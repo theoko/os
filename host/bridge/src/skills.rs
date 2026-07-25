@@ -129,6 +129,23 @@ pub fn save_skill(name: &str, body: &str) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+/// Delete the user skills tree. Revoking Save skills must forget what it
+/// wrote — defaults under `OS_SKILLS_DEFAULTS` are never touched.
+pub fn forget() -> Result<&'static str, String> {
+    let (defaults, user) = skills_dirs();
+    // Refuse to wipe the curated defaults if env mispoints USER at them.
+    if let (Ok(d), Ok(u)) = (defaults.canonicalize(), user.canonicalize()) {
+        if d == u {
+            return Err("refusing to forget defaults dir".into());
+        }
+    }
+    match fs::remove_dir_all(&user) {
+        Ok(()) => Ok("removed"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("nothing_to_remove"),
+        Err(e) => Err(format!("remove {}: {e}", user.display())),
+    }
+}
+
 pub fn list_response() -> Vec<String> {
     let skills = list_skills();
     let n = skills.len();
@@ -203,5 +220,30 @@ mod tests {
         let list = list_skills();
         assert!(list.iter().any(|s| s.name == "email-triage"));
         assert!(list.iter().any(|s| s.name == "agent-plan-act"));
+    }
+
+    #[test]
+    fn forget_removes_saved_skills_not_defaults() {
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = env::temp_dir().join(format!("os-skills-forget-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        unsafe {
+            env::set_var("OS_SKILLS_USER", &dir);
+        }
+        save_skill("unit-saved", "names email.search").unwrap();
+        assert!(dir.join("unit-saved/SKILL.md").is_file());
+        assert!(list_skills().iter().any(|s| s.name == "unit-saved" && !s.builtin));
+        assert_eq!(forget().unwrap(), "removed");
+        assert!(!dir.exists());
+        assert!(
+            list_skills().iter().any(|s| s.name == "email-triage" && s.builtin),
+            "defaults must survive skills.forget"
+        );
+        assert_eq!(forget().unwrap(), "nothing_to_remove");
+        unsafe {
+            env::remove_var("OS_SKILLS_USER");
+        }
+        let _ = fs::remove_dir_all(&dir);
     }
 }

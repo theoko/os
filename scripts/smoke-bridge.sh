@@ -195,6 +195,7 @@ require_listed(
     "workspace.forget",
     "doc.read",
     "skills.save",
+    "skills.forget",
 )
 
 require_portal_cap("teddy.health")
@@ -232,6 +233,23 @@ for tool in ("search.query", "email.search", "audio.transcribe"):
         print(starter_body, file=sys.stderr)
         sys.exit(1)
 print("smoke-bridge: skills.save skills=1 ok")
+
+forgot_skills = call("CALL skills.forget")
+if not forgot_skills.startswith("OK skills.forget"):
+    print("error: skills.forget failed", file=sys.stderr)
+    print(forgot_skills, file=sys.stderr)
+    sys.exit(1)
+listed_after = call("CALL skills.list")
+if "smoke-guest-starter" in listed_after:
+    print("error: skills.forget left saved skill listed", file=sys.stderr)
+    print(listed_after, file=sys.stderr)
+    sys.exit(1)
+again_skills = call("CALL skills.forget")
+if not again_skills.startswith("OK skills.forget"):
+    print("error: skills.forget must be idempotent", file=sys.stderr)
+    print(again_skills, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: skills.forget ok")
 
 forgotten = call("CALL portal.forget")
 if not forgotten.startswith("OK portal.forget"):

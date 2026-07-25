@@ -309,7 +309,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
     match cmd {
         "PING" => vec!["OK pong".into()],
         "LIST" => {
-            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,teddy.health,teddy.fear_greed,teddy.gex,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,portal.forget,email.forget,doc.read".into()]
+            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,skills.forget,search.query,workspace.index,tsearch.sync,teddy.health,teddy.fear_greed,teddy.gex,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,portal.forget,email.forget,doc.read".into()]
         }
         "CALL" => {
             let (tool, rest) = split_word(rest);
@@ -490,6 +490,10 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
         "email.forget" => match graph::forget() {
             Ok(status) => vec![format!("OK email.forget {status}"), "END".into()],
             Err(e) => vec![format!("ERR email.forget {e}")],
+        },
+        "skills.forget" => match skills::forget() {
+            Ok(status) => vec![format!("OK skills.forget {status}"), "END".into()],
+            Err(e) => vec![format!("ERR skills.forget {e}")],
         },
         // Revoking Online services: purge teddy corpus API cache and live
         // portal snapshots so "off" means forgotten, not merely hidden.
@@ -918,6 +922,38 @@ mod tests {
         let r = dispatch("LIST", &test_backends());
         assert!(r[0].contains("portal.forget"), "{}", r[0]);
         assert!(r[0].contains("email.forget"), "{}", r[0]);
+        assert!(r[0].contains("skills.forget"), "{}", r[0]);
+    }
+
+    #[test]
+    fn skills_forget_clears_saved_skills() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("os-sforget-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        unsafe {
+            std::env::set_var("OS_SKILLS_USER", &dir);
+        }
+        let saved = dispatch(
+            "CALL skills.save name=dispatch-saved desc=demo skills=1",
+            &test_backends(),
+        );
+        assert!(saved[0].starts_with("OK skills.save"), "{saved:?}");
+        let listed = dispatch("CALL skills.list", &test_backends());
+        assert!(listed.iter().any(|l| l.contains("dispatch-saved")), "{listed:?}");
+        let r = dispatch("CALL skills.forget", &test_backends());
+        assert!(r[0].starts_with("OK skills.forget removed"), "{r:?}");
+        let after = dispatch("CALL skills.list", &test_backends());
+        assert!(
+            !after.iter().any(|l| l.contains("dispatch-saved")),
+            "saved skill survived forget: {after:?}"
+        );
+        let again = dispatch("CALL skills.forget", &test_backends());
+        assert!(again[0].starts_with("OK skills.forget"), "{again:?}");
+        unsafe {
+            std::env::remove_var("OS_SKILLS_USER");
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

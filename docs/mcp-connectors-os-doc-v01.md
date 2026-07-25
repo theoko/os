@@ -69,7 +69,7 @@ wire flags so a forged CALL cannot bypass consent:
 | `search.query` | guest refuse | `search.query` (`email=1`/`files=1`/… opt-in) |
 | `workspace.index` | `files=1` | workspace index / file docs; `workspace.forget` |
 | `audio.transcribe` | `audio=1` | `audio.transcribe path=…`; Search path picker; `audio.forget` |
-| `skills.save` | `skills=1` | `skills.save` |
+| `skills.save` | `skills=1` | `skills.save`; revoke → `skills.forget` |
 | `portal.sync` | `portal=1` | `tsearch.sync`, `teddy.*`, `market.*`; `portal.forget` |
 
 Ambient root is forbidden: a missing grant is a hard deny.

@@ -53,7 +53,7 @@ impl Cap {
             Cap::SearchQuery => "Search what ships with the OS",
             Cap::WorkspaceIndex => "Search project folders you choose",
             Cap::AudioTranscribe => "Type a media path in Search",
-            Cap::SkillsSave => "Write new playbooks to disk",
+            Cap::SkillsSave => "Write playbooks; revoke deletes them",
             Cap::PortalSync => "Teddy and market portals",
         }
     }

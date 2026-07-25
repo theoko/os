@@ -27,10 +27,14 @@ Frontmatter: `name`, `description` (same convention as Cursor skills).
 | `CALL skills.get name=…` | `OK skills.get` + `LINE …` body lines + `END` |
 | `CALL skills.save name=… desc=… skills=1` | one-line starter under Application Support |
 | `CALL skills.save name=… skills=1` then `LINE`…`END` | full body write |
+| `CALL skills.forget` | Delete the user skills tree (defaults untouched) |
 
 `skills.save` requires `skills=1` (guest `Cap::SkillsSave`). Without it the
 bridge returns `ERR skills.save needs_skills_cap` and still drains any
 `LINE`…`END` body so the protocol stays in sync.
+
+Revoking Save skills on the guest calls `skills.forget` and refreshes the
+Skills list — same consent loop as email / workspace / audio / portal.
 
 Guest always knows **builtin** defaults even if the bridge is offline. With
 Save skills granted, the Skills screen **Save starter** CTA and the

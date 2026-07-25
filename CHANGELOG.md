@@ -1,8 +1,18 @@
 ---
-version: 0.9.16
+version: 0.9.17
 ---
 
 # Changelog
+
+## 0.9.17 — 2026-07-25
+
+Save skills revoke forgets what it wrote:
+
+- Bridge `skills.forget` deletes the user skills tree only (defaults stay);
+  idempotent `removed` / `nothing_to_remove`.
+- Guest Caps: turning **Save skills** off calls `skills.forget` and refreshes
+  the Skills peek so `src=saved` rows disappear.
+- Smoke: save → get → forget → list; Caps copy names the revoke consequence.
 
 ## 0.9.16 — 2026-07-25
 

@@ -476,6 +476,11 @@ unsafe extern "C" fn kmain() -> ! {
                                             &["workspace.index"][..],
                                         ),
                                         (caps::Cap::AudioTranscribe, "audio.forget", &[][..]),
+                                        (
+                                            caps::Cap::SkillsSave,
+                                            "skills.forget",
+                                            &[][..],
+                                        ),
                                         // Corpus sync + warm a live teddy portal
                                         // so the switch is never on with nothing
                                         // behind it.
@@ -513,6 +518,14 @@ unsafe extern "C" fn kmain() -> ! {
                                         != grants.allows(caps::Cap::EmailSearch)
                                     {
                                         mail = mcp::fetch_mail_peek(grants);
+                                    }
+                                    // Save skills revoke purges user playbooks —
+                                    // refresh the Skills list so src=saved rows
+                                    // do not linger after the switch flips off.
+                                    if before.allows(caps::Cap::SkillsSave)
+                                        && !grants.allows(caps::Cap::SkillsSave)
+                                    {
+                                        skill_peek = mcp::fetch_skill_peek();
                                     }
                                     status_len = grants.describe(&mut status_buf);
                                     dirty = true;
