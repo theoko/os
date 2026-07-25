@@ -43,7 +43,12 @@ pub struct Posting {
 include!(concat!(env!("OUT_DIR"), "/corpus.rs"));
 
 /// Max hits returned. Matches the bridge's home-screen peek.
-pub const MAX_HITS: usize = 3;
+/// Rows a result screen can hold.
+///
+/// This is also the cap the bridge is asked to respect. It was 3 while the
+/// bridge returned 5, so the agent's sentence said "5 matches" above three
+/// visible rows - the count was true of the search and false of the screen.
+pub const MAX_HITS: usize = 5;
 
 #[derive(Clone, Copy)]
 pub struct Hit {

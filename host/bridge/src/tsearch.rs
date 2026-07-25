@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, OnceLock, RwLock};
+use std::sync::{Arc, RwLock};
 
 /// Live corpus published by the tsearch front-end.
 pub const DEFAULT_URL: &str = "https://teddysearch.com/tsearch/corpus.json";

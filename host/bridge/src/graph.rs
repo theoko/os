@@ -57,7 +57,7 @@ fn home() -> PathBuf {
 }
 
 /// Cheap stable id. Not cryptographic — only needs to dedupe re-ingests.
-fn id_for(from: &str, subject: &str) -> String {
+pub fn id_for(from: &str, subject: &str) -> String {
     let mut h: u64 = 0xcbf29ce484222325;
     for b in from.bytes().chain(b"\x00".iter().copied()).chain(subject.bytes()) {
         h ^= b as u64;

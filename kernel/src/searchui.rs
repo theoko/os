@@ -119,6 +119,19 @@ pub struct SearchView {
     /// True once a query has been run, so we can tell "no results" from "idle".
     pub searched: bool,
     pub source: Source,
+    /// What the agent understood, in one sentence, shown above the results.
+    say: [u8; crate::mcp::SAY_MAX],
+}
+
+/// Copy a sentence into a fixed buffer, truncating on a character boundary so
+/// a long answer cannot leave half a UTF-8 sequence behind.
+fn set_say(buf: &mut [u8; crate::mcp::SAY_MAX], text: &str) {
+    *buf = [0; crate::mcp::SAY_MAX];
+    let mut end = text.len().min(buf.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    buf[..end].copy_from_slice(&text.as_bytes()[..end]);
 }
 
 impl SearchView {
@@ -126,6 +139,7 @@ impl SearchView {
         Self {
             rows: [Row::empty(); search::MAX_HITS],
             count: 0,
+            say: [0; crate::mcp::SAY_MAX],
             searched: false,
             source: Source::offline(),
         }
@@ -139,6 +153,7 @@ impl SearchView {
         self.searched = true;
         self.count = 0;
         self.source = Source::offline();
+        set_say(&mut self.say, "Answered from the built-in guide - the bridge is offline.");
         if q.trim().is_empty() {
             return;
         }
@@ -164,6 +179,7 @@ impl SearchView {
             return;
         }
         let peek = crate::mcp::fetch_search_peek(caps, q);
+        set_say(&mut self.say, peek.say());
         let online = matches!(peek.status, crate::mcp::BridgeStatus::Online) && !peek.denied;
         // Record reachability BEFORE any fallback, so an online bridge that
         // simply found nothing is never reported as a connection failure.
@@ -180,17 +196,39 @@ impl SearchView {
             }
         }
         if self.count == 0 {
-            // Nothing from the bridge: try what we shipped with.
+            // Nothing from the bridge: try what we shipped with. `run` rewrites
+            // the sentence, which is right - it describes where these came from.
+            let said = self.say;
             self.run(q);
+            // Unless the bridge already explained itself, in which case its
+            // answer ("your files are switched off") is the useful one.
+            if online && !say_str(&said).is_empty() {
+                self.say = said;
+            }
         }
         self.source = source;
     }
+
+    /// The agent's sentence for the current results.
+    pub fn say(&self) -> &str {
+        say_str(&self.say)
+    }
+}
+
+/// Read a NUL-padded sentence back out, stopping at the first invalid byte.
+fn say_str(buf: &[u8; crate::mcp::SAY_MAX]) -> &str {
+    let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+    core::str::from_utf8(&buf[..end]).unwrap_or("")
 }
 
 const PAD_X: i32 = 28;
 const NAV_H: i32 = 56;
 const FIELD_H: i32 = 52;
 const ROW_H: i32 = 64;
+/// Band above the results holding the agent's sentence. Reserved whether or
+/// not there is text, so hit-testing and drawing never disagree about where
+/// row zero starts.
+const SAY_H: i32 = 34;
 const CONTENT_MAX: i32 = 720;
 
 /// Geometry shared by the renderer and hit-testing.
@@ -208,8 +246,14 @@ pub fn back_rect(w: i32) -> (i32, i32, i32, i32) {
 
 /// Bounding box of result row `i`, shared by drawing and hit-testing.
 pub fn row_rect(w: i32, h: i32, i: usize) -> (i32, i32, i32, i32) {
-    let (fx, fy, fw, fh) = field_rect(w, h);
-    (fx, fy + fh + 26 + i as i32 * (ROW_H + 10), fw, ROW_H)
+    let (fx, _, fw, _) = field_rect(w, h);
+    (fx, results_top(w, h) + i as i32 * (ROW_H + 10), fw, ROW_H)
+}
+
+/// Y of the first result row, below the field and the agent's sentence.
+pub fn results_top(w: i32, h: i32) -> i32 {
+    let (_, fy, _, fh) = field_rect(w, h);
+    fy + fh + 26 + SAY_H
 }
 
 /// Which result was clicked, if any.
@@ -253,9 +297,17 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
         fb.fill_rect(cx, fy + 14, 2, fh - 28, theme::INK);
     }
 
+    // What the agent understood. It sits above the results because it is the
+    // answer to "did you get what I meant?" - the rows are the evidence.
+    let say_y = fy + fh + 26;
+    if view.searched && !view.say().is_empty() {
+        fb.draw_text_clipped(fx, say_y + BODY_FACE.baseline(), view.say(), &BODY_FACE, 0, theme::INK, fw);
+    }
+
     // Results.
-    let mut y = fy + fh + 26;
+    let mut y = results_top(w, h);
     if !view.searched {
+        y = say_y;
         fb.draw_text_centered(
             w / 2,
             y + 30,
@@ -267,7 +319,12 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
         return;
     }
     if view.count == 0 {
-        fb.draw_text_centered(w / 2, y + 30, view.source.empty_reason(), &BODY_FACE, 0, theme::MUTED);
+        // Only one explanation. The agent's sentence and `empty_reason` were
+        // both rendered, so an offline search said "the bridge is offline"
+        // twice in two different wordings.
+        if view.say().is_empty() {
+            fb.draw_text_centered(w / 2, y + 30, view.source.empty_reason(), &BODY_FACE, 0, theme::MUTED);
+        }
         return;
     }
 
@@ -602,5 +659,41 @@ mod scroll_tests {
             crate::mcp::DocPage::MAX > READER_ROWS,
             "fetching fewer lines than the screen shows makes scrolling pointless"
         );
+    }
+}
+
+#[cfg(test)]
+mod agent_say_tests {
+    use super::*;
+
+    #[test]
+    fn the_sentence_sits_above_the_first_result() {
+        let (_, ry, _, _) = row_rect(1024, 768, 0);
+        let (_, fy, _, fh) = field_rect(1024, 768);
+        assert!(ry > fy + fh, "results must clear the input field");
+        assert!(
+            ry - (fy + fh) >= SAY_H,
+            "no room reserved for what the agent said"
+        );
+    }
+
+    #[test]
+    fn an_offline_answer_admits_where_it_came_from() {
+        let mut v = SearchView::new();
+        v.run("capability");
+        assert!(v.say().contains("offline"), "{}", v.say());
+    }
+
+    #[test]
+    fn a_long_sentence_is_cut_on_a_character_boundary() {
+        let mut buf = [0u8; crate::mcp::SAY_MAX];
+        let long = "e".repeat(crate::mcp::SAY_MAX + 40);
+        set_say(&mut buf, &long);
+        assert_eq!(say_str(&buf).len(), crate::mcp::SAY_MAX);
+    }
+
+    #[test]
+    fn an_idle_view_says_nothing() {
+        assert!(SearchView::new().say().is_empty());
     }
 }

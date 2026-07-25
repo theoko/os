@@ -1,9 +1,11 @@
 //! Host-side MCP-shaped connector bridge.
 //!
 //! Speaks the line protocol in docs/mcp-connectors-os-doc-v01.md over TCP.
-//! Email backends: mock (default) or `gog`. Skills: defaults + saved on host.
+//! Email backends: automatic Gmail discovery, `gog`, or the explicit demo
+//! `mock` backend. Skills: defaults + saved on host.
 
 mod graph;
+mod agent;
 mod workspace;
 mod portals;
 mod search;
@@ -51,7 +53,7 @@ fn main() {
     let connect = env::var("OS_MCP_BRIDGE_CONNECT").ok();
     let addr = env::var("OS_MCP_BRIDGE_ADDR").unwrap_or_else(|_| "127.0.0.1:7420".into());
     let backends = Arc::new(Backends {
-        email: env::var("OS_MCP_EMAIL_BACKEND").unwrap_or_else(|_| "mock".into()),
+        email: email_backend(),
         search: env::var("OS_MCP_SEARCH_BACKEND").unwrap_or_else(|_| "tfidf".into()),
     });
 
@@ -66,17 +68,22 @@ fn main() {
         user.display()
     );
 
-    // Build the corpus index before serving. Lazily, whichever query arrives
-    // first pays ~10s while every other one is instant — this was here before
-    // the merge and the regression is invisible until you time a cold search.
+    // Prewarm the corpus off the startup path. Lazily, whichever query arrives
+    // first pays ~10s while every other one is instant. But doing it *inline*
+    // was worse: the port stayed closed for those 10s, so `make utm-bridged`
+    // started QEMU against a socket nobody was listening on yet and QEMU
+    // aborted with "Connection refused" — a boot failure caused entirely by
+    // indexing order. Bind first; warm in the background.
     if tsearch::is_available() {
-        let t0 = std::time::Instant::now();
-        let n = tsearch::docs().len();
-        let terms = tsearch::index().term_count();
-        eprintln!(
-            "tsearch: indexed {n} docs / {terms} terms in {:.1}s",
-            t0.elapsed().as_secs_f64()
-        );
+        std::thread::spawn(|| {
+            let t0 = std::time::Instant::now();
+            let n = tsearch::docs().len();
+            let terms = tsearch::index().term_count();
+            eprintln!(
+                "tsearch: indexed {n} docs / {terms} terms in {:.1}s",
+                t0.elapsed().as_secs_f64()
+            );
+        });
     }
 
     if let Some(target) = connect {
@@ -86,6 +93,38 @@ fn main() {
     } else {
         serve_tcp(&addr, backends);
     }
+}
+
+/// Pick a real inbox when the host has already authorized one.  The OS must
+/// never pass fabricated demo mail off as a user's inbox: with no account, it
+/// returns the explicit `unconfigured` state instead. `mock` remains useful
+/// only for demos and tests when requested deliberately.
+fn email_backend() -> String {
+    match env::var("OS_MCP_EMAIL_BACKEND").as_deref().unwrap_or("auto") {
+        "auto" => {
+            if gog_has_account() { "gog" } else { "unconfigured" }.into()
+        }
+        "gog" | "mock" => env::var("OS_MCP_EMAIL_BACKEND").unwrap(),
+        _ => "unconfigured".into(),
+    }
+}
+
+fn gog_has_account() -> bool {
+    let Ok(out) = Command::new("gog")
+        .args(["auth", "list", "--json", "--no-input"])
+        .output()
+    else { return false };
+    if !out.status.success() {
+        return false;
+    }
+    gog_accounts_from_json(&String::from_utf8_lossy(&out.stdout))
+}
+
+fn gog_accounts_from_json(raw: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(raw)
+        .ok()
+        .and_then(|v| v.get("accounts").and_then(|a| a.as_array()).cloned())
+        .is_some_and(|accounts| !accounts.is_empty())
 }
 
 /// Dial a peer that is already listening (UTM QEMU serial unix server).
@@ -290,7 +329,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
     match cmd {
         "PING" => vec!["OK pong".into()],
         "LIST" => {
-            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,portal.forget,portal.status,doc.read".into()]
+            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,agent.plan,workspace.index,tsearch.sync,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,portal.forget,portal.status,doc.read".into()]
         }
         "CALL" => {
             let (tool, rest) = split_word(rest);
@@ -341,6 +380,80 @@ fn parse_args(rest: &str) -> Vec<(String, String)> {
 
 fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<String> {
     match tool {
+        // The old agent.plan returned prose. agent.act returns prose *plus*
+        // steps you can click, because a plan you cannot act on is a note.
+        "agent.act" => {
+            let goal = arg_val(args, "goal").unwrap_or("");
+            if goal.trim().is_empty() {
+                return vec!["ERR agent.act missing_goal".into()];
+            }
+            let grants = agent::Grants {
+                files: matches!(arg_val(args, "files"), Some("1")),
+                email: matches!(arg_val(args, "email"), Some("1")),
+                audio: matches!(arg_val(args, "audio"), Some("1")),
+                portal: matches!(arg_val(args, "portal"), Some("1")),
+            };
+            // How many rows the guest's screen holds. Returning more made the
+            // agent's own sentence ("5 matches") contradict the three rows
+            // actually rendered. `max` is accepted as an older spelling.
+            let k: usize = arg_val(args, "k")
+                .or_else(|| arg_val(args, "max"))
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(5)
+                .clamp(1, 20);
+            let a = agent::act(goal, grants, k);
+
+            // agent.act must never be worse than the search box it replaces.
+            // The planner only looks at your own sources, so a plain keyword
+            // query ("q2 planning") or a goal it could not place still gets
+            // the full scoped index behind it.
+            let mut rows: Vec<(String, String, String)> = a
+                .steps
+                .iter()
+                .map(|s| (s.label.clone(), s.url.clone(), s.why.clone()))
+                .collect();
+            let fell_back = rows.is_empty() || a.intent == agent::Intent::Unknown;
+            if fell_back {
+                let query = if a.subject.is_empty() { goal } else { &a.subject };
+                for line in search::query_scoped(
+                    query,
+                    k,
+                    None,
+                    &backends.search,
+                    grants.email,
+                    grants.files,
+                    grants.audio,
+                    grants.portal,
+                ) {
+                    let (Some(t), Some(u)) =
+                        (parse_row_field(&line, "title"), parse_row_field(&line, "url"))
+                    else {
+                        continue;
+                    };
+                    if rows.iter().any(|(_, have, _)| have == u) {
+                        continue;
+                    }
+                    rows.push((t.to_string(), u.to_string(), "matched your query".into()));
+                }
+            }
+            rows.truncate(k);
+
+            // Say the true thing about the rows actually being shown, not the
+            // one the planner wrote before the fallback filled them in.
+            let say = if a.steps.is_empty() && !rows.is_empty() {
+                format!("{} matches for {}.", rows.len(), if a.subject.is_empty() { goal } else { &a.subject })
+            } else {
+                a.say
+            };
+
+            let mut out = vec![format!("OK agent.act n={} intent={}", rows.len(), a.intent.name())];
+            out.push(format!("SAY {say}"));
+            for (title, url, why) in rows {
+                out.push(format!("ROW title={title}|url={url}|why={why}"));
+            }
+            out.push("END".into());
+            out
+        }
         "email.search" => email_search(args, &backends.email),
         "email.send" => vec!["ERR email.send disabled_until_cap_confirm".into()],
         "calendar.list" => vec![
@@ -584,6 +697,18 @@ fn read_doc(url: &str, max: usize, args: &[(String, String)]) -> Result<Vec<Stri
         }
         let path = found.ok_or("outside the indexed roots")?;
         std::fs::read_to_string(&path).map_err(|e| format!("read: {e}"))?
+    } else if let Some(id) = url.strip_prefix("email://") {
+        // Mail is readable only with the grant that surfaced it.
+        if !matches!(arg_val(args, "email"), Some("1")) {
+            return Err("needs_email_cap".into());
+        }
+        let g = graph::Graph::load_or_empty();
+        let m = g
+            .messages
+            .into_iter()
+            .find(|m| m.id == id)
+            .ok_or("no such message")?;
+        format!("{}\n\n{}", m.subject, m.snippet)
     } else if let Some(src) = url.strip_prefix("audio://") {
         if !with_audio {
             return Err("needs_audio_cap".into());
@@ -651,6 +776,7 @@ fn email_search(args: &[(String, String)], backend: &str) -> Vec<String> {
 
     let out = match backend {
         "gog" => email_search_gog(query, max),
+        "unconfigured" => vec!["ERR email.search email_not_connected".into()],
         _ => email_search_mock(query, max),
     };
     // Fold what we just fetched into the knowledge graph. Hooked here rather
@@ -670,7 +796,12 @@ fn email_search_mock(query: &str, max: usize) -> Vec<String> {
     let n = samples.len().min(max);
     let mut out = vec![format!("OK email.search n={n}")];
     for (from, subj) in samples.iter().take(n) {
-        out.push(format!("ROW from={from}|subj={subj}"));
+        // Carry the graph id so the guest can open the message, not just
+        // list it. Same hash the graph uses, so the two agree.
+        out.push(format!(
+            "ROW from={from}|subj={subj}|url=email://{}",
+            graph::id_for(from, subj)
+        ));
     }
     out.push("END".into());
     out
@@ -728,10 +859,10 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
                 .or_else(|| item.get("snippet"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("(no subject)");
+            let (from, subj) = (sanitize_field(from), sanitize_field(subj));
             rows.push(format!(
-                "ROW from={}|subj={}",
-                sanitize_field(from),
-                sanitize_field(subj)
+                "ROW from={from}|subj={subj}|url=email://{}",
+                graph::id_for(&from, &subj)
             ));
         }
     }
@@ -775,6 +906,13 @@ mod tests {
         assert!(r[0].starts_with("OK email.search n=2"));
         assert!(r.iter().any(|l| l.starts_with("ROW ")));
         assert_eq!(r.last().map(String::as_str), Some("END"));
+    }
+
+    #[test]
+    fn auto_email_detects_only_a_real_saved_account() {
+        assert!(!gog_accounts_from_json(r#"{"accounts":[]}"#));
+        assert!(gog_accounts_from_json(r#"{"accounts":[{"email":"me@example.com"}]}"#));
+        assert!(!gog_accounts_from_json("not json"));
     }
 
     fn test_backends() -> Backends {
@@ -871,5 +1009,65 @@ mod read_tests {
         let rows = wrap_lines(&"x".repeat(300), 20, 5);
         assert!(!rows.is_empty());
         assert!(rows.len() <= 5);
+    }
+}
+
+#[cfg(test)]
+mod agent_dispatch_tests {
+    use super::*;
+
+    fn backends() -> Backends {
+        Backends { email: "mock".into(), search: "tfidf".into() }
+    }
+
+    fn rows(reply: &[String]) -> usize {
+        reply.iter().filter(|l| l.starts_with("ROW ")).count()
+    }
+
+    fn say(reply: &[String]) -> String {
+        reply
+            .iter()
+            .find_map(|l| l.strip_prefix("SAY "))
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    #[test]
+    fn the_row_limit_is_honoured_through_the_fallback_path() {
+        // `agent::act` respected the limit while the keyword fallback appended
+        // past it, so a plain search returned five rows however few were asked
+        // for - and the sentence counted all five.
+        for k in 1..=5 {
+            let reply = dispatch(
+                &format!("CALL agent.act goal=planning k={k} portal=1"),
+                &backends(),
+            );
+            assert!(rows(&reply) <= k, "asked for {k}, got {}", rows(&reply));
+        }
+    }
+
+    #[test]
+    fn the_sentence_counts_the_rows_that_were_actually_sent() {
+        for k in [1usize, 3, 5] {
+            let reply = dispatch(
+                &format!("CALL agent.act goal=planning k={k} portal=1"),
+                &backends(),
+            );
+            let said = say(&reply);
+            if let Ok(n) = said.split_whitespace().next().unwrap_or("x").parse::<usize>() {
+                assert_eq!(n, rows(&reply), "said {n:?} but sent {}: {said}", rows(&reply));
+            }
+        }
+    }
+
+    #[test]
+    fn the_header_count_matches_the_rows_too() {
+        let reply = dispatch("CALL agent.act goal=planning k=2 portal=1", &backends());
+        let n: usize = reply[0]
+            .split_whitespace()
+            .find_map(|f| f.strip_prefix("n="))
+            .and_then(|v| v.parse().ok())
+            .expect("OK line carries n=");
+        assert_eq!(n, rows(&reply));
     }
 }

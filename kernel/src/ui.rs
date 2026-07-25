@@ -245,9 +245,10 @@ pub fn draw_home_full(
         fb.draw_text(
             x0,
             ry,
-            match mail.status {
-                BridgeStatus::Online => "Inbox empty, or email.search not granted.",
-                BridgeStatus::Offline => "Bridge offline - run: make utm-bridged",
+            match (mail.status, mail.needs_connection) {
+                (BridgeStatus::Online, true) => "Connect email on this Mac to show your inbox.",
+                (BridgeStatus::Online, false) => "Inbox empty, or email.search not granted.",
+                (BridgeStatus::Offline, _) => "Bridge offline - run: make utm-bridged",
             },
             &SMALL_FACE,
             0,
@@ -287,6 +288,21 @@ pub(crate) fn home_column(w: i32) -> (i32, i32) {
 }
 
 /// The home search field, shared by drawing and hit-testing.
+/// Bounding box of recent-mail row `i`, shared by drawing and hit-testing.
+///
+/// These were drawn but unclickable — listed mail you could see and not open.
+pub fn mail_row_rect(w: i32, h: i32, i: usize) -> Rect {
+    let (x0, cw) = home_column(w);
+    let ry = tile_top(h) + TILE_H + 40;
+    // Header at ry, first row 30px below, 38px apart (text + rule + gap).
+    Rect { x: x0, y: ry + 12 + i as i32 * 38, w: cw, h: 32 }
+}
+
+/// Which recent-mail row was clicked, if any.
+pub fn mail_hit(w: i32, h: i32, count: usize, px: i32, py: i32) -> Option<usize> {
+    (0..count.min(3)).find(|&i| mail_row_rect(w, h, i).contains(px, py))
+}
+
 pub fn search_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
     let _ = h;
     let (x, cw) = home_column(w);
@@ -446,5 +462,45 @@ mod tests {
         let mail = MailPeek::empty(BridgeStatus::Offline);
         let _ = home_targets(1024, 768, &peek());
         assert_eq!(mail.count, 0);
+    }
+}
+
+#[cfg(test)]
+mod mail_click_tests {
+    use super::*;
+
+    #[test]
+    fn mail_rows_are_clickable_at_their_centre() {
+        for i in 0..3 {
+            let r = mail_row_rect(1024, 768, i);
+            assert_eq!(mail_hit(1024, 768, 3, r.x + r.w / 2, r.y + r.h / 2), Some(i));
+        }
+    }
+
+    #[test]
+    fn mail_rows_do_not_overlap_each_other() {
+        for i in 1..3 {
+            let prev = mail_row_rect(1024, 768, i - 1);
+            let cur = mail_row_rect(1024, 768, i);
+            assert!(cur.y >= prev.y + prev.h, "mail row {i} overlaps its predecessor");
+        }
+    }
+
+    #[test]
+    fn rows_beyond_the_message_count_are_not_hittable() {
+        let r = mail_row_rect(1024, 768, 2);
+        assert_eq!(mail_hit(1024, 768, 1, r.x + r.w / 2, r.y + r.h / 2), None);
+    }
+
+    #[test]
+    fn mail_rows_sit_below_the_tiles() {
+        let tile = tile_rect(1024, 768, 0);
+        let first = mail_row_rect(1024, 768, 0);
+        assert!(first.y >= tile.y + tile.h, "mail overlaps the tiles");
+    }
+
+    #[test]
+    fn an_empty_inbox_has_no_targets() {
+        assert_eq!(mail_hit(1024, 768, 0, 512, 700), None);
     }
 }
