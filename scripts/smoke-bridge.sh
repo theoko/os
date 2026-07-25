@@ -35,6 +35,22 @@ BRIDGE_PID=$!
 # if the bridge died on startup, e.g. port already in use.
 BRIDGE_HOST="${ADDR%:*}"
 BRIDGE_PORT="${ADDR##*:}"
+# Prefer a real TCP connect over `nc -z`: many CI images ship neither
+# netcat-openbsd nor traditional nc, and bash /dev/tcp is not portable.
+bridge_probe() {
+  python3 - "$BRIDGE_HOST" "$BRIDGE_PORT" <<'PY'
+import socket, sys
+host, port = sys.argv[1], int(sys.argv[2])
+s = socket.socket()
+s.settimeout(0.2)
+try:
+    s.connect((host, port))
+except OSError:
+    sys.exit(1)
+finally:
+    s.close()
+PY
+}
 bridge_up=0
 for _ in $(seq 1 50); do
   if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
@@ -42,7 +58,7 @@ for _ in $(seq 1 50); do
     cat "$BRIDGE_LOG" >&2
     exit 1
   fi
-  if nc -z "$BRIDGE_HOST" "$BRIDGE_PORT" 2>/dev/null; then
+  if bridge_probe; then
     bridge_up=1
     break
   fi
