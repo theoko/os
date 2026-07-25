@@ -3,7 +3,7 @@
 
 use core::hint::black_box;
 
-use kernel::{fb, hello_message, mcp, mouse, serial, setup, skills, ui, usb_tablet};
+use kernel::{caps, fb, hello_message, mcp, mouse, serial, setup, skills, ui, usb_tablet};
 use limine::BaseRevision;
 use limine::request::{
     FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
@@ -121,7 +121,10 @@ unsafe extern "C" fn kmain() -> ! {
             } {
                 ui::draw_home(&surface, &mail, &skill_peek, "");
 
-                mail = mcp::fetch_mail_peek();
+                // Early peek uses default grants so smoke still exercises COM2
+                // before the setup journey runs (smoke exits before setup).
+                let mut grants = caps::Caps::default_grants();
+                mail = mcp::fetch_mail_peek(grants);
                 match mail.status {
                     mcp::BridgeStatus::Online => serial_port.write_str("mcp: email connected\n"),
                     mcp::BridgeStatus::Offline => serial_port.write_str("mcp: email offline\n"),
@@ -176,7 +179,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut x = cx;
                 let mut y = cy;
                 let mut prev_buttons = 0u8;
-                let mut status = "";
+                let mut status = grants.footer_status();
                 let mut setup = setup::Setup::new();
                 // First boot: run the setup journey before the home screen.
                 cursor.hide(&surface);
@@ -213,7 +216,14 @@ unsafe extern "C" fn kmain() -> ! {
                         if setup.pointer(x, y, buttons) {
                             cursor.hide(&surface);
                             if setup.is_finished() {
+                                grants = setup.grants();
+                                status = grants.footer_status();
                                 serial_port.write_str("ui: setup done\n");
+                                serial_port.write_str("caps: ");
+                                serial_port.write_str(status);
+                                serial_port.write_str("\n");
+                                // Re-probe bridge under the chosen grant set.
+                                mail = mcp::fetch_mail_peek(grants);
                                 ui::draw_home(&surface, &mail, &skill_peek, status);
                             } else {
                                 setup.draw(&surface, &mail, &skill_peek);
@@ -240,7 +250,11 @@ unsafe extern "C" fn kmain() -> ! {
                                 }
                                 Some(ui::CtaId::Skills) => {
                                     serial_port.write_str("ui: click Skills\n");
-                                    status = "Skills - markdown playbooks on the host.";
+                                    status = if grants.allows(caps::Cap::SkillsSave) {
+                                        "skills.save granted - playbooks writable"
+                                    } else {
+                                        "skills.save denied - playbooks read-only"
+                                    };
                                     clicked = true;
                                 }
                                 None => {}
