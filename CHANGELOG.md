@@ -1,8 +1,14 @@
 ---
-version: 0.7.2
+version: 0.7.3
 ---
 
 # Changelog
+
+## 0.7.3 — 2026-07-25
+
+- UTM: `make utm` refreshes an existing VM bundle instead of delete+create.
+  Ghost library rows (name registered, `.utm` missing) are scrubbed from UTM's
+  preferences so recreate stops failing with AppleScript -2700.
 
 ## 0.7.2 — 2026-07-25
 
