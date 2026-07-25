@@ -1,8 +1,19 @@
 ---
-version: 0.9.8
+version: 0.9.9
 ---
 
 # Changelog
+
+## 0.9.9 — 2026-07-25
+
+Guest finally writes playbooks when Save skills is on:
+
+- `mcp::save_skill` sends `CALL skills.save … skills=1` (one-line `desc=`
+  form); cap denial never opens COM2.
+- Skills screen **Save starter** CTA + `capability-safe-tools` prove the
+  write; list rows surface `src=saved`.
+- Skills tile subtitle is `N writable` / `N read-only`; smoke round-trips
+  an allowed save and checks `skills.list`.
 
 ## 0.9.8 — 2026-07-25
 

@@ -208,8 +208,8 @@ pub fn draw_home_full(
     // Destinations, each showing a real number rather than a slogan.
     let mut mbuf = [0u8; 16];
     let mail_label = fmt_count(&mut mbuf, mail.count, "message", "messages");
-    let mut sbuf = [0u8; 16];
-    let skill_label = fmt_count(&mut sbuf, skills.count, "playbook", "playbooks");
+    let mut sbuf = [0u8; 28];
+    let skill_label = skills_tile_sub(caps, skills.count, &mut sbuf);
     let mut src_buf = [0u8; 40];
     let search_sub = search_tile_sub(caps, &mut src_buf);
 
@@ -264,6 +264,39 @@ pub fn draw_home_full(
     }
 
     fb.draw_text_centered(w / 2, h - 24, mail_label, &SMALL_FACE, 0, theme::MUTED);
+}
+
+/// Skills-tile subtitle: playbook count plus whether Save skills is granted.
+pub fn skills_tile_sub<'a>(caps: Caps, count: usize, buf: &'a mut [u8; 28]) -> &'a str {
+    buf.fill(0);
+    let mut n = 0;
+    let mut push = |s: &str, n: &mut usize| {
+        for &b in s.as_bytes() {
+            if *n < buf.len() {
+                buf[*n] = b;
+                *n += 1;
+            }
+        }
+    };
+    // Keep it short for the tile width: "7 writable" / "7 read-only".
+    if count >= 10 {
+        push("9+", &mut n);
+    } else {
+        let digit = [b'0' + (count as u8)];
+        push(core::str::from_utf8(&digit).unwrap_or("0"), &mut n);
+    }
+    push(
+        if caps.allows(Cap::SkillsSave) {
+            " writable"
+        } else {
+            " read-only"
+        },
+        &mut n,
+    );
+    match core::str::from_utf8(&buf[..n]) {
+        Ok(s) => s,
+        Err(e) => core::str::from_utf8(&buf[..e.valid_up_to()]).unwrap_or(""),
+    }
 }
 
 /// Short Search-tile subtitle naming the sources the current grants unlock.
@@ -599,6 +632,8 @@ mod tests {
             "Tap to reopen",
             "grant search first",
             "docs + mail + files + online",
+            "7 writable",
+            "7 read-only",
             "Inbox empty, or email.search not granted.",
             "Bridge offline - run: make utm-bridged",
             "bridge connected",
@@ -627,6 +662,12 @@ mod tests {
         caps.set(Cap::PortalSync, true);
         let sub = search_tile_sub(caps, &mut src);
         assert!(SMALL_FACE.width(sub, 0) < r.w - 36, "search sub overflows: {sub}");
+        let mut sbuf = [0u8; 28];
+        let skill_sub = skills_tile_sub(caps, 7, &mut sbuf);
+        assert!(
+            SMALL_FACE.width(skill_sub, 0) < r.w - 36,
+            "skills sub overflows: {skill_sub}"
+        );
         let mut buf = [0u8; 96];
         let n = Caps::default_grants().describe(&mut buf);
         let status = core::str::from_utf8(&buf[..n]).unwrap();
@@ -642,6 +683,16 @@ mod tests {
         assert_eq!(search_tile_sub(caps, &mut buf), "docs");
         caps.set(Cap::PortalSync, true);
         assert_eq!(search_tile_sub(caps, &mut buf), "docs + online");
+    }
+
+    #[test]
+    fn skills_tile_sub_names_writability() {
+        let mut buf = [0u8; 28];
+        assert_eq!(skills_tile_sub(Caps::none(), 7, &mut buf), "7 read-only");
+        let mut caps = Caps::none();
+        caps.set(Cap::SkillsSave, true);
+        assert_eq!(skills_tile_sub(caps, 7, &mut buf), "7 writable");
+        assert_eq!(skills_tile_sub(caps, 12, &mut buf), "9+ writable");
     }
 
     #[test]

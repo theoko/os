@@ -468,7 +468,40 @@ unsafe extern "C" fn kmain() -> ! {
                                     dirty = true;
                                 }
                             } else if view == screens::View::Skills {
-                                if let Some(i) = screens::skills_hit(w, skill_peek.count, x, y) {
+                                if screens::skills_save_hit(
+                                    w,
+                                    skill_peek.count,
+                                    grants.allows(caps::Cap::SkillsSave),
+                                    x,
+                                    y,
+                                ) {
+                                    match mcp::save_skill(
+                                        grants,
+                                        "guest-starter",
+                                        "Starter from the Skills screen",
+                                    ) {
+                                        mcp::SaveSkillStatus::Ok => {
+                                            write_status(&mut status_buf, "Saved guest-starter");
+                                            serial_port.write_str("skills: saved guest-starter\n");
+                                            skill_peek = mcp::fetch_skill_peek();
+                                        }
+                                        mcp::SaveSkillStatus::Denied => {
+                                            write_status(&mut status_buf, "Grant Save skills first");
+                                            serial_port.write_str("skills: save need skills.save\n");
+                                        }
+                                        mcp::SaveSkillStatus::Offline => {
+                                            write_status(&mut status_buf, "Bridge offline");
+                                            serial_port.write_str("skills: save offline\n");
+                                        }
+                                        mcp::SaveSkillStatus::Failed => {
+                                            write_status(&mut status_buf, "skills.save failed");
+                                            serial_port.write_str("skills: save failed\n");
+                                        }
+                                    }
+                                    dirty = true;
+                                } else if let Some(i) =
+                                    screens::skills_hit(w, skill_peek.count, x, y)
+                                {
                                     let name = skill_peek.name_at(i);
                                     if agent::is_runnable(name) {
                                         brief = agent::run(name, grants);
@@ -516,7 +549,9 @@ unsafe extern "C" fn kmain() -> ! {
                                     caret,
                                     bridge_note(&mail),
                                 ),
-                                screens::View::Skills => screens::draw_skills(surface, &skill_peek),
+                                screens::View::Skills => {
+                                    screens::draw_skills(surface, &skill_peek, grants)
+                                }
                                 screens::View::Caps => screens::draw_caps(surface, grants),
                                 screens::View::Brief => screens::draw_brief(surface, &brief),
                                 screens::View::Reader => {
@@ -565,7 +600,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     });
                                     view = screens::View::Skills;
                                     cursor.hide(surface);
-                                    screens::draw_skills(surface, &skill_peek);
+                                    screens::draw_skills(surface, &skill_peek, grants);
                                     cursor.show_at(surface, x, y);
                                     enter(&screen);
                                     // Don't fall through to the home redraw below.

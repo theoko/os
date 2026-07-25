@@ -23,15 +23,19 @@ Frontmatter: `name`, `description` (same convention as Cursor skills).
 
 | Call | Result |
 |------|--------|
-| `CALL skills.list` | `OK skills.list n=N` + `ROW name=…\|desc=…` + `END` |
+| `CALL skills.list` | `OK skills.list n=N` + `ROW name=…\|src=default\|saved\|desc=…` + `END` |
 | `CALL skills.get name=…` | `OK skills.get` + `LINE …` body lines + `END` |
-| `CALL skills.save name=… skills=1` | writes under Application Support (body via `LINE`…`END` after request) |
+| `CALL skills.save name=… desc=… skills=1` | one-line starter under Application Support |
+| `CALL skills.save name=… skills=1` then `LINE`…`END` | full body write |
 
 `skills.save` requires `skills=1` (guest `Cap::SkillsSave`). Without it the
 bridge returns `ERR skills.save needs_skills_cap` and still drains any
 `LINE`…`END` body so the protocol stays in sync.
 
-Guest always knows **builtin** defaults even if the bridge is offline.
+Guest always knows **builtin** defaults even if the bridge is offline. With
+Save skills granted, the Skills screen **Save starter** CTA and the
+`capability-safe-tools` runner call `skills.save … skills=1` and refresh the
+list so `src=saved` rows appear.
 
 ## Defaults
 
@@ -45,11 +49,15 @@ Guest always knows **builtin** defaults even if the bridge is offline.
 | `teddy-portals` | Teddy corpus API + live `teddy.*` portals |
 | `market-portals` | Live `market.health` / `market.fear_greed` |
 
-## Guest runner (v0.9.2)
+## Guest runner (v0.9.2+)
 
 The kernel does **not** interpret skill markdown. Named builtins map to a
 fixed plan in `kernel/src/agent.rs` that issues MCP calls under the current
 `Caps` and paints a Brief screen. Unknown / saved skills still use
-`skills.get` for a body blurb only.
+`skills.get` for a body blurb only until they gain a guest plan.
+
+From **0.9.9** the guest also writes: `mcp::save_skill` sends the one-line
+`desc=` form with `skills=1` when `Cap::SkillsSave` is on (cap refusal never
+opens COM2).
 
 Also see [`docs/search-os-doc-v01.md`](search-os-doc-v01.md).

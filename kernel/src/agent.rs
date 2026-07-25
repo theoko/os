@@ -538,11 +538,27 @@ fn run_cap_safe(brief: &mut Brief, caps: Caps) {
     brief.status = BridgeStatus::Online;
     brief.push_plan("List each grant");
     brief.push_plan("Refuse tools whose switch is off");
-    brief.push_plan("Never invent ambient root");
+    brief.push_plan("Prove skills.save needs Save skills");
 
     for cap in Cap::ALL {
         let tag = if caps.allows(cap) { "On" } else { "Off" };
         brief.push_line(tag, cap.label());
+    }
+    // Cap::ALL is six rows; leave room for one outcome line (max 8).
+    // Host unit tests must not grant SkillsSave here — that path opens COM2.
+    if caps.allows(Cap::SkillsSave) {
+        match mcp::save_skill(caps, "guest-starter", "Starter from capability check") {
+            mcp::SaveSkillStatus::Ok => brief.push_line("Saved", "guest-starter"),
+            mcp::SaveSkillStatus::Offline => {
+                brief.push_line("Info", "Bridge offline - cannot save.")
+            }
+            mcp::SaveSkillStatus::Denied => brief.need(Cap::SkillsSave),
+            mcp::SaveSkillStatus::Failed => {
+                brief.push_line("Info", "skills.save failed on the host.")
+            }
+        }
+    } else {
+        brief.push_line("Info", "Save skills off - no write.");
     }
 }
 
@@ -670,10 +686,14 @@ mod tests {
     fn cap_safe_lists_every_switch() {
         let mut caps = Caps::none();
         caps.set(Cap::SearchQuery, true);
+        // Do not grant SkillsSave: that branch would open COM2.
         let b = run("capability-safe-tools", caps);
-        assert_eq!(b.count, Cap::ALL.len());
+        assert_eq!(b.count, Cap::ALL.len() + 1);
         assert!(b.lines.iter().any(|l| l.tag() == "On" && l.text() == "Built-in docs"));
         assert!(b.lines.iter().any(|l| l.tag() == "Off" && l.text() == "Email"));
+        assert!(b.lines.iter().any(|l| l.tag() == "Off" && l.text() == "Save skills"));
+        assert_eq!(b.lines[b.count - 1].tag(), "Info");
+        assert!(b.lines[b.count - 1].text().contains("no write"));
     }
 
     #[test]
@@ -702,6 +722,9 @@ mod tests {
             "Grant Email on Capabilities, then re-run.",
             "Grant Online services, then re-run.",
             "Bridge offline - cannot read mail.",
+            "Bridge offline - cannot save.",
+            "Save skills off - no write.",
+            "skills.save failed on the host.",
             "Acting only with switches that are on.",
         ] {
             assert!(

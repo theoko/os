@@ -363,7 +363,8 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
         if resp.starts_with("ROW ") {
             let name = parse_row_field(resp, "name").unwrap_or("?");
             let desc = parse_row_field(resp, "desc").unwrap_or("");
-            if !peek.push(name, desc) {
+            let saved = matches!(parse_row_field(resp, "src"), Some("saved"));
+            if !peek.push_src(name, desc, saved) {
                 break;
             }
         }
@@ -375,6 +376,67 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
     } else {
         peek
     }
+}
+
+/// Outcome of a guest `skills.save` attempt.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SaveSkillStatus {
+    /// `Cap::SkillsSave` was off — never opened COM2.
+    Denied,
+    Offline,
+    Ok,
+    /// Bridge answered with ERR (other than a missing-cap race).
+    Failed,
+}
+
+/// Write a one-line starter skill when `Cap::SkillsSave` is granted.
+///
+/// Uses the bridge `desc=` form (`CALL … skills=1`) so the guest never has to
+/// speak `LINE`…`END`. Cap refusal happens before any serial I/O so host unit
+/// tests can assert the gate without touching COM2.
+pub fn save_skill(caps: crate::caps::Caps, name: &str, desc: &str) -> SaveSkillStatus {
+    if !caps.allows(crate::caps::Cap::SkillsSave) {
+        return SaveSkillStatus::Denied;
+    }
+    if !skill_name_ok(name) || desc.is_empty() {
+        return SaveSkillStatus::Failed;
+    }
+
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+
+    match ping_bridge(&com2, &mut line) {
+        BridgeStatus::Offline => return SaveSkillStatus::Offline,
+        BridgeStatus::Online => {}
+    }
+
+    com2.write_str("CALL skills.save name=");
+    com2.write_str(name);
+    com2.write_str(" desc=");
+    com2.write_str(desc);
+    com2.write_str(" skills=1\n");
+
+    let Some(n) = com2.read_line(&mut line, TIMEOUT_REPLY) else {
+        return SaveSkillStatus::Offline;
+    };
+    let resp = str_prefix(&line[..n]);
+    if resp.starts_with("OK skills.save") {
+        SaveSkillStatus::Ok
+    } else if resp.contains("needs_skills_cap") {
+        SaveSkillStatus::Denied
+    } else {
+        SaveSkillStatus::Failed
+    }
+}
+
+/// Bridge skill names: ASCII letters, digits, `-`, `_`.
+fn skill_name_ok(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 28
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
 /// First useful body line from `CALL skills.get name=…` (for a clicked row).
@@ -695,6 +757,31 @@ mod tests {
         let line = "ROW name=email-triage|src=default|desc=Inbox via MCP email";
         assert_eq!(parse_row_field(line, "name"), Some("email-triage"));
         assert_eq!(parse_row_field(line, "desc"), Some("Inbox via MCP email"));
+        assert_eq!(parse_row_field(line, "src"), Some("default"));
+        let saved = "ROW name=guest-starter|src=saved|desc=from guest";
+        assert_eq!(parse_row_field(saved, "src"), Some("saved"));
+    }
+
+    #[test]
+    fn skill_name_ok_matches_bridge_rules() {
+        assert!(skill_name_ok("guest-starter"));
+        assert!(skill_name_ok("a_b1"));
+        assert!(!skill_name_ok(""));
+        assert!(!skill_name_ok("has space"));
+        assert!(!skill_name_ok("bad/name"));
+    }
+
+    #[test]
+    fn save_skill_refuses_without_opening_com2() {
+        use crate::caps::{Cap, Caps};
+        // Denied before serial: safe in host unit tests.
+        let mut caps = Caps::none();
+        caps.set(Cap::SearchQuery, true);
+        assert_eq!(
+            save_skill(caps, "guest-starter", "demo"),
+            SaveSkillStatus::Denied
+        );
+        assert!(!caps.allows(Cap::SkillsSave));
     }
 
     #[test]

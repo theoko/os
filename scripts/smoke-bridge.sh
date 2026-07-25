@@ -159,6 +159,20 @@ if "needs_skills_cap" not in denied_save:
     sys.exit(1)
 print("smoke-bridge: skills.save needs_skills_cap ok")
 
+allowed_save = call(
+    "CALL skills.save name=smoke-guest-starter desc=from-smoke skills=1"
+)
+if not allowed_save.startswith("OK skills.save"):
+    print("error: skills.save skills=1 must succeed", file=sys.stderr)
+    print(allowed_save, file=sys.stderr)
+    sys.exit(1)
+listed = call("CALL skills.list")
+if "name=smoke-guest-starter" not in listed or "src=saved" not in listed:
+    print("error: saved skill missing from skills.list", file=sys.stderr)
+    print(listed, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: skills.save skills=1 ok")
+
 forgotten = call("CALL portal.forget")
 if not forgotten.startswith("OK portal.forget"):
     print("error: portal.forget failed", file=sys.stderr)
