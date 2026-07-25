@@ -66,6 +66,19 @@ fn main() {
         user.display()
     );
 
+    // Build the corpus index before serving. Lazily, whichever query arrives
+    // first pays ~10s while every other one is instant — this was here before
+    // the merge and the regression is invisible until you time a cold search.
+    if tsearch::is_available() {
+        let t0 = std::time::Instant::now();
+        let n = tsearch::docs().len();
+        let terms = tsearch::index().term_count();
+        eprintln!(
+            "tsearch: indexed {n} docs / {terms} terms in {:.1}s",
+            t0.elapsed().as_secs_f64()
+        );
+    }
+
     if let Some(target) = connect {
         connect_loop(&target, backends);
     } else if let Some(path) = addr.strip_prefix("unix:") {
