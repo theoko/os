@@ -30,6 +30,13 @@ fi
 mkdir -p "$UTM_DOCS/Public"
 cp -f "$ISO" "$STAGED"
 
+# Orphan bundles (screenshot/ISO but no config.plist) are invisible to UTM's
+# AppleScript API yet still block `make new` with -2700 "already exists".
+if [[ -d "$UTM_DIR" && ! -f "$UTM_DIR/config.plist" ]]; then
+  echo "removing orphan bundle: $UTM_DIR"
+  rm -rf "$UTM_DIR"
+fi
+
 osascript <<EOF
 set isoPath to POSIX file "$STAGED"
 tell application "UTM"

@@ -1,14 +1,21 @@
 ---
-version: 0.7.0
+version: 0.7.1
 ---
 
 # Changelog
 
-## 0.7.0 — 2026-07-25
+## 0.7.1 — 2026-07-25
 
 - Mouse: USB tablet interrupt-IN is non-blocking and keeps the TD armed across
   NAKs (no data-toggle flip on empty polls). Fixes "ready but cursor stuck" —
-  QEMU abs input now moves the pointer (verified via screendump + serial hits).
+  QEMU abs input moves the pointer (screendump + serial hits); UTM guest logs
+  `usb-tablet ready` on the dedicated `piix3-usb-uhci` + `usb-tablet` path.
+- UTM: disable UTM's USB input bus; attach one UHCI + one tablet via
+  `AdditionalArguments`. Remove orphan `.utm` bundles (no `config.plist`) that
+  blocked recreate with AppleScript -2700.
+
+## 0.7.0 — 2026-07-25
+
 - UI: vendored **Inter** (SIL OFL 1.1, `assets/fonts/`) as the default UI font, so
   the build is reproducible off macOS and the ISO is redistributable. System
   fonts remain fallbacks and warn at build time; `OS_UI_FONT` overrides.
