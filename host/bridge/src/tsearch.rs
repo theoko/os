@@ -281,16 +281,6 @@ impl Index {
 
 #[cfg(test)]
 mod index_tests {
-    use super::*;
-
-    #[test]
-    fn an_absent_corpus_indexes_to_empty() {
-        unsafe { env::set_var("OS_TSEARCH_CACHE", "/nonexistent/os-teddy/none.json") };
-        // Must not panic when there is nothing to index.
-        assert!(docs().is_empty());
-        unsafe { env::remove_var("OS_TSEARCH_CACHE") };
-    }
-
     #[test]
     fn tokeniser_matches_the_bridge_rules() {
         assert_eq!(

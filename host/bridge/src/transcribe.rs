@@ -301,25 +301,28 @@ mod scope_tests {
         unsafe { env::set_var("OS_TRANSCRIPT_STORE", dir.join("t.json")) };
 
         let mut st = Store::default();
+        // Unique tokens only — common words like "audio" drown in teddysearch.
         st.upsert(Transcript {
             source: "/tmp/call.wav".into(),
-            title: "Xenon Ledger Briefing".into(),
-            text: "the xenon ledger briefing covered settlement".into(),
+            title: "ZygoteNotary Briefing".into(),
+            text: "the zygotenotary briefing covered settlement".into(),
             seconds: 10.0,
-            words: 6,
+            words: 5,
         });
         st.save().unwrap();
 
         // workspace.index granted, audio.transcribe not: must stay hidden.
-        let files_only = crate::search::query_all("xenon ledger", 5, None, false, true, false);
+        let files_only =
+            crate::search::query_all("zygotenotary", 5, None, false, true, false);
         assert!(
-            !files_only.iter().any(|r| r.contains("Xenon Ledger")),
+            !files_only.iter().any(|r| r.contains("ZygoteNotary")),
             "a recording surfaced under the files grant: {files_only:?}"
         );
 
-        let with_audio = crate::search::query_all("xenon ledger", 5, None, false, false, true);
+        let with_audio =
+            crate::search::query_all("zygotenotary", 5, None, false, false, true);
         assert!(
-            with_audio.iter().any(|r| r.contains("Xenon Ledger")),
+            with_audio.iter().any(|r| r.contains("ZygoteNotary")),
             "granted search should find the transcript: {with_audio:?}"
         );
 
