@@ -1,8 +1,19 @@
 ---
-version: 0.9.12
+version: 0.9.13
 ---
 
 # Changelog
+
+## 0.9.13 — 2026-07-25
+
+Open recordings completes the search→open trilogy:
+
+- Smoke: `doc.read audio://` deny/allow with seeded transcript text before
+  `audio.forget`; unit test covers the allow path.
+- Teddy corpus bodies need `portal=1` on `doc.read` (`needs_portal_cap`);
+  built-in `os://` corpus stays ungated. Reader maps portal / missing
+  transcript denials honestly.
+- Morning `plan_act` notes when Recordings is on (Search to open audio hits).
 
 ## 0.9.12 — 2026-07-25
 

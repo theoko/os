@@ -38,7 +38,11 @@ Guest → host:
 | `CALL email.forget` | Delete the host mail knowledge graph |
 | `CALL workspace.index files=1` | Build the project-folder index |
 | `CALL workspace.forget` | Delete the workspace index |
-| `CALL doc.read url=… [files=1] [audio=1] [email=1]` | Open a search hit (`file://`, `audio://`, `email://`, corpus) |
+| `CALL doc.read url=… [files=1] [audio=1] [email=1] [portal=1]` | Open a search hit (`file://`, `audio://`, `email://`, `os://`, teddy) |
+
+`doc.read` uses the same wire bits as `search.query`: a caller that could not
+have found a hit must not open it by guessing the URL. Teddy / portal corpus
+bodies need `portal=1`; the built-in curated corpus does not.
 | `CALL email.send to=<addr> subj=<s> body=<b>` | Send (cap-gated; bridge may require confirm) |
 | `CALL search.query q=<keywords> k=<n> cat=<opt>` | Knowledge search (curated corpus) |
 

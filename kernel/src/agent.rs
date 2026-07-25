@@ -424,6 +424,11 @@ fn run_plan_act(brief: &mut Brief, caps: Caps) {
         brief.push_line("Need", Cap::SearchQuery.label());
     }
 
+    // Recordings: no COM2 here — point at Search so host unit tests stay safe.
+    if caps.allows(Cap::AudioTranscribe) {
+        brief.push_line("Info", "Recordings on - open audio hits from Search.");
+    }
+
     // Live portals when Online services is on — teddy first, then markets.
     if caps.allows(Cap::PortalSync) {
         fill_portal_lines(brief, caps, "teddy.health", 1);
@@ -728,6 +733,21 @@ mod tests {
     }
 
     #[test]
+    fn plan_act_mentions_recordings_when_granted_without_com2() {
+        // AudioTranscribe alone must not open COM2 (SearchQuery stays off).
+        let mut caps = Caps::none();
+        caps.set(Cap::AudioTranscribe, true);
+        let b = run("agent-plan-act", caps);
+        assert!(
+            b.lines
+                .iter()
+                .any(|l| l.text().contains("Recordings on")),
+            "expected recordings lane: {:?}",
+            b.lines.iter().map(|l| l.text()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn copy_is_ascii_only() {
         for s in [
             "Morning mail brief",
@@ -746,6 +766,7 @@ mod tests {
             "Playbook only",
             "Saved skills show body text until they get a runner.",
             "Playbook body unavailable.",
+            "Recordings on - open audio hits from Search.",
             "Acting only with switches that are on.",
         ] {
             assert!(

@@ -588,6 +588,7 @@ fn read_doc(url: &str, max: usize, args: &[(String, String)]) -> Result<Vec<Stri
     let with_files = matches!(arg_val(args, "files"), Some("1"));
     let with_audio = matches!(arg_val(args, "audio"), Some("1"));
     let with_email = matches!(arg_val(args, "email"), Some("1"));
+    let with_portal = matches!(arg_val(args, "portal"), Some("1"));
 
     let body = if let Some(rel) = url.strip_prefix("file://") {
         if !with_files {
@@ -640,9 +641,17 @@ fn read_doc(url: &str, max: usize, args: &[(String, String)]) -> Result<Vec<Stri
                 m.snippet.as_str()
             }
         )
+    } else if let Some(rows) = search::body_for_builtin(url, max) {
+        // Built-in os:// corpus — no portal bit.
+        return Ok(rows);
+    } else if search::portal_has_url(url) {
+        // Teddy / remote corpus: same consent as search.query portal=1.
+        if !with_portal {
+            return Err("needs_portal_cap".into());
+        }
+        return search::body_for_portal(url, max).ok_or_else(|| "no readable body".into());
     } else {
-        // Corpus and teddy documents carry their body in the index.
-        return search::body_for(url, max).ok_or_else(|| "no readable body".into());
+        return Err("no readable body".into());
     };
 
     Ok(wrap_lines(&body, 78, max))
@@ -1073,6 +1082,78 @@ mod read_tests {
     fn reading_a_transcript_needs_the_audio_grant() {
         let e = read_doc("audio:///tmp/x.wav", 10, &args(&[("files", "1")])).unwrap_err();
         assert_eq!(e, "needs_audio_cap", "the files grant must not unlock recordings");
+    }
+
+    #[test]
+    fn reading_a_transcript_with_audio_cap_shows_text() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("os-aread-{}", std::process::id()));
+        let path = dir.join("t.json");
+        let _ = std::fs::create_dir_all(&dir);
+        unsafe {
+            std::env::set_var("OS_TRANSCRIPT_STORE", &path);
+        }
+        let mut store = transcribe::Store::default();
+        store.upsert(transcribe::Transcript {
+            source: "/tmp/os-unit-rec.wav".into(),
+            title: "Unit Recording".into(),
+            text: "unit recording transcript words for the reader".into(),
+            seconds: 1.0,
+            words: 7,
+        });
+        store.save().expect("save");
+        let rows = read_doc(
+            "audio:///tmp/os-unit-rec.wav",
+            10,
+            &args(&[("audio", "1")]),
+        )
+        .expect("read");
+        let text: String = rows
+            .iter()
+            .filter_map(|r| r.strip_prefix("ROW line="))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(text.contains("unit recording transcript"), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+        unsafe {
+            std::env::remove_var("OS_TRANSCRIPT_STORE");
+        }
+    }
+
+    #[test]
+    fn reading_teddy_body_needs_the_portal_grant() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("os-pread-{}", std::process::id()));
+        let path = dir.join("teddy.json");
+        let _ = std::fs::create_dir_all(&dir);
+        std::fs::write(
+            &path,
+            r#"{"crawled_at":"now","docs":[{"t":"Portal Doc","u":"https://teddy.example/unit","c":"web","b":"portal body words","pr":0.5}]}"#,
+        )
+        .unwrap();
+        unsafe {
+            std::env::set_var("OS_TSEARCH_CACHE", &path);
+        }
+        tsearch::clear_memory();
+        let denied = read_doc("https://teddy.example/unit", 10, &args(&[])).unwrap_err();
+        assert_eq!(denied, "needs_portal_cap");
+        let rows = read_doc(
+            "https://teddy.example/unit",
+            10,
+            &args(&[("portal", "1")]),
+        )
+        .expect("portal=1");
+        let text: String = rows
+            .iter()
+            .filter_map(|r| r.strip_prefix("ROW line="))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(text.contains("portal body words"), "{text}");
+        unsafe {
+            std::env::remove_var("OS_TSEARCH_CACHE");
+        }
+        tsearch::clear_memory();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

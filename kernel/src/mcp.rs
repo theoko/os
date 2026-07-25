@@ -193,6 +193,7 @@ pub enum DocDeny {
     NeedFiles,
     NeedAudio,
     NeedEmail,
+    NeedPortal,
     NoBody,
     OutsideRoots,
     Other,
@@ -206,7 +207,12 @@ impl DocDeny {
             Self::NeedAudio
         } else if resp.contains("needs_email_cap") {
             Self::NeedEmail
-        } else if resp.contains("no readable body") || resp.contains("no such message") {
+        } else if resp.contains("needs_portal_cap") {
+            Self::NeedPortal
+        } else if resp.contains("no readable body")
+            || resp.contains("no such message")
+            || resp.contains("no such transcript")
+        {
             Self::NoBody
         } else if resp.contains("outside the indexed roots") {
             Self::OutsideRoots
@@ -221,6 +227,7 @@ impl DocDeny {
             Self::NeedFiles => "Grant Your files to open this document.",
             Self::NeedAudio => "Grant Recordings to open this transcript.",
             Self::NeedEmail => "Grant Email to open this message.",
+            Self::NeedPortal => "Grant Online services to open this page.",
             Self::NoBody => "Nothing readable here.",
             Self::OutsideRoots => "Outside the indexed folders.",
             Self::Other => "Could not open this document.",
@@ -793,10 +800,19 @@ mod tests {
         assert!(DocDeny::NeedFiles.message().contains("Your files"));
         assert!(DocDeny::NeedEmail.message().contains("Email"));
         assert!(DocDeny::NeedAudio.message().contains("Recordings"));
+        assert_eq!(
+            DocDeny::from_err("ERR doc.read no such transcript"),
+            DocDeny::NoBody
+        );
+        assert_eq!(
+            DocDeny::from_err("ERR doc.read needs_portal_cap"),
+            DocDeny::NeedPortal
+        );
         for d in [
             DocDeny::NeedFiles,
             DocDeny::NeedAudio,
             DocDeny::NeedEmail,
+            DocDeny::NeedPortal,
             DocDeny::NoBody,
             DocDeny::OutsideRoots,
             DocDeny::Other,

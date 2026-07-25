@@ -268,6 +268,29 @@ if "Smoke Recording Alpha" not in hit:
     sys.exit(1)
 print("smoke-bridge: search.query audio=1 ok")
 
+audio_url = None
+for line in hit.splitlines():
+    if line.startswith("ROW ") and "audio://" in line:
+        for part in line.split("|"):
+            if part.startswith("url="):
+                audio_url = part[4:]
+                break
+if not audio_url:
+    print("error: audio search row missing audio:// url", file=sys.stderr)
+    print(hit, file=sys.stderr)
+    sys.exit(1)
+denied_audio_doc = call(f"CALL doc.read url={audio_url} lines=8")
+if "needs_audio_cap" not in denied_audio_doc:
+    print("error: doc.read audio:// must require audio=1", file=sys.stderr)
+    print(denied_audio_doc, file=sys.stderr)
+    sys.exit(1)
+opened_audio = call(f"CALL doc.read url={audio_url} lines=8 audio=1")
+if not opened_audio.startswith("OK doc.read") or "smoke recording alpha" not in opened_audio:
+    print("error: doc.read audio=1 must open transcript", file=sys.stderr)
+    print(opened_audio, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: doc.read audio=1 ok")
+
 forgot_audio = call("CALL audio.forget")
 if not forgot_audio.startswith("OK audio.forget"):
     print("error: audio.forget failed", file=sys.stderr)
