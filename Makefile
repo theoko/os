@@ -10,9 +10,14 @@ KERNEL_TARGET := x86_64-unknown-none
 KERNEL_PROFILE ?= dev
 KERNEL_PROFILE_DIR := $(if $(filter dev,$(KERNEL_PROFILE)),debug,$(KERNEL_PROFILE))
 KERNEL_ELF := target/$(KERNEL_TARGET)/$(KERNEL_PROFILE_DIR)/kernel
+ARM64_KERNEL_TARGET := aarch64-unknown-none
+ARM64_KERNEL_ELF := target/$(ARM64_KERNEL_TARGET)/$(KERNEL_PROFILE_DIR)/kernel
+ARM64_IMAGE_NAME := os-arm64
 LIMINE_BRANCH := v9.x-binary
 BRIDGE_ADDR ?= 127.0.0.1:7420
-EMAIL_BACKEND ?= mock
+# `auto` selects Gmail when the host already has a signed-in gog account;
+# otherwise the OS stays honest that email still needs connecting.
+EMAIL_BACKEND ?= auto
 
 QEMU ?= qemu-system-x86_64
 QEMUFLAGS ?= -m 512M -serial stdio -display none
@@ -36,7 +41,7 @@ endif
 RUSTUP_BIN := $(patsubst %/,%,$(dir $(CARGO)))
 WITH_RUST := PATH="$(RUSTUP_BIN):$$PATH"
 
-.PHONY: all build kernel iso bridge bridge-run run run-bridged utm utm-run utm-bridged linux-vm refresh refresh-install refresh-uninstall test test-host smoke smoke-bridge clean distclean
+.PHONY: all build kernel arm64-kernel iso arm64-iso bridge bridge-run run run-bridged run-best utm utm-run utm-bridged usb usb-list linux-vm refresh refresh-install refresh-uninstall test test-host smoke smoke-bridge clean distclean
 
 all: build
 
@@ -44,6 +49,11 @@ build: iso
 
 kernel:
 	$(WITH_RUST) $(CARGO) build -p kernel --target $(KERNEL_TARGET) --profile $(KERNEL_PROFILE)
+
+# Apple Silicon VirtualBox virtualises ARM guests. This parallel target keeps
+# the existing x86 image intact while producing the ARM64 kernel binary.
+arm64-kernel:
+	$(WITH_RUST) $(CARGO) build -p kernel --target $(ARM64_KERNEL_TARGET) --profile $(KERNEL_PROFILE)
 
 bridge:
 	$(WITH_RUST) $(CARGO) build -p os-mcp-bridge
@@ -54,6 +64,21 @@ bridge-run: bridge
 
 iso: limine/limine kernel
 	rm -rf iso_root
+
+# ARM64 UEFI-only ISO. Limine's FAT UEFI image contains BOOTAA64.EFI; ARM
+# firmware recognises this El Torito form, whereas a bare PE file is not a
+# mountable EFI system partition on all virtual CD-ROM implementations.
+arm64-iso: limine/limine arm64-kernel
+	rm -rf arm64_iso_root
+	mkdir -p arm64_iso_root/boot/limine arm64_iso_root/EFI/BOOT
+	cp -f $(ARM64_KERNEL_ELF) arm64_iso_root/boot/kernel
+	cp -f limine.conf arm64_iso_root/boot/limine/
+	cp -f limine/limine-uefi-cd.bin arm64_iso_root/boot/limine/
+	xorriso -as mkisofs -R -r -J \
+		--efi-boot boot/limine/limine-uefi-cd.bin \
+		-efi-boot-part --efi-boot-image --protective-msdos-label \
+		-o $(ARM64_IMAGE_NAME).iso arm64_iso_root
+	rm -rf arm64_iso_root
 	mkdir -p iso_root/boot/limine iso_root/EFI/BOOT
 	cp -f $(KERNEL_ELF) iso_root/boot/kernel
 	cp -f limine.conf iso_root/boot/limine/
@@ -83,6 +108,28 @@ run-bridged: iso bridge
 		-serial tcp:$(BRIDGE_ADDR) \
 		$(QEMU_DEBUG_EXIT) || true
 
+# One entrypoint for a person rather than a VM compatibility quiz. VirtualBox
+# cannot execute this x86_64 guest on Apple Silicon; UTM can emulate it and is
+# the supported desktop route. Other hosts retain the lightweight QEMU path.
+run-best:
+	@if [ "$(shell uname -s)" = Darwin ] && [ "$(shell uname -m)" = arm64 ]; then \
+		echo "Apple Silicon detected: launching the x86_64 OS in UTM."; \
+		$(MAKE) utm-bridged; \
+	else \
+		echo "Launching with QEMU."; \
+		$(MAKE) run-bridged; \
+	fi
+
+# Write the ISO to a USB stick for real x86-64 hardware. Destructive, so it
+# refuses internal disks and makes you retype the device before writing.
+usb: iso
+	chmod +x scripts/make-usb.sh
+	./scripts/make-usb.sh
+
+usb-list:
+	chmod +x scripts/make-usb.sh
+	./scripts/make-usb.sh --list
+
 utm: iso
 	chmod +x scripts/make-utm.sh
 	./scripts/make-utm.sh
@@ -94,8 +141,10 @@ utm-run: iso
 # Host bridge on TCP :7420; UTM COM2 = Serial TcpClient to that address.
 utm-bridged: iso bridge
 	chmod +x scripts/ensure-bridge.sh scripts/make-utm.sh
-	@kill `cat .bridge.pid 2>/dev/null` 2>/dev/null || true; rm -f .bridge.pid
-	OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) ./scripts/ensure-bridge.sh
+	# The helper waits for an existing bridge rather than replacing one while it
+	# is still binding. It automatically uses Gmail when an account is connected
+	# and otherwise tells the user email needs connecting (no fake inbox data).
+	OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) EMAIL_BACKEND=$(EMAIL_BACKEND) ./scripts/ensure-bridge.sh
 	UTM_BRIDGE=1 UTM_START=1 OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) ./scripts/make-utm.sh
 
 # Substrate proof for docs/linux-os-doc-v02.md: aarch64 Linux under Apple's
