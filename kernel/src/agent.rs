@@ -8,7 +8,7 @@
 
 use crate::caps::{Cap, Caps};
 use crate::level::Level;
-use crate::mcp::{self, BridgeStatus, CalendarPeek, MailPeek, SearchPeek};
+use crate::mcp::{self, BridgeStatus, CalendarPeek, FilePeek, MailPeek, SearchPeek};
 
 /// Which builtin playbook the runner knows how to execute.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -71,6 +71,10 @@ pub struct Brief {
     pub event_n: usize,
     event_id: [[u8; 20]; 2],
     event_line: [u8; 2],
+    /// Openable Doc / Hit rows from a goal run (`file://`, `os://`, …).
+    pub doc_n: usize,
+    doc_url: [[u8; 72]; 3],
+    doc_line: [u8; 3],
 }
 
 impl Brief {
@@ -91,6 +95,9 @@ impl Brief {
             event_n: 0,
             event_id: [[0; 20]; 2],
             event_line: [0; 2],
+            doc_n: 0,
+            doc_url: [[0; 72]; 3],
+            doc_line: [0; 3],
         }
     }
 
@@ -165,6 +172,28 @@ impl Brief {
         Some(str_at(&buf[..n]))
     }
 
+    /// Remember a Doc report line so Brief can open its URL.
+    pub fn arm_doc(&mut self, url: &str, line_idx: usize) {
+        if self.doc_n >= self.doc_url.len() || url.is_empty() {
+            return;
+        }
+        copy_field(&mut self.doc_url[self.doc_n], url);
+        self.doc_line[self.doc_n] = line_idx.min(255) as u8;
+        self.doc_n += 1;
+    }
+
+    pub fn doc_line_at(&self, i: usize) -> Option<usize> {
+        (i < self.doc_n).then_some(self.doc_line[i] as usize)
+    }
+
+    pub fn doc_url_at(&self, i: usize) -> Option<&str> {
+        if i >= self.doc_n {
+            return None;
+        }
+        let u = str_at(&self.doc_url[i]);
+        (!u.is_empty()).then_some(u)
+    }
+
     /// True when there is something worth keeping on the home screen.
     pub fn has_report(&self) -> bool {
         self.count > 0 || self.plan_n > 0 || !self.heading().is_empty()
@@ -222,6 +251,271 @@ pub fn classify(name: &str) -> Kind {
 /// True when clicking the row should run a plan rather than only fetch a blurb.
 pub fn is_runnable(name: &str) -> bool {
     !matches!(classify(name), Kind::Unknown)
+}
+
+/// Run a free-form home goal under `caps`: plan → act via MCP → Brief.
+///
+/// The kernel does not run an LLM. It restates the ask, strips filler words
+/// into a search query, CALLs granted connectors, and arms Doc rows the UI
+/// can open. That is the agentic loop: capabilities + tools, not autocomplete.
+pub fn run_goal(goal: &str, caps: Caps) -> Brief {
+    let mut brief = Brief::empty();
+    brief.set_skill("agent-plan-act");
+    brief.set_heading("Working on it");
+    brief.push_plan("Restate the goal");
+    brief.push_plan("Pick tools from grants");
+    brief.push_plan("Search under those grants");
+    brief.push_plan("Report openable hits");
+
+    let mut goal_buf = [0u8; 68];
+    let restated = restate_goal(goal, &mut goal_buf);
+    if !restated.is_empty() {
+        brief.push_line("Goal", restated);
+    }
+
+    let mut qbuf = [0u8; 48];
+    let q = keywords_from_goal(goal, &mut qbuf);
+    if q.is_empty() {
+        brief.push_line("Info", "Try naming the file, topic, or inbox.");
+        return brief;
+    }
+    brief.push_line("Query", q);
+
+    let mailish = goal_looks_like_mail(goal);
+    let mut acted = false;
+
+    // Inbox lane when the ask is about mail and Email is on.
+    if mailish {
+        if caps.allows(Cap::EmailSearch) {
+            let mail = mcp::fetch_mail_peek(caps);
+            brief.status = mail.status;
+            if mail.status == BridgeStatus::Online && mail.count > 0 {
+                fill_mail_lines(&mut brief, &mail, false);
+                acted = true;
+            } else if mail.status == BridgeStatus::Online {
+                brief.push_line("FYI", "Inbox empty.");
+                acted = true;
+            } else {
+                brief.push_line("Info", "Bridge offline for mail.");
+            }
+        } else {
+            brief.need(Cap::EmailSearch);
+        }
+    }
+
+    // Knowledge + personal files share search.query on the wire; Your files
+    // alone can still surface recent workspace rows by title match.
+    if caps.allows(Cap::SearchQuery) {
+        let peek = mcp::fetch_search_peek(caps, q);
+        if brief.status != BridgeStatus::Online {
+            brief.status = peek.status;
+        }
+        if peek.denied {
+            brief.need(Cap::SearchQuery);
+        } else {
+            fill_goal_hits(&mut brief, &peek);
+            acted = true;
+        }
+    } else if caps.allows(Cap::WorkspaceIndex) {
+        let files = mcp::fetch_files_peek(caps);
+        if brief.status != BridgeStatus::Online {
+            brief.status = files.status;
+        }
+        if files.denied {
+            brief.need(Cap::WorkspaceIndex);
+        } else {
+            fill_goal_files(&mut brief, &files, q);
+            acted = true;
+        }
+    } else if !mailish {
+        brief.need(Cap::SearchQuery);
+        brief.push_line("Info", "Grant Built-in docs or Your files.");
+    }
+
+    if acted && brief.doc_n == 0 && !mailish {
+        brief.push_line("Info", "No openable hits - refine the ask.");
+    } else if brief.doc_n > 0 {
+        brief.push_line("Next", "Tap a Doc row to open it.");
+    }
+    brief
+}
+
+/// Drop filler words so "i wanna work on my paper" becomes `paper`.
+pub fn keywords_from_goal<'a>(goal: &str, buf: &'a mut [u8; 48]) -> &'a str {
+    const STOP: &[&str] = &[
+        "i", "im", "i'm", "wanna", "want", "to", "a", "an", "the", "my", "me",
+        "on", "in", "for", "of", "and", "or", "please", "can", "you", "we",
+        "work", "working", "get", "got", "do", "doing", "help", "with", "about",
+        "find", "show", "open", "read", "look", "looking", "gotta", "gonna",
+        "just", "some", "any", "this", "that", "it",
+    ];
+    buf.fill(0);
+    let mut n = 0;
+    for raw in goal.split(|c: char| !c.is_ascii_alphanumeric()) {
+        if raw.is_empty() {
+            continue;
+        }
+        let mut word = [0u8; 24];
+        let mut w = 0;
+        for &b in raw.as_bytes() {
+            if w >= word.len() {
+                break;
+            }
+            word[w] = if (b'A'..=b'Z').contains(&b) {
+                b + 32
+            } else {
+                b
+            };
+            w += 1;
+        }
+        let tok = core::str::from_utf8(&word[..w]).unwrap_or("");
+        if tok.is_empty() || STOP.iter().any(|&s| s == tok) {
+            continue;
+        }
+        if n > 0 && n < buf.len() {
+            buf[n] = b' ';
+            n += 1;
+        }
+        for &b in tok.as_bytes() {
+            if n < buf.len() {
+                buf[n] = b;
+                n += 1;
+            }
+        }
+    }
+    core::str::from_utf8(&buf[..n]).unwrap_or("")
+}
+
+fn restate_goal<'a>(goal: &str, buf: &'a mut [u8; 68]) -> &'a str {
+    buf.fill(0);
+    let bytes = goal.as_bytes();
+    let mut n = bytes.len().min(buf.len());
+    while n > 0 && !goal.is_char_boundary(n) {
+        n -= 1;
+    }
+    buf[..n].copy_from_slice(&bytes[..n]);
+    // Collapse runs of whitespace for a tight Goal line.
+    let mut w = 0;
+    let mut space = false;
+    for i in 0..n {
+        let b = buf[i];
+        if b == b' ' || b == b'\t' {
+            if w > 0 {
+                space = true;
+            }
+            continue;
+        }
+        if space && w < buf.len() {
+            buf[w] = b' ';
+            w += 1;
+            space = false;
+        }
+        if w < buf.len() {
+            buf[w] = b;
+            w += 1;
+        }
+    }
+    core::str::from_utf8(&buf[..w]).unwrap_or("")
+}
+
+fn goal_looks_like_mail(goal: &str) -> bool {
+    let g = goal.as_bytes();
+    // ASCII substring check — enough for inbox / email / mail.
+    contains_ascii(g, b"inbox") || contains_ascii(g, b"email") || contains_ascii(g, b"mail")
+}
+
+fn contains_ascii(hay: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return false;
+    }
+    let norm = |b: u8| {
+        if (b'A'..=b'Z').contains(&b) {
+            b + 32
+        } else {
+            b
+        }
+    };
+    'outer: for i in 0..=hay.len() - needle.len() {
+        for j in 0..needle.len() {
+            if norm(hay[i + j]) != needle[j] {
+                continue 'outer;
+            }
+        }
+        return true;
+    }
+    false
+}
+
+fn fill_goal_hits(brief: &mut Brief, peek: &SearchPeek) {
+    if peek.count == 0 {
+        brief.push_line(
+            "Info",
+            if peek.status == BridgeStatus::Offline {
+                "No offline hits for that query."
+            } else {
+                "No search hits."
+            },
+        );
+        return;
+    }
+    for i in 0..peek.count.min(3) {
+        let title = peek.title_at(i);
+        let url = peek.url_at(i);
+        let line_i = brief.count;
+        brief.push_line("Doc", title);
+        if !url.is_empty() {
+            brief.arm_doc(url, line_i);
+        }
+    }
+}
+
+fn fill_goal_files(brief: &mut Brief, files: &FilePeek, q: &str) {
+    if files.count == 0 {
+        brief.push_line("Info", "No recent files indexed yet.");
+        return;
+    }
+    let mut matched = 0usize;
+    for i in 0..files.count.min(3) {
+        let title = files.title_at(i);
+        let url = files.url_at(i);
+        if !title_matches_query(title, q) {
+            continue;
+        }
+        let line_i = brief.count;
+        brief.push_line("Doc", title);
+        if !url.is_empty() {
+            brief.arm_doc(url, line_i);
+        }
+        matched += 1;
+    }
+    if matched == 0 {
+        // Still surface top recent files so the agent is not empty theatre.
+        for i in 0..files.count.min(2) {
+            let title = files.title_at(i);
+            let url = files.url_at(i);
+            let line_i = brief.count;
+            brief.push_line("Doc", title);
+            if !url.is_empty() {
+                brief.arm_doc(url, line_i);
+            }
+        }
+        brief.push_line("Info", "No title match - showing recent files.");
+    }
+}
+
+fn title_matches_query(title: &str, q: &str) -> bool {
+    if q.is_empty() {
+        return false;
+    }
+    for part in q.split(' ') {
+        if part.is_empty() {
+            continue;
+        }
+        if contains_ascii(title.as_bytes(), part.as_bytes()) {
+            return true;
+        }
+    }
+    false
 }
 
 /// Execute a named skill under `caps`. Unknown names return an empty brief
@@ -1268,11 +1562,59 @@ mod tests {
             "Tap Confirm send below",
             "email.send: Confirm send on an inbox Brief.",
             "Mock queued on the bridge",
+            "Working on it",
+            "Try naming the file, topic, or inbox.",
+            "Grant Built-in docs or Your files.",
+            "No openable hits - refine the ask.",
+            "Tap a Doc row to open it.",
+            "No recent files indexed yet.",
+            "No title match - showing recent files.",
+            "No search hits.",
         ] {
             assert!(
                 s.bytes().all(|b| (0x20..=0x7E).contains(&b)),
                 "non-ASCII: {s:?}"
             );
         }
+    }
+
+    #[test]
+    fn keywords_drop_filler_from_natural_asks() {
+        let mut buf = [0u8; 48];
+        assert_eq!(
+            keywords_from_goal("i wanna work on my paper", &mut buf),
+            "paper"
+        );
+        assert_eq!(
+            keywords_from_goal("find the capability model docs", &mut buf),
+            "capability model docs"
+        );
+        assert_eq!(keywords_from_goal("!!!", &mut buf), "");
+    }
+
+    #[test]
+    fn run_goal_without_grants_names_the_need() {
+        // Caps::none must not open COM2.
+        let b = run_goal("i wanna work on my paper", Caps::none());
+        assert_eq!(b.heading(), "Working on it");
+        assert!(b.plan_n >= 3);
+        assert!(b.lines.iter().any(|l| l.tag() == "Goal"));
+        assert!(b.lines.iter().any(|l| l.tag() == "Query" && l.text() == "paper"));
+        assert!(b.denied);
+        assert_eq!(b.deny_name(), "search.query");
+        assert_eq!(b.doc_n, 0);
+    }
+
+    #[test]
+    fn goal_hits_arm_openable_doc_urls() {
+        let mut brief = Brief::empty();
+        let mut peek = SearchPeek::empty(BridgeStatus::Online, false);
+        copy_field(&mut peek.hits[0].title, "thesis draft");
+        copy_field(&mut peek.hits[0].url, "file://docs/thesis.md");
+        peek.count = 1;
+        fill_goal_hits(&mut brief, &peek);
+        assert_eq!(brief.lines[0].tag(), "Doc");
+        assert_eq!(brief.doc_n, 1);
+        assert_eq!(brief.doc_url_at(0), Some("file://docs/thesis.md"));
     }
 }

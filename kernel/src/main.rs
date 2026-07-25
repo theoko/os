@@ -366,9 +366,11 @@ unsafe extern "C" fn kmain() -> ! {
                                             view = screens::View::Search;
                                             dirty = true;
                                         } else {
-                                            sview.run_via(query.as_str(), grants);
-                                            view = screens::View::Search;
-                                            serial_port.write_str("search: ran from home\n");
+                                            // Agentic home: plan/act under caps,
+                                            // then a Brief with openable Doc rows.
+                                            brief = agent::run_goal(query.as_str(), grants);
+                                            view = screens::View::Brief;
+                                            serial_port.write_str("agent: ran goal\n");
                                             dirty = true;
                                         }
                                     }
@@ -388,17 +390,20 @@ unsafe extern "C" fn kmain() -> ! {
                         }
                         if dirty {
                             cursor.hide(surface);
-                            if view == screens::View::Search {
-                                searchui::draw(
+                            match view {
+                                screens::View::Search => searchui::draw(
                                     surface,
                                     &sview,
                                     query.as_str(),
                                     caret,
                                     bridge_note(&mail),
                                     level,
-                                );
-                            } else {
-                                ui::draw_home_full(
+                                ),
+                                screens::View::Brief => screens::draw_brief(surface, &brief),
+                                screens::View::Reader => {
+                                    searchui::draw_reader(surface, open_title.as_str(), &page)
+                                }
+                                _ => ui::draw_home_full(
                                     surface,
                                     &mail,
                                     &files,
@@ -409,7 +414,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     grants,
                                     &brief,
                                     level,
-                                );
+                                ),
                             }
                             cursor.show_at(surface, x, y);
                             enter(&screen, &mut motion, x, y);
@@ -585,6 +590,19 @@ unsafe extern "C" fn kmain() -> ! {
                                         page = mcp::fetch_doc(grants, url);
                                         view = screens::View::Reader;
                                         serial_port.write_str("ui: open event\n");
+                                        dirty = true;
+                                    }
+                                } else if let Some(di) = screens::brief_doc_hit(w, &brief, x, y) {
+                                    if let Some(url) = brief.doc_url_at(di) {
+                                        open_title.clear();
+                                        if let Some(line_i) = brief.doc_line_at(di) {
+                                            for b in brief.lines[line_i].text().bytes() {
+                                                open_title.apply(keyboard::Key::Char(b));
+                                            }
+                                        }
+                                        page = mcp::fetch_doc(grants, url);
+                                        view = screens::View::Reader;
+                                        serial_port.write_str("ui: open doc\n");
                                         dirty = true;
                                     }
                                 } else if screens::brief_send_hit(

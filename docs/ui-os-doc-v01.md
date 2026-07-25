@@ -49,6 +49,14 @@ not inferred from caps, bridge, or click history. RAM-only until reboot.
 
 Code: [`kernel/src/level.rs`](../kernel/src/level.rs), setup Experience step.
 
+## Home agent (v0.9.26)
+
+Typing a natural ask on Home and pressing Enter runs the guest plan/act loop
+(`agent::run_goal`): restate → keyword query → CALL granted tools → Brief with
+openable **Doc** rows. Example: `i wanna work on my paper` searches under
+Your files / Built-in docs, then opens hits in the Reader. No model in the
+kernel — missing caps stay Need.
+
 ## Recent mail (v0.9.22)
 
 Home lists recent inbox rows when Email is granted. Each row is clickable and

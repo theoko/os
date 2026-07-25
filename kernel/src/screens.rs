@@ -226,7 +226,7 @@ pub fn draw_brief(fb: &Surface, brief: &Brief) {
             fb.fill_round_rect(rx, ry, rw, rh, 10, theme::CARD_BORDER);
             fb.fill_round_rect(rx + 1, ry + 1, rw - 2, rh - 2, 9, theme::BG);
             let tag = brief.lines[i].tag();
-            let accent = matches!(tag, "Urgent" | "Reply" | "Need" | "Event");
+            let accent = matches!(tag, "Urgent" | "Reply" | "Need" | "Event" | "Doc");
             fb.draw_text(
                 rx + 16,
                 ry + 22,
@@ -301,13 +301,29 @@ fn brief_report_top(brief: &Brief) -> i32 {
 
 /// Hit an armed Event report row → index into [`Brief::event_url_at`].
 pub fn brief_event_hit(w: i32, brief: &Brief, x: i32, y: i32) -> Option<usize> {
-    if brief.event_n == 0 || brief.count == 0 {
+    brief_armed_hit(w, brief, x, y, brief.event_n, |b, i| b.event_line_at(i))
+}
+
+/// Hit an armed Doc report row → index into [`Brief::doc_url_at`].
+pub fn brief_doc_hit(w: i32, brief: &Brief, x: i32, y: i32) -> Option<usize> {
+    brief_armed_hit(w, brief, x, y, brief.doc_n, |b, i| b.doc_line_at(i))
+}
+
+fn brief_armed_hit(
+    w: i32,
+    brief: &Brief,
+    x: i32,
+    y: i32,
+    n: usize,
+    line_at: fn(&Brief, usize) -> Option<usize>,
+) -> Option<usize> {
+    if n == 0 || brief.count == 0 {
         return None;
     }
     let (col_x, cw) = column(w);
     let top = brief_report_top(brief);
-    for ev in 0..brief.event_n {
-        let Some(line_i) = brief.event_line_at(ev) else {
+    for i in 0..n {
+        let Some(line_i) = line_at(brief, i) else {
             continue;
         };
         if line_i >= brief.count {
@@ -316,7 +332,7 @@ pub fn brief_event_hit(w: i32, brief: &Brief, x: i32, y: i32) -> Option<usize> {
         let ry = top + 8 + line_i as i32 * (ROW_H - 10);
         let rh = ROW_H - 14;
         if x >= col_x && x < col_x + cw && y >= ry && y < ry + rh {
-            return Some(ev);
+            return Some(i);
         }
     }
     None
@@ -480,6 +496,22 @@ mod tests {
             Some(0)
         );
         assert_eq!(brief_event_hit(1024, &Brief::empty(), x + cw / 2, ry + 10), None);
+    }
+
+    #[test]
+    fn brief_doc_rows_are_hittable() {
+        let mut brief = Brief::empty();
+        brief.push_report("Goal", "work on paper");
+        brief.push_report("Doc", "thesis-draft.md");
+        brief.arm_doc("file://docs/thesis-draft.md", 1);
+        let top = brief_report_top(&brief);
+        let (x, cw) = column(1024);
+        let ry = top + 8 + 1 * (ROW_H - 10);
+        assert_eq!(
+            brief_doc_hit(1024, &brief, x + cw / 2, ry + 10),
+            Some(0)
+        );
+        assert_eq!(brief_doc_hit(1024, &Brief::empty(), x + cw / 2, ry + 10), None);
     }
 
     #[test]

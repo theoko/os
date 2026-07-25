@@ -1,8 +1,18 @@
 ---
-version: 0.9.25
+version: 0.9.26
 ---
 
 # Changelog
+
+## 0.9.26 — 2026-07-25
+
+Home field is agentic (plan / act / Brief):
+
+- Enter on Home runs `agent::run_goal` under current caps — not bare search.
+- Filler words drop (`i wanna work on my paper` → query `paper`); granted
+  search / files / mail tools act; Doc rows open in the Reader.
+- No LLM in the kernel. Missing grants stay `Need`. Path/media Enter still
+  goes to Search / transcribe.
 
 ## 0.9.25 — 2026-07-25
 
