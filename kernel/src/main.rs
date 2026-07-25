@@ -738,7 +738,7 @@ unsafe extern "C" fn kmain() -> ! {
                                         &mail,
                                         &skill_peek,
                                         status_str(&status_buf, status_len),
-                                        home_query.as_str(),
+                                        query.as_str(),
                                         true,
                                     );
                                     cursor.show_at(surface, x, y);
