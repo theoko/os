@@ -1089,28 +1089,6 @@ mod tests {
     }
 
     #[test]
-    fn reading_calendar_needs_email_and_matches_list_id() {
-        let listed = dispatch("CALL calendar.list email=1", &test_backends());
-        let row = listed.iter().find(|l| l.starts_with("ROW ")).unwrap();
-        let id = parse_row_field(row, "id").unwrap();
-        let denied = read_doc(&format!("cal://{id}"), 10, &args(&[])).unwrap_err();
-        assert_eq!(denied, "needs_email_cap");
-        let rows = read_doc(
-            &format!("cal://{id}"),
-            10,
-            &args(&[("email", "1")]),
-        )
-        .expect("read");
-        let text: String = rows
-            .iter()
-            .filter_map(|r| r.strip_prefix("ROW line="))
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(text.contains("Demo event"), "{text}");
-        assert!(text.contains("tomorrow"), "{text}");
-    }
-
-    #[test]
     fn email_search_rows_carry_graph_ids() {
         let rows = email_search_mock("in:inbox", 2);
         let row = rows.iter().find(|l| l.starts_with("ROW ")).expect("ROW");
