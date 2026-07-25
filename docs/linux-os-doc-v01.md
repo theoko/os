@@ -7,7 +7,46 @@ status: proposal — not started
 
 # Moving to a Linux substrate
 
+## The decisive argument: real applications
+
+Someone will want to open a document in LibreOffice or Word.
+
+A custom kernel cannot do that in any realistic timeframe. It needs an ELF
+loader, POSIX syscalls, a filesystem, glibc, a display server, fontconfig,
+printing — years of work to arrive at something Linux already is. The
+performance argument below is about *cost*. This one is about *possibility*,
+and it is the one that settles the question.
+
+It also reframes the project, and that deserves stating plainly rather than
+being discovered later.
+
+## What running real apps does to the thesis
+
+LibreOffice with filesystem access **is** ambient authority. There is no
+version of "no ambient root" that survives running arbitrary desktop binaries
+under the old definition. If the OS runs real applications, the current claim
+is simply false, however the UI is worded.
+
+The coherent reframe — and it is a better product than the current one:
+
+> **A desktop where every application's access is explicit, and the agent is
+> one of those applications.**
+
+The capability screen stops being an agent-only consent flow and becomes the
+system's permission manager. `workspace.index`, `audio.transcribe`,
+`portal.sync` are already exactly the right shape for that; they just apply to
+one process today. Extending them to every app is a generalisation, not a
+rewrite.
+
+That makes **option 2 below (real sandboxing) the only honest choice**, because
+the enforcement now has to hold against binaries nobody in this repo wrote.
+Flatpak and bubblewrap already do the containment; what is missing from that
+world is a coherent, legible consent surface — which is the part this project
+has actually built and got right.
+
 ## The case
+
+
 
 A day of work on this repo went into: framebuffer pixel formats, PS/2 versus
 UHCI device enumeration, font rasterisation, Retina upscaling filters, dirty
@@ -100,8 +139,11 @@ Three honest options:
    chosen, `AGENTS.md` should be amended to say so rather than continuing to
    assert something the code no longer enforces.
 
-**This is the decision that matters.** The graphics work is a day; the thesis
-is the project. I would not start moving code before it is settled.
+**Given the requirement to run real applications, option 2 is the answer.**
+Options 1 and 3 both assume the only thing running is code we wrote. Once
+LibreOffice is in scope, enforcement has to be real and it has to come from the
+kernel, because the alternative is a permission screen that describes
+restrictions nothing applies.
 
 ## What is gained
 
@@ -137,7 +179,14 @@ should stay that way until the replacement is better, not merely newer.
 
 ## Recommendation
 
-Do it, on option 1 or 2, and only after the enforcement question is answered in
-writing. If the answer turns out to be option 3, that is a legitimate choice —
-but then the honest move is to stop describing this as a capability-enforcing
-OS and start describing it as an agent shell, which is still a good thing to be.
+Do it, on **option 2**, and rewrite `AGENTS.md` first.
+
+The requirement to run real applications settles the substrate question — a
+custom kernel cannot get there. It also retires the current phrasing of the
+thesis: "no ambient root" cannot survive running arbitrary binaries, and the
+document should say what the system will actually enforce rather than what the
+old kernel made true by accident.
+
+The replacement claim is stronger, not weaker: every application's access is
+explicit, the agent included. That is a product people would want on a machine
+that also runs Word — and it is the part of this repo worth keeping.
