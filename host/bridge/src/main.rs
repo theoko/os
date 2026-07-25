@@ -4,6 +4,7 @@
 //! Email backends: mock (default) or `gog`. Skills: defaults + saved on host.
 
 mod graph;
+mod paths;
 mod workspace;
 mod search;
 mod transcribe;
@@ -40,7 +41,6 @@ fn read_line_bounded<R: BufRead>(reader: &mut R, line: &mut String) -> std::io::
 
 struct Backends {
     email: String,
-    search: String,
 }
 
 fn main() {
@@ -48,16 +48,14 @@ fn main() {
     let addr = env::var("OS_MCP_BRIDGE_ADDR").unwrap_or_else(|_| "127.0.0.1:7420".into());
     let backends = Arc::new(Backends {
         email: env::var("OS_MCP_EMAIL_BACKEND").unwrap_or_else(|_| "mock".into()),
-        search: env::var("OS_MCP_SEARCH_BACKEND").unwrap_or_else(|_| "tfidf".into()),
     });
 
     let (defaults, user) = skills::skills_dirs();
     let where_ = connect.as_deref().unwrap_or(addr.as_str());
     eprintln!(
-        "os-mcp-bridge {} on {where_} (email={}; search={}; skills defaults={} user={})",
+        "os-mcp-bridge {} on {where_} (email={}; skills defaults={} user={})",
         if connect.is_some() { "connecting" } else { "listening" },
         backends.email,
-        backends.search,
         defaults.display(),
         user.display()
     );
@@ -416,7 +414,7 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             if q.is_empty() {
                 vec!["ERR search.query missing_q".into()]
             } else {
-                search::query_scoped(q, k, cat, &backends.search, with_email, with_files, with_audio)
+                search::query_scoped(q, k, cat, with_email, with_files, with_audio)
             }
         }
         _ => vec![format!("ERR {tool} not_found")],
@@ -678,7 +676,6 @@ mod tests {
     fn test_backends() -> Backends {
         Backends {
             email: "mock".into(),
-            search: "tfidf".into(),
         }
     }
 

@@ -19,14 +19,8 @@ pub fn skills_dirs() -> (PathBuf, PathBuf) {
         .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/defaults"));
     let user = env::var("OS_SKILLS_USER")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| dirs_home().join("Library/Application Support/os/skills"));
+        .unwrap_or_else(|_| crate::paths::home().join("Library/Application Support/os/skills"));
     (defaults, user)
-}
-
-fn dirs_home() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/tmp"))
 }
 
 pub fn list_skills() -> Vec<SkillMeta> {

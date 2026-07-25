@@ -30,16 +30,6 @@ pub fn lerp(a: i32, b: i32, t: i32) -> i32 {
     a + (((b - a) as i64 * t.clamp(0, ONE) as i64) / ONE as i64) as i32
 }
 
-/// Blend two XRGB colours by Q16 `t`.
-pub fn lerp_color(a: u32, b: u32, t: i32) -> u32 {
-    let ch = |sh: u32| -> u32 {
-        let ca = ((a >> sh) & 0xff) as i32;
-        let cb = ((b >> sh) & 0xff) as i32;
-        (lerp(ca, cb, t).clamp(0, 255) as u32) << sh
-    };
-    ch(16) | ch(8) | ch(0)
-}
-
 /// Assumed cycle rate for frame pacing.
 ///
 /// TCG's clock is not the host's, so this paces frames approximately. It only
@@ -135,15 +125,6 @@ mod tests {
         assert_eq!(lerp(10, 20, 0), 10);
         assert_eq!(lerp(10, 20, ONE), 20);
         assert_eq!(lerp(0, 100, ONE / 2), 50);
-    }
-
-    #[test]
-    fn colour_blend_stays_in_gamut() {
-        let c = lerp_color(0x00FF_FFFF, 0x0000_0000, ONE / 2);
-        for sh in [16, 8, 0] {
-            assert!((c >> sh) & 0xff <= 0xff);
-        }
-        assert_eq!(lerp_color(0x00FF_FFFF, 0x001D_1D1F, ONE), 0x001D_1D1F);
     }
 
     #[test]

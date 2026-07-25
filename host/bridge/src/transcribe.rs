@@ -36,11 +36,9 @@ pub struct Store {
 pub fn store_path() -> PathBuf {
     env::var("OS_TRANSCRIPT_STORE")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| home().join("Library/Application Support/os/knowledge/transcripts.json"))
-}
-
-fn home() -> PathBuf {
-    env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|_| {
+            crate::paths::home().join("Library/Application Support/os/knowledge/transcripts.json")
+        })
 }
 
 /// Whisper model to use. `small` is the speed/quality compromise the
@@ -49,7 +47,7 @@ fn model_path() -> PathBuf {
     if let Ok(p) = env::var("OS_WHISPER_MODEL") {
         return PathBuf::from(p);
     }
-    let dir = home().join(".cache/whisper-models");
+    let dir = crate::paths::home().join(".cache/whisper-models");
     let small = dir.join("ggml-small.bin");
     if small.is_file() { small } else { dir.join("ggml-medium.bin") }
 }
@@ -322,13 +320,13 @@ mod scope_tests {
         st.save().unwrap();
 
         // workspace.index granted, audio.transcribe not: must stay hidden.
-        let files_only = crate::search::query_scoped("xenon ledger", 5, None, "tfidf", false, true, false);
+        let files_only = crate::search::query_scoped("xenon ledger", 5, None, false, true, false);
         assert!(
             !files_only.iter().any(|r| r.contains("Xenon Ledger")),
             "a recording surfaced under the files grant: {files_only:?}"
         );
 
-        let with_audio = crate::search::query_scoped("xenon ledger", 5, None, "tfidf", false, false, true);
+        let with_audio = crate::search::query_scoped("xenon ledger", 5, None, false, false, true);
         assert!(
             with_audio.iter().any(|r| r.contains("Xenon Ledger")),
             "granted search should find the transcript: {with_audio:?}"

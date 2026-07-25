@@ -47,13 +47,9 @@ pub struct Graph {
 pub fn graph_path() -> PathBuf {
     env::var("OS_GRAPH_PATH")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| home().join("Library/Application Support/os/knowledge/emails.json"))
-}
-
-fn home() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|_| {
+            crate::paths::home().join("Library/Application Support/os/knowledge/emails.json")
+        })
 }
 
 /// Cheap stable id. Not cryptographic — only needs to dedupe re-ingests.
@@ -346,9 +342,9 @@ mod gate_tests {
         g.save().expect("save");
 
         let without =
-            crate::search::query_scoped("confidential merger", 5, None, "tfidf", false, false, false);
+            crate::search::query_scoped("confidential merger", 5, None, false, false, false);
         let with =
-            crate::search::query_scoped("confidential merger", 5, None, "tfidf", true, false, false);
+            crate::search::query_scoped("confidential merger", 5, None, true, false, false);
 
         assert!(
             !without.iter().any(|r| r.contains("Confidential merger")),

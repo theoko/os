@@ -14,7 +14,7 @@ status: active
 | Path | Ranking |
 |------|---------|
 | Browser (`index.html`) | Hybrid BM25 + LSA + PageRank |
-| Agent MCP (`tsearch_mcp.py`) | FTS5 BM25 or tf-idf × PageRank, exact-then-synonym ladder |
+| Agent path | tf-idf × PageRank, exact-then-synonym ladder |
 
 **os v1** follows the **agent** path, not the crawler/LSA/GraphRAG stack.
 
@@ -24,7 +24,7 @@ status: active
 guest  -- CALL search.query -->  host/bridge
                                       |
                          search/corpus.json  (curated {t,u,c,b,pr})
-                         optional TSEARCH_DATA → tsearch_mcp.t_search
+                         + native teddy cache / files / mail when granted
 ```
 
 Corpus docs use the same card fields as tSearch: title `t`, url `u`, category `c`,
@@ -34,17 +34,10 @@ body `b`, optional PageRank-ish boost `pr`.
 
 | Call | Result |
 |------|--------|
-| `CALL search.query q=… k=5 cat=docs` | `OK search.query n=N backend=…` + `ROW title=…\|cat=…\|score=…\|snip=…\|url=…` + `END` |
+| `CALL search.query q=… k=5 cat=docs` | `OK search.query n=N …` + `ROW title=…\|cat=…\|score=…\|snip=…\|url=…` + `END` |
 
-## Host backends
-
-| Env | Behavior |
-|-----|----------|
-| `OS_MCP_SEARCH_BACKEND=tfidf` (default) | In-bridge tf-idf × (1+4·pr), exact-AND bonus |
-| `OS_MCP_SEARCH_BACKEND=mock` | Fixed demo rows (CI without corpus) |
-| `OS_MCP_SEARCH_BACKEND=tsearch` | Shells to `TSEARCH_DATA/tsearch_mcp.py` |
-
-Override corpus path with `OS_SEARCH_CORPUS`.
+In-bridge ranking is tf-idf × (1+4·pr) with an exact-AND bonus. Override corpus
+path with `OS_SEARCH_CORPUS`.
 
 ## Skill
 

@@ -8,11 +8,6 @@ pub fn encode_for_serial(s: &str) -> &[u8] {
     s.as_bytes()
 }
 
-/// Whether a byte is safe to emit raw on early UART (printable + common whitespace).
-pub fn is_early_serial_byte(b: u8) -> bool {
-    matches!(b, b'\n' | b'\r' | b'\t' | 0x20..=0x7e)
-}
-
 #[cfg(target_arch = "x86_64")]
 mod port {
     use core::arch::asm;
@@ -196,13 +191,7 @@ mod tests {
     #[test]
     fn encode_preserves_utf8() {
         assert_eq!(encode_for_serial("os: hello"), b"os: hello");
-    }
-
-    #[test]
-    fn early_bytes_accept_banner() {
-        for &b in encode_for_serial(crate::HELLO_MESSAGE) {
-            assert!(is_early_serial_byte(b), "unexpected byte {b}");
-        }
+        assert_eq!(encode_for_serial(crate::HELLO_MESSAGE), crate::HELLO_MESSAGE.as_bytes());
     }
 }
 

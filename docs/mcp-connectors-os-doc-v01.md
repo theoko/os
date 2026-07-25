@@ -62,8 +62,9 @@ ambient root is still forbidden for arbitrary tools.
 |-----|----------|
 | `OS_MCP_EMAIL_BACKEND=mock` (default) | Deterministic fake rows (CI) |
 | `OS_MCP_EMAIL_BACKEND=gog` | `gog gmail search -j --results-only …` via keyring |
-| `OS_MCP_SEARCH_BACKEND=tfidf` (default) | Curated `search/corpus.json` (tSearch-style) |
-| `OS_MCP_SEARCH_BACKEND=mock` / `tsearch` | Demo rows / live tsearch-revival |
+
+Search always uses the in-bridge corpus + teddy/files/mail when those caps are
+granted on the `CALL` (see [`docs/search-os-doc-v01.md`](search-os-doc-v01.md)).
 
 ## Bridge API
 

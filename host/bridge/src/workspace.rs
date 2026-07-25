@@ -68,11 +68,9 @@ pub const MAX_ENTRIES: usize = 4000;
 pub fn index_path() -> PathBuf {
     env::var("OS_WORKSPACE_INDEX")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| home().join("Library/Application Support/os/knowledge/workspace.json"))
-}
-
-fn home() -> PathBuf {
-    env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|_| {
+            crate::paths::home().join("Library/Application Support/os/knowledge/workspace.json")
+        })
 }
 
 /// Roots to index. `OS_WORKSPACE_ROOTS` is a `:`-separated list.
@@ -89,7 +87,7 @@ pub fn roots() -> Vec<PathBuf> {
             .map(PathBuf::from)
             .collect();
     }
-    let d = home().join("Desktop");
+    let d = crate::paths::home().join("Desktop");
     vec![d.join("projects"), d.join("os")]
 }
 
@@ -446,7 +444,7 @@ mod ascii_tests {
         // Real document titles contain emoji; the kernel atlas cannot render
         // them and would show '?' for each byte.
         let out =
-            crate::search::query_scoped("greek events engine", 3, None, "tfidf", false, false, false);
+            crate::search::query_scoped("greek events engine", 3, None, false, false, false);
         for row in &out {
             assert!(row.is_ascii(), "non-ASCII reached the wire: {row}");
         }
@@ -471,8 +469,8 @@ mod consent_tests {
         unsafe { env::set_var("OS_WORKSPACE_INDEX", &ix_path) };
         build(&[dir.clone()]).save().expect("save index");
 
-        let without = crate::search::query_scoped("zygote notary", 5, None, "tfidf", false, false, false);
-        let with = crate::search::query_scoped("zygote notary", 5, None, "tfidf", false, true, false);
+        let without = crate::search::query_scoped("zygote notary", 5, None, false, false, false);
+        let with = crate::search::query_scoped("zygote notary", 5, None, false, true, false);
 
         assert!(
             !without.iter().any(|r| r.contains("Zygote Notary")),

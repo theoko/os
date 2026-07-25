@@ -91,10 +91,9 @@ fn load_docs() -> Result<Vec<Doc>, String> {
     Ok(file.docs)
 }
 
-fn fold_tok(text: &str) -> Vec<String> {
-    let lower = text.to_lowercase();
-    // ASCII-oriented split; good enough for the curated OS corpus.
-    lower
+/// ASCII-oriented tokenizer shared with the teddy index.
+pub(crate) fn tokenize(text: &str) -> Vec<String> {
+    text.to_lowercase()
         .split(|c: char| !c.is_ascii_alphanumeric())
         .filter(|w| w.len() >= 2)
         .map(|w| w.to_string())
@@ -102,7 +101,7 @@ fn fold_tok(text: &str) -> Vec<String> {
 }
 
 fn search_tfidf(docs: &[Doc], query: &str, k: usize, cat: Option<&str>) -> Vec<(f64, usize)> {
-    let q_terms: Vec<String> = fold_tok(query);
+    let q_terms: Vec<String> = tokenize(query);
     if q_terms.is_empty() || docs.is_empty() {
         return Vec::new();
     }
@@ -111,9 +110,9 @@ fn search_tfidf(docs: &[Doc], query: &str, k: usize, cat: Option<&str>) -> Vec<(
     // Document tokens (title counts double — tSearch client ethos).
     let mut doc_toks: Vec<Vec<String>> = Vec::with_capacity(docs.len());
     for d in docs {
-        let mut t = fold_tok(&d.t);
-        t.extend(fold_tok(&d.t)); // title double
-        t.extend(fold_tok(&d.b));
+        let mut t = tokenize(&d.t);
+        t.extend(tokenize(&d.t)); // title double
+        t.extend(tokenize(&d.b));
         doc_toks.push(t);
     }
 
@@ -162,7 +161,7 @@ fn search_tfidf(docs: &[Doc], query: &str, k: usize, cat: Option<&str>) -> Vec<(
 }
 
 fn snip(body: &str, query: &str) -> String {
-    let q = fold_tok(query);
+    let q = tokenize(query);
     let lower = body.to_lowercase();
     // `find` returns a byte offset into `lower`; that only maps back onto
     // `body` when lowercasing didn't change byte lengths. Otherwise anchor at
@@ -274,37 +273,16 @@ pub fn query_all(
     Ok(out)
 }
 
-pub fn query_mock(q: &str, k: usize) -> Vec<String> {
-    let samples = [
-        ("os identity", "docs", "Agent-centric OS with capability-based agents"),
-        ("MCP connectors", "docs", "Host bridge email skills search over COM2"),
-        ("tSearch revival inspiration", "web", &format!("Lexical search inspired hit for {q}")),
-    ];
-    let n = samples.len().min(k);
-    let mut out = vec![format!("OK search.query n={n} backend=mock")];
-    for (title, cat, snip) in samples.iter().take(n) {
-        out.push(format!("ROW title={title}|cat={cat}|score=1.0|snip={snip}|url=os://mock"));
-    }
-    out.push("END".into());
-    out
-}
-
 pub fn query_scoped(
     q: &str,
     k: usize,
     cat: Option<&str>,
-    backend: &str,
     include_email: bool,
     include_files: bool,
     include_audio: bool,
 ) -> Vec<String> {
-    match backend {
-        "mock" => query_mock(q, k),
-        // Native teddy index is already folded into the default `query_all`
-        // path; the old Python `tsearch_mcp.py` shell-out is gone.
-        _ => query_all(q, k, cat, include_email, include_files, include_audio)
-            .unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
-    }
+    query_all(q, k, cat, include_email, include_files, include_audio)
+        .unwrap_or_else(|e| vec![format!("ERR search.query {e}")])
 }
 
 #[cfg(test)]
@@ -324,11 +302,6 @@ mod tests {
         );
     }
 
-    #[test]
-    fn mock_ok() {
-        let r = query_mock("test", 2);
-        assert!(r[0].starts_with("OK search.query"));
-    }
 }
 
 /// Body text for a document URL, from the built-in corpus or teddysearch.

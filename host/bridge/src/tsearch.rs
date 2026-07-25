@@ -51,11 +51,9 @@ pub fn url() -> String {
 pub fn cache_path() -> PathBuf {
     env::var("OS_TSEARCH_CACHE")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| home().join("Library/Application Support/os/knowledge/teddysearch.json"))
-}
-
-fn home() -> PathBuf {
-    env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
+        .unwrap_or_else(|_| {
+            crate::paths::home().join("Library/Application Support/os/knowledge/teddysearch.json")
+        })
 }
 
 /// Fetch the live corpus into the cache. Returns (documents, crawl stamp).
@@ -195,15 +193,6 @@ pub struct Term {
 
 static INDEX: OnceLock<Index> = OnceLock::new();
 
-/// Tokeniser shared with the rest of the bridge.
-fn tok(text: &str) -> Vec<String> {
-    text.to_lowercase()
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|w| w.len() >= 2)
-        .map(|w| w.to_string())
-        .collect()
-}
-
 pub fn index() -> &'static Index {
     INDEX.get_or_init(|| {
         let docs = docs();
@@ -212,9 +201,9 @@ pub fn index() -> &'static Index {
         let mut acc: HashMap<String, HashMap<usize, f64>> = HashMap::new();
         let mut lens = vec![0usize; docs.len()];
         for (i, d) in docs.iter().enumerate() {
-            let mut t = tok(&d.t);
-            t.extend(tok(&d.t)); // title counts double, as in the client
-            t.extend(tok(&d.b));
+            let mut t = crate::search::tokenize(&d.t);
+            t.extend(crate::search::tokenize(&d.t)); // title counts double, as in the client
+            t.extend(crate::search::tokenize(&d.b));
             lens[i] = t.len().max(1);
             for w in t {
                 *acc.entry(w).or_default().entry(i).or_insert(0.0) += 1.0;
@@ -257,7 +246,7 @@ impl Index {
     /// Mirrors the built-in scorer: tf-idf blended with PageRank, plus the
     /// exact-AND bonus for documents carrying every query term.
     pub fn search(&self, query: &str, k: usize) -> Vec<(f64, usize)> {
-        let q = tok(query);
+        let q = crate::search::tokenize(query);
         if q.is_empty() || self.terms.is_empty() {
             return Vec::new();
         }
@@ -304,6 +293,9 @@ mod index_tests {
 
     #[test]
     fn tokeniser_matches_the_bridge_rules() {
-        assert_eq!(tok("Capability-based Agents v2 a"), vec!["capability", "based", "agents", "v2"]);
+        assert_eq!(
+            crate::search::tokenize("Capability-based Agents v2 a"),
+            vec!["capability", "based", "agents", "v2"]
+        );
     }
 }
