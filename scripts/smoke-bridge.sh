@@ -270,11 +270,14 @@ if not allowed_mail.startswith("OK email.search"):
     sys.exit(1)
 mail_row_id = None
 for line in allowed_mail.splitlines():
-    if line.startswith("ROW ") and "id=" in line:
-        for part in line.split("|"):
-            if part.startswith("id="):
-                mail_row_id = part[3:]
-                break
+    if not line.startswith("ROW "):
+        continue
+    for part in line[4:].split("|"):
+        if part.startswith("id="):
+            mail_row_id = part[3:]
+            break
+    if mail_row_id:
+        break
 if not mail_row_id or len(mail_row_id) != 16:
     print("error: email.search ROW must carry a 16-char id=", file=sys.stderr)
     print(allowed_mail, file=sys.stderr)
