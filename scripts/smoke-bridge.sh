@@ -29,7 +29,30 @@ trap cleanup EXIT
 
 OS_MCP_BRIDGE_ADDR="$ADDR" OS_MCP_EMAIL_BACKEND=mock "$BRIDGE_BIN" >"$BRIDGE_LOG" 2>&1 &
 BRIDGE_PID=$!
-sleep 0.4
+
+# Wait until the bridge is actually accepting connections (a fixed sleep races
+# a slow bind, and QEMU's tcp: client chardev does not retry). Also fail fast
+# if the bridge died on startup, e.g. port already in use.
+BRIDGE_HOST="${ADDR%:*}"
+BRIDGE_PORT="${ADDR##*:}"
+bridge_up=0
+for _ in $(seq 1 50); do
+  if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
+    echo "error: bridge exited during startup" >&2
+    cat "$BRIDGE_LOG" >&2
+    exit 1
+  fi
+  if nc -z "$BRIDGE_HOST" "$BRIDGE_PORT" 2>/dev/null; then
+    bridge_up=1
+    break
+  fi
+  sleep 0.1
+done
+if [[ "$bridge_up" != 1 ]]; then
+  echo "error: bridge never listened on $ADDR" >&2
+  cat "$BRIDGE_LOG" >&2
+  exit 1
+fi
 
 export OS_SMOKE_ROOT="$ROOT"
 export OS_SMOKE_ISO="$ISO"

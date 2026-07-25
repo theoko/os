@@ -7,10 +7,35 @@ mod search;
 mod skills;
 
 use std::env;
-use std::io::{BufRead, BufReader, Write};
+use std::fs;
+use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
+use std::os::unix::net::{UnixListener, UnixStream};
+use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
+
+/// Longest request line we accept from the wire; the peer is untrusted.
+const MAX_LINE: u64 = 64 * 1024;
+/// Cap on an accumulated skills.save body.
+const MAX_BODY: usize = 1024 * 1024;
+
+/// `read_line` with a hard length cap so a peer that never sends `\n` cannot
+/// grow the buffer without bound. `Ok(None)` = EOF, `Err` on I/O or oversize.
+fn read_line_bounded<R: BufRead>(reader: &mut R, line: &mut String) -> std::io::Result<Option<()>> {
+    line.clear();
+    let n = reader.take(MAX_LINE).read_line(line)?;
+    if n == 0 {
+        return Ok(None);
+    }
+    if n as u64 == MAX_LINE && !line.ends_with('\n') {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "line exceeds MAX_LINE",
+        ));
+    }
+    Ok(Some(()))
+}
 
 struct Backends {
     email: String,
@@ -18,6 +43,7 @@ struct Backends {
 }
 
 fn main() {
+    let connect = env::var("OS_MCP_BRIDGE_CONNECT").ok();
     let addr = env::var("OS_MCP_BRIDGE_ADDR").unwrap_or_else(|_| "127.0.0.1:7420".into());
     let backends = Arc::new(Backends {
         email: env::var("OS_MCP_EMAIL_BACKEND").unwrap_or_else(|_| "mock".into()),
@@ -25,22 +51,54 @@ fn main() {
     });
 
     let (defaults, user) = skills::skills_dirs();
+    let where_ = connect.as_deref().unwrap_or(addr.as_str());
     eprintln!(
-        "os-mcp-bridge listening on {addr} (email={}; search={}; skills defaults={} user={})",
+        "os-mcp-bridge {} on {where_} (email={}; search={}; skills defaults={} user={})",
+        if connect.is_some() { "connecting" } else { "listening" },
         backends.email,
         backends.search,
         defaults.display(),
         user.display()
     );
 
-    let listener = TcpListener::bind(&addr).expect("bind bridge");
+    if let Some(target) = connect {
+        connect_loop(&target, backends);
+    } else if let Some(path) = addr.strip_prefix("unix:") {
+        serve_unix(path, backends);
+    } else {
+        serve_tcp(&addr, backends);
+    }
+}
 
+/// Dial a peer that is already listening (UTM QEMU serial unix server).
+/// Retries until the guest appears, then serves one session and reconnects.
+fn connect_loop(target: &str, backends: Arc<Backends>) {
+    let path = target.strip_prefix("unix:").unwrap_or(target);
+    loop {
+        match UnixStream::connect(path) {
+            Ok(stream) => {
+                eprintln!("connected to {path}");
+                let backends = Arc::clone(&backends);
+                if let Err(e) = handle_unix(stream, &backends) {
+                    eprintln!("client error: {e}");
+                }
+                eprintln!("guest disconnected — waiting to reconnect");
+            }
+            Err(_) => {
+                std::thread::sleep(std::time::Duration::from_millis(400));
+            }
+        }
+    }
+}
+
+fn serve_tcp(addr: &str, backends: Arc<Backends>) {
+    let listener = TcpListener::bind(addr).expect("bind bridge tcp");
     for conn in listener.incoming() {
         match conn {
             Ok(stream) => {
                 let backends = Arc::clone(&backends);
                 std::thread::spawn(move || {
-                    if let Err(e) = handle_client(stream, &backends) {
+                    if let Err(e) = handle_tcp(stream, &backends) {
                         eprintln!("client error: {e}");
                     }
                 });
@@ -50,50 +108,110 @@ fn main() {
     }
 }
 
-fn handle_client(stream: TcpStream, backends: &Backends) -> std::io::Result<()> {
+fn serve_unix(path: &str, backends: Arc<Backends>) {
+    let path = Path::new(path);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if path.exists() {
+        let _ = fs::remove_file(path);
+    }
+    let listener = UnixListener::bind(path).expect("bind bridge unix");
+    for conn in listener.incoming() {
+        match conn {
+            Ok(stream) => {
+                let backends = Arc::clone(&backends);
+                std::thread::spawn(move || {
+                    if let Err(e) = handle_unix(stream, &backends) {
+                        eprintln!("client error: {e}");
+                    }
+                });
+            }
+            Err(e) => eprintln!("accept error: {e}"),
+        }
+    }
+}
+
+fn handle_tcp(stream: TcpStream, backends: &Backends) -> std::io::Result<()> {
     stream.set_read_timeout(Some(std::time::Duration::from_secs(120)))?;
     stream.set_write_timeout(Some(std::time::Duration::from_secs(30)))?;
-    let mut writer = stream.try_clone()?;
-    let mut reader = BufReader::new(stream);
+    let writer = stream.try_clone()?;
+    let reader = BufReader::new(stream);
+    handle_client(reader, writer, backends)
+}
 
+fn handle_unix(stream: UnixStream, backends: &Backends) -> std::io::Result<()> {
+    stream.set_read_timeout(Some(std::time::Duration::from_secs(120)))?;
+    stream.set_write_timeout(Some(std::time::Duration::from_secs(30)))?;
+    let writer = stream.try_clone()?;
+    let reader = BufReader::new(stream);
+    handle_client(reader, writer, backends)
+}
+
+fn handle_client<R: Read, W: Write>(
+    mut reader: BufReader<R>,
+    mut writer: W,
+    backends: &Backends,
+) -> std::io::Result<()> {
+    let mut raw = String::new();
     loop {
-        let mut line = String::new();
-        let n = reader.read_line(&mut line)?;
-        if n == 0 {
+        if read_line_bounded(&mut reader, &mut raw)?.is_none() {
             break;
         }
-        let line = line.trim();
+        // UEFI/Limine also write to COM2 under UTM; strip CSI/controls so a
+        // guest `PING\n` that shared a line with firmware noise still parses.
+        let line = scrub_protocol_line(&raw);
         if line.is_empty() {
             continue;
         }
         eprintln!("← {line}");
 
-        // Multi-line save: CALL skills.save name=foo  then LINE… END
+        // Multi-line save: CALL skills.save name=foo  then LINE… END.
+        // A one-line form with desc= creates a starter skill with no body read,
+        // so a client that never sends LINE/END cannot desync the protocol.
         if line.starts_with("CALL skills.save ") {
-            let name = line
-                .split_whitespace()
-                .find_map(|a| a.strip_prefix("name="))
-                .unwrap_or("")
-                .to_string();
-            let mut body = String::new();
-            loop {
-                let mut ln = String::new();
-                let n = reader.read_line(&mut ln)?;
-                if n == 0 {
-                    break;
+            let args = parse_args(line.trim_start_matches("CALL skills.save "));
+            let name = arg_val(&args, "name").unwrap_or("").to_string();
+            let reply = if let Some(desc) = arg_val(&args, "desc") {
+                let body = format!(
+                    "---\nname: {name}\ndescription: {desc}\n---\n\n# {name}\n\n(edit me)\n"
+                );
+                match skills::save_skill(&name, &body) {
+                    Ok(path) => vec![format!("OK skills.save path={}", path.display())],
+                    Err(e) => vec![format!("ERR skills.save {e}")],
                 }
-                let t = ln.trim_end_matches(['\r', '\n']);
-                if t == "END" {
-                    break;
+            } else {
+                let mut body = String::new();
+                let mut ended = false;
+                loop {
+                    if read_line_bounded(&mut reader, &mut raw)?.is_none() {
+                        break;
+                    }
+                    let t = raw.trim_end_matches(['\r', '\n']);
+                    if t == "END" {
+                        ended = true;
+                        break;
+                    }
+                    if let Some(rest) = t.strip_prefix("LINE ") {
+                        if body.len() + rest.len() + 1 > MAX_BODY {
+                            return Err(std::io::Error::new(
+                                std::io::ErrorKind::InvalidData,
+                                "skills.save body exceeds MAX_BODY",
+                            ));
+                        }
+                        body.push_str(rest);
+                        body.push('\n');
+                    }
                 }
-                if let Some(rest) = t.strip_prefix("LINE ") {
-                    body.push_str(rest);
-                    body.push('\n');
+                if !ended {
+                    // Disconnect mid-body: do not write a truncated skill.
+                    vec!["ERR skills.save truncated_body".into()]
+                } else {
+                    match skills::save_skill(&name, &body) {
+                        Ok(path) => vec![format!("OK skills.save path={}", path.display())],
+                        Err(e) => vec![format!("ERR skills.save {e}")],
+                    }
                 }
-            }
-            let reply = match skills::save_skill(&name, &body) {
-                Ok(path) => vec![format!("OK skills.save path={}", path.display())],
-                Err(e) => vec![format!("ERR skills.save {e}")],
             };
             for r in &reply {
                 eprintln!("→ {r}");
@@ -103,7 +221,10 @@ fn handle_client(stream: TcpStream, backends: &Backends) -> std::io::Result<()> 
             continue;
         }
 
-        let reply = dispatch(line, backends);
+        let reply = dispatch(&line, backends);
+        if reply.is_empty() {
+            continue;
+        }
         for r in &reply {
             eprintln!("→ {r}");
             writeln!(writer, "{r}")?;
@@ -113,24 +234,94 @@ fn handle_client(stream: TcpStream, backends: &Backends) -> std::io::Result<()> 
     Ok(())
 }
 
+/// Drop ANSI CSI sequences and other controls; keep printable ASCII protocol.
+fn scrub_protocol_line(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for d in chars.by_ref() {
+                    if d.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+            }
+            continue;
+        }
+        if c == '\r' || c == '\n' || c == '\t' {
+            continue;
+        }
+        if c.is_control() {
+            continue;
+        }
+        out.push(c);
+    }
+    // Firmware may leave prose before the guest command on the same "line".
+    for prefix in ["CALL ", "PING", "LIST"] {
+        if let Some(i) = out.find(prefix) {
+            return out[i..].trim().to_string();
+        }
+    }
+    out.trim().to_string()
+}
+
 fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
-    let mut parts = line.split_whitespace();
-    let cmd = parts.next().unwrap_or("");
+    let (cmd, rest) = split_word(line);
     match cmd {
         "PING" => vec!["OK pong".into()],
         "LIST" => {
             vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query".into()]
         }
         "CALL" => {
-            let tool = parts.next().unwrap_or("");
-            let rest: Vec<&str> = parts.collect();
-            call_tool(tool, &rest, backends)
+            let (tool, rest) = split_word(rest);
+            let args = parse_args(rest);
+            call_tool(tool, &args, backends)
         }
-        _ => vec!["ERR unknown command".into()],
+        _ => {
+            // Ignore UEFI/Limine console noise on the same COM2 pipe.
+            Vec::new()
+        }
     }
 }
 
-fn call_tool(tool: &str, args: &[&str], backends: &Backends) -> Vec<String> {
+/// Split off the first whitespace-delimited word; the remainder keeps its
+/// internal spacing (values may contain spaces per the wire protocol doc).
+fn split_word(s: &str) -> (&str, &str) {
+    let s = s.trim_start();
+    match s.find(char::is_whitespace) {
+        Some(i) => (&s[..i], s[i..].trim_start()),
+        None => (s, ""),
+    }
+}
+
+/// Parse `key=value` pairs where values may contain spaces (per the wire
+/// protocol doc). A new pair starts at a token whose prefix before `=` looks
+/// like a key (`[a-z][a-z0-9_]*`); other tokens extend the current value.
+fn parse_args(rest: &str) -> Vec<(String, String)> {
+    let mut out: Vec<(String, String)> = Vec::new();
+    for tok in rest.split_whitespace() {
+        let key = tok.split_once('=').map(|(k, _)| k);
+        let is_key = key.is_some_and(|k| {
+            let mut ch = k.chars();
+            ch.next().is_some_and(|c| c.is_ascii_lowercase())
+                && k.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        });
+        if is_key {
+            let (k, v) = tok.split_once('=').unwrap();
+            out.push((k.to_string(), v.to_string()));
+        } else if let Some(last) = out.last_mut() {
+            if !last.1.is_empty() {
+                last.1.push(' ');
+            }
+            last.1.push_str(tok);
+        }
+    }
+    out
+}
+
+fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<String> {
     match tool {
         "email.search" => email_search(args, &backends.email),
         "email.send" => vec!["ERR email.send disabled_until_cap_confirm".into()],
@@ -145,7 +336,8 @@ fn call_tool(tool: &str, args: &[&str], backends: &Backends) -> Vec<String> {
             skills::get_response(name)
         }
         "skills.save" => {
-            // Stub without body — creates a starter skill on disk.
+            // Reached only via dispatch (tests); the socket path handles
+            // skills.save in handle_client so it can read a LINE…END body.
             let name = arg_val(args, "name").unwrap_or("");
             let desc = arg_val(args, "desc").unwrap_or("User-saved skill.");
             let body = format!("---\nname: {name}\ndescription: {desc}\n---\n\n# {name}\n\n(edit me)\n");
@@ -171,12 +363,13 @@ fn call_tool(tool: &str, args: &[&str], backends: &Backends) -> Vec<String> {
     }
 }
 
-fn arg_val<'a>(args: &[&'a str], key: &str) -> Option<&'a str> {
-    let prefix = format!("{key}=");
-    args.iter().find_map(|a| a.strip_prefix(&prefix))
+fn arg_val<'a>(args: &'a [(String, String)], key: &str) -> Option<&'a str> {
+    args.iter()
+        .find(|(k, _)| k == key)
+        .map(|(_, v)| v.as_str())
 }
 
-fn email_search(args: &[&str], backend: &str) -> Vec<String> {
+fn email_search(args: &[(String, String)], backend: &str) -> Vec<String> {
     let query = arg_val(args, "q").unwrap_or("in:inbox");
     let max: usize = arg_val(args, "max")
         .and_then(|s| s.parse().ok())
@@ -190,6 +383,7 @@ fn email_search(args: &[&str], backend: &str) -> Vec<String> {
 }
 
 fn email_search_mock(query: &str, max: usize) -> Vec<String> {
+    let query = sanitize_field(query);
     let samples = [
         ("Alice Chen", "Q2 planning notes"),
         ("GitHub", "Your Actions workflow run"),
@@ -205,14 +399,16 @@ fn email_search_mock(query: &str, max: usize) -> Vec<String> {
 }
 
 fn email_search_gog(query: &str, max: usize) -> Vec<String> {
+    // `--` stops flag parsing so an untrusted query cannot inject gog flags.
     let output = Command::new("gog")
         .args([
             "gmail",
             "search",
-            query,
             "-j",
             "--results-only",
             "--no-input",
+            "--",
+            query,
         ])
         .output();
 
@@ -313,6 +509,16 @@ mod tests {
     #[test]
     fn dispatch_ping() {
         assert_eq!(dispatch("PING", &test_backends()), vec!["OK pong".to_string()]);
+    }
+
+    #[test]
+    fn scrub_recovers_ping_after_uefi_csi() {
+        let raw = "\u{1b}[2J\u{1b}[01;01HPING\n";
+        assert_eq!(scrub_protocol_line(raw), "PING");
+        let raw2 = "BdsDxe: loading...\n";
+        assert!(!scrub_protocol_line(raw2).starts_with("PING"));
+        let raw3 = "\u{1b}[0mCALL email.search q=x\n";
+        assert_eq!(scrub_protocol_line(raw3), "CALL email.search q=x");
     }
 
     #[test]

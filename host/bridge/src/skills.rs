@@ -134,9 +134,12 @@ pub fn list_response() -> Vec<String> {
     let n = skills.len();
     let mut out = vec![format!("OK skills.list n={n}")];
     for s in &skills {
+        // Frontmatter names are untrusted text: sanitize like desc so a '|'
+        // in a name cannot inject ROW fields.
+        let name = sanitize(&s.name);
         let desc = sanitize(&s.description);
         let src = if s.builtin { "default" } else { "saved" };
-        out.push(format!("ROW name={}|src={src}|desc={desc}", s.name));
+        out.push(format!("ROW name={name}|src={src}|desc={desc}"));
     }
     out.push("END".into());
     out
@@ -147,7 +150,11 @@ pub fn get_response(name: &str) -> Vec<String> {
         Some(body) => {
             let mut out = vec!["OK skills.get".into()];
             for line in body.lines() {
-                out.push(format!("LINE {}", sanitize(line)));
+                // LINE payload is the whole rest of the line, not a ROW with
+                // '|'-separated fields — preserve it verbatim so save→get
+                // round-trips; only strip control chars that would break the
+                // line framing (keep tabs for markdown code blocks).
+                out.push(format!("LINE {}", strip_line_controls(line)));
             }
             out.push("END".into());
             out
@@ -164,6 +171,12 @@ fn sanitize(s: &str) -> String {
             c => c,
         })
         .take(120)
+        .collect()
+}
+
+fn strip_line_controls(s: &str) -> String {
+    s.chars()
+        .map(|c| if c.is_control() && c != '\t' { ' ' } else { c })
         .collect()
 }
 

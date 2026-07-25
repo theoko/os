@@ -34,8 +34,23 @@ fn blend(dst: u32, src: u32, a: u32) -> u32 {
 impl Surface {
     /// # Safety
     /// `addr` must be a valid writable framebuffer for the given geometry.
-    pub unsafe fn new(addr: *mut u8, width: u64, height: u64, pitch: u64, bpp: u16) -> Option<Self> {
+    ///
+    /// All drawing here composes pixels as XRGB (red at bit 16, green at 8,
+    /// blue at 0). `mask_shifts` = Limine's `(red, green, blue)` mask shifts;
+    /// a framebuffer with any other channel order is rejected rather than
+    /// silently rendering with swapped colours.
+    pub unsafe fn new(
+        addr: *mut u8,
+        width: u64,
+        height: u64,
+        pitch: u64,
+        bpp: u16,
+        mask_shifts: (u8, u8, u8),
+    ) -> Option<Self> {
         if bpp != 32 || width == 0 || height == 0 || pitch < width * 4 {
+            return None;
+        }
+        if mask_shifts != (16, 8, 0) {
             return None;
         }
         Some(Self {
@@ -429,5 +444,76 @@ mod tests {
             s.draw_text(38, 20, "clipped", &BODY_FACE, 0, 0x0000_0000);
         }
         assert_eq!(c.buf.len(), 40 * 40);
+    }
+}
+
+/// Largest framebuffer we can double-buffer. Lives in `.bss`, so it costs
+/// nothing in the ISO — Limine zeroes it at load.
+pub const MAX_W: usize = 1280;
+pub const MAX_H: usize = 1024;
+
+static mut BACK: [u32; MAX_W * MAX_H] = [0; MAX_W * MAX_H];
+
+/// Back buffer plus the framebuffer it presents to.
+///
+/// Drawing straight into video memory is why repaints flashed and crawled: a
+/// full-screen `fill` is ~786k *uncached* MMIO writes, and every anti-aliased
+/// pixel costs an MMIO read-modify-write on top. Compositing in cached RAM and
+/// blitting once removes the flash and makes blending roughly free.
+pub struct Screen {
+    back: Surface,
+    fb: *mut u8,
+    fb_pitch: usize,
+    w: usize,
+    h: usize,
+}
+
+impl Screen {
+    /// # Safety
+    /// Same contract as [`Surface::new`].
+    ///
+    /// Returns `None` when the mode is unsupported *or* larger than the back
+    /// buffer; callers should fall back to drawing directly.
+    pub unsafe fn new(
+        addr: *mut u8,
+        width: u64,
+        height: u64,
+        pitch: u64,
+        bpp: u16,
+        mask_shifts: (u8, u8, u8),
+    ) -> Option<Self> {
+        if bpp != 32 || width == 0 || height == 0 || pitch < width * 4 {
+            return None;
+        }
+        if mask_shifts != (16, 8, 0) {
+            return None;
+        }
+        let (w, h) = (width as usize, height as usize);
+        if w > MAX_W || h > MAX_H {
+            return None;
+        }
+        let back = Surface {
+            addr: (&raw mut BACK).cast::<u8>(),
+            width: w,
+            height: h,
+            pitch: w * 4,
+        };
+        Some(Self { back, fb: addr, fb_pitch: pitch as usize, w, h })
+    }
+
+    /// The surface to draw on. Nothing is visible until [`Self::present`].
+    pub fn surface(&self) -> &Surface {
+        &self.back
+    }
+
+    /// Blit the back buffer to the framebuffer.
+    pub fn present(&self) {
+        for y in 0..self.h {
+            let src = unsafe { self.back.addr.add(y * self.back.pitch).cast::<u32>() };
+            let dst = unsafe { self.fb.add(y * self.fb_pitch).cast::<u32>() };
+            for x in 0..self.w {
+                unsafe { dst.add(x).write_volatile(src.add(x).read()) };
+            }
+        }
     }
 }

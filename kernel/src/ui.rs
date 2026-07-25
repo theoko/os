@@ -231,7 +231,7 @@ pub fn draw_home(fb: &Surface, mail: &MailPeek, skills: &SkillPeek, status: &str
 
     // --- footer ---
     let foot = if status.is_empty() {
-        "os 0.7.5  |  limine  |  x86_64"
+        "os 0.7.6  |  limine  |  x86_64"
     } else {
         status
     };
@@ -414,7 +414,7 @@ mod tests {
             "Capability-scoped agents, host connectors on one port,",
             "and skills that stay out of the kernel.",
             "What's wired",
-            "os 0.7.5  |  limine  |  x86_64",
+            "os 0.7.6  |  limine  |  x86_64",
             "bridge connected",
             "bridge offline",
             "Ready",

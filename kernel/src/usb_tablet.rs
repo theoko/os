@@ -280,6 +280,19 @@ impl UsbTablet {
         false
     }
 
+    /// Wait for FRNUM to advance (≤1 ms) after unlinking the frame list, so
+    /// the HC cannot still be executing a QH/TD we are about to rewrite.
+    /// Bounded in case the controller is halted and FRNUM is frozen.
+    fn wait_frame_tick(&self) {
+        let start = self.inw(FRNUM);
+        for _ in 0..200_000 {
+            if self.inw(FRNUM) != start {
+                return;
+            }
+            core::hint::spin_loop();
+        }
+    }
+
     fn control(
         &mut self,
         request_type: u8,
@@ -341,7 +354,7 @@ impl UsbTablet {
             } else {
                 td2_p | 0x4
             };
-            td0.write(Td {
+            td0.write_volatile(Td {
                 link: first_data,
                 status: TD_ACTIVE | (3 << 27),
                 token: setup_token,
@@ -361,7 +374,7 @@ impl UsbTablet {
                 // DATA1 on the first data packet, alternating thereafter.
                 let toggle = if i % 2 == 0 { 1u32 << 19 } else { 0 };
                 let token = ((len - 1) << 21) | toggle | (addr << 8) | tok;
-                (tdv as *mut Td).write(Td {
+                (tdv as *mut Td).write_volatile(Td {
                     link: next,
                     status: TD_ACTIVE | (3 << 27),
                     token,
@@ -377,17 +390,21 @@ impl UsbTablet {
                 TOKEN_IN
             };
             let status_token = (0x7FF << 21) | (1 << 19) | (addr << 8) | stok;
-            td2.write(Td {
+            td2.write_volatile(Td {
                 link: 1,
                 status: TD_ACTIVE | TD_IOC | (3 << 27),
                 token: status_token,
                 buffer: 0,
             });
 
-            qh.write(Qh {
+            qh.write_volatile(Qh {
                 head_link: 1,
                 element: td0_p,
             });
+
+            // The HC reads these structures via DMA: make sure every TD/QH
+            // store above is complete before the frame list publishes them.
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
             for i in 0..1024 {
                 self.dma.fl.add(i).write_volatile(qh_p | 0x2);
@@ -400,6 +417,9 @@ impl UsbTablet {
                     self.dma.fl.add(i).write_volatile(1);
                 }
             }
+            // The HC may have fetched the frame pointer just before the
+            // unlink; let the current frame drain before scratch is reused.
+            self.wait_frame_tick();
             return None;
         }
 
@@ -416,6 +436,7 @@ impl UsbTablet {
                 self.dma.fl.add(i).write_volatile(1);
             }
         }
+        self.wait_frame_tick();
         Some(())
     }
 
@@ -536,6 +557,9 @@ impl UsbTablet {
                 self.dma.fl.add(i).write_volatile(1);
             }
         }
+        // The HC may have fetched this frame's pointer pre-unlink; let the
+        // frame drain before the next arm_interrupt_in rewrites the QH/TD.
+        self.wait_frame_tick();
         self.outstanding = false;
 
         // Stalled / babble / CRC / buffer error → drop, do not flip toggle.
@@ -598,16 +622,18 @@ impl UsbTablet {
             for i in 0..8 {
                 buf_v.add(i).write_volatile(0);
             }
-            td.write(Td {
+            td.write_volatile(Td {
                 link: 1,
                 status: TD_ACTIVE | (3 << 27) | TD_SPD,
                 token,
                 buffer: buf_p,
             });
-            qh.write(Qh {
+            qh.write_volatile(Qh {
                 head_link: 1,
                 element: td_p,
             });
+            // TD/QH must be fully written before the frame list points at them.
+            core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
             for i in 0..1024 {
                 self.dma.fl.add(i).write_volatile(qh_p | 0x2);
             }

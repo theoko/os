@@ -223,7 +223,7 @@ impl Setup {
             self.row(fb, w, y, name, None, i == sel, false, Action::Row(i));
             y += ROW_H + 8;
         }
-        self.footer(fb, w, h, true);
+        self.footer(fb, w, h, y, true);
     }
 
     fn draw_bridge(&mut self, fb: &Surface, w: i32, h: i32, mail: &MailPeek) {
@@ -241,7 +241,7 @@ impl Setup {
             ("Host bridge", "Offline - start it with 'make bridge-run'", theme::OFFLINE)
         };
         self.status_card(fb, w, top, label, detail, tint);
-        self.footer(fb, w, h, true);
+        self.footer(fb, w, h, top + ROW_H + 8, true);
     }
 
     fn draw_caps(&mut self, fb: &Surface, w: i32, h: i32) {
@@ -258,7 +258,7 @@ impl Setup {
             self.row(fb, w, y, name, Some(blurb), on, true, Action::Row(i));
             y += ROW_H + 8;
         }
-        self.footer(fb, w, h, true);
+        self.footer(fb, w, h, y, true);
     }
 
     fn draw_skills(&mut self, fb: &Surface, w: i32, h: i32, skills: &SkillPeek) {
@@ -274,7 +274,7 @@ impl Setup {
             self.row(fb, w, y, skills.name_at(i), None, true, false, Action::Row(i));
             y += ROW_H + 8;
         }
-        self.footer(fb, w, h, true);
+        self.footer(fb, w, h, y, true);
     }
 
     fn draw_done(&mut self, fb: &Surface, w: i32, h: i32) {
@@ -398,8 +398,11 @@ impl Setup {
         self.push_zone(x - 12, y - 8, tw + 24, BTN_FACE.px + 20, Action::Back);
     }
 
-    fn footer(&mut self, fb: &Surface, w: i32, h: i32, back: bool) {
-        let y = h - 150;
+    /// `content_bottom` = y just below the last row/card: on short
+    /// framebuffers the pill moves down rather than overlapping the rows
+    /// (zones are hit first-match, so an overlap misroutes clicks).
+    fn footer(&mut self, fb: &Surface, w: i32, h: i32, content_bottom: i32, back: bool) {
+        let y = (h - 150).max(content_bottom + 24);
         self.primary(fb, w, y, "Continue");
         if back {
             self.back_link(fb, w, y + CTA_H + 26);

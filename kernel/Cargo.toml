@@ -21,3 +21,4 @@ limine = "0.5"
 
 [build-dependencies]
 ab_glyph = "0.2.32"
+serde_json = "1.0.151"

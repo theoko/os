@@ -9,6 +9,8 @@
 *.hdd
 /serial.out
 /.smoke-*
+/.bridge.pid
+/.bridge.log
 .DS_Store
 *.swp
 *~
