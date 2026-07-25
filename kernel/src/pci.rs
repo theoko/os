@@ -102,8 +102,9 @@ pub fn write16(bus: u8, slot: u8, func: u8, offset: u8, val: u16) {
 }
 
 /// UHCI = class 0x0C, subclass 0x03, prog-if 0x00.
-pub fn find_uhci() -> Option<(u8, u8, u8, u16)> {
-    for bus in 0..=0u8 {
+pub fn find_all_uhci() -> heapless_vec::UhciList {
+    let mut out = heapless_vec::UhciList::new();
+    for bus in 0..4u8 {
         for slot in 0..32u8 {
             for func in 0..8u8 {
                 let id = read32(bus, slot, func, 0x00);
@@ -121,10 +122,9 @@ pub fn find_uhci() -> Option<(u8, u8, u8, u16)> {
                     let bar4 = read32(bus, slot, func, 0x20);
                     if bar4 & 1 == 1 {
                         let io = (bar4 & 0xFFE0) as u16;
-                        // Enable I/O + bus master
                         let cmd = read16(bus, slot, func, 0x04);
                         write16(bus, slot, func, 0x04, cmd | 0x05);
-                        return Some((bus, slot, func, io));
+                        out.push((bus, slot, func, io));
                     }
                 }
                 let header = (read32(bus, slot, func, 0x0C) >> 16) as u8;
@@ -134,8 +134,12 @@ pub fn find_uhci() -> Option<(u8, u8, u8, u16)> {
             }
         }
     }
-    // Also scan bus 0 more carefully already done; try buses 0..3 for q35
-    for bus in 1..4u8 {
+    out
+}
+
+/// EHCI = class 0x0C, subclass 0x03, prog-if 0x20. Returns MMIO BAR phys.
+pub fn find_ehci_mmio() -> Option<(u8, u8, u8, u64)> {
+    for bus in 0..4u8 {
         for slot in 0..32u8 {
             for func in 0..8u8 {
                 let id = read32(bus, slot, func, 0x00);
@@ -149,19 +153,51 @@ pub fn find_uhci() -> Option<(u8, u8, u8, u16)> {
                 let base_class = (class >> 24) & 0xFF;
                 let subclass = (class >> 16) & 0xFF;
                 let prog_if = (class >> 8) & 0xFF;
-                if base_class == 0x0C && subclass == 0x03 && prog_if == 0x00 {
-                    let bar4 = read32(bus, slot, func, 0x20);
-                    if bar4 & 1 == 1 {
-                        let io = (bar4 & 0xFFE0) as u16;
+                if base_class == 0x0C && subclass == 0x03 && prog_if == 0x20 {
+                    let bar0 = read32(bus, slot, func, 0x10);
+                    if bar0 & 1 == 0 {
+                        let mem = (bar0 & 0xFFFF_FFF0) as u64;
                         let cmd = read16(bus, slot, func, 0x04);
-                        write16(bus, slot, func, 0x04, cmd | 0x05);
-                        return Some((bus, slot, func, io));
+                        write16(bus, slot, func, 0x04, cmd | 0x06); // mem + bus master
+                        return Some((bus, slot, func, mem));
                     }
+                }
+                let header = (read32(bus, slot, func, 0x0C) >> 16) as u8;
+                if func == 0 && header & 0x80 == 0 {
+                    break;
                 }
             }
         }
     }
     None
+}
+
+/// Tiny fixed vec so we don't need alloc — max 8 UHCI controllers.
+pub mod heapless_vec {
+    pub struct UhciList {
+        data: [(u8, u8, u8, u16); 8],
+        len: usize,
+    }
+    impl UhciList {
+        pub const fn new() -> Self {
+            Self {
+                data: [(0, 0, 0, 0); 8],
+                len: 0,
+            }
+        }
+        pub fn push(&mut self, v: (u8, u8, u8, u16)) {
+            if self.len < self.data.len() {
+                self.data[self.len] = v;
+                self.len += 1;
+            }
+        }
+        pub fn is_empty(&self) -> bool {
+            self.len == 0
+        }
+        pub fn iter(&self) -> impl Iterator<Item = &(u8, u8, u8, u16)> {
+            self.data[..self.len].iter()
+        }
+    }
 }
 
 #[cfg(target_arch = "x86_64")]
