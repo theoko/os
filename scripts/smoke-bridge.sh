@@ -270,6 +270,22 @@ if not allowed_mail.startswith("OK email.search"):
     sys.exit(1)
 print("smoke-bridge: email.search email=1 ok")
 
+denied_cal = call("CALL calendar.list")
+if "needs_email_cap" not in denied_cal:
+    print("error: calendar.list must require email=1", file=sys.stderr)
+    print(denied_cal, file=sys.stderr)
+    sys.exit(1)
+allowed_cal = call("CALL calendar.list email=1")
+if not allowed_cal.startswith("OK calendar.list"):
+    print("error: calendar.list email=1 must succeed", file=sys.stderr)
+    print(allowed_cal, file=sys.stderr)
+    sys.exit(1)
+if "ROW " not in allowed_cal or "title=" not in allowed_cal:
+    print("error: calendar.list email=1 must return a ROW", file=sys.stderr)
+    print(allowed_cal, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: calendar.list email=1 ok")
+
 forgot_mail = call("CALL email.forget")
 if not forgot_mail.startswith("OK email.forget"):
     print("error: email.forget failed", file=sys.stderr)

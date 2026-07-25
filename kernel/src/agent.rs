@@ -8,7 +8,7 @@
 
 use crate::caps::{Cap, Caps};
 use crate::level::Level;
-use crate::mcp::{self, BridgeStatus, MailPeek, SearchPeek};
+use crate::mcp::{self, BridgeStatus, CalendarPeek, MailPeek, SearchPeek};
 
 /// Which builtin playbook the runner knows how to execute.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -196,6 +196,7 @@ const PLAYBOOK_TOOLS: &[(&str, Cap)] = &[
     ("teddy.health", Cap::PortalSync),
     ("market.health", Cap::PortalSync),
     ("doc.read", Cap::SearchQuery),
+    ("calendar.list", Cap::EmailSearch),
 ];
 
 /// Scan playbook prose for known tool spellings (substring, ASCII).
@@ -290,6 +291,15 @@ pub fn run_playbook_allowed(brief: &mut Brief, caps: Caps, body: &str) {
         }
     }
 
+    // calendar.list shares Cap::EmailSearch / email=1 with mail.
+    if bit_set(bits, 9) && caps.allows(Cap::EmailSearch) && brief.count < brief.lines.len() {
+        let cal = mcp::fetch_calendar_peek(caps);
+        if brief.status != BridgeStatus::Online {
+            brief.status = cal.status;
+        }
+        fill_calendar_lines(brief, &cal);
+    }
+
     if bit_set(bits, 1) && caps.allows(Cap::SearchQuery) && brief.count < brief.lines.len() {
         let peek = mcp::fetch_search_peek(caps, "capability-agent");
         if brief.status != BridgeStatus::Online {
@@ -362,6 +372,7 @@ fn run_inbox(brief: &mut Brief, caps: Caps, triage: bool) {
     });
     brief.push_plan("Check email.search grant");
     brief.push_plan("CALL email.search q=in:inbox max=5");
+    brief.push_plan("CALL calendar.list under the same grant");
     brief.push_plan(if triage {
         "Rank: reply / wait / skip"
     } else {
@@ -382,9 +393,13 @@ fn run_inbox(brief: &mut Brief, caps: Caps, triage: bool) {
     }
     if mail.count == 0 {
         brief.push_line("FYI", "Inbox empty right now.");
-        return;
+    } else {
+        fill_mail_lines(brief, &mail, triage);
     }
-    fill_mail_lines(brief, &mail, triage);
+    if brief.count < brief.lines.len() {
+        let cal = mcp::fetch_calendar_peek(caps);
+        fill_calendar_lines(brief, &cal);
+    }
 }
 
 fn fill_mail_lines(brief: &mut Brief, mail: &MailPeek, triage: bool) {
@@ -427,6 +442,52 @@ fn fill_mail_lines(brief: &mut Brief, mail: &MailPeek, triage: bool) {
         }
         let line = core::str::from_utf8(&text[..n]).unwrap_or(subj);
         brief.push_line(tag, line);
+    }
+}
+
+fn fill_calendar_lines(brief: &mut Brief, cal: &CalendarPeek) {
+    if cal.denied {
+        return;
+    }
+    if cal.status == BridgeStatus::Offline {
+        brief.push_line("Info", "Bridge offline for calendar.");
+        return;
+    }
+    if cal.count == 0 {
+        brief.push_line("FYI", "No upcoming events.");
+        return;
+    }
+    for i in 0..cal.count.min(2) {
+        if brief.count >= brief.lines.len() {
+            break;
+        }
+        let title = cal.title_at(i);
+        let when = cal.when_at(i);
+        if when.is_empty() {
+            brief.push_line("Event", title);
+        } else {
+            let mut text = [0u8; 68];
+            let mut n = 0;
+            for &b in title.as_bytes().iter().take(40) {
+                text[n] = b;
+                n += 1;
+            }
+            if n + 3 < text.len() {
+                text[n] = b' ';
+                text[n + 1] = b'-';
+                text[n + 2] = b' ';
+                n += 3;
+            }
+            for &b in when.as_bytes() {
+                if n >= text.len() {
+                    break;
+                }
+                text[n] = b;
+                n += 1;
+            }
+            let line = core::str::from_utf8(&text[..n]).unwrap_or(title);
+            brief.push_line("Event", line);
+        }
     }
 }
 
@@ -560,7 +621,7 @@ fn run_plan_act(brief: &mut Brief, caps: Caps) {
         brief.push_line("Plan", "Acting only with switches that are on.");
     }
 
-    // Mail lane when granted.
+    // Mail + calendar when granted (same Cap::EmailSearch / email=1 bit).
     if caps.allows(Cap::EmailSearch) {
         let mail = mcp::fetch_mail_peek(caps);
         brief.status = mail.status;
@@ -570,6 +631,10 @@ fn run_plan_act(brief: &mut Brief, caps: Caps) {
             brief.push_line("FYI", "Inbox empty.");
         } else {
             brief.push_line("Info", "Bridge offline for mail.");
+        }
+        if brief.count < brief.lines.len() {
+            let cal = mcp::fetch_calendar_peek(caps);
+            fill_calendar_lines(brief, &cal);
         }
     } else {
         brief.push_line("Info", "Email off - skipping inbox.");
@@ -864,6 +929,31 @@ mod tests {
     }
 
     #[test]
+    fn calendar_playbook_needs_email_without_com2() {
+        let body = "Check calendar.list for the afternoon.";
+        assert!(playbook_tool_bits(body) & (1 << 9) != 0);
+        let mut brief = run("cal-saved", Caps::none());
+        enrich_playbook(&mut brief, Caps::none(), body);
+        run_playbook_allowed(&mut brief, Caps::none(), body);
+        assert!(brief.denied);
+        assert_eq!(brief.deny_name(), "email.search");
+        assert!(!brief.lines.iter().any(|l| l.tag() == "Event"));
+    }
+
+    #[test]
+    fn calendar_lines_format_title_and_when() {
+        let mut brief = Brief::empty();
+        let mut cal = CalendarPeek::empty(BridgeStatus::Online, false);
+        copy_field(&mut cal.rows[0].title, "Demo event");
+        copy_field(&mut cal.rows[0].when, "tomorrow");
+        cal.count = 1;
+        fill_calendar_lines(&mut brief, &cal);
+        assert_eq!(brief.lines[0].tag(), "Event");
+        assert!(brief.lines[0].text().contains("Demo event"));
+        assert!(brief.lines[0].text().contains("tomorrow"));
+    }
+
+    #[test]
     fn teddy_skill_names_the_portal_cap_when_missing() {
         let b = run("teddy-portals", Caps::none());
         assert!(b.denied);
@@ -1033,6 +1123,10 @@ mod tests {
             "tsearch.sync: warm Online services on Caps.",
             "Acting only with switches that are on.",
             "CALL tools already granted",
+            "CALL calendar.list under the same grant",
+            "Bridge offline for calendar.",
+            "No upcoming events.",
+            "Read inbox and calendar",
         ] {
             assert!(
                 s.bytes().all(|b| (0x20..=0x7E).contains(&b)),

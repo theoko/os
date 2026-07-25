@@ -49,7 +49,7 @@ impl Cap {
     /// The consequence of granting it, in one clause (Guided UI).
     pub const fn detail(self) -> &'static str {
         match self {
-            Cap::EmailSearch => "Read your inbox",
+            Cap::EmailSearch => "Read inbox and calendar",
             Cap::SearchQuery => "Search what ships with the OS",
             Cap::WorkspaceIndex => "Search project folders you choose",
             Cap::AudioTranscribe => "Type a media path in Search",
@@ -215,6 +215,13 @@ mod tests {
         assert_eq!(Cap::EmailSearch.name(), "email.search");
         assert_eq!(Cap::SearchQuery.name(), "search.query");
         assert_eq!(Cap::SkillsSave.name(), "skills.save");
+    }
+
+    #[test]
+    fn email_detail_names_calendar() {
+        let d = Cap::EmailSearch.detail();
+        assert!(d.contains("calendar"), "{d}");
+        assert!(d.bytes().all(|b| (0x20..=0x7E).contains(&b)), "{d}");
     }
 
     #[test]

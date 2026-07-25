@@ -365,6 +365,11 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
         }
         "email.search" => email_search(args, &backends.email),
         "email.send" => vec!["ERR email.send disabled_until_cap_confirm".into()],
+        // Same Google identity as email.search — no ambient calendar without
+        // the email wire bit (reuse Cap::EmailSearch on the guest).
+        "calendar.list" if !matches!(arg_val(args, "email"), Some("1")) => {
+            vec!["ERR calendar.list needs_email_cap".into()]
+        }
         "calendar.list" => vec![
             "OK calendar.list n=1".into(),
             "ROW title=Demo event|when=tomorrow".into(),
@@ -965,6 +970,24 @@ mod tests {
         assert!(
             denied[0].contains("needs_audio_cap"),
             "ungated audio.transcribe: {denied:?}"
+        );
+    }
+
+    #[test]
+    fn calendar_list_needs_the_email_cap() {
+        let denied = dispatch("CALL calendar.list", &test_backends());
+        assert!(
+            denied[0].contains("needs_email_cap"),
+            "ungated calendar.list: {denied:?}"
+        );
+        let allowed = dispatch("CALL calendar.list email=1", &test_backends());
+        assert!(
+            allowed[0].starts_with("OK calendar.list"),
+            "email=1 should list: {allowed:?}"
+        );
+        assert!(
+            allowed.iter().any(|l| l.starts_with("ROW ") && l.contains("title=")),
+            "expected a demo ROW: {allowed:?}"
         );
     }
 

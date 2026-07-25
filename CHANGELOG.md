@@ -1,8 +1,18 @@
 ---
-version: 0.9.20
+version: 0.9.21
 ---
 
 # Changelog
+
+## 0.9.21 — 2026-07-25
+
+Calendar is not ambient:
+
+- Bridge `calendar.list` requires `email=1` (same consent as `email.search`);
+  mock demo ROW when allowed. Smoke + unit cover deny/allow.
+- Guest `fetch_calendar_peek` refuses without `Cap::EmailSearch` (no COM2).
+  Morning / inbox / playbook act surface `Event` lines when Email is on.
+- Caps Email detail: "Read inbox and calendar".
 
 ## 0.9.20 — 2026-07-25
 

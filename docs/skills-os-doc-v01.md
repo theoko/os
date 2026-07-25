@@ -79,4 +79,8 @@ never opens COM2. Path/URL/write tools (`audio.transcribe`, `doc.read`,
 still not a script, and `email.send` stays disabled. One-line `skills.save`
 starters ship with suggested tool names so the plan is non-empty.
 
+From **0.9.21** `calendar.list` is also a granted peek (same `email=1` /
+`Cap::EmailSearch` as mail). The bridge refuses without the wire bit — no
+ambient calendar just because LIST names the tool.
+
 Also see [`docs/search-os-doc-v01.md`](search-os-doc-v01.md).
