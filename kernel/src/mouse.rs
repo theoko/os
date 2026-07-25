@@ -250,9 +250,11 @@ pub struct CursorMotion {
 }
 
 const MOTION_ONE: i32 = 1 << 16;
-const GENTLE_FOLLOW: i32 = 22_000;
-const FAST_FOLLOW: i32 = 50_000;
-const FAST_INPUT_PX: i32 = 36;
+/// Soft follow — chill game-pad glide for precise moves.
+const GENTLE_FOLLOW: i32 = 14_000;
+/// Still catches up on flicks, without snapping like a desktop OS.
+const FAST_FOLLOW: i32 = 42_000;
+const FAST_INPUT_PX: i32 = 48;
 
 impl CursorMotion {
     pub const fn new(x: i32, y: i32) -> Self {

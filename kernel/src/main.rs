@@ -11,9 +11,9 @@ use limine::request::{
 };
 
 const STACK_SIZE: u64 = 128 * 1024;
-/// Cursor animations are capped at the display-friendly 60 Hz.  When the
-/// pointer is still, the loop does no timed rendering at all.
-const FRAME_US: u32 = 1_000_000 / 60;
+/// Chill game loop: always paced at 60 Hz so ambient motion keeps breathing
+/// even when the pointer is still.
+const FRAME_US: u32 = anim::FRAME_US_60;
 
 #[used]
 #[unsafe(link_section = ".requests")]
@@ -223,7 +223,8 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut page = mcp::DocPage::empty(mcp::BridgeStatus::Offline, false);
                 let mut open_title = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut view = screens::View::Home;
-                let caret = true;
+                let mut tick: u32 = 0;
+                let mut caret = true;
                 // First boot: run the setup journey before the home screen.
                 cursor.hide(surface);
                 setup.draw(surface, &mail, &skill_peek);
@@ -757,22 +758,66 @@ unsafe extern "C" fn kmain() -> ! {
                         motion.snap(x, y);
                     }
                     prev_buttons = buttons;
-                    if moved || motion.active() {
-                        if let Some((draw_x, draw_y)) = motion.step() {
-                            cursor.show_at(surface, draw_x, draw_y);
-                            // hide()/show_at() marked both footprints;
-                            // present() blits exactly that union and nothing else.
-                            screen.present();
+
+                    // --- 60 Hz chill frame ---------------------------------
+                    tick = tick.wrapping_add(1);
+                    let caret_now = (tick / 36) % 2 == 0; // ~1.2 Hz blink
+                    let blink_changed = caret_now != caret;
+                    caret = caret_now;
+
+                    cursor.hide(surface);
+                    // Soft accent breath on the nav hairline (home + search chrome).
+                    if setup.is_finished()
+                        && matches!(
+                            view,
+                            screens::View::Home
+                                | screens::View::Search
+                                | screens::View::Skills
+                                | screens::View::Caps
+                                | screens::View::Brief
+                                | screens::View::Reader
+                        )
+                    {
+                        ui::paint_chill_rule(surface, w, tick);
+                    }
+                    // Caret blink: redraw field views when the phase flips.
+                    if blink_changed && setup.is_finished() {
+                        match view {
+                            screens::View::Home => {
+                                ui::draw_home_full(
+                                    surface,
+                                    &mail,
+                                    &skill_peek,
+                                    status_str(&status_buf, status_len),
+                                    query.as_str(),
+                                    caret,
+                                    grants,
+                                    &brief,
+                                    level,
+                                );
+                                ui::paint_chill_rule(surface, w, tick);
+                            }
+                            screens::View::Search => {
+                                searchui::draw(
+                                    surface,
+                                    &sview,
+                                    query.as_str(),
+                                    caret,
+                                    bridge_note(&mail),
+                                    level,
+                                );
+                                ui::paint_chill_rule(surface, w, tick);
+                            }
+                            _ => {}
                         }
                     }
-                    if motion.active() {
-                        frame_mark = anim::pace(frame_mark, FRAME_US);
+                    if let Some((draw_x, draw_y)) = motion.step() {
+                        cursor.show_at(surface, draw_x, draw_y);
                     } else {
-                        // Reset the mark while idle so the next active frame
-                        // begins immediately instead of inheriting old time.
-                        frame_mark = serial::rdtsc();
+                        cursor.show_at(surface, x, y);
                     }
-                    core::hint::spin_loop();
+                    screen.present();
+                    frame_mark = anim::pace(frame_mark, FRAME_US);
                 }
             } else {
                 serial_port.write_str("fb: unsupported format\n");

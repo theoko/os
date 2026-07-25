@@ -1,8 +1,20 @@
 ---
-version: 0.9.18
+version: 0.9.19
 ---
 
 # Changelog
+
+## 0.9.19 — 2026-07-25
+
+Chill 60 fps game loop:
+
+- Main loop always paces at 60 Hz (`anim::FRAME_US_60`) so the UI keeps a
+  quiet pulse when the pointer is still — not only when something moves.
+- Soft nav hairline breath, ~1.2 Hz caret blink on Home/Search, gentler
+  screen entrances (12 frames / 22 px), softer pointer glide, chillier
+  startup chime.
+- Ambient chrome stays cheap (1 px rule + dirty present); no inference in
+  the kernel.
 
 ## 0.9.18 — 2026-07-25
 

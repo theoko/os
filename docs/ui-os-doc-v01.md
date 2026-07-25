@@ -49,8 +49,18 @@ not inferred from caps, bridge, or click history. RAM-only until reboot.
 
 Code: [`kernel/src/level.rs`](../kernel/src/level.rs), setup Experience step.
 
+## Chill 60 Hz loop (v0.9.19)
+
+After the framebuffer is up, the guest runs a paced **60 fps** game loop
+(`anim::FRAME_US_60`). Ambient motion — nav-rule breath, caret blink,
+soft pointer glide — keeps going when input is idle. Screen entrances are
+short eased slides; the startup chime is quieter and a touch slower.
+
+Code: [`kernel/src/anim.rs`](../kernel/src/anim.rs), [`kernel/src/main.rs`](../kernel/src/main.rs).
+
 ## Code
 
 - [`kernel/src/ui.rs`](../kernel/src/ui.rs)
 - [`kernel/src/fb.rs`](../kernel/src/fb.rs)
 - [`kernel/src/level.rs`](../kernel/src/level.rs)
+- [`kernel/src/anim.rs`](../kernel/src/anim.rs)

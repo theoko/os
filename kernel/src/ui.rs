@@ -34,7 +34,22 @@ pub mod theme {
     pub const OFFLINE: u32 = 0x00FF_3B30;
 }
 
-const NAV_H: i32 = 56;
+pub const NAV_H: i32 = 56;
+
+/// Soft nav hairline that breathes with the 60 Hz chill loop.
+///
+/// Cheap: one 1px strip. Keeps the UI alive when the pointer is still —
+/// the difference between a frozen form and a quiet game menu.
+pub fn paint_chill_rule(fb: &Surface, w: i32, phase: u32) {
+    let t = crate::anim::breath(phase);
+    // Keep it subtle: at most ~35% of the way from RULE toward ACCENT.
+    let amt = (t as i64 * (ONE_CHILL as i64) / (crate::anim::ONE as i64)) as i32;
+    let c = crate::anim::lerp_color(theme::RULE, theme::ACCENT, amt);
+    fb.fill_rect(0, NAV_H, w, 1, c);
+}
+
+/// Peak blend strength for the chill rule (Q16) — about a third of the way.
+const ONE_CHILL: i32 = crate::anim::ONE / 3;
 const PAD_X: i32 = 28;
 const CONTENT_MAX: i32 = 920;
 
@@ -724,6 +739,17 @@ mod tests {
         assert_eq!(t.hit(r.x + 8, r.y + 8), Some(HomeHit::Brief));
         let empty = home_targets(1024, 768, &peek(), &empty_brief());
         assert_ne!(empty.hit(r.x + 8, r.y + 8), Some(HomeHit::Brief));
+    }
+
+    #[test]
+    fn chill_rule_blend_stays_between_rule_and_accent() {
+        // Peak breath should not reach full accent — ambient, not flashing.
+        let peak = crate::anim::breath(90);
+        let amt = (peak as i64 * (ONE_CHILL as i64) / (crate::anim::ONE as i64)) as i32;
+        assert!(amt > 0 && amt < crate::anim::ONE / 2, "amt={amt}");
+        let c = crate::anim::lerp_color(theme::RULE, theme::ACCENT, amt);
+        assert_ne!(c, theme::RULE);
+        assert_ne!(c, theme::ACCENT);
     }
 
     #[test]
