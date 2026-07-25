@@ -42,7 +42,9 @@ for _ in $(seq 1 50); do
     cat "$BRIDGE_LOG" >&2
     exit 1
   fi
-  if nc -z "$BRIDGE_HOST" "$BRIDGE_PORT" 2>/dev/null; then
+  # Prefer python: many CI images ship without `nc`.
+  if python3 -c "import socket; s=socket.create_connection(('${BRIDGE_HOST}', int('${BRIDGE_PORT}')), 0.2); s.close()" 2>/dev/null \
+    || nc -z "$BRIDGE_HOST" "$BRIDGE_PORT" 2>/dev/null; then
     bridge_up=1
     break
   fi
