@@ -168,15 +168,99 @@ pub fn run(name: &str, caps: Caps) -> Brief {
         Kind::TeddyPortals => run_teddy(&mut brief, caps),
         Kind::MarketPortals => run_markets(&mut brief, caps),
         Kind::Unknown => {
-            // Saved / custom skills: Brief always, with body peek filled by the
-            // click path. No MCP tool plan until a guest runner exists.
-            brief.set_heading("Playbook only");
-            brief.push_plan("Show playbook body from the host");
-            brief.push_plan("No guest MCP plan for this name");
-            brief.push_line("Info", "Saved skills show body text until they get a runner.");
+            // Saved / custom skills: Brief always. The click path fetches the
+            // body and [`enrich_playbook`] names tools + missing grants.
+            // Still no auto-CALL — markdown is not executable kernel code.
+            brief.set_heading("Playbook plan");
+            brief.push_plan("Read playbook from the host");
+            brief.push_plan("Name tools the playbook mentions");
+            brief.push_plan("Report missing grants");
+            brief.push_plan("Do not auto-CALL from markdown");
+            brief.push_line("Info", "Preview only - saved skills do not auto-run MCP.");
         }
     }
     brief
+}
+
+/// Tools a playbook may name, mapped to the grant that would allow them.
+const PLAYBOOK_TOOLS: &[(&str, Cap)] = &[
+    ("email.search", Cap::EmailSearch),
+    ("search.query", Cap::SearchQuery),
+    ("workspace.index", Cap::WorkspaceIndex),
+    ("audio.transcribe", Cap::AudioTranscribe),
+    ("skills.save", Cap::SkillsSave),
+    ("tsearch.sync", Cap::PortalSync),
+    ("teddy.health", Cap::PortalSync),
+    ("market.health", Cap::PortalSync),
+    ("doc.read", Cap::SearchQuery),
+];
+
+/// Scan playbook prose for known tool spellings (substring, ASCII).
+///
+/// Returns a bit per [`PLAYBOOK_TOOLS`] entry (low bit = index 0). Pure: safe
+/// in host unit tests with no COM2.
+pub fn playbook_tool_bits(body: &str) -> u32 {
+    let mut bits = 0u32;
+    for (i, (tool, _)) in PLAYBOOK_TOOLS.iter().enumerate() {
+        if body.contains(tool) {
+            bits |= 1u32 << i;
+        }
+    }
+    bits
+}
+
+/// Fill Body / Tool / Need lines from playbook text after [`run`] for Unknown.
+///
+/// Does not issue MCP calls — only previews what the playbook asks for.
+pub fn enrich_playbook(brief: &mut Brief, caps: Caps, body: &str) {
+    // First non-empty prose line as Body (skip markdown headings if possible).
+    let mut body_line = "";
+    for line in body.lines() {
+        let t = line.trim();
+        if t.is_empty() || t == "---" {
+            continue;
+        }
+        if t.starts_with('#') {
+            let rest = t.trim_start_matches('#').trim();
+            if !rest.is_empty() && body_line.is_empty() {
+                body_line = rest;
+            }
+            continue;
+        }
+        body_line = t;
+        break;
+    }
+    if !body_line.is_empty() {
+        brief.push_report("Body", body_line);
+    } else {
+        brief.push_report("Info", "Playbook body unavailable.");
+    }
+
+    let bits = playbook_tool_bits(body);
+    if bits == 0 {
+        brief.push_line("Info", "No known MCP tools named in this playbook.");
+        return;
+    }
+
+    // One Tool line per mention, then Need for grants still off. Leave room
+    // for the Info/Body lines already pushed (max 8).
+    for (i, (tool, cap)) in PLAYBOOK_TOOLS.iter().enumerate() {
+        if bits & (1u32 << i) == 0 {
+            continue;
+        }
+        if brief.count >= brief.lines.len() {
+            break;
+        }
+        brief.push_line("Tool", tool);
+        if !caps.allows(*cap) && brief.count < brief.lines.len() {
+            // need() sets denied; prefer the first missing grant as deny_cap.
+            if !brief.denied {
+                brief.need(*cap);
+            } else {
+                brief.push_line("Need", cap.label());
+            }
+        }
+    }
 }
 
 /// Morning brief used on home after setup: plan/act over whatever is granted.
@@ -430,7 +514,7 @@ fn run_plan_act(brief: &mut Brief, caps: Caps) {
         brief.push_line("Info", "Your files on - open file hits from Search.");
     }
     if caps.allows(Cap::AudioTranscribe) {
-        brief.push_line("Info", "Recordings on - open audio hits from Search.");
+        brief.push_line("Info", "Recordings on - type /path.wav in Search.");
     }
 
     // Live portals when Online services is on — teddy first, then markets.
@@ -626,10 +710,42 @@ mod tests {
     fn unknown_skill_opens_a_brief_without_com2() {
         // Host unit tests must not grant anything that would open COM2.
         let b = run("guest-starter", Caps::none());
-        assert_eq!(b.heading(), "Playbook only");
+        assert_eq!(b.heading(), "Playbook plan");
         assert!(b.plan_n >= 2);
         assert!(!b.denied);
         assert!(b.lines.iter().any(|l| l.tag() == "Info"));
+    }
+
+    #[test]
+    fn playbook_scan_names_tools_and_missing_grants() {
+        let body = "Triages mail with email.search then search.query for context.";
+        let bits = playbook_tool_bits(body);
+        assert!(bits & 1 != 0, "email.search");
+        assert!(bits & (1 << 1) != 0, "search.query");
+
+        let mut brief = run("custom-saved", Caps::none());
+        enrich_playbook(&mut brief, Caps::none(), body);
+        assert!(brief.lines.iter().any(|l| l.tag() == "Tool" && l.text() == "email.search"));
+        assert!(brief.lines.iter().any(|l| l.tag() == "Tool" && l.text() == "search.query"));
+        assert!(brief.denied);
+        assert_eq!(brief.deny_name(), "email.search");
+        assert!(brief.lines.iter().any(|l| l.tag() == "Need" && l.text() == "Email"));
+        assert!(brief.lines.iter().any(|l| l.tag() == "Need" && l.text() == "Built-in docs"));
+    }
+
+    #[test]
+    fn playbook_scan_respects_grants_already_on() {
+        let mut caps = Caps::none();
+        caps.set(Cap::SearchQuery, true);
+        let mut brief = run("custom-saved", caps);
+        enrich_playbook(
+            &mut brief,
+            caps,
+            "Only search.query is named here.",
+        );
+        assert!(brief.lines.iter().any(|l| l.tag() == "Tool"));
+        assert!(!brief.denied, "granted tool must not mark Need");
+        assert!(!brief.lines.iter().any(|l| l.tag() == "Need"));
     }
 
     #[test]
@@ -782,11 +898,12 @@ mod tests {
             "Bridge offline - cannot save.",
             "Save skills off - no write.",
             "skills.save failed on the host.",
-            "Playbook only",
-            "Saved skills show body text until they get a runner.",
+            "Playbook plan",
+            "Preview only - saved skills do not auto-run MCP.",
+            "No known MCP tools named in this playbook.",
             "Playbook body unavailable.",
             "Your files on - open file hits from Search.",
-            "Recordings on - open audio hits from Search.",
+            "Recordings on - type /path.wav in Search.",
             "Acting only with switches that are on.",
         ] {
             assert!(

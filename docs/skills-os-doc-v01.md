@@ -64,4 +64,10 @@ From **0.9.11** every Skills row opens Brief — builtins run their MCP plan;
 saved/unknown skills show a playbook body peek (`skills.get`) instead of a
 footer blurb.
 
+From **0.9.16** that peek is a **plan preview**: the guest scans the body for
+known tool spellings, lists them as `Tool` lines, and marks `Need` for grants
+still off. It does **not** auto-CALL anything from markdown. One-line
+`skills.save` starters ship with suggested `search.query` / `email.search` /
+`audio.transcribe` lines so the preview is non-empty.
+
 Also see [`docs/search-os-doc-v01.md`](search-os-doc-v01.md).

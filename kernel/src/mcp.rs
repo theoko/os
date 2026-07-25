@@ -564,16 +564,24 @@ fn skill_name_ok(name: &str) -> bool {
 ///
 /// Returns `false` when the bridge is down or the skill is missing.
 pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
+    fetch_skill_body(name, out) > 0
+}
+
+/// Playbook body from `CALL skills.get`, frontmatter stripped, into `out`.
+///
+/// Concatenates body lines with newlines so [`crate::agent::enrich_playbook`]
+/// can scan for tool names. Returns bytes written (0 = offline / missing).
+pub fn fetch_skill_body(name: &str, out: &mut [u8]) -> usize {
     out.fill(0);
-    if name.is_empty() {
-        return false;
+    if name.is_empty() || out.is_empty() {
+        return 0;
     }
     let com2 = Serial::com2();
     com2.init();
     let mut line = [0u8; LINE_BUF];
 
     if matches!(ping_bridge(&com2, &mut line), BridgeStatus::Offline) {
-        return false;
+        return 0;
     }
 
     com2.write_str("CALL skills.get name=");
@@ -583,6 +591,7 @@ pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
     let mut first = true;
     let mut in_frontmatter = false;
     let mut saw_fm_open = false;
+    let mut wrote = 0usize;
     for _ in 0..40 {
         let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
         let Some(n) = com2.read_line(&mut line, timeout) else {
@@ -599,7 +608,7 @@ pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
         let Some(body) = resp.strip_prefix("LINE ") else {
             continue;
         };
-        // Skip YAML frontmatter so the blurb is real prose, not `---`.
+        // Skip YAML frontmatter so the body is real prose, not `---`.
         if body.trim() == "---" {
             if !saw_fm_open {
                 saw_fm_open = true;
@@ -612,14 +621,20 @@ pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
         if in_frontmatter {
             continue;
         }
-        let text = body.trim();
-        if text.is_empty() {
-            continue;
+        if wrote > 0 && wrote < out.len() {
+            out[wrote] = b'\n';
+            wrote += 1;
         }
-        copy_field(out, text);
-        return true;
+        let raw = body.as_bytes();
+        let room = out.len().saturating_sub(wrote);
+        let n = raw.len().min(room);
+        out[wrote..wrote + n].copy_from_slice(&raw[..n]);
+        wrote += n;
+        if wrote >= out.len() {
+            break;
+        }
     }
-    false
+    wrote
 }
 
 fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {

@@ -557,15 +557,12 @@ unsafe extern "C" fn kmain() -> ! {
                                     let name = skill_peek.name_at(i);
                                     brief = agent::run(name, grants);
                                     if !agent::is_runnable(name) {
-                                        let mut blurb = [0u8; 68];
-                                        if mcp::fetch_skill_blurb(name, &mut blurb) {
-                                            let n = blurb
-                                                .iter()
-                                                .position(|&b| b == 0)
-                                                .unwrap_or(blurb.len());
-                                            let body = core::str::from_utf8(&blurb[..n])
-                                                .unwrap_or(name);
-                                            brief.push_report("Body", body);
+                                        let mut body_buf = [0u8; 512];
+                                        let n = mcp::fetch_skill_body(name, &mut body_buf);
+                                        if n > 0 {
+                                            let body = core::str::from_utf8(&body_buf[..n])
+                                                .unwrap_or("");
+                                            agent::enrich_playbook(&mut brief, grants, body);
                                             serial_port.write_str("skills: brief ");
                                             serial_port.write_str(name);
                                             serial_port.write_str("\n");

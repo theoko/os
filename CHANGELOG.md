@@ -1,8 +1,19 @@
 ---
-version: 0.9.15
+version: 0.9.16
 ---
 
 # Changelog
+
+## 0.9.16 — 2026-07-25
+
+Saved-skill playbook plan preview (still no auto-CALL):
+
+- Unknown / saved skills open a **Playbook plan** Brief; the click path
+  fetches the body and names mentioned tools (`email.search`, …) plus
+  missing grants. Markdown stays non-executable.
+- Starter `skills.save` bodies include suggested tools so the preview is
+  useful out of the box; smoke checks `skills.get`.
+- Caps / morning brief: Recordings copy points at the Search media path.
 
 ## 0.9.15 — 2026-07-25
 

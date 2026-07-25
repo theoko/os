@@ -52,7 +52,7 @@ impl Cap {
             Cap::EmailSearch => "Read your inbox",
             Cap::SearchQuery => "Search what ships with the OS",
             Cap::WorkspaceIndex => "Search project folders you choose",
-            Cap::AudioTranscribe => "Transcribe audio you point it at",
+            Cap::AudioTranscribe => "Type a media path in Search",
             Cap::SkillsSave => "Write new playbooks to disk",
             Cap::PortalSync => "Teddy and market portals",
         }

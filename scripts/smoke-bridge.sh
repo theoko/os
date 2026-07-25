@@ -221,6 +221,16 @@ if "name=smoke-guest-starter" not in listed or "src=saved" not in listed:
     print("error: saved skill missing from skills.list", file=sys.stderr)
     print(listed, file=sys.stderr)
     sys.exit(1)
+starter_body = call("CALL skills.get name=smoke-guest-starter")
+if not starter_body.startswith("OK skills.get"):
+    print("error: skills.get smoke-guest-starter failed", file=sys.stderr)
+    print(starter_body, file=sys.stderr)
+    sys.exit(1)
+for tool in ("search.query", "email.search", "audio.transcribe"):
+    if tool not in starter_body:
+        print(f"error: starter playbook must name {tool} for guest plan preview", file=sys.stderr)
+        print(starter_body, file=sys.stderr)
+        sys.exit(1)
 print("smoke-bridge: skills.save skills=1 ok")
 
 forgotten = call("CALL portal.forget")

@@ -208,7 +208,10 @@ fn handle_client<R: Read, W: Write>(
                 vec!["ERR skills.save needs_skills_cap".into()]
             } else if let Some(desc) = arg_val(&args, "desc") {
                 let body = format!(
-                    "---\nname: {name}\ndescription: {desc}\n---\n\n# {name}\n\n(edit me)\n"
+                    "---\nname: {name}\ndescription: {desc}\n---\n\n# {name}\n\n\
+                     {desc}\n\n\
+                     Suggested tools: `search.query`, `email.search`, `audio.transcribe`.\n\n\
+                     (edit me)\n"
                 );
                 match skills::save_skill(&name, &body) {
                     Ok(path) => vec![format!("OK skills.save path={}", path.display())],
@@ -380,7 +383,12 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             // skills.save in handle_client so it can read a LINE…END body.
             let name = arg_val(args, "name").unwrap_or("");
             let desc = arg_val(args, "desc").unwrap_or("User-saved skill.");
-            let body = format!("---\nname: {name}\ndescription: {desc}\n---\n\n# {name}\n\n(edit me)\n");
+            let body = format!(
+                "---\nname: {name}\ndescription: {desc}\n---\n\n# {name}\n\n\
+                 {desc}\n\n\
+                 Suggested tools: `search.query`, `email.search`, `audio.transcribe`.\n\n\
+                 (edit me)\n"
+            );
             match skills::save_skill(name, &body) {
                 Ok(path) => vec![format!("OK skills.save path={}", path.display())],
                 Err(e) => vec![format!("ERR skills.save {e}")],
