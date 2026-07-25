@@ -248,13 +248,7 @@ impl Index {
     }
 
     pub fn save(&self) -> Result<PathBuf, String> {
-        let path = index_path();
-        if let Some(d) = path.parent() {
-            fs::create_dir_all(d).map_err(|e| format!("mkdir {}: {e}", d.display()))?;
-        }
-        let raw = serde_json::to_string(self).map_err(|e| e.to_string())?;
-        fs::write(&path, raw).map_err(|e| format!("write {}: {e}", path.display()))?;
-        Ok(path)
+        crate::paths::write_json(index_path(), self)
     }
 }
 

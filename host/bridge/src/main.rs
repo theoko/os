@@ -289,6 +289,17 @@ fn parse_args(rest: &str) -> Vec<(String, String)> {
     out
 }
 
+/// Delete a capability-produced store. Missing file is success (`nothing_to_remove`).
+fn forget_file(tool: &str, path: &std::path::Path) -> Vec<String> {
+    match std::fs::remove_file(path) {
+        Ok(()) => vec![format!("OK {tool} removed"), "END".into()],
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            vec![format!("OK {tool} nothing_to_remove"), "END".into()]
+        }
+        Err(e) => vec![format!("ERR {tool} {e}")],
+    }
+}
+
 fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<String> {
     match tool {
         "email.search" => email_search(args, &backends.email),
@@ -356,20 +367,8 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                 Err(e) => vec![format!("ERR doc.read {e}")],
             }
         }
-        "workspace.forget" => match std::fs::remove_file(workspace::index_path()) {
-            Ok(()) => vec!["OK workspace.forget removed".into(), "END".into()],
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                vec!["OK workspace.forget nothing_to_remove".into(), "END".into()]
-            }
-            Err(e) => vec![format!("ERR workspace.forget {e}")],
-        },
-        "audio.forget" => match std::fs::remove_file(transcribe::store_path()) {
-            Ok(()) => vec!["OK audio.forget removed".into(), "END".into()],
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                vec!["OK audio.forget nothing_to_remove".into(), "END".into()]
-            }
-            Err(e) => vec![format!("ERR audio.forget {e}")],
-        },
+        "workspace.forget" => forget_file("workspace.forget", &workspace::index_path()),
+        "audio.forget" => forget_file("audio.forget", &transcribe::store_path()),
         "workspace.index" => {
             // Building the index reads the user's files, so it needs the same
             // grant as searching them.

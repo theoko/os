@@ -184,7 +184,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut y = cy;
                 let mut prev_buttons = 0u8;
                 let mut status_buf = [0u8; 72];
-                write_status(&mut status_buf, grants.footer_status());
+                skills::copy_field(&mut status_buf, grants.footer_status());
                 let mut setup = setup::Setup::new();
                 let mut kb = keyboard::Keyboard::new();
                 let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
@@ -261,10 +261,10 @@ unsafe extern "C" fn kmain() -> ! {
                             cursor.hide(surface);
                             if setup.is_finished() {
                                 grants = setup.grants();
-                                write_status(&mut status_buf, grants.footer_status());
+                                skills::copy_field(&mut status_buf, grants.footer_status());
                                 serial_port.write_str("ui: setup done\n");
                                 serial_port.write_str("caps: ");
-                                serial_port.write_str(status_str(&status_buf));
+                                serial_port.write_str(skills::str_at(&status_buf));
                                 serial_port.write_str("\n");
                                 mail = mcp::fetch_mail_peek(grants);
                                 paint_view(
@@ -272,7 +272,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     screens::View::Home,
                                     &mail,
                                     &skill_peek,
-                                    status_str(&status_buf),
+                                    skills::str_at(&status_buf),
                                     "",
                                     false,
                                     &sview,
@@ -335,7 +335,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 }
                                 Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
                                     serial_port.write_str("ui: click Capabilities\n");
-                                    write_status(&mut status_buf, grants.footer_status());
+                                    skills::copy_field(&mut status_buf, grants.footer_status());
                                     view = screens::View::Caps;
                                     dirty = true;
                                 }
@@ -353,7 +353,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 view,
                                 &mail,
                                 &skill_peek,
-                                status_str(&status_buf),
+                                skills::str_at(&status_buf),
                                 query.as_str(),
                                 caret,
                                 &sview,
@@ -437,7 +437,7 @@ unsafe extern "C" fn kmain() -> ! {
                                             serial_port.write_str(" - purged\n");
                                         }
                                     }
-                                    write_status(&mut status_buf, grants.footer_status());
+                                    skills::copy_field(&mut status_buf, grants.footer_status());
                                     dirty = true;
                                 }
                             } else if view == screens::View::Skills {
@@ -445,16 +445,12 @@ unsafe extern "C" fn kmain() -> ! {
                                     let name = skill_peek.name_at(i);
                                     let mut blurb = [0u8; 72];
                                     if mcp::fetch_skill_blurb(name, &mut blurb) {
-                                        let n = blurb.iter().position(|&b| b == 0).unwrap_or(blurb.len());
-                                        write_status(
-                                            &mut status_buf,
-                                            core::str::from_utf8(&blurb[..n]).unwrap_or(name),
-                                        );
+                                        skills::copy_field(&mut status_buf, skills::str_at(&blurb));
                                         serial_port.write_str("skills: got ");
                                         serial_port.write_str(name);
                                         serial_port.write_str("\n");
                                     } else {
-                                        write_status(&mut status_buf, name);
+                                        skills::copy_field(&mut status_buf, name);
                                         serial_port.write_str("skills: get offline ");
                                         serial_port.write_str(name);
                                         serial_port.write_str("\n");
@@ -474,7 +470,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 view,
                                 &mail,
                                 &skill_peek,
-                                status_str(&status_buf),
+                                skills::str_at(&status_buf),
                                 query.as_str(),
                                 caret,
                                 &sview,
@@ -606,18 +602,6 @@ fn write_u64(port: &serial::Serial, mut v: u64) {
         v /= 10;
     }
     port.write_bytes(&buf[i..]);
-}
-
-fn write_status(buf: &mut [u8; 72], s: &str) {
-    buf.fill(0);
-    let bytes = s.as_bytes();
-    let n = bytes.len().min(buf.len().saturating_sub(1));
-    buf[..n].copy_from_slice(&bytes[..n]);
-}
-
-fn status_str(buf: &[u8; 72]) -> &str {
-    let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    core::str::from_utf8(&buf[..n]).unwrap_or("")
 }
 
 #[panic_handler]

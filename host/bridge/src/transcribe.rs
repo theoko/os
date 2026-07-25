@@ -173,13 +173,7 @@ impl Store {
     }
 
     pub fn save(&self) -> Result<PathBuf, String> {
-        let path = store_path();
-        if let Some(d) = path.parent() {
-            fs::create_dir_all(d).map_err(|e| format!("mkdir {}: {e}", d.display()))?;
-        }
-        fs::write(&path, serde_json::to_string(self).map_err(|e| e.to_string())?)
-            .map_err(|e| format!("write {}: {e}", path.display()))?;
-        Ok(path)
+        crate::paths::write_json(store_path(), self)
     }
 
     /// Add or replace by source path, so re-transcribing updates in place.

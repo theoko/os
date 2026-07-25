@@ -92,7 +92,6 @@ impl SearchPeek {
     }
 }
 
-
 fn parse_row_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     let rest = line.strip_prefix("ROW ")?;
     for part in rest.split('|') {
@@ -105,15 +104,41 @@ fn parse_row_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     None
 }
 
+/// Walk COM2 reply lines after a CALL. First line waits [`TIMEOUT_REPLY`];
+/// later lines use [`TIMEOUT_LINE`]. Callback returns `false` to stop.
+fn for_each_reply(
+    com2: &Serial,
+    line: &mut [u8],
+    max: usize,
+    mut f: impl FnMut(&str) -> bool,
+) {
+    let mut first = true;
+    for _ in 0..max {
+        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
+        let Some(n) = com2.read_line(line, timeout) else {
+            break;
+        };
+        first = false;
+        if !f(utf8_prefix(&line[..n])) {
+            break;
+        }
+    }
+}
+
+fn open_com2(line: &mut [u8]) -> (Serial, BridgeStatus) {
+    let com2 = Serial::com2();
+    com2.init();
+    let status = ping_bridge(&com2, line);
+    (com2, status)
+}
+
 /// Probe the host bridge and optionally fetch a short inbox peek.
 ///
 /// `email.search` is refused when `caps` does not grant [`crate::caps::Cap::EmailSearch`].
 pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
-    let com2 = Serial::com2();
-    com2.init();
     let mut line = [0u8; LINE_BUF];
-
-    if ping_bridge(&com2, &mut line) != BridgeStatus::Online {
+    let (com2, status) = open_com2(&mut line);
+    if status != BridgeStatus::Online {
         return MailPeek::empty(BridgeStatus::Offline);
     }
 
@@ -125,20 +150,12 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
     com2.write_str("CALL email.search q=in:inbox max=3\n");
 
     let mut peek = MailPeek::empty(BridgeStatus::Online);
-
-    let mut first = true;
-    for _ in 0..16 {
-        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
-        let Some(n) = com2.read_line(&mut line, timeout) else {
-            break;
-        };
-        first = false;
-        let resp = utf8_prefix(&line[..n]);
+    for_each_reply(&com2, &mut line, 16, |resp| {
         if resp.starts_with("ERR ") || resp == "END" {
-            break;
+            return false;
         }
         if resp.starts_with("OK email.search") {
-            continue;
+            return true;
         }
         if resp.starts_with("ROW ") && peek.count < peek.rows.len() {
             let from = parse_row_field(resp, "from").unwrap_or("?");
@@ -147,8 +164,8 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
             copy_field(&mut peek.rows[peek.count].subj, subj);
             peek.count += 1;
         }
-    }
-
+        true
+    });
     peek
 }
 
@@ -178,13 +195,10 @@ impl DocPage {
 /// per source: a caller that could not have found a document must not be able
 /// to read it by knowing its URL.
 pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
-    let com2 = Serial::com2();
-    com2.init();
     let mut line = [0u8; LINE_BUF];
-
-    match ping_bridge(&com2, &mut line) {
-        BridgeStatus::Offline => return DocPage::empty(BridgeStatus::Offline, false),
-        BridgeStatus::Online => {}
+    let (com2, status) = open_com2(&mut line);
+    if status != BridgeStatus::Online {
+        return DocPage::empty(BridgeStatus::Offline, false);
     }
 
     com2.write_str("CALL doc.read url=");
@@ -199,30 +213,24 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
     com2.write_str("\n");
 
     let mut page = DocPage::empty(BridgeStatus::Online, false);
-    let mut first = true;
-    for _ in 0..40 {
-        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
-        let Some(n) = com2.read_line(&mut line, timeout) else {
-            break;
-        };
-        first = false;
-        let resp = utf8_prefix(&line[..n]);
+    for_each_reply(&com2, &mut line, 40, |resp| {
         if resp == "END" {
-            break;
+            return false;
         }
         if resp.starts_with("ERR ") {
             page.denied = true;
-            break;
+            return false;
         }
         if resp.starts_with("OK doc.read") {
-            continue;
+            return true;
         }
         if resp.starts_with("ROW ") && page.count < DocPage::MAX {
             let text = parse_row_field(resp, "line").unwrap_or("");
             copy_field(&mut page.lines[page.count], text);
             page.count += 1;
         }
-    }
+        true
+    });
     page
 }
 
@@ -232,24 +240,16 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
 /// answering from it — otherwise "off" means "hidden", which is not what the
 /// switch says.
 pub fn forget(tool: &str) -> BridgeStatus {
-    let com2 = Serial::com2();
-    com2.init();
     let mut line = [0u8; LINE_BUF];
-    if matches!(ping_bridge(&com2, &mut line), BridgeStatus::Offline) {
+    let (com2, status) = open_com2(&mut line);
+    if status != BridgeStatus::Online {
         return BridgeStatus::Offline;
     }
     com2.write_str("CALL ");
     com2.write_str(tool);
     com2.write_str("\n");
     // Drain the reply so the next call starts on a clean line.
-    for _ in 0..8 {
-        let Some(n) = com2.read_line(&mut line, TIMEOUT_REPLY) else {
-            break;
-        };
-        if utf8_prefix(&line[..n]) == "END" {
-            break;
-        }
-    }
+    for_each_reply(&com2, &mut line, 8, |resp| resp != "END");
     BridgeStatus::Online
 }
 
@@ -259,49 +259,38 @@ pub fn forget(tool: &str) -> BridgeStatus {
 /// `fetch_mail_peek` there would read — and, since the bridge indexes results,
 /// *persist* — the inbox before anyone agreed to it.
 pub fn probe_bridge() -> BridgeStatus {
-    let com2 = Serial::com2();
-    com2.init();
     let mut line = [0u8; LINE_BUF];
-    ping_bridge(&com2, &mut line)
+    open_com2(&mut line).1
 }
 
 /// List playbooks via `CALL skills.list`. Offline → builtins baked into the ISO.
 pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
-    let com2 = Serial::com2();
-    com2.init();
     let mut line = [0u8; LINE_BUF];
-
-    match ping_bridge(&com2, &mut line) {
-        BridgeStatus::Offline => return crate::skills::SkillPeek::from_builtin(),
-        BridgeStatus::Online => {}
+    let (com2, status) = open_com2(&mut line);
+    if status != BridgeStatus::Online {
+        return crate::skills::SkillPeek::from_builtin();
     }
 
     com2.write_str("CALL skills.list\n");
 
     let mut peek = crate::skills::SkillPeek::empty();
     peek.from_bridge = true;
-    let mut first = true;
-    for _ in 0..24 {
-        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
-        let Some(n) = com2.read_line(&mut line, timeout) else {
-            break;
-        };
-        first = false;
-        let resp = utf8_prefix(&line[..n]);
+    for_each_reply(&com2, &mut line, 24, |resp| {
         if resp.starts_with("ERR ") || resp == "END" {
-            break;
+            return false;
         }
         if resp.starts_with("OK skills.list") {
-            continue;
+            return true;
         }
         if resp.starts_with("ROW ") {
             let name = parse_row_field(resp, "name").unwrap_or("?");
             let desc = parse_row_field(resp, "desc").unwrap_or("");
             if !peek.push(name, desc) {
-                break;
+                return false;
             }
         }
-    }
+        true
+    });
 
     if peek.count == 0 {
         // Bridge answered but listed nothing — still show ISO defaults.
@@ -319,11 +308,9 @@ pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
     if name.is_empty() {
         return false;
     }
-    let com2 = Serial::com2();
-    com2.init();
     let mut line = [0u8; LINE_BUF];
-
-    if matches!(ping_bridge(&com2, &mut line), BridgeStatus::Offline) {
+    let (com2, status) = open_com2(&mut line);
+    if status != BridgeStatus::Online {
         return false;
     }
 
@@ -331,24 +318,18 @@ pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
     com2.write_str(name);
     com2.write_str("\n");
 
-    let mut first = true;
     let mut in_frontmatter = false;
     let mut saw_fm_open = false;
-    for _ in 0..40 {
-        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
-        let Some(n) = com2.read_line(&mut line, timeout) else {
-            break;
-        };
-        first = false;
-        let resp = utf8_prefix(&line[..n]);
+    let mut found = false;
+    for_each_reply(&com2, &mut line, 40, |resp| {
         if resp == "END" || resp.starts_with("ERR ") {
-            break;
+            return false;
         }
         if resp.starts_with("OK skills.get") {
-            continue;
+            return true;
         }
         let Some(body) = resp.strip_prefix("LINE ") else {
-            continue;
+            return true;
         };
         // Skip YAML frontmatter so the blurb is real prose, not `---`.
         if body.trim() == "---" {
@@ -358,19 +339,20 @@ pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
             } else {
                 in_frontmatter = false;
             }
-            continue;
+            return true;
         }
         if in_frontmatter {
-            continue;
+            return true;
         }
         let text = body.trim();
         if text.is_empty() {
-            continue;
+            return true;
         }
         copy_field(out, text);
-        return true;
-    }
-    false
+        found = true;
+        false
+    });
+    found
 }
 
 fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
@@ -393,13 +375,13 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
 
 /// Run `search.query` when granted. `q` must be ASCII without spaces (use `-`).
 pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
+    let mut line = [0u8; LINE_BUF];
     let com2 = Serial::com2();
     com2.init();
-    let mut line = [0u8; LINE_BUF];
 
     if !caps.allows(crate::caps::Cap::SearchQuery) {
-        // Refuse before probing: a denied cap is denied whether or not a
-        // bridge happens to be listening.
+        // No CALL: a denied cap is denied whether or not a bridge is listening.
+        // Still PING so the UI can show Online vs Offline alongside denied.
         let status = ping_bridge(&com2, &mut line);
         return SearchPeek::empty(status, true);
     }
@@ -432,27 +414,24 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     com2.write_str("\n");
 
     let mut peek = SearchPeek::empty(BridgeStatus::Online, false);
-    let mut first = true;
-    for _ in 0..16 {
-        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
-        let Some(n) = com2.read_line(&mut line, timeout) else {
-            break;
-        };
-        first = false;
-        let resp = utf8_prefix(&line[..n]);
+    for_each_reply(&com2, &mut line, 16, |resp| {
         if resp.starts_with("ERR ") || resp == "END" {
-            break;
+            return false;
         }
         if resp.starts_with("OK search.query") {
-            continue;
+            return true;
         }
         if resp.starts_with("ROW ") && peek.count < peek.hits.len() {
             let title = parse_row_field(resp, "title").unwrap_or("?");
             copy_field(&mut peek.hits[peek.count].title, title);
-            copy_field(&mut peek.hits[peek.count].url, parse_row_field(resp, "url").unwrap_or(""));
+            copy_field(
+                &mut peek.hits[peek.count].url,
+                parse_row_field(resp, "url").unwrap_or(""),
+            );
             peek.count += 1;
         }
-    }
+        true
+    });
     peek
 }
 

@@ -41,7 +41,7 @@ pub fn back_rect(w: i32) -> (i32, i32, i32, i32) {
     (PAD_X, (NAV_H - 24) / 2, 72, 28)
 }
 
-fn column(w: i32) -> (i32, i32) {
+pub(crate) fn column(w: i32) -> (i32, i32) {
     let cw = (w - PAD_X * 2).min(CONTENT_MAX);
     ((w - cw) / 2, cw)
 }
@@ -52,12 +52,17 @@ pub fn row_rect(w: i32, i: usize) -> (i32, i32, i32, i32) {
     (x, TOP + i as i32 * (ROW_H + ROW_GAP), cw, ROW_H)
 }
 
-/// Which capability row contains this point, if any.
-pub fn caps_hit(w: i32, x: i32, y: i32) -> Option<usize> {
-    (0..Cap::ALL.len()).find(|&i| {
+/// Which row in `0..count` contains this point, if any.
+fn row_hit(w: i32, count: usize, x: i32, y: i32) -> Option<usize> {
+    (0..count).find(|&i| {
         let (rx, ry, rw, rh) = row_rect(w, i);
         x >= rx && x < rx + rw && y >= ry && y < ry + rh
     })
+}
+
+/// Which capability row contains this point, if any.
+pub fn caps_hit(w: i32, x: i32, y: i32) -> Option<usize> {
+    row_hit(w, Cap::ALL.len(), x, y)
 }
 
 /// Shared top chrome: Back, centered title, rule, optional heading.
@@ -132,10 +137,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
 
 /// Which skill row contains this point, if any.
 pub fn skills_hit(w: i32, count: usize, x: i32, y: i32) -> Option<usize> {
-    (0..count.min(6)).find(|&i| {
-        let (rx, ry, rw, rh) = row_rect(w, i);
-        x >= rx && x < rx + rw && y >= ry && y < ry + rh
-    })
+    row_hit(w, count.min(6), x, y)
 }
 
 /// Live capability switches. Clicking a row toggles the grant.
