@@ -190,7 +190,6 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut x = cx;
                 let mut y = cy;
                 let mut prev_buttons = 0u8;
-                let (mut prev_x, mut prev_y) = (cx, cy);
                 let mut status_buf = [0u8; 72];
                 write_status(&mut status_buf, grants.footer_status());
                 let mut setup = setup::Setup::new();
@@ -278,8 +277,6 @@ unsafe extern "C" fn kmain() -> ! {
                             cursor.show_at(surface, x, y);
                             screen.present();
                             moved = false;
-                            prev_x = x;
-                            prev_y = y;
                         }
                     } else if view == screens::View::Home {
                         // Type straight into the home field - no click first.
@@ -330,8 +327,6 @@ unsafe extern "C" fn kmain() -> ! {
                             cursor.show_at(surface, x, y);
                             screen.present();
                             moved = false;
-                            prev_x = x;
-                            prev_y = y;
                         }
                     }
                     if view != screens::View::Home {
@@ -396,8 +391,6 @@ unsafe extern "C" fn kmain() -> ! {
                             cursor.show_at(surface, x, y);
                             screen.present();
                             moved = false;
-                            prev_x = x;
-                            prev_y = y;
                         }
                     } else {
                         let left_down = buttons & 1 != 0;
@@ -415,8 +408,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     screen.present();
                                     clicked = true;
                                     moved = false;
-                                    prev_x = x;
-                                    prev_y = y;
                                 }
                                 Some(ui::HomeHit::Cta(ui::CtaId::Skills))
                                 | Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
@@ -451,8 +442,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     screen.present();
                                     clicked = true;
                                     moved = false;
-                                    prev_x = x;
-                                    prev_y = y;
                                 }
                                 #[allow(unreachable_patterns)]
                                 Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
@@ -509,8 +498,6 @@ unsafe extern "C" fn kmain() -> ! {
                                 cursor.show_at(surface, x, y);
                                 screen.present();
                                 moved = false;
-                                prev_x = x;
-                                prev_y = y;
                             }
                         }
                     }
@@ -520,8 +507,6 @@ unsafe extern "C" fn kmain() -> ! {
                         // hide()/show_at() marked both footprints; present()
                         // blits exactly that union and nothing else.
                         screen.present();
-                        prev_x = x;
-                        prev_y = y;
                     }
                     core::hint::spin_loop();
                 }

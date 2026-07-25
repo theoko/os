@@ -63,11 +63,38 @@ fn as_str(buf: &[u8]) -> &str {
     core::str::from_utf8(&buf[..n]).unwrap_or("")
 }
 
-/// Where the current results came from.
+/// What the last query actually did, so the empty state can be truthful.
+///
+/// A bridge that answers "no matches" is NOT an offline bridge — reporting it
+/// as one sent people looking for a connection problem that did not exist.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum Source {
-    Offline,
-    Bridge,
+pub struct Source {
+    /// COM2 answered.
+    pub bridge_online: bool,
+    /// The caller held workspace.index, so the user's own files were in scope.
+    pub files_in_scope: bool,
+    /// The caller held email.search.
+    pub mail_in_scope: bool,
+}
+
+impl Source {
+    pub const fn offline() -> Self {
+        Self { bridge_online: false, files_in_scope: false, mail_in_scope: false }
+    }
+
+    /// One line explaining an empty result set, naming the fix when there is one.
+    pub fn empty_reason(self) -> &'static str {
+        if !self.bridge_online {
+            return "No matches. Bridge offline - only built-in docs are searchable.";
+        }
+        if !self.files_in_scope {
+            return "No matches. Turn on workspace.index in Capabilities to search your files.";
+        }
+        if !self.mail_in_scope {
+            return "No matches in your files. Turn on email.search to include mail.";
+        }
+        "No matches. The bridge searched your files and mail."
+    }
 }
 
 pub struct SearchView {
@@ -84,7 +111,7 @@ impl SearchView {
             rows: [Row::empty(); search::MAX_HITS],
             count: 0,
             searched: false,
-            source: Source::Offline,
+            source: Source::offline(),
         }
     }
 
@@ -95,7 +122,7 @@ impl SearchView {
     pub fn run(&mut self, q: &str) {
         self.searched = true;
         self.count = 0;
-        self.source = Source::Offline;
+        self.source = Source::offline();
         if q.trim().is_empty() {
             return;
         }
@@ -117,21 +144,29 @@ impl SearchView {
         self.searched = true;
         self.count = 0;
         if q.trim().is_empty() {
-            self.source = Source::Offline;
+            self.source = Source::offline();
             return;
         }
         let peek = crate::mcp::fetch_search_peek(caps, q);
-        if matches!(peek.status, crate::mcp::BridgeStatus::Online) && !peek.denied {
+        let online = matches!(peek.status, crate::mcp::BridgeStatus::Online) && !peek.denied;
+        // Record reachability BEFORE any fallback, so an online bridge that
+        // simply found nothing is never reported as a connection failure.
+        let source = Source {
+            bridge_online: online,
+            files_in_scope: caps.allows(crate::caps::Cap::WorkspaceIndex),
+            mail_in_scope: caps.allows(crate::caps::Cap::EmailSearch),
+        };
+        if online {
             for i in 0..peek.count.min(search::MAX_HITS) {
                 self.rows[self.count].set(peek.title_at(i), "", "bridge");
                 self.count += 1;
             }
-            if self.count > 0 {
-                self.source = Source::Bridge;
-                return;
-            }
         }
-        self.run(q);
+        if self.count == 0 {
+            // Nothing from the bridge: try what we shipped with.
+            self.run(q);
+        }
+        self.source = source;
     }
 }
 
@@ -201,11 +236,7 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
         return;
     }
     if view.count == 0 {
-        let msg = match view.source {
-            Source::Bridge => "No matches. The bridge searched your files and mail.",
-            Source::Offline => "No matches. Bridge offline - only built-in docs are searchable.",
-        };
-        fb.draw_text_centered(w / 2, y + 30, msg, &BODY_FACE, 0, theme::MUTED);
+        fb.draw_text_centered(w / 2, y + 30, view.source.empty_reason(), &BODY_FACE, 0, theme::MUTED);
         return;
     }
 
@@ -292,5 +323,51 @@ mod tests {
     fn back_target_is_clickable_sized() {
         let (_x, _y, w, h) = back_rect(1024);
         assert!(w >= 44 && h >= 24, "back target too small to hit");
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    #[test]
+    fn an_online_bridge_is_never_reported_as_offline() {
+        // The bug this replaces: a bridge that answered "n=0" was rendered as
+        // "Bridge offline", sending the user to debug a working connection.
+        let s = Source { bridge_online: true, files_in_scope: true, mail_in_scope: true };
+        assert!(!s.empty_reason().contains("offline"));
+    }
+
+    #[test]
+    fn a_real_outage_still_says_offline() {
+        assert!(Source::offline().empty_reason().contains("offline"));
+    }
+
+    #[test]
+    fn missing_file_grant_names_the_fix() {
+        let s = Source { bridge_online: true, files_in_scope: false, mail_in_scope: true };
+        let m = s.empty_reason();
+        assert!(m.contains("workspace.index"), "{m}");
+        assert!(!m.contains("offline"), "{m}");
+    }
+
+    #[test]
+    fn missing_mail_grant_names_the_fix() {
+        let s = Source { bridge_online: true, files_in_scope: true, mail_in_scope: false };
+        assert!(s.empty_reason().contains("email.search"));
+    }
+
+    #[test]
+    fn every_reason_is_renderable_ascii() {
+        for s in [
+            Source::offline(),
+            Source { bridge_online: true, files_in_scope: false, mail_in_scope: false },
+            Source { bridge_online: true, files_in_scope: true, mail_in_scope: false },
+            Source { bridge_online: true, files_in_scope: true, mail_in_scope: true },
+        ] {
+            let m = s.empty_reason();
+            assert!(m.bytes().all(|b| (0x20..=0x7E).contains(&b)), "{m}");
+            assert!(BODY_FACE.width(m, 0) < 980, "empty-state line overflows: {m}");
+        }
     }
 }
