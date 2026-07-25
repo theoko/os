@@ -451,3 +451,38 @@ mod ascii_tests {
         }
     }
 }
+
+#[cfg(test)]
+mod consent_tests {
+    //! The rule: `search.query` alone reaches the built-in corpus, never the
+    //! user's own documents. Those need `workspace.index`, granted at setup.
+    use super::*;
+
+    #[test]
+    fn personal_files_need_the_workspace_grant() {
+        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = env::temp_dir().join(format!("os-consent-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("private.md"), "# Zygote Notary Filing\n\npersonal matter\n").unwrap();
+
+        let ix_path = dir.join("index.json");
+        unsafe { env::set_var("OS_WORKSPACE_INDEX", &ix_path) };
+        build(&[dir.clone()]).save().expect("save index");
+
+        let without = crate::search::query_scoped("zygote notary", 5, None, "tfidf", false, false);
+        let with = crate::search::query_scoped("zygote notary", 5, None, "tfidf", false, true);
+
+        assert!(
+            !without.iter().any(|r| r.contains("Zygote Notary")),
+            "personal file reachable without the grant: {without:?}"
+        );
+        assert!(
+            with.iter().any(|r| r.contains("Zygote Notary")),
+            "granted search should find it: {with:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        unsafe { env::remove_var("OS_WORKSPACE_INDEX") };
+    }
+}

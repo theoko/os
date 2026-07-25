@@ -31,8 +31,8 @@ struct Doc {
 
 /// Workspace files, projected into corpus documents.
 ///
-/// Not gated behind a capability: these are the user's own local documents,
-/// indexed from roots they chose. Email is different and stays opt-in.
+/// Reached only when the caller passed `files=1`, i.e. the user granted
+/// workspace.index during setup.
 fn workspace_docs() -> Vec<Doc> {
     crate::workspace::Index::load()
         .entries
@@ -206,8 +206,23 @@ pub fn query_builtin_with(
     cat: Option<&str>,
     include_email: bool,
 ) -> Result<Vec<String>, String> {
+    query_all(q, k, cat, include_email, false)
+}
+
+/// `include_files` folds in the user's own indexed documents. Off by default
+/// for the same reason as email: holding `search.query` grants the built-in
+/// corpus, not a personal file tree.
+pub fn query_all(
+    q: &str,
+    k: usize,
+    cat: Option<&str>,
+    include_email: bool,
+    include_files: bool,
+) -> Result<Vec<String>, String> {
     let mut docs = load_docs()?;
-    docs.extend(workspace_docs());
+    if include_files {
+        docs.extend(workspace_docs());
+    }
     if include_email {
         docs.extend(email_docs());
     }
@@ -321,10 +336,21 @@ pub fn query_with(
     backend: &str,
     include_email: bool,
 ) -> Vec<String> {
+    query_scoped(q, k, cat, backend, include_email, false)
+}
+
+pub fn query_scoped(
+    q: &str,
+    k: usize,
+    cat: Option<&str>,
+    backend: &str,
+    include_email: bool,
+    include_files: bool,
+) -> Vec<String> {
     match backend {
         "mock" => query_mock(q, k),
         "tsearch" => query_tsearch(q, k).unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
-        _ => query_builtin_with(q, k, cat, include_email)
+        _ => query_all(q, k, cat, include_email, include_files)
             .unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
     }
 }

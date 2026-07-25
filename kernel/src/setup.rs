@@ -55,10 +55,11 @@ pub enum Step {
 pub const REGIONS: [&str; 4] = ["United States", "United Kingdom", "Greece", "Japan"];
 
 /// Capabilities the agent may be granted up front. Mirrors [`Cap`] / bridge tools.
-pub const CAPS: [(&str, &str); 3] = [
+pub const CAPS: [(&str, &str); 4] = [
     ("email.search", "Read the inbox through the host bridge"),
-    ("search.query", "Query the local knowledge corpus"),
+    ("search.query", "Query the built-in knowledge corpus"),
     ("skills.save", "Write new skill playbooks to disk"),
+    ("workspace.index", "Search your own files on this machine"),
 ];
 
 const MAX_ZONES: usize = 12;
@@ -78,9 +79,9 @@ impl Setup {
         Self {
             step: Step::Welcome,
             region: 0,
-            // email.search on by default; writing skills is opt-in, matching
-            // the "no ambient root" rule.
-            caps: [true, true, false],
+            // Read-only tools on; anything that writes to disk or reaches
+            // personal files is opt-in, matching the "no ambient root" rule.
+            caps: [true, true, false, false],
             zones: [Zone {
                 x: 0,
                 y: 0,

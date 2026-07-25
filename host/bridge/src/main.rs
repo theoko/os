@@ -349,6 +349,11 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             }
         }
         "workspace.index" => {
+            // Building the index reads the user's files, so it needs the same
+            // grant as searching them.
+            if !matches!(arg_val(args, "files"), Some("1")) {
+                return vec!["ERR workspace.index needs_workspace_cap".into()];
+            }
             let roots = workspace::roots();
             let ix = workspace::build(&roots);
             let n = ix.entries.len();
@@ -371,10 +376,11 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             // the user granted email.search at setup, so holding search.query
             // alone cannot reach mail.
             let with_email = matches!(arg_val(args, "email"), Some("1"));
+            let with_files = matches!(arg_val(args, "files"), Some("1"));
             if q.is_empty() {
                 vec!["ERR search.query missing_q".into()]
             } else {
-                search::query_with(q, k, cat, &backends.search, with_email)
+                search::query_scoped(q, k, cat, &backends.search, with_email, with_files)
             }
         }
         _ => vec![format!("ERR {tool} not_found")],

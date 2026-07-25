@@ -239,6 +239,11 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     if caps.allows(crate::caps::Cap::EmailSearch) {
         com2.write_str(" email=1");
     }
+    // Personal documents are a separate grant from the built-in corpus:
+    // search.query alone must not reach the user's own file tree.
+    if caps.allows(crate::caps::Cap::WorkspaceIndex) {
+        com2.write_str(" files=1");
+    }
     com2.write_str("\n");
 
     let mut peek = SearchPeek::empty(BridgeStatus::Online, false);
