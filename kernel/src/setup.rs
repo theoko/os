@@ -91,7 +91,8 @@ impl Setup {
             // OS are searchable out of the box.
             //
             // Order matches caps::Cap::ALL. Level never changes these defaults.
-            caps: [false, true, false, false, false, false],
+            // Email / Send mail / docs / files / recordings / save / portals
+            caps: [false, false, true, false, false, false, false],
             zones: [Zone {
                 x: 0,
                 y: 0,
@@ -771,27 +772,17 @@ mod layout_tests {
 
     #[test]
     fn the_capability_list_is_at_its_layout_limit() {
-        // Six rows is what fits above the footer at 768px, and we are at six.
-        // A seventh needs the step to scroll or paginate — shrinking the rows
-        // to squeeze it in would push the blurbs into the switches.
-        //
-        // This is deliberately a hard stop: the previous version of this test
-        // demanded room for one more, and the honest answer is that there
-        // isn't any. Add scrolling before adding a capability.
+        // Seven single-line rows fit above the footer at 768px (Send mail).
+        // An eighth would need scroll/paginate — do not shrink rows to squeeze.
+        assert_eq!(N_CAPS, 7, "update this guard when Caps grow again");
         assert!(
             rows_bottom(N_CAPS) < footer_top(768),
             "{} capability rows already collide with the footer",
             N_CAPS
         );
-        // Single-line rows fit more than the old stacked ones. Recomputed
-        // rather than relaxed: this is the count that actually fits.
         assert!(
-            rows_bottom(7) < footer_top(768),
-            "a 7th row no longer fits — the guard is stale"
-        );
-        assert!(
-            rows_bottom(9) >= footer_top(768),
-            "layout gained room for a 9th row — update this guard deliberately"
+            rows_bottom(8) >= footer_top(768),
+            "layout gained room for an 8th row — update this guard deliberately"
         );
     }
 

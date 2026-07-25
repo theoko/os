@@ -158,6 +158,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek, caps: Caps) {
 /// Show the outcome of a skill run: plan, then tagged result lines.
 pub fn draw_brief(fb: &Surface, brief: &Brief) {
     let w = fb.width() as i32;
+    let h = fb.height() as i32;
     let heading = if brief.heading().is_empty() {
         brief.skill_name()
     } else {
@@ -245,6 +246,42 @@ pub fn draw_brief(fb: &Surface, brief: &Brief) {
             let _ = rh;
         }
     }
+
+    if brief.send_ready {
+        let (sx, sy, sw, sh) = brief_send_rect(w, h);
+        fb.fill_round_rect(sx, sy, sw, sh, 10, theme::ACCENT);
+        fb.fill_round_rect(sx + 1, sy + 1, sw - 2, sh - 2, 9, theme::BG);
+        fb.draw_text(sx + 18, sy + 26, "Confirm send", &BRAND_FACE, 0, theme::ACCENT);
+        let mut sub = [0u8; 64];
+        let mut n = 0;
+        let prefix = b"To ";
+        for &b in prefix {
+            sub[n] = b;
+            n += 1;
+        }
+        for &b in brief.draft_to().as_bytes().iter().take(28) {
+            if n < sub.len() {
+                sub[n] = b;
+                n += 1;
+            }
+        }
+        let s = core::str::from_utf8(&sub[..n]).unwrap_or("Draft ready");
+        fb.draw_text(sx + 18, sy + 46, s, &SMALL_FACE, 0, theme::MUTED);
+    }
+}
+
+/// Confirm send CTA on Brief — only when a draft was armed.
+pub fn brief_send_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
+    let (x, cw) = column(w);
+    (x, h - 96, cw, ROW_H)
+}
+
+pub fn brief_send_hit(w: i32, h: i32, ready: bool, x: i32, y: i32) -> bool {
+    if !ready {
+        return false;
+    }
+    let (rx, ry, rw, rh) = brief_send_rect(w, h);
+    x >= rx && x < rx + rw && y >= ry && y < ry + rh
 }
 
 /// Which skill row contains this point, if any.
@@ -385,6 +422,14 @@ mod tests {
     }
 
     #[test]
+    fn brief_send_hit_only_when_armed() {
+        let (x, y, w, h) = brief_send_rect(1024, 768);
+        assert!(brief_send_hit(1024, 768, true, x + w / 2, y + h / 2));
+        assert!(!brief_send_hit(1024, 768, false, x + w / 2, y + h / 2));
+        assert!(!brief_send_hit(1024, 768, true, x + w / 2, y - 4));
+    }
+
+    #[test]
     fn copy_is_ascii_only() {
         let mut all = vec![
             "Tap a playbook to run it",
@@ -404,6 +449,7 @@ mod tests {
             "Save starter",
             "Write guest-starter to the host",
             "Tap to run under current grants",
+            "Confirm send",
             "Plan",
             "Report",
         ];

@@ -549,7 +549,49 @@ unsafe extern "C" fn kmain() -> ! {
                                     {
                                         skill_peek = mcp::fetch_skill_peek();
                                     }
+                                    // Revoking Send mail disarms any Confirm CTA.
+                                    if before.allows(caps::Cap::EmailSend)
+                                        && !grants.allows(caps::Cap::EmailSend)
+                                    {
+                                        brief.clear_send();
+                                    }
                                     status_len = grants.describe(&mut status_buf);
+                                    dirty = true;
+                                }
+                            } else if view == screens::View::Brief {
+                                if screens::brief_send_hit(
+                                    w,
+                                    h,
+                                    brief.send_ready,
+                                    x,
+                                    y,
+                                ) {
+                                    match mcp::send_mail(
+                                        grants,
+                                        brief.draft_to(),
+                                        brief.draft_subj(),
+                                        "Draft from os Brief confirm",
+                                    ) {
+                                        mcp::SendMailStatus::Ok => {
+                                            write_status(&mut status_buf, "Mail queued (mock)");
+                                            serial_port.write_str("email: sent mock\n");
+                                            brief.clear_send();
+                                            brief.push_report("Sent", "Mock queued on the bridge");
+                                        }
+                                        mcp::SendMailStatus::Denied => {
+                                            write_status(&mut status_buf, "Grant Send mail first");
+                                            serial_port.write_str("email: send need email.send\n");
+                                            brief.clear_send();
+                                        }
+                                        mcp::SendMailStatus::Offline => {
+                                            write_status(&mut status_buf, "Bridge offline");
+                                            serial_port.write_str("email: send offline\n");
+                                        }
+                                        mcp::SendMailStatus::Failed => {
+                                            write_status(&mut status_buf, "email.send failed");
+                                            serial_port.write_str("email: send failed\n");
+                                        }
+                                    }
                                     dirty = true;
                                 }
                             } else if view == screens::View::Skills {

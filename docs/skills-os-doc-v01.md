@@ -83,4 +83,8 @@ From **0.9.21** `calendar.list` is also a granted peek (same `email=1` /
 `Cap::EmailSearch` as mail). The bridge refuses without the wire bit — no
 ambient calendar just because LIST names the tool.
 
+From **0.9.23** `email.send` is a separate **Send mail** cap. Inbox Briefs
+arm a draft and show **Confirm send**; that click is the only guest path that
+sends `confirm=1`. Playbooks never auto-CALL send.
+
 Also see [`docs/search-os-doc-v01.md`](search-os-doc-v01.md).

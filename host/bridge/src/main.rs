@@ -364,7 +364,28 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             vec!["ERR email.search needs_email_cap".into()]
         }
         "email.search" => email_search(args, &backends.email),
-        "email.send" => vec!["ERR email.send disabled_until_cap_confirm".into()],
+        "email.send" if !matches!(arg_val(args, "email"), Some("1")) => {
+            vec!["ERR email.send needs_email_cap".into()]
+        }
+        "email.send" if !matches!(arg_val(args, "confirm"), Some("1")) => {
+            // Grant alone is not enough — guest must send confirm=1 after an
+            // explicit UI confirm (AGENTS non-negotiable #3).
+            vec!["ERR email.send disabled_until_cap_confirm".into()]
+        }
+        "email.send" => {
+            let to = arg_val(args, "to").unwrap_or("");
+            let subj = arg_val(args, "subj").unwrap_or("(no subject)");
+            if to.is_empty() {
+                vec!["ERR email.send missing_to".into()]
+            } else {
+                // Mock only — never talks to gog. CI proves the confirm path.
+                vec![format!(
+                    "OK email.send mock queued to={} subj={}",
+                    sanitize_field(to),
+                    sanitize_field(subj)
+                )]
+            }
+        }
         // Same Google identity as email.search — no ambient calendar without
         // the email wire bit (reuse Cap::EmailSearch on the guest).
         "calendar.list" if !matches!(arg_val(args, "email"), Some("1")) => {
@@ -972,6 +993,35 @@ mod tests {
             denied[0].contains("needs_audio_cap"),
             "ungated audio.transcribe: {denied:?}"
         );
+    }
+
+    #[test]
+    fn email_send_needs_email_and_confirm() {
+        let no_email = dispatch(
+            "CALL email.send to=ada@x.com subj=Hi body=Hello",
+            &test_backends(),
+        );
+        assert!(
+            no_email[0].contains("needs_email_cap"),
+            "ungated email.send: {no_email:?}"
+        );
+        let no_confirm = dispatch(
+            "CALL email.send to=ada@x.com subj=Hi body=Hello email=1",
+            &test_backends(),
+        );
+        assert!(
+            no_confirm[0].contains("disabled_until_cap_confirm"),
+            "confirm-less email.send: {no_confirm:?}"
+        );
+        let ok = dispatch(
+            "CALL email.send to=ada@x.com subj=Hi body=Hello email=1 confirm=1",
+            &test_backends(),
+        );
+        assert!(
+            ok[0].starts_with("OK email.send mock"),
+            "confirmed mock send: {ok:?}"
+        );
+        assert!(ok[0].contains("ada@x.com"), "{ok:?}");
     }
 
     #[test]

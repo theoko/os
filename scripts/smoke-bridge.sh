@@ -300,6 +300,25 @@ if "ROW " not in allowed_cal or "title=" not in allowed_cal:
     sys.exit(1)
 print("smoke-bridge: calendar.list email=1 ok")
 
+denied_send = call("CALL email.send to=ada@x.com subj=Hi body=Hello")
+if "needs_email_cap" not in denied_send:
+    print("error: email.send must require email=1", file=sys.stderr)
+    print(denied_send, file=sys.stderr)
+    sys.exit(1)
+no_confirm = call("CALL email.send to=ada@x.com subj=Hi body=Hello email=1")
+if "disabled_until_cap_confirm" not in no_confirm:
+    print("error: email.send must require confirm=1", file=sys.stderr)
+    print(no_confirm, file=sys.stderr)
+    sys.exit(1)
+allowed_send = call(
+    "CALL email.send to=ada@x.com subj=Hi body=Hello email=1 confirm=1"
+)
+if not allowed_send.startswith("OK email.send mock"):
+    print("error: email.send email=1 confirm=1 must mock-queue", file=sys.stderr)
+    print(allowed_send, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: email.send confirm ok")
+
 forgot_mail = call("CALL email.forget")
 if not forgot_mail.startswith("OK email.forget"):
     print("error: email.forget failed", file=sys.stderr)
@@ -427,13 +446,14 @@ if not reseed.startswith("OK email.search"):
     sys.exit(1)
 mail_url = None
 for line in reseed.splitlines():
-    if line.startswith("ROW ") and "id=" in line:
-        for part in line.split("|"):
-            if part.startswith("id="):
-                mail_url = f"email://{part[3:]}"
-                break
-        if mail_url:
+    if not line.startswith("ROW "):
+        continue
+    for part in line[4:].split("|"):
+        if part.startswith("id="):
+            mail_url = f"email://{part[3:]}"
             break
+    if mail_url:
+        break
 if not mail_url:
     # Fallback: search.query email graph (older path).
     mail_hit = call("CALL search.query q=Q2-planning k=3 email=1")

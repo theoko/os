@@ -1,8 +1,18 @@
 ---
-version: 0.9.22
+version: 0.9.23
 ---
 
 # Changelog
+
+## 0.9.23 — 2026-07-25
+
+`email.send` mock + explicit confirm:
+
+- New Caps **Send mail** (`Cap::EmailSend`, default off) — separate from Email
+  read. Bridge needs `email=1` and `confirm=1`; mock queues only (no gog).
+- Inbox Brief arms a draft and shows **Confirm send**; that click CALLs with
+  `confirm=1`. Cap refusal never opens COM2. Playbooks stay Info-only.
+- Smoke: deny without bits, mock allow with both.
 
 ## 0.9.22 — 2026-07-25
 

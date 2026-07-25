@@ -63,6 +63,10 @@ pub struct Brief {
     pub plans: [[u8; 52]; 5],
     pub count: usize,
     pub lines: [Line; 8],
+    /// Armed by inbox skills when Send mail is granted — Brief shows Confirm.
+    pub send_ready: bool,
+    draft_to: [u8; 40],
+    draft_subj: [u8; 48],
 }
 
 impl Brief {
@@ -77,6 +81,9 @@ impl Brief {
             plans: [[0; 52]; 5],
             count: 0,
             lines: [Line::empty(); 8],
+            send_ready: false,
+            draft_to: [0; 40],
+            draft_subj: [0; 48],
         }
     }
 
@@ -94,6 +101,27 @@ impl Brief {
 
     pub fn plan_at(&self, i: usize) -> &str {
         str_at(&self.plans[i])
+    }
+
+    pub fn draft_to(&self) -> &str {
+        str_at(&self.draft_to)
+    }
+
+    pub fn draft_subj(&self) -> &str {
+        str_at(&self.draft_subj)
+    }
+
+    /// Arm the Confirm send CTA with a draft (never auto-CALLs).
+    pub fn arm_send(&mut self, to: &str, subj: &str) {
+        self.send_ready = true;
+        copy_field(&mut self.draft_to, to);
+        copy_field(&mut self.draft_subj, subj);
+    }
+
+    pub fn clear_send(&mut self) {
+        self.send_ready = false;
+        self.draft_to = [0; 40];
+        self.draft_subj = [0; 48];
     }
 
     /// True when there is something worth keeping on the home screen.
@@ -197,6 +225,7 @@ const PLAYBOOK_TOOLS: &[(&str, Cap)] = &[
     ("market.health", Cap::PortalSync),
     ("doc.read", Cap::SearchQuery),
     ("calendar.list", Cap::EmailSearch),
+    ("email.send", Cap::EmailSend),
 ];
 
 /// Scan playbook prose for known tool spellings (substring, ASCII).
@@ -347,6 +376,12 @@ pub fn run_playbook_allowed(brief: &mut Brief, caps: Caps, body: &str) {
     if bit_set(bits, 8) && caps.allows(Cap::SearchQuery) {
         brief.push_line("Info", "doc.read: open a hit from Search.");
     }
+    // email.send is never silent-CALL'd — Confirm send on an inbox Brief.
+    if bit_set(bits, 10) {
+        if caps.allows(Cap::EmailSend) {
+            brief.push_line("Info", "email.send: Confirm send on an inbox Brief.");
+        }
+    }
 }
 
 fn bit_set(bits: u32, i: usize) -> bool {
@@ -399,6 +434,29 @@ fn run_inbox(brief: &mut Brief, caps: Caps, triage: bool) {
     if brief.count < brief.lines.len() {
         let cal = mcp::fetch_calendar_peek(caps);
         fill_calendar_lines(brief, &cal);
+    }
+    // Draft only — Confirm send on Brief issues the CALL with confirm=1.
+    if mail.count > 0 && brief.count < brief.lines.len() {
+        if caps.allows(Cap::EmailSend) {
+            let to = mail.row_from(0);
+            let subj = mail.row_subj(0);
+            let mut re = [0u8; 48];
+            let prefix = b"Re: ";
+            let mut n = prefix.len();
+            re[..n].copy_from_slice(prefix);
+            for &b in subj.as_bytes() {
+                if n >= re.len() {
+                    break;
+                }
+                re[n] = b;
+                n += 1;
+            }
+            let re_subj = core::str::from_utf8(&re[..n]).unwrap_or(subj);
+            brief.arm_send(to, re_subj);
+            brief.push_line("Draft", "Tap Confirm send below");
+        } else {
+            brief.push_line("Info", "Send mail off - drafts only.");
+        }
     }
 }
 
@@ -796,7 +854,7 @@ fn run_cap_safe(brief: &mut Brief, caps: Caps) {
         let tag = if caps.allows(cap) { "On" } else { "Off" };
         brief.push_line(tag, cap.label());
     }
-    // Cap::ALL is six rows; leave room for one outcome line (max 8).
+    // Cap::ALL is seven rows; leave room for one outcome line (max 8).
     // Host unit tests must not grant SkillsSave here — that path opens COM2.
     if caps.allows(Cap::SkillsSave) {
         match mcp::save_skill(caps, "guest-starter", "Starter from capability check") {
@@ -926,6 +984,34 @@ mod tests {
         assert!(brief.lines.iter().any(|l| l.text().contains("Recordings")));
         assert!(brief.lines.iter().any(|l| l.text().contains("Save skills")));
         assert!(!brief.lines.iter().any(|l| l.tag() == "Hit"));
+    }
+
+    #[test]
+    fn email_send_playbook_stays_confirm_only() {
+        let body = "May use email.send after the user confirms.";
+        assert!(playbook_tool_bits(body) & (1 << 10) != 0);
+        let mut caps = Caps::none();
+        caps.set(Cap::EmailSend, true);
+        let mut brief = run("send-saved", caps);
+        enrich_playbook(&mut brief, caps, body);
+        run_playbook_allowed(&mut brief, caps, body);
+        assert!(!brief.denied, "granted send should not Need");
+        assert!(
+            brief.lines.iter().any(|l| l.text().contains("Confirm send")),
+            "must point at Brief confirm, not auto-CALL"
+        );
+        assert!(!brief.send_ready, "playbook must not arm a draft");
+    }
+
+    #[test]
+    fn arm_send_exposes_draft_for_confirm_cta() {
+        let mut brief = Brief::empty();
+        brief.arm_send("ada@x.com", "Re: Hello");
+        assert!(brief.send_ready);
+        assert_eq!(brief.draft_to(), "ada@x.com");
+        assert_eq!(brief.draft_subj(), "Re: Hello");
+        brief.clear_send();
+        assert!(!brief.send_ready);
     }
 
     #[test]
@@ -1127,6 +1213,11 @@ mod tests {
             "Bridge offline for calendar.",
             "No upcoming events.",
             "Read inbox and calendar",
+            "Send after you confirm on Brief",
+            "Send mail off - drafts only.",
+            "Tap Confirm send below",
+            "email.send: Confirm send on an inbox Brief.",
+            "Mock queued on the bridge",
         ] {
             assert!(
                 s.bytes().all(|b| (0x20..=0x7E).contains(&b)),

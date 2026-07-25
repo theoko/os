@@ -552,6 +552,68 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
     }
 }
 
+/// Outcome of a guest `email.send` attempt.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SendMailStatus {
+    /// `Cap::EmailSend` was off — never opened COM2.
+    Denied,
+    Offline,
+    Ok,
+    Failed,
+}
+
+/// Send a message when Send mail is granted. Always includes `confirm=1`.
+///
+/// Cap refusal never opens COM2. The bridge still rejects calls without
+/// `confirm=1`, so a forged guest cannot skip the Brief Confirm send step by
+/// omitting the wire bit alone — the Cap is what arms `confirm=1`.
+pub fn send_mail(
+    caps: crate::caps::Caps,
+    to: &str,
+    subj: &str,
+    body: &str,
+) -> SendMailStatus {
+    if !caps.allows(crate::caps::Cap::EmailSend) {
+        return SendMailStatus::Denied;
+    }
+    if to.is_empty()
+        || to.contains('|')
+        || to.contains('\n')
+        || subj.contains('|')
+        || subj.contains('\n')
+        || body.contains('|')
+        || body.contains('\n')
+    {
+        return SendMailStatus::Failed;
+    }
+
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+    match ping_bridge(&com2, &mut line) {
+        BridgeStatus::Offline => return SendMailStatus::Offline,
+        BridgeStatus::Online => {}
+    }
+
+    com2.write_str("CALL email.send to=");
+    com2.write_str(to);
+    com2.write_str(" subj=");
+    com2.write_str(subj);
+    com2.write_str(" body=");
+    com2.write_str(body);
+    com2.write_str(" email=1 confirm=1\n");
+
+    let Some(n) = com2.read_line(&mut line, TIMEOUT_REPLY) else {
+        return SendMailStatus::Offline;
+    };
+    let resp = str_prefix(&line[..n]);
+    if resp.starts_with("OK email.send") {
+        SendMailStatus::Ok
+    } else {
+        SendMailStatus::Failed
+    }
+}
+
 /// Outcome of a guest `audio.transcribe` attempt.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum TranscribeStatus {
@@ -976,6 +1038,22 @@ mod tests {
         let peek = fetch_calendar_peek(Caps::none());
         assert!(peek.denied);
         assert_eq!(peek.count, 0);
+    }
+
+    #[test]
+    fn send_mail_refuses_without_opening_com2() {
+        use crate::caps::{Cap, Caps};
+        assert_eq!(
+            send_mail(Caps::none(), "ada@x.com", "Hi", "Hello"),
+            SendMailStatus::Denied
+        );
+        // Email read alone must not arm send.
+        let mut caps = Caps::none();
+        caps.set(Cap::EmailSearch, true);
+        assert_eq!(
+            send_mail(caps, "ada@x.com", "Hi", "Hello"),
+            SendMailStatus::Denied
+        );
     }
 
     #[test]

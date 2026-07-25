@@ -19,13 +19,17 @@ pub enum Cap {
     /// Exchange data with external portals (teddy, markets). OFF by
     /// default: every other capability is local, this one leaves the machine.
     PortalSync = 5,
+    /// Send mail. OFF by default; still needs an explicit Confirm send on
+    /// Brief — grant alone never auto-sends (AGENTS non-negotiable #3).
+    EmailSend = 6,
 }
 
 impl Cap {
     /// Screen order. `setup::CAPS[i]` labels `ALL[i]`, so these must agree —
     /// a mismatch shows the right switch against the wrong name.
-    pub const ALL: [Cap; 6] = [
+    pub const ALL: [Cap; 7] = [
         Cap::EmailSearch,
+        Cap::EmailSend,
         Cap::SearchQuery,
         Cap::WorkspaceIndex,
         Cap::AudioTranscribe,
@@ -38,6 +42,7 @@ impl Cap {
     pub const fn label(self) -> &'static str {
         match self {
             Cap::EmailSearch => "Email",
+            Cap::EmailSend => "Send mail",
             Cap::SearchQuery => "Built-in docs",
             Cap::WorkspaceIndex => "Your files",
             Cap::AudioTranscribe => "Recordings",
@@ -50,6 +55,7 @@ impl Cap {
     pub const fn detail(self) -> &'static str {
         match self {
             Cap::EmailSearch => "Read inbox and calendar",
+            Cap::EmailSend => "Send after you confirm on Brief",
             Cap::SearchQuery => "Search what ships with the OS",
             Cap::WorkspaceIndex => "Search project folders you choose",
             Cap::AudioTranscribe => "Type a media path in Search",
@@ -70,6 +76,7 @@ impl Cap {
     pub const fn name(self) -> &'static str {
         match self {
             Cap::EmailSearch => "email.search",
+            Cap::EmailSend => "email.send",
             Cap::SearchQuery => "search.query",
             Cap::SkillsSave => "skills.save",
             Cap::WorkspaceIndex => "workspace.index",
@@ -184,6 +191,7 @@ mod tests {
         let c = Caps::default_grants();
         assert!(c.allows(Cap::SearchQuery));
         assert!(!c.allows(Cap::EmailSearch));
+        assert!(!c.allows(Cap::EmailSend));
         assert!(!c.allows(Cap::SkillsSave));
     }
 
@@ -200,7 +208,7 @@ mod tests {
 
     #[test]
     fn footer_is_ascii_and_short() {
-        for bits in 0u8..64 {
+        for bits in 0u8..=127 {
             let c = Caps { bits };
             let mut buf = [0u8; 96];
             let n = c.describe(&mut buf);
@@ -213,8 +221,16 @@ mod tests {
     #[test]
     fn names_match_setup_rows() {
         assert_eq!(Cap::EmailSearch.name(), "email.search");
+        assert_eq!(Cap::EmailSend.name(), "email.send");
         assert_eq!(Cap::SearchQuery.name(), "search.query");
         assert_eq!(Cap::SkillsSave.name(), "skills.save");
+    }
+
+    #[test]
+    fn send_mail_is_not_implied_by_email_read() {
+        let mut c = Caps::none();
+        c.set(Cap::EmailSearch, true);
+        assert!(!c.allows(Cap::EmailSend));
     }
 
     #[test]
