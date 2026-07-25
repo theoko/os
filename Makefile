@@ -36,7 +36,7 @@ endif
 RUSTUP_BIN := $(patsubst %/,%,$(dir $(CARGO)))
 WITH_RUST := PATH="$(RUSTUP_BIN):$$PATH"
 
-.PHONY: all build kernel iso bridge bridge-run run run-bridged utm utm-run utm-bridged linux-vm test test-host smoke smoke-bridge clean distclean
+.PHONY: all build kernel iso bridge bridge-run run run-bridged utm utm-run utm-bridged linux-vm refresh refresh-install refresh-uninstall test test-host smoke smoke-bridge clean distclean
 
 all: build
 
@@ -103,6 +103,24 @@ utm-bridged: iso bridge
 linux-vm:
 	chmod +x scripts/linux-vm.sh
 	./scripts/linux-vm.sh -serial stdio -display none
+
+# Daily search refresh. Re-indexes workspace files and re-syncs the portal
+# corpus, but only if that corpus was already synced once — a host-side timer
+# must not be a way to start talking to the network on the user's behalf.
+refresh:
+	./scripts/refresh-index.sh
+
+refresh-install:
+	mkdir -p $(HOME)/Library/LaunchAgents
+	cp deploy/com.os.refresh.plist $(HOME)/Library/LaunchAgents/
+	launchctl unload $(HOME)/Library/LaunchAgents/com.os.refresh.plist 2>/dev/null || true
+	launchctl load $(HOME)/Library/LaunchAgents/com.os.refresh.plist
+	@echo ">>> daily at 08:00 — log: .refresh.log"
+
+refresh-uninstall:
+	launchctl unload $(HOME)/Library/LaunchAgents/com.os.refresh.plist 2>/dev/null || true
+	rm -f $(HOME)/Library/LaunchAgents/com.os.refresh.plist
+	@echo ">>> removed"
 
 test: test-host smoke smoke-bridge
 
