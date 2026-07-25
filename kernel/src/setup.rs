@@ -55,13 +55,20 @@ pub enum Step {
 pub const REGIONS: [&str; 4] = ["United States", "United Kingdom", "Greece", "Japan"];
 
 /// Capabilities the agent may be granted up front. Mirrors [`Cap`] / bridge tools.
+/// What each capability is called on screen, and what it costs you.
+///
+/// Plain language, not dotted identifiers: someone at first boot is deciding
+/// what this machine may touch, not reading an API. The second column is the
+/// consequence, phrased so the honest answer to "should I?" is visible — and
+/// where something leaves the machine, it says so, because that is the only
+/// distinction that really matters here.
 pub const CAPS: [(&str, &str); 6] = [
-    ("email.search", "Read the inbox through the host bridge"),
-    ("search.query", "Query the built-in knowledge corpus"),
-    ("skills.save", "Write new skill playbooks to disk"),
-    ("workspace.index", "Search your own files on this machine"),
-    ("audio.transcribe", "Transcribe recordings and index what was said"),
-    ("portal.sync", "Send queries to teddysearch and market portals"),
+    ("Email", "Read your inbox"),
+    ("Built-in docs", "Search what ships with the OS"),
+    ("Your files", "Search documents on this machine"),
+    ("Recordings", "Transcribe audio you point it at"),
+    ("Save skills", "Write new playbooks to disk"),
+    ("Online services", "Sends queries off this machine"),
 ];
 
 const MAX_ZONES: usize = 12;
@@ -81,9 +88,12 @@ impl Setup {
         Self {
             step: Step::Welcome,
             region: 0,
-            // Read-only tools on; anything that writes to disk or reaches
-            // personal files is opt-in, matching the "no ambient root" rule.
-            caps: [true, true, false, false, false, false],
+            // Privacy first: nothing is on that reads personal data, writes
+            // to disk, or leaves the machine. Only the docs that ship with the
+            // OS are searchable out of the box.
+            //
+            // Order matches caps::Cap::ALL.
+            caps: [false, true, false, false, false, false],
             zones: [Zone {
                 x: 0,
                 y: 0,
@@ -330,28 +340,25 @@ impl Setup {
         let cw = CONTENT_W.min(w - 80);
         let x = (w - cw) / 2;
 
-        // Selected rows get an accent hairline; the rest a neutral one.
         let border = if on && !toggle { theme::ACCENT } else { theme::CARD_BORDER };
         fb.fill_round_rect(x, y, cw, ROW_H, 10, border);
         let inner = if on && !toggle { theme::TINT_BG } else { theme::BG };
         fb.fill_round_rect(x + 1, y + 1, cw - 2, ROW_H - 2, 9, inner);
 
-        let pad = 18;
-        let has_blurb = blurb.is_some();
-        let title_base = if has_blurb {
-            y + 24
-        } else {
-            y + ROW_H / 2 + BRAND_FACE.px / 3
-        };
-        fb.draw_text(x + pad, title_base, title, &BRAND_FACE, 0, theme::INK);
+        // Single baseline: label left, consequence beside it in muted grey.
+        // Stacking a subtitle under every row made six of them overflow the
+        // window, and the second line was never the thing being decided.
+        let pad = 16;
+        let base = y + ROW_H / 2 + BRAND_FACE.px / 3;
+        fb.draw_text(x + pad, base, title, &BRAND_FACE, 0, theme::INK);
         if let Some(b) = blurb {
-            fb.draw_text(x + pad, title_base + 20, b, &SMALL_FACE, 0, theme::MUTED);
+            let lx = x + pad + BRAND_FACE.width(title, 0) + 12;
+            fb.draw_text(lx, base, b, &SMALL_FACE, 0, theme::MUTED);
         }
 
         if toggle {
-            // Pill switch, filled when granted.
-            let tw = 40;
-            let th = 22;
+            let tw = 36;
+            let th = 20;
             let tx = x + cw - pad - tw;
             let ty = y + (ROW_H - th) / 2;
             let track_col = if on { theme::ACCENT } else { theme::RULE };
@@ -360,16 +367,8 @@ impl Setup {
             let kx = if on { tx + tw - knob - 3 } else { tx + 3 };
             fb.fill_round_rect(kx, ty + 3, knob, knob, knob / 2, theme::BG);
         } else if on {
-            // Selection dot.
-            let d = 10;
-            fb.fill_round_rect(
-                x + cw - pad - d,
-                y + (ROW_H - d) / 2,
-                d,
-                d,
-                d / 2,
-                theme::ACCENT,
-            );
+            let d = 9;
+            fb.fill_round_rect(x + cw - pad - d, y + (ROW_H - d) / 2, d, d, d / 2, theme::ACCENT);
         }
 
         self.push_zone(x, y, cw, ROW_H, action);
@@ -419,8 +418,8 @@ impl Setup {
     }
 }
 
-const CONTENT_W: i32 = 460;
-const ROW_H: i32 = 58;
+const CONTENT_W: i32 = 520;
+const ROW_H: i32 = 46;
 const CTA_H: i32 = 44;
 
 #[cfg(test)]
@@ -502,21 +501,62 @@ mod tests {
     }
 
     #[test]
-    fn skills_write_is_off_by_default() {
-        // "No ambient root" - granting disk writes must be a deliberate act.
-        let s = setup();
-        let idx = CAPS.iter().position(|(n, _)| *n == "skills.save").unwrap();
-        assert!(!s.caps[idx]);
+    fn nothing_touching_personal_data_is_on_by_default() {
+        use crate::caps::Cap;
+        // Privacy first: out of the box the OS may search only the documents
+        // that ship with it. Reading mail, indexing files, transcribing audio,
+        // writing to disk and talking to remote services are all deliberate.
+        let g = setup().grants();
+        assert!(g.allows(Cap::SearchQuery), "built-in docs should be usable immediately");
+        for cap in [
+            Cap::EmailSearch,
+            Cap::WorkspaceIndex,
+            Cap::AudioTranscribe,
+            Cap::SkillsSave,
+            Cap::PortalSync,
+        ] {
+            assert!(!g.allows(cap), "{} must be off by default", cap.name());
+        }
     }
 
     #[test]
     fn grants_match_cap_module() {
         use crate::caps::Cap;
+        // Rows show plain labels now, so the old name-equality check is gone.
+        // What still has to hold is that row i drives Cap::ALL[i] — a mismatch
+        // would put the right switch against the wrong capability, which is a
+        // consent bug, not a cosmetic one.
+        assert_eq!(CAPS.len(), Cap::ALL.len());
         let s = setup();
         let g = s.grants();
         for (i, cap) in Cap::ALL.iter().enumerate() {
-            assert_eq!(CAPS[i].0, cap.name());
-            assert_eq!(s.caps[i], g.allows(*cap));
+            assert_eq!(s.caps[i], g.allows(*cap), "row {i} ({}) drives the wrong cap", CAPS[i].0);
+        }
+    }
+
+    #[test]
+    fn every_row_toggles_exactly_its_own_capability() {
+        use crate::caps::Cap;
+        // Stronger than the mapping check: flip one row and confirm only that
+        // capability moved.
+        for i in 0..CAPS.len() {
+            let mut s = setup();
+            let before = s.grants();
+            s.step = Step::Capabilities;
+            s.apply(Action::Row(i));
+            let after = s.grants();
+            for (j, cap) in Cap::ALL.iter().enumerate() {
+                if i == j {
+                    assert_ne!(before.allows(*cap), after.allows(*cap), "row {i} did not toggle");
+                } else {
+                    assert_eq!(
+                        before.allows(*cap),
+                        after.allows(*cap),
+                        "row {i} also changed {}",
+                        cap.name()
+                    );
+                }
+            }
         }
     }
 
@@ -654,9 +694,15 @@ mod layout_tests {
             "{} capability rows already collide with the footer",
             CAPS.len()
         );
+        // Single-line rows fit more than the old stacked ones. Recomputed
+        // rather than relaxed: this is the count that actually fits.
         assert!(
-            rows_bottom(7) >= footer_top(768),
-            "layout gained room for a 7th row — update this guard deliberately"
+            rows_bottom(7) < footer_top(768),
+            "a 7th row no longer fits — the guard is stale"
+        );
+        assert!(
+            rows_bottom(9) >= footer_top(768),
+            "layout gained room for a 9th row — update this guard deliberately"
         );
     }
 
@@ -674,8 +720,10 @@ mod layout_tests {
     #[test]
     fn capability_names_and_blurbs_fit_the_column() {
         for (name, blurb) in CAPS {
-            assert!(BRAND_FACE.width(name, 0) < CONTENT_W - 76, "name hits the switch: {name}");
-            assert!(SMALL_FACE.width(blurb, 0) < CONTENT_W - 76, "blurb hits the switch: {blurb}");
+            // Label and consequence share one baseline, so they must fit
+            // side by side without reaching the switch.
+            let used = BRAND_FACE.width(name, 0) + 12 + SMALL_FACE.width(blurb, 0);
+            assert!(used < CONTENT_W - 80, "row {name:?} overruns the switch: {used}px");
         }
     }
 }

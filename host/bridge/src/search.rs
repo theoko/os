@@ -408,7 +408,7 @@ mod tests {
     }
 }
 
-/// Body text for a document URL, from the built-in corpus or teddysearch.
+/// Body text for a document URL, from the built-in corpus or teddy.
 ///
 /// These sources carry their text in the index, so reading needs no file
 /// access — and no capability beyond the one that found them.

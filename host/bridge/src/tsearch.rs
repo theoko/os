@@ -51,7 +51,9 @@ pub fn url() -> String {
 pub fn cache_path() -> PathBuf {
     env::var("OS_TSEARCH_CACHE")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| home().join("Library/Application Support/os/knowledge/teddysearch.json"))
+        // Renamed from teddysearch.json; an existing cache is simply re-synced
+        // rather than migrated, since it is a downloadable artifact.
+        .unwrap_or_else(|_| home().join("Library/Application Support/os/knowledge/teddy.json"))
 }
 
 fn home() -> PathBuf {

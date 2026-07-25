@@ -110,7 +110,7 @@ even keep its integer scoring, though it would no longer need to.
 
 **Untouched (~3,400 lines)**
 
-The entire `host/bridge`: email graph, workspace index, teddysearch, portals,
+The entire `host/bridge`: email graph, workspace index, teddy, portals,
 transcription, `doc.read`. It talks a line protocol over a socket and does not
 care what is on the other end.
 

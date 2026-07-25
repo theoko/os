@@ -566,7 +566,7 @@ fn read_doc(url: &str, max: usize, args: &[(String, String)]) -> Result<Vec<Stri
             .map(|t| t.text)
             .ok_or("no such transcript")?
     } else {
-        // Corpus and teddysearch documents carry their body in the index.
+        // Corpus and teddy documents carry their body in the index.
         return search::body_for(url, max).ok_or_else(|| "no readable body".into());
     };
 
