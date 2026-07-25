@@ -1,8 +1,14 @@
 ---
-version: 0.9.0
+version: 0.9.1
 ---
 
 # Changelog
+
+## 0.9.1 — 2026-07-25
+
+Setup Skills and the home Skills screen list playbooks from the host bridge
+(`CALL skills.list`) over COM2. Offline still shows the ISO builtins. Clicking
+a skill row calls `skills.get` for a short body blurb in the footer.
 
 ## 0.9.0 — 2026-07-25
 
