@@ -11,6 +11,9 @@ use limine::request::{
 };
 
 const STACK_SIZE: u64 = 128 * 1024;
+/// Cursor animations are capped at the display-friendly 60 Hz.  When the
+/// pointer is still, the loop does no timed rendering at all.
+const FRAME_US: u32 = 1_000_000 / 60;
 
 #[used]
 #[unsafe(link_section = ".requests")]
@@ -191,6 +194,8 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut cursor = mouse::Cursor::new();
                 let mut x = cx;
                 let mut y = cy;
+                let mut motion = mouse::CursorMotion::new(x, y);
+                let mut frame_mark = serial::rdtsc();
                 let mut prev_buttons = 0u8;
                 let mut status_buf = [0u8; 72];
                 let mut status_len = grants.describe(&mut status_buf);
@@ -206,7 +211,7 @@ unsafe extern "C" fn kmain() -> ! {
                 cursor.hide(surface);
                 setup.draw(surface, &mail, &skill_peek);
                 cursor.show_at(surface, x, y);
-                enter(&screen);
+                enter(&screen, &mut motion, x, y);
                 serial_port.write_str("ui: setup welcome\n");
                 // Chime after the first frame is up, so the screen is never
                 // waiting on the speaker.
@@ -247,6 +252,9 @@ unsafe extern "C" fn kmain() -> ! {
                         y = mice.y;
                         buttons = mice.buttons;
                         moved = true;
+                    }
+                    if moved {
+                        motion.set_target(x, y);
                     }
 
                     if !setup.is_finished() {
@@ -306,7 +314,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 setup.draw(surface, &mail, &skill_peek);
                             }
                             cursor.show_at(surface, x, y);
-                            enter(&screen);
+                            enter(&screen, &mut motion, x, y);
                             moved = false;
                         }
                     } else if view == screens::View::Home {
@@ -358,7 +366,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 );
                             }
                             cursor.show_at(surface, x, y);
-                            enter(&screen);
+                            enter(&screen, &mut motion, x, y);
                             moved = false;
                         }
                     }
@@ -582,7 +590,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 }
                             }
                             cursor.show_at(surface, x, y);
-                            enter(&screen);
+                            enter(&screen, &mut motion, x, y);
                             moved = false;
                         }
                     } else {
@@ -598,7 +606,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     cursor.hide(surface);
                                     setup.draw(surface, &mail, &skill_peek);
                                     cursor.show_at(surface, x, y);
-                                    enter(&screen);
+                                    enter(&screen, &mut motion, x, y);
                                     clicked = true;
                                     moved = false;
                                 }
@@ -615,7 +623,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     cursor.hide(surface);
                                     screens::draw_skills(surface, &skill_peek, grants);
                                     cursor.show_at(surface, x, y);
-                                    enter(&screen);
+                                    enter(&screen, &mut motion, x, y);
                                     // Don't fall through to the home redraw below.
                                     clicked = false;
                                     moved = false;
@@ -634,7 +642,7 @@ unsafe extern "C" fn kmain() -> ! {
                                         bridge_note(&mail),
                                     );
                                     cursor.show_at(surface, x, y);
-                                    enter(&screen);
+                                    enter(&screen, &mut motion, x, y);
                                     clicked = true;
                                     moved = false;
                                 }
@@ -645,7 +653,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     cursor.hide(surface);
                                     screens::draw_caps(surface, grants);
                                     cursor.show_at(surface, x, y);
-                                    enter(&screen);
+                                    enter(&screen, &mut motion, x, y);
                                     clicked = false;
                                     moved = false;
                                 }
@@ -655,7 +663,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     cursor.hide(surface);
                                     screens::draw_brief(surface, &brief);
                                     cursor.show_at(surface, x, y);
-                                    enter(&screen);
+                                    enter(&screen, &mut motion, x, y);
                                     clicked = false;
                                     moved = false;
                                 }
@@ -672,17 +680,30 @@ unsafe extern "C" fn kmain() -> ! {
                                     &brief,
                                 );
                                 cursor.show_at(surface, x, y);
-                                enter(&screen);
+                                enter(&screen, &mut motion, x, y);
                                 moved = false;
                             }
                         }
                     }
+                    if buttons != prev_buttons {
+                        // Never leave the cursor visually behind a click.
+                        motion.snap(x, y);
+                    }
                     prev_buttons = buttons;
-                    if moved {
-                        cursor.show_at(surface, x, y);
-                        // hide()/show_at() marked both footprints; present()
-                        // blits exactly that union and nothing else.
-                        screen.present();
+                    if moved || motion.active() {
+                        if let Some((draw_x, draw_y)) = motion.step() {
+                            cursor.show_at(surface, draw_x, draw_y);
+                            // hide()/show_at() marked both footprints;
+                            // present() blits exactly that union and nothing else.
+                            screen.present();
+                        }
+                    }
+                    if motion.active() {
+                        frame_mark = anim::pace(frame_mark, FRAME_US);
+                    } else {
+                        // Reset the mark while idle so the next active frame
+                        // begins immediately instead of inheriting old time.
+                        frame_mark = serial::rdtsc();
                     }
                     core::hint::spin_loop();
                 }
@@ -713,7 +734,10 @@ fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
 ///
 /// Snapping between screens is what made this feel unlike a desktop; an
 /// eased slide-and-fade costs a handful of blits and reads as intentional.
-fn enter(screen: &fb::Screen) {
+fn enter(screen: &fb::Screen, motion: &mut mouse::CursorMotion, x: i32, y: i32) {
+    // A new screen is rendered at the exact pointer position; smoothing then
+    // resumes only for subsequent free movement.
+    motion.snap(x, y);
     let mut mark = serial::rdtsc();
     for i in 0..=anim::SLIDE_IN.frames {
         let (dy, a) = anim::SLIDE_IN.at(i);

@@ -236,6 +236,86 @@ impl Mouse {
     }
 }
 
+/// A small fixed-point spring between raw pointer input and the drawn cursor.
+///
+/// Input remains exact for hit-testing.  Only the visual pointer eases toward
+/// it, at most once per 60 Hz frame, so a slow hand feels fluid without making
+/// a fast user wait for the cursor to catch up.
+pub struct CursorMotion {
+    x: i32,
+    y: i32,
+    target_x: i32,
+    target_y: i32,
+    follow: i32,
+}
+
+const MOTION_ONE: i32 = 1 << 16;
+const GENTLE_FOLLOW: i32 = 22_000;
+const FAST_FOLLOW: i32 = 50_000;
+const FAST_INPUT_PX: i32 = 36;
+
+impl CursorMotion {
+    pub const fn new(x: i32, y: i32) -> Self {
+        Self {
+            x: x << 16,
+            y: y << 16,
+            target_x: x << 16,
+            target_y: y << 16,
+            follow: GENTLE_FOLLOW,
+        }
+    }
+
+    /// Aim for an input position. Swift, expert-like movements get a stronger
+    /// follow factor; precise movement retains a softer game-like glide.
+    pub fn set_target(&mut self, x: i32, y: i32) {
+        let tx = x << 16;
+        let ty = y << 16;
+        let distance = ((tx - self.target_x).abs() + (ty - self.target_y).abs()) >> 16;
+        self.target_x = tx;
+        self.target_y = ty;
+        self.follow = if distance >= FAST_INPUT_PX {
+            FAST_FOLLOW
+        } else {
+            GENTLE_FOLLOW
+        };
+    }
+
+    /// Interactions snap, so the visible pointer and the clicked target agree.
+    pub fn snap(&mut self, x: i32, y: i32) {
+        self.x = x << 16;
+        self.y = y << 16;
+        self.target_x = self.x;
+        self.target_y = self.y;
+    }
+
+    pub fn active(&self) -> bool {
+        self.x != self.target_x || self.y != self.target_y
+    }
+
+    /// Advance one 60 Hz frame. Returns a new whole-pixel cursor position only
+    /// when one needs painting.
+    pub fn step(&mut self) -> Option<(i32, i32)> {
+        if !self.active() {
+            return None;
+        }
+        let old_x = self.x >> 16;
+        let old_y = self.y >> 16;
+        self.x = follow(self.x, self.target_x, self.follow);
+        self.y = follow(self.y, self.target_y, self.follow);
+        let x = self.x >> 16;
+        let y = self.y >> 16;
+        (x != old_x || y != old_y).then_some((x, y))
+    }
+}
+
+fn follow(current: i32, target: i32, amount: i32) -> i32 {
+    let delta = target - current;
+    if delta.abs() <= 512 {
+        return target;
+    }
+    current + ((delta as i64 * amount as i64) / MOTION_ONE as i64) as i32
+}
+
 /// Arrow outline in 1/8-px units, tip at (0,0) — a real polygon so the cursor
 /// is anti-aliased like the rest of the UI instead of a stair-stepped bitmap.
 const ARROW: [(i32, i32); 7] = [
@@ -414,5 +494,29 @@ mod tests {
         let w = ARROW.iter().map(|p| p.0).max().unwrap();
         let h = ARROW.iter().map(|p| p.1).max().unwrap();
         assert!(h > w, "arrow should be taller than it is wide");
+    }
+
+    #[test]
+    fn cursor_motion_glides_then_lands_exactly() {
+        let mut motion = CursorMotion::new(10, 10);
+        motion.set_target(110, 10);
+        let first = motion.step().expect("first frame should move");
+        assert!(first.0 > 10 && first.0 < 110, "first frame should ease, not jump");
+        for _ in 0..32 {
+            motion.step();
+            if !motion.active() {
+                break;
+            }
+        }
+        assert!(!motion.active(), "motion should settle rather than drift forever");
+    }
+
+    #[test]
+    fn cursor_motion_click_snap_has_no_visual_lag() {
+        let mut motion = CursorMotion::new(0, 0);
+        motion.set_target(100, 100);
+        motion.snap(100, 100);
+        assert!(!motion.active());
+        assert_eq!(motion.step(), None);
     }
 }

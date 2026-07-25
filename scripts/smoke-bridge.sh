@@ -89,7 +89,10 @@ finally:
 PY
 }
 bridge_up=0
-for _ in $(seq 1 50); do
+# A cold Rust process can spend several seconds loading its local index on a
+# constrained CI runner. Keep the probe bounded, but don't report that normal
+# warm-up as a failed bind.
+for _ in $(seq 1 100); do
   if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
     echo "error: bridge exited during startup" >&2
     cat "$BRIDGE_LOG" >&2
