@@ -59,7 +59,7 @@ fn main() {
     let where_ = connect.as_deref().unwrap_or(addr.as_str());
     eprintln!(
         "os-mcp-bridge {} on {where_} (email={}; search={}; skills defaults={} user={})",
-        if connect.is_some() { "connecting" } else { "listening" },
+        if connect.is_some() { "connecting" } else { "starting" },
         backends.email,
         backends.search,
         defaults.display(),
