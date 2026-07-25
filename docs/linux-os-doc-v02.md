@@ -1,8 +1,108 @@
 ---
+title: Substrate and architecture — two separate decisions
+version: v02
+supersedes: linux-os-doc-v01.md
+date: 2026-07-25
+status: proposal — not started
+---
+
+# Substrate and architecture — two separate decisions
+
+v01 got the diagnosis wrong, in a way that would have been expensive.
+
+It attributed the performance ceiling to the custom kernel and proposed Linux
+as the fix. The ceiling is real, but the cause is not the kernel.
+
+## Measured
+
+The guest runs `-accel tcg`: every instruction is translated in software,
+because the image is x86-64 and the host is arm64.
+
+```
+qemu-system-aarch64 -accel help  ->  hvf, tcg
+```
+
+`hvf` is Apple's Hypervisor.framework. An aarch64 guest was launched under it
+on this machine and booted — hardware virtualisation is available and works.
+
+So the frame numbers from v01:
+
+| operation | cycles | wall | ceiling |
+|---|---|---|---|
+| full-screen present | 67,468k | ~22.5 ms | ~44 fps |
+| dirty-rect present | 103k | ~0.034 ms | far past 60 fps |
+
+are a property of **emulating a foreign architecture**, not of writing our own
+kernel.
+
+## Two axes, not one
+
+| change | buys |
+|---|---|
+| x86-64 → **aarch64** | the performance ceiling |
+| custom kernel → **Linux** | running real applications |
+
+v01 bundled these. They are independent.
+
+**The trap this creates:** migrating to *x86-64* Linux would keep TCG and keep
+the 22 ms frames. All of the porting cost, none of the performance benefit.
+Anyone reading v01 and starting work could reasonably have done that. If the
+substrate moves, it must move to aarch64.
+
+## The option v01 never considered
+
+Porting the existing kernel to `aarch64-unknown-none` fixes graphics with no
+Linux at all, and keeps enforcement-by-construction — the property that makes
+the capability claim true today.
+
+It is not free. On `virt` there is no port I/O, no PS/2, no PIT, so:
+
+| file | today | on aarch64 |
+|---|---|---|
+| `mouse.rs`, `usb_tablet.rs` | PS/2 + UHCI | virtio-input |
+| `pci.rs` | port-I/O CAM | ECAM/MMIO |
+| `beep.rs` | PIT channel 2 | virtio-sound, or drop |
+| `serial.rs` | 16550 UART | PL011 |
+| `fb.rs` | Limine framebuffer | unchanged — still a linear framebuffer |
+
+`caps`, `search`, `skills`, `font`, `anim`, `ui`, `searchui`, `screens`, and
+the whole bridge are architecture-independent and would not change.
+
+That is a fraction of the Linux port, and it is reversible.
+
+## What this does not change
+
+The LibreOffice argument stands. A custom kernel cannot run real applications
+in any realistic timeframe, on any architecture, and everything v01 says about
+the thesis — that "no ambient root" does not survive arbitrary binaries, and
+that real sandboxing becomes the only honest option — is unaffected.
+
+## Revised recommendation
+
+Decide the two questions separately, in this order:
+
+1. **Do you need real applications?** If yes, Linux, and the enforcement
+   question from v01 has to be answered first. If no, the kernel can stay.
+2. **Whichever substrate: go aarch64.** This is not optional and not a detail.
+   It is where the performance actually comes from, and it is cheap relative to
+   everything else.
+
+If the answer to (1) is "yes but not yet", porting the current kernel to
+aarch64 is a defensible intermediate step: it makes the thing pleasant to use
+now, costs a fraction of the full move, and throws away nothing that the Linux
+port would have kept anyway.
+
+---
+
+*v01 is retained below for the inventory and the thesis discussion, both of
+which stand.*
+
+
+---
 title: Moving to a Linux substrate
 version: v01
 date: 2026-07-25
-status: superseded by linux-os-doc-v02.md — its performance diagnosis is wrong
+status: proposal — not started
 ---
 
 # Moving to a Linux substrate
