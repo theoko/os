@@ -290,7 +290,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
     match cmd {
         "PING" => vec!["OK pong".into()],
         "LIST" => {
-            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,teddy.health,teddy.fear_greed,teddy.gex,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,doc.read".into()]
+            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,teddy.health,teddy.fear_greed,teddy.gex,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,portal.forget,doc.read".into()]
         }
         "CALL" => {
             let (tool, rest) = split_word(rest);
@@ -455,6 +455,29 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                 vec!["OK audio.forget nothing_to_remove".into(), "END".into()]
             }
             Err(e) => vec![format!("ERR audio.forget {e}")],
+        },
+        // Revoking Online services: purge teddy corpus API cache and live
+        // portal snapshots so "off" means forgotten, not merely hidden.
+        "portal.forget" => {
+            let corpus = tsearch::forget();
+            let snaps = portals::forget();
+            match (corpus, snaps) {
+                (Ok(c), Ok(s)) => {
+                    let removed = c == "removed" || s == "removed";
+                    vec![
+                        format!(
+                            "OK portal.forget {}",
+                            if removed {
+                                "removed"
+                            } else {
+                                "nothing_to_remove"
+                            }
+                        ),
+                        "END".into(),
+                    ]
+                }
+                (Err(e), _) | (_, Err(e)) => vec![format!("ERR portal.forget {e}")],
+            }
         },
         "workspace.index" => {
             // Building the index reads the user's files, so it needs the same
@@ -822,6 +845,35 @@ mod tests {
     fn tsearch_sync_still_needs_portal_cap() {
         let denied = dispatch("CALL tsearch.sync", &test_backends());
         assert!(denied[0].contains("needs_portal_cap"), "{denied:?}");
+    }
+
+    #[test]
+    fn list_includes_portal_forget() {
+        let r = dispatch("LIST", &test_backends());
+        assert!(r[0].contains("portal.forget"), "{}", r[0]);
+    }
+
+    #[test]
+    fn portal_forget_is_idempotent() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("os-pf-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let teddy = dir.join("teddy.json");
+        let snaps = dir.join("portals.json");
+        unsafe {
+            std::env::set_var("OS_TSEARCH_CACHE", &teddy);
+            std::env::set_var("OS_PORTAL_SNAPSHOT", &snaps);
+        }
+        tsearch::clear_memory();
+        let r = dispatch("CALL portal.forget", &test_backends());
+        assert!(r[0].starts_with("OK portal.forget"), "{r:?}");
+        assert!(r[0].contains("nothing_to_remove"), "{r:?}");
+        unsafe {
+            std::env::remove_var("OS_TSEARCH_CACHE");
+            std::env::remove_var("OS_PORTAL_SNAPSHOT");
+        }
+        tsearch::clear_memory();
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
 

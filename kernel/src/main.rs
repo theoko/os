@@ -438,7 +438,7 @@ unsafe extern "C" fn kmain() -> ! {
                                         // behind it.
                                         (
                                             caps::Cap::PortalSync,
-                                            "",
+                                            "portal.forget",
                                             &["tsearch.sync", "teddy.health"][..],
                                         ),
                                     ] {

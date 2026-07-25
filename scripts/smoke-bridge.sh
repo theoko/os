@@ -137,6 +137,17 @@ elif "needs_portal_cap" in allowed:
     sys.exit(1)
 else:
     print(f"smoke-bridge: teddy.health live call skipped ({allowed.splitlines()[:1]})")
+
+if "portal.forget" not in listing:
+    print("error: LIST missing portal.forget", file=sys.stderr)
+    print(listing, file=sys.stderr)
+    sys.exit(1)
+forgotten = call("CALL portal.forget")
+if not forgotten.startswith("OK portal.forget"):
+    print("error: portal.forget failed", file=sys.stderr)
+    print(forgotten, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: portal.forget ok")
 PY
 
 python3 <<'PY'

@@ -1,8 +1,18 @@
 ---
-version: 0.9.4
+version: 0.9.5
 ---
 
 # Changelog
+
+## 0.9.5 — 2026-07-25
+
+Revoking Online services forgets what it built:
+
+- Bridge `portal.forget` deletes the teddy corpus cache and portal snapshots,
+  and clears in-memory tsearch state (no more OnceLock that outlived revoke).
+- Guest Caps toggle calls `portal.forget` on revoke, matching workspace/audio.
+- Setup Skills lists all six builtins (teddy-portals was previously hidden).
+- Smoke asserts `portal.forget`.
 
 ## 0.9.4 — 2026-07-25
 

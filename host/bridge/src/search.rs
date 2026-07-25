@@ -245,22 +245,29 @@ pub fn query_all(
     // inline would re-tokenise 12k documents on every keystroke.
     // Portals are the only source that leaves this machine, so they need the
     // grant that says so.
-    let teddy = crate::tsearch::index();
-    if include_portal && !teddy.is_empty() && cat.is_none() {
-        let tdocs = crate::tsearch::docs();
-        for (score, i) in teddy.search(q, k) {
-            docs.push(Doc {
-                t: tdocs[i].t.clone(),
-                u: tdocs[i].u.clone(),
-                c: if tdocs[i].c.is_empty() { "teddy".into() } else { tdocs[i].c.clone() },
-                b: tdocs[i].b.clone(),
-                pr: tdocs[i].pr,
-            });
-            // `docs` just grew by one; that entry is what this score refers to.
-            hits.push((score, docs.len() - 1));
-        }
-        hits.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        hits.truncate(k);
+    if include_portal && cat.is_none() {
+        crate::tsearch::with_docs_index(|tdocs, teddy| {
+            if teddy.is_empty() {
+                return;
+            }
+            for (score, i) in teddy.search(tdocs, q, k) {
+                docs.push(Doc {
+                    t: tdocs[i].t.clone(),
+                    u: tdocs[i].u.clone(),
+                    c: if tdocs[i].c.is_empty() {
+                        "teddy".into()
+                    } else {
+                        tdocs[i].c.clone()
+                    },
+                    b: tdocs[i].b.clone(),
+                    pr: tdocs[i].pr,
+                });
+                // `docs` just grew by one; that entry is what this score refers to.
+                hits.push((score, docs.len() - 1));
+            }
+            hits.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            hits.truncate(k);
+        });
     }
     let n = hits.len();
     let mut out = vec![format!("OK search.query n={n} backend=tfidf-pr")];

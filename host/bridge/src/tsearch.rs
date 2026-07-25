@@ -10,15 +10,16 @@
 //! * The corpus already uses the `{t,u,c,b,pr}` schema this bridge parses —
 //!   the local `search/corpus.json` was modelled on it — so no translation.
 //! * It is ~64 MB and ~12k documents, far too large to re-read per query, so
-//!   it is parsed once per process and held behind a `OnceLock`.
+//!   it is parsed once and held in process memory. Memory is a `Mutex` (not
+//!   `OnceLock`) so `forget` can purge it when the user revokes portal.sync.
 
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Arc, Mutex};
 
 /// Live corpus published by the tsearch front-end.
 pub const DEFAULT_URL: &str = "https://teddysearch.com/tsearch/corpus.json";
@@ -100,28 +101,98 @@ pub fn sync() -> Result<(usize, String), String> {
     }
 
     fs::rename(&tmp, &path).map_err(|e| format!("rename: {e}"))?;
+    // Replace in-memory state so the next search sees the new corpus without
+    // restarting the bridge (OnceLock could not do this after a revoke/resync).
+    publish(Arc::new(Corpus::from_docs(parsed.docs)));
     Ok((n, parsed.crawled_at))
 }
 
-static CACHE: OnceLock<Vec<RawDoc>> = OnceLock::new();
+/// In-memory corpus + index. `None` means "load from disk on next use".
+static CORPUS: Mutex<Option<Arc<Corpus>>> = Mutex::new(None);
 
-/// Cached corpus documents, parsed once per process.
-///
-/// Re-reading 64 MB on every `search.query` would make the search field
-/// unusable; this is why the source is a cache rather than a live call.
-pub fn docs() -> &'static [RawDoc] {
-    CACHE.get_or_init(|| {
+struct Corpus {
+    docs: Arc<Vec<RawDoc>>,
+    index: Arc<Index>,
+}
+
+impl Corpus {
+    fn empty() -> Self {
+        let docs = Arc::new(Vec::new());
+        let index = Arc::new(Index::build(&docs));
+        Self { docs, index }
+    }
+
+    fn from_docs(docs: Vec<RawDoc>) -> Self {
+        let docs = Arc::new(docs);
+        let index = Arc::new(Index::build(&docs));
+        Self { docs, index }
+    }
+
+    fn from_disk() -> Self {
         let Ok(raw) = fs::read_to_string(cache_path()) else {
-            return Vec::new();
+            return Self::empty();
         };
         match serde_json::from_str::<CorpusFile>(&raw) {
-            Ok(c) => c.docs,
+            Ok(c) => Self::from_docs(c.docs),
             Err(e) => {
                 eprintln!("tsearch: cache unreadable ({e}); run CALL tsearch.sync");
-                Vec::new()
+                Self::empty()
             }
         }
-    })
+    }
+}
+
+fn publish(c: Arc<Corpus>) {
+    if let Ok(mut g) = CORPUS.lock() {
+        *g = Some(c);
+    }
+}
+
+fn loaded() -> Arc<Corpus> {
+    let mut g = CORPUS.lock().unwrap_or_else(|e| e.into_inner());
+    if g.is_none() {
+        *g = Some(Arc::new(Corpus::from_disk()));
+    }
+    Arc::clone(g.as_ref().unwrap())
+}
+
+/// Drop in-memory state so the next access reloads from disk (or emptiness).
+pub fn clear_memory() {
+    if let Ok(mut g) = CORPUS.lock() {
+        *g = None;
+    }
+}
+
+/// Delete the on-disk teddy corpus and purge the in-memory index.
+///
+/// Revoking `portal.sync` must not leave a 12k-doc cache behind a switch that
+/// reads as off — "hidden" is not "forgotten".
+pub fn forget() -> Result<&'static str, String> {
+    let path = cache_path();
+    let _ = fs::remove_file(path.with_extension("part"));
+    let status = match fs::remove_file(&path) {
+        Ok(()) => "removed",
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => "nothing_to_remove",
+        Err(e) => return Err(format!("{e}")),
+    };
+    // Publish empty immediately so concurrent searches cannot resurrect the
+    // old Arc while disk is already gone.
+    publish(Arc::new(Corpus::empty()));
+    Ok(status)
+}
+
+/// Cached corpus documents for the current process.
+///
+/// Re-reading 64 MB on every `search.query` would make the search field
+/// unusable; this is why the source is a memory cache rather than a live call.
+pub fn docs() -> Arc<Vec<RawDoc>> {
+    Arc::clone(&loaded().docs)
+}
+
+/// Borrow docs + index under one load — prefer this on the search hot path.
+pub fn with_docs_index<R>(f: impl FnOnce(&[RawDoc], &Index) -> R) -> R {
+    let c = loaded();
+    f(&c.docs, &c.index)
 }
 
 pub fn is_available() -> bool {
@@ -169,8 +240,36 @@ mod tests {
         // parallel runner would otherwise leak between them.
         let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_TSEARCH_CACHE", "/nonexistent/os-teddy/none.json") };
+        clear_memory();
         assert!(!is_available());
+        assert!(docs().is_empty());
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
+        clear_memory();
+    }
+
+    #[test]
+    fn forget_deletes_disk_and_memory() {
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = env::temp_dir().join(format!("os-teddy-forget-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("teddy.json");
+        fs::write(
+            &path,
+            r#"{"crawled_at":"now","docs":[{"t":"Keep","u":"u","c":"web","b":"body","pr":0.5}]}"#,
+        )
+        .unwrap();
+        unsafe { env::set_var("OS_TSEARCH_CACHE", &path) };
+        clear_memory();
+        assert_eq!(docs().len(), 1);
+        assert!(!index().is_empty());
+        assert_eq!(forget().unwrap(), "removed");
+        assert!(!path.is_file());
+        assert!(docs().is_empty());
+        assert!(index().is_empty());
+        assert_eq!(forget().unwrap(), "nothing_to_remove");
+        unsafe { env::remove_var("OS_TSEARCH_CACHE") };
+        clear_memory();
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -199,8 +298,8 @@ mod tests {
 ///
 /// `search_tfidf` re-tokenises every document and rebuilds the df map per
 /// query. That is fine for the ~16-document built-in corpus and hopeless for
-/// 12k: measured at 5.6 s per search. The corpus only changes on sync, so the
-/// tokenisation and idf are computed once and queries walk postings instead.
+/// 12k: measured at 5.6 s per search. The corpus only changes on sync/forget,
+/// so tokenisation and idf are computed then and queries walk postings.
 pub struct Index {
     /// Sorted by term, so lookup is a binary search.
     terms: Vec<Term>,
@@ -214,8 +313,6 @@ pub struct Term {
     len: usize,
 }
 
-static INDEX: OnceLock<Index> = OnceLock::new();
-
 /// Tokeniser shared with the rest of the bridge.
 fn tok(text: &str) -> Vec<String> {
     text.to_lowercase()
@@ -225,11 +322,13 @@ fn tok(text: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn index() -> &'static Index {
-    INDEX.get_or_init(|| {
-        let docs = docs();
+pub fn index() -> Arc<Index> {
+    Arc::clone(&loaded().index)
+}
+
+impl Index {
+    fn build(docs: &[RawDoc]) -> Self {
         let n = docs.len() as f64;
-        // term -> doc -> tf
         let mut acc: HashMap<String, HashMap<usize, f64>> = HashMap::new();
         let mut lens = vec![0usize; docs.len()];
         for (i, d) in docs.iter().enumerate() {
@@ -255,18 +354,20 @@ pub fn index() -> &'static Index {
             for id in ids {
                 postings.push((id, per_doc[&id] / lens[id] as f64));
             }
-            terms.push(Term { word: w, idf, start, len: per_doc.len() });
+            terms.push(Term {
+                word: w,
+                idf,
+                start,
+                len: per_doc.len(),
+            });
         }
-        Index { terms, postings }
-    })
-}
+        Self { terms, postings }
+    }
 
-impl Index {
     pub fn is_empty(&self) -> bool {
         self.terms.is_empty()
     }
 
-    #[allow(dead_code)] // used by the bridge's startup prewarm log
     pub fn term_count(&self) -> usize {
         self.terms.len()
     }
@@ -282,12 +383,11 @@ impl Index {
     ///
     /// Mirrors the built-in scorer: tf-idf blended with PageRank, plus the
     /// exact-AND bonus for documents carrying every query term.
-    pub fn search(&self, query: &str, k: usize) -> Vec<(f64, usize)> {
+    pub fn search(&self, docs: &[RawDoc], query: &str, k: usize) -> Vec<(f64, usize)> {
         let q = tok(query);
         if q.is_empty() || self.terms.is_empty() {
             return Vec::new();
         }
-        let docs = docs();
         let mut score: HashMap<usize, f64> = HashMap::new();
         let mut hits: HashMap<usize, usize> = HashMap::new();
         let mut seen = 0usize;
@@ -302,7 +402,7 @@ impl Index {
         let mut out: Vec<(f64, usize)> = score
             .into_iter()
             .map(|(doc, mut s)| {
-                let pr = docs[doc].pr.clamp(0.0, 1.0);
+                let pr = docs.get(doc).map(|d| d.pr.clamp(0.0, 1.0)).unwrap_or(0.0);
                 s *= 1.0 + 4.0 * pr;
                 if seen > 0 && hits.get(&doc).copied().unwrap_or(0) >= seen {
                     s *= 1.35;
@@ -326,13 +426,19 @@ mod index_tests {
         // parallel runner would otherwise leak between them.
         let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_TSEARCH_CACHE", "/nonexistent/os-teddy/none.json") };
+        clear_memory();
         // Must not panic when there is nothing to index.
         assert!(docs().is_empty());
+        assert!(index().is_empty());
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
+        clear_memory();
     }
 
     #[test]
     fn tokeniser_matches_the_bridge_rules() {
-        assert_eq!(tok("Capability-based Agents v2 a"), vec!["capability", "based", "agents", "v2"]);
+        assert_eq!(
+            tok("Capability-based Agents v2 a"),
+            vec!["capability", "based", "agents", "v2"]
+        );
     }
 }

@@ -273,6 +273,22 @@ pub fn save_snapshot(tool: &str, body: &str) {
     }
 }
 
+/// Forget live portal state: in-memory TTL cache and on-disk snapshots.
+///
+/// Paired with `tsearch::forget` under `portal.forget` so revoking Online
+/// services clears both the corpus API cache and the live portal residue.
+pub fn forget() -> Result<&'static str, String> {
+    if let Ok(mut g) = CACHE.lock() {
+        *g = None;
+    }
+    let path = snapshot_path();
+    match fs::remove_file(&path) {
+        Ok(()) => Ok("removed"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("nothing_to_remove"),
+        Err(e) => Err(format!("{e}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -381,5 +397,21 @@ mod tests {
         unsafe { env::remove_var("OS_PORTAL_SNAPSHOT") };
         let p = snapshot_path().to_string_lossy().to_string();
         assert!(!p.contains("/os/search"), "snapshot must not land in the repo: {p}");
+    }
+
+    #[test]
+    fn forget_clears_snapshot_file() {
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = env::temp_dir().join(format!("os-portal-forget-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("portals.json");
+        unsafe { env::set_var("OS_PORTAL_SNAPSHOT", &path) };
+        save_snapshot("teddy.health", r#"{"status":"ok"}"#);
+        assert!(path.is_file());
+        assert_eq!(forget().unwrap(), "removed");
+        assert!(!path.is_file());
+        assert_eq!(forget().unwrap(), "nothing_to_remove");
+        unsafe { env::remove_var("OS_PORTAL_SNAPSHOT") };
+        let _ = fs::remove_dir_all(&dir);
     }
 }

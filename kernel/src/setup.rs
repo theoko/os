@@ -280,7 +280,9 @@ impl Setup {
             },
         );
         let mut y = top;
-        for i in 0..skills.count.min(4) {
+        // All builtins fit at ROW_H=46 on a 768 screen (see layout_tests).
+        // Hiding the last two used to leave teddy-portals undiscoverable.
+        for i in 0..skills.count.min(6) {
             let desc = skills.desc_at(i);
             let blurb = if desc.is_empty() { None } else { Some(desc) };
             self.row(fb, w, y, skills.name_at(i), blurb, true, false, Action::Row(i));
@@ -669,8 +671,12 @@ mod layout_tests {
 
     #[test]
     fn skills_rows_also_clear_the_footer() {
-        let bottom = rows_bottom(4); // draw_skills caps the list at 4
-        assert!(bottom < footer_top(768));
+        let bottom = rows_bottom(6); // draw_skills shows up to six builtins
+        assert!(
+            bottom < footer_top(768),
+            "6 skill rows reach {bottom}px, footer starts at {}",
+            footer_top(768)
+        );
     }
 
     #[test]
