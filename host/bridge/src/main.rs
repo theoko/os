@@ -309,7 +309,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
     match cmd {
         "PING" => vec!["OK pong".into()],
         "LIST" => {
-            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,skills.forget,search.query,workspace.index,tsearch.sync,teddy.health,teddy.fear_greed,teddy.gex,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,portal.forget,email.forget,doc.read".into()]
+            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,skills.forget,search.query,workspace.index,workspace.recent,tsearch.sync,teddy.health,teddy.fear_greed,teddy.gex,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,portal.forget,email.forget,doc.read".into()]
         }
         "CALL" => {
             let (tool, rest) = split_word(rest);
@@ -557,6 +557,16 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                 Err(e) => vec![format!("ERR workspace.index {e}")],
             }
         }
+        "workspace.recent" if !matches!(arg_val(args, "files"), Some("1")) => {
+            vec!["ERR workspace.recent needs_workspace_cap".into()]
+        }
+        "workspace.recent" => {
+            let k: usize = arg_val(args, "k")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(3)
+                .clamp(1, 10);
+            workspace_recent(k)
+        }
         "search.query" => {
             let q = arg_val(args, "q").unwrap_or("");
             let k: usize = arg_val(args, "k")
@@ -581,6 +591,28 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
         }
         _ => vec![format!("ERR {tool} not_found")],
     }
+}
+
+/// Top-ranked workspace files for the guest Home "Recent files" strip.
+fn workspace_recent(k: usize) -> Vec<String> {
+    let mut entries = workspace::Index::load().entries;
+    entries.sort_by(|a, b| {
+        b.pr
+            .partial_cmp(&a.pr)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let n = entries.len().min(k);
+    let mut out = vec![format!("OK workspace.recent n={n}")];
+    for e in entries.into_iter().take(n) {
+        out.push(format!(
+            "ROW title={}|url=file://{}|snip={}",
+            sanitize_field(&e.title),
+            sanitize_field(&e.path),
+            sanitize_field(&e.snippet)
+        ));
+    }
+    out.push("END".into());
+    out
 }
 
 /// Mock calendar rows — deterministic ids via [`graph::id_for`].
@@ -1064,6 +1096,15 @@ mod tests {
             "confirmed mock send: {ok:?}"
         );
         assert!(ok[0].contains("ada@x.com"), "{ok:?}");
+    }
+
+    #[test]
+    fn workspace_recent_needs_the_files_cap() {
+        let denied = dispatch("CALL workspace.recent", &test_backends());
+        assert!(
+            denied[0].contains("needs_workspace_cap"),
+            "ungated workspace.recent: {denied:?}"
+        );
     }
 
     #[test]

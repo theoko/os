@@ -39,6 +39,7 @@ Guest → host:
 | `CALL doc.read url=cal://… email=1` | Open a calendar event body |
 | `CALL email.forget` | Delete the host mail knowledge graph |
 | `CALL workspace.index files=1` | Build the project-folder index |
+| `CALL workspace.recent k=<n> files=1` | Top-ranked workspace files for Home |
 | `CALL workspace.forget` | Delete the workspace index |
 | `CALL doc.read url=… [files=1] [audio=1] [email=1] [portal=1]` | Open a search hit (`file://`, `audio://`, `email://`, `os://`, teddy) |
 | `CALL email.send to=<addr> subj=<s> body=<b> email=1 confirm=1` | Mock send (needs both bits; no gog) |
@@ -70,7 +71,7 @@ wire flags so a forged CALL cannot bypass consent:
 | `email.search` | `email=1` | `email.search`, `calendar.list`; revoke → `email.forget` |
 | `email.send` | `email=1` + `confirm=1` | `email.send` mock queue; guest Cap + Brief Confirm CTA |
 | `search.query` | guest refuse | `search.query` (`email=1`/`files=1`/… opt-in) |
-| `workspace.index` | `files=1` | workspace index / file docs; `workspace.forget` |
+| `workspace.index` | `files=1` | workspace index / `workspace.recent` / file docs; `workspace.forget` |
 | `audio.transcribe` | `audio=1` | `audio.transcribe path=…`; Search path picker; `audio.forget` |
 | `skills.save` | `skills=1` | `skills.save`; revoke → `skills.forget` |
 | `portal.sync` | `portal=1` | `tsearch.sync`, `teddy.*`, `market.*`; `portal.forget` |

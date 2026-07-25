@@ -1,8 +1,18 @@
 ---
-version: 0.9.24
+version: 0.9.25
 ---
 
 # Changelog
+
+## 0.9.25 — 2026-07-25
+
+Home Recent files opens in the Reader:
+
+- Bridge `workspace.recent` (needs `files=1`) returns top-ranked index rows
+  with `file://` URLs for the guest Home strip.
+- Guest peeks after Your files is granted; clicking a row opens `doc.read`
+  the same way Search / mail already do. Cap refuse never opens COM2.
+- Smoke: deny without `files=1`, allow after `workspace.index`.
 
 ## 0.9.24 — 2026-07-25
 

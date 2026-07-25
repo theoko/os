@@ -9,7 +9,7 @@ use crate::agent::Brief;
 use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{BODY_FACE, BRAND_FACE, H2_FACE, SMALL_FACE};
-use crate::mcp::{BridgeStatus, MailPeek};
+use crate::mcp::{BridgeStatus, FilePeek, MailPeek};
 use crate::skills::SkillPeek;
 
 /// Palette lifted from the reference site.
@@ -93,6 +93,8 @@ pub enum HomeHit {
     Brief,
     /// Open a Recent mail row (`email://` via the peek's graph id).
     Mail(usize),
+    /// Open a Recent files row (`file://` via workspace.recent).
+    File(usize),
 }
 
 /// Hit targets for the CTA pair, computed with the same layout as `draw_home`.
@@ -146,6 +148,8 @@ pub struct HomeTargets {
     pub brief: Rect,
     pub mail: [Rect; 3],
     pub mail_n: usize,
+    pub files: [Rect; 3],
+    pub files_n: usize,
 }
 
 impl HomeTargets {
@@ -164,6 +168,11 @@ impl HomeTargets {
                 return Some(HomeHit::Mail(i));
             }
         }
+        for i in 0..self.files_n.min(self.files.len()) {
+            if self.files[i].w > 0 && self.files[i].contains(px, py) {
+                return Some(HomeHit::File(i));
+            }
+        }
         None
     }
 }
@@ -175,13 +184,14 @@ impl HomeTargets {
 pub fn draw_home(
     fb: &Surface,
     mail: &MailPeek,
+    files: &FilePeek,
     skills: &SkillPeek,
     status: &str,
     caps: Caps,
     brief: &Brief,
     level: crate::level::Level,
 ) {
-    draw_home_full(fb, mail, skills, status, "", false, caps, brief, level)
+    draw_home_full(fb, mail, files, skills, status, "", false, caps, brief, level)
 }
 
 /// The home screen: a launcher, not a landing page.
@@ -192,6 +202,7 @@ pub fn draw_home(
 pub fn draw_home_full(
     fb: &Surface,
     mail: &MailPeek,
+    files: &FilePeek,
     skills: &SkillPeek,
     status: &str,
     query: &str,
@@ -262,18 +273,19 @@ pub fn draw_home_full(
         fb.draw_text(tx + 18, ty + 58, sub, &SMALL_FACE, 0, theme::MUTED);
     }
 
-    // Last brief stays after Back; mail still shows below when granted so a
-    // morning brief cannot starve the inbox forever.
+    // Last brief stays after Back; mail + files still show below when granted
+    // so a morning brief cannot starve the inbox forever.
     let ry = ty + TILE_H + 40;
     let mut y = ry;
     if brief.has_report() {
         y = draw_brief_residue(fb, x0, ry, cw, brief);
         y += 16;
     }
+    let mail_n = home_mail_n(brief, files);
+    let files_n = home_files_n(brief, mail);
     if mail.count > 0 {
         fb.draw_text(x0, y, "Recent mail", &BRAND_FACE, 0, theme::INK);
         y += 28;
-        let mail_n = if brief.has_report() { 2 } else { 3 };
         for i in 0..mail.count.min(mail_n) {
             fb.draw_text(x0, y, mail.row_subj(i), &BODY_FACE, 0, theme::INK);
             let from = mail.row_from(i);
@@ -282,16 +294,46 @@ pub fn draw_home_full(
             fb.fill_rect(x0, y, cw, 1, theme::CARD_BORDER);
             y += 22;
         }
-    } else if !brief.has_report() {
+    } else if !brief.has_report() && files.count == 0 {
         let empty_mail = match mail.status {
             BridgeStatus::Offline => "Bridge offline - run: make utm-bridged",
             BridgeStatus::Online if caps.allows(Cap::EmailSearch) => "Inbox empty right now.",
             BridgeStatus::Online => "Grant Email to show recent mail.",
         };
-        fb.draw_text(x0, ry, empty_mail, &SMALL_FACE, 0, theme::MUTED);
+        fb.draw_text(x0, y, empty_mail, &SMALL_FACE, 0, theme::MUTED);
+        y += 22;
+    }
+    if files.count > 0 {
+        if mail.count > 0 {
+            y += 8;
+        }
+        fb.draw_text(x0, y, "Recent files", &BRAND_FACE, 0, theme::INK);
+        y += 28;
+        for i in 0..files.count.min(files_n) {
+            fb.draw_text(x0, y, files.title_at(i), &BODY_FACE, 0, theme::INK);
+            y += 12;
+            fb.fill_rect(x0, y, cw, 1, theme::CARD_BORDER);
+            y += 22;
+        }
     }
 
     fb.draw_text_centered(w / 2, h - 24, mail_label, &SMALL_FACE, 0, theme::MUTED);
+}
+
+fn home_mail_n(brief: &Brief, files: &FilePeek) -> usize {
+    if brief.has_report() || files.count > 0 {
+        2
+    } else {
+        3
+    }
+}
+
+fn home_files_n(brief: &Brief, mail: &MailPeek) -> usize {
+    if brief.has_report() || mail.count > 0 {
+        2
+    } else {
+        3
+    }
 }
 
 /// Skills-tile subtitle: playbook count plus whether Save skills is granted.
@@ -525,27 +567,34 @@ pub fn home_targets(
     skills: &SkillPeek,
     brief: &Brief,
     mail: &MailPeek,
+    files: &FilePeek,
 ) -> HomeTargets {
-    let (mail_rects, mail_n) = mail_targets(w, h, brief, mail);
+    let (mail_rects, mail_n) = mail_targets(w, h, brief, mail, files);
+    let (file_rects, files_n) = file_targets(w, h, brief, mail, files);
     HomeTargets {
         ctas: cta_targets(w, h, skills),
         cards: card_targets(w, h),
         brief: brief_rect(w, h, brief),
         mail: mail_rects,
         mail_n,
+        files: file_rects,
+        files_n,
     }
 }
 
-/// Y origin of the Recent mail block (heading), matching `draw_home_full`.
+/// Y origin of the Recent mail / files stack (heading), matching `draw_home_full`.
 fn mail_block_top(_w: i32, h: i32, brief: &Brief) -> i32 {
     let ry = tile_top(h) + TILE_H + 40;
     if !brief.has_report() {
         return ry;
     }
-    // Same end Y as `draw_brief_residue`, then the 16px gap before mail.
+    // Same end Y as `draw_brief_residue`, then the 16px gap before mail/files.
     let lines = brief.count.min(2) as i32;
     ry + 52 + lines * 20 + 16
 }
+
+const PEEK_ROW_PITCH: i32 = 34;
+const PEEK_HEADING: i32 = 28;
 
 /// Hit boxes for Recent mail rows. Empty when there is nothing to open.
 pub fn mail_targets(
@@ -553,6 +602,7 @@ pub fn mail_targets(
     h: i32,
     brief: &Brief,
     mail: &MailPeek,
+    files: &FilePeek,
 ) -> ([Rect; 3], usize) {
     let mut rects = [Rect {
         x: 0,
@@ -564,17 +614,58 @@ pub fn mail_targets(
         return (rects, 0);
     }
     let (x0, cw) = home_column(w);
-    let mail_n = if brief.has_report() { 2 } else { 3 };
+    let mail_n = home_mail_n(brief, files);
     let n = mail.count.min(mail_n).min(rects.len());
     // Heading ("Recent mail") is 28px; each row is subject + rule = 34px.
-    let y0 = mail_block_top(w, h, brief) + 28;
-    const ROW_PITCH: i32 = 34;
+    let y0 = mail_block_top(w, h, brief) + PEEK_HEADING;
     for i in 0..n {
         rects[i] = Rect {
             x: x0,
-            y: y0 + i as i32 * ROW_PITCH,
+            y: y0 + i as i32 * PEEK_ROW_PITCH,
             w: cw,
-            h: ROW_PITCH,
+            h: PEEK_ROW_PITCH,
+        };
+    }
+    (rects, n)
+}
+
+/// Y origin of the Recent files heading, matching `draw_home_full`.
+fn files_block_top(w: i32, h: i32, brief: &Brief, mail: &MailPeek, files: &FilePeek) -> i32 {
+    let y = mail_block_top(w, h, brief);
+    if mail.count == 0 {
+        return y;
+    }
+    let shown = mail.count.min(home_mail_n(brief, files));
+    y + PEEK_HEADING + shown as i32 * PEEK_ROW_PITCH + 8
+}
+
+/// Hit boxes for Recent files rows. Empty when there is nothing to open.
+pub fn file_targets(
+    w: i32,
+    h: i32,
+    brief: &Brief,
+    mail: &MailPeek,
+    files: &FilePeek,
+) -> ([Rect; 3], usize) {
+    let mut rects = [Rect {
+        x: 0,
+        y: 0,
+        w: 0,
+        h: 0,
+    }; 3];
+    if files.count == 0 {
+        return (rects, 0);
+    }
+    let (x0, cw) = home_column(w);
+    let files_n = home_files_n(brief, mail);
+    let n = files.count.min(files_n).min(rects.len());
+    let y0 = files_block_top(w, h, brief, mail, files) + PEEK_HEADING;
+    for i in 0..n {
+        rects[i] = Rect {
+            x: x0,
+            y: y0 + i as i32 * PEEK_ROW_PITCH,
+            w: cw,
+            h: PEEK_ROW_PITCH,
         };
     }
     (rects, n)
@@ -630,7 +721,7 @@ mod tests {
     use super::*;
     use crate::agent::Brief;
     use crate::caps::Caps;
-    use crate::mcp::MailPeek;
+    use crate::mcp::{FilePeek, MailPeek};
 
     fn peek() -> SkillPeek {
         SkillPeek::from_builtin()
@@ -644,7 +735,8 @@ mod tests {
     fn search_field_is_not_a_cta() {
         // Clicking the query box used to fire CtaId::Ready and restart setup.
         let mail = MailPeek::empty(BridgeStatus::Offline);
-        let t = home_targets(1024, 768, &peek(), &empty_brief(), &mail);
+        let files = FilePeek::empty(BridgeStatus::Offline, false);
+        let t = home_targets(1024, 768, &peek(), &empty_brief(), &mail, &files);
         let (fx, fy, fw, fh) = search_rect(1024, 768);
         assert_eq!(t.hit(fx + fw / 2, fy + fh / 2), None);
         let (sx, sy, sw, sh) = setup_rect(1024);
@@ -663,7 +755,8 @@ mod tests {
     #[test]
     fn each_tile_hit_tests_to_its_own_id() {
         let mail = MailPeek::empty(BridgeStatus::Offline);
-        let t = home_targets(1024, 768, &peek(), &empty_brief(), &mail);
+        let files = FilePeek::empty(BridgeStatus::Offline, false);
+        let t = home_targets(1024, 768, &peek(), &empty_brief(), &mail, &files);
         for (i, want) in [CardId::Connectors, CardId::Capabilities, CardId::Skills]
             .iter()
             .enumerate()
@@ -715,6 +808,7 @@ mod tests {
             "Capabilities",
             "Skills",
             "Recent mail",
+            "Recent files",
             "Last brief",
             "Tap to reopen",
             "grant search first",
@@ -800,9 +894,10 @@ mod tests {
         let r = brief_rect(1024, 768, &brief);
         assert!(r.w > 0 && r.h > 0);
         let mail = MailPeek::empty(BridgeStatus::Online);
-        let t = home_targets(1024, 768, &peek(), &brief, &mail);
+        let files = FilePeek::empty(BridgeStatus::Online, false);
+        let t = home_targets(1024, 768, &peek(), &brief, &mail, &files);
         assert_eq!(t.hit(r.x + 8, r.y + 8), Some(HomeHit::Brief));
-        let empty = home_targets(1024, 768, &peek(), &empty_brief(), &mail);
+        let empty = home_targets(1024, 768, &peek(), &empty_brief(), &mail, &files);
         assert_ne!(empty.hit(r.x + 8, r.y + 8), Some(HomeHit::Brief));
     }
 
@@ -816,10 +911,11 @@ mod tests {
         copy_ascii(&mut mail.rows[1].from, "bob@x.com");
         copy_ascii(&mut mail.rows[1].subj, "Hello");
         mail.count = 2;
+        let files = FilePeek::empty(BridgeStatus::Online, false);
 
-        let (rects, n) = mail_targets(1024, 768, &empty_brief(), &mail);
+        let (rects, n) = mail_targets(1024, 768, &empty_brief(), &mail, &files);
         assert_eq!(n, 2);
-        let t = home_targets(1024, 768, &peek(), &empty_brief(), &mail);
+        let t = home_targets(1024, 768, &peek(), &empty_brief(), &mail, &files);
         assert_eq!(
             t.hit(rects[0].x + 8, rects[0].y + 8),
             Some(HomeHit::Mail(0))
@@ -830,13 +926,50 @@ mod tests {
         );
         // With a brief above, mail still hits and does not steal the brief.
         let brief = crate::agent::run("capability-safe-tools", Caps::default_grants());
-        let t2 = home_targets(1024, 768, &peek(), &brief, &mail);
+        let t2 = home_targets(1024, 768, &peek(), &brief, &mail, &files);
         let br = brief_rect(1024, 768, &brief);
         assert_eq!(t2.hit(br.x + 8, br.y + 8), Some(HomeHit::Brief));
         assert_eq!(t2.mail_n, 2);
         assert_eq!(
             t2.hit(t2.mail[0].x + 8, t2.mail[0].y + 8),
             Some(HomeHit::Mail(0))
+        );
+    }
+
+    #[test]
+    fn recent_file_rows_are_hittable() {
+        let mail = MailPeek::empty(BridgeStatus::Online);
+        let mut files = FilePeek::empty(BridgeStatus::Online, false);
+        copy_ascii(&mut files.rows[0].title, "notes.md");
+        copy_ascii(&mut files.rows[0].url, "file://docs/notes.md");
+        copy_ascii(&mut files.rows[1].title, "plan.txt");
+        copy_ascii(&mut files.rows[1].url, "file://docs/plan.txt");
+        files.count = 2;
+
+        let (rects, n) = file_targets(1024, 768, &empty_brief(), &mail, &files);
+        assert_eq!(n, 2);
+        let t = home_targets(1024, 768, &peek(), &empty_brief(), &mail, &files);
+        assert_eq!(
+            t.hit(rects[0].x + 8, rects[0].y + 8),
+            Some(HomeHit::File(0))
+        );
+        assert_eq!(
+            t.hit(rects[1].x + 8, rects[1].y + 8),
+            Some(HomeHit::File(1))
+        );
+        // Mail above files: both hit, files sit below mail.
+        let mut mail2 = MailPeek::empty(BridgeStatus::Online);
+        copy_ascii(&mut mail2.rows[0].id, "0123456789abcdef");
+        copy_ascii(&mut mail2.rows[0].from, "ada@x.com");
+        copy_ascii(&mut mail2.rows[0].subj, "Hello");
+        mail2.count = 1;
+        let t2 = home_targets(1024, 768, &peek(), &empty_brief(), &mail2, &files);
+        assert_eq!(t2.mail_n, 1);
+        assert_eq!(t2.files_n, 2);
+        assert!(t2.files[0].y > t2.mail[0].y);
+        assert_eq!(
+            t2.hit(t2.files[0].x + 8, t2.files[0].y + 8),
+            Some(HomeHit::File(0))
         );
     }
 
@@ -861,7 +994,8 @@ mod tests {
     fn drawing_the_home_screen_does_not_panic() {
         // Exercises the offline branch and the count formatting together.
         let mail = MailPeek::empty(BridgeStatus::Offline);
-        let _ = home_targets(1024, 768, &peek(), &empty_brief(), &mail);
+        let files = FilePeek::empty(BridgeStatus::Offline, false);
+        let _ = home_targets(1024, 768, &peek(), &empty_brief(), &mail, &files);
         assert_eq!(mail.count, 0);
     }
 

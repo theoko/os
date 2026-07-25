@@ -55,6 +55,12 @@ Home lists recent inbox rows when Email is granted. Each row is clickable and
 opens `email://{id}` in the Reader — same `doc.read` path as Search. The id
 comes from the bridge `email.search` ROW (graph-stable hash of from+subject).
 
+## Recent files (v0.9.25)
+
+Home lists top-ranked workspace files when Your files is granted. Each row is
+clickable and opens `file://…` in the Reader (`doc.read` + `files=1`). Rows
+come from bridge `workspace.recent` after `workspace.index`.
+
 ## Calendar events (v0.9.24)
 
 Morning / inbox Briefs list upcoming events when Email is on. An Event row is

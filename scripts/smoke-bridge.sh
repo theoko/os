@@ -415,6 +415,17 @@ if not indexed.startswith("OK workspace.index"):
     print("error: workspace.index files=1 must succeed", file=sys.stderr)
     print(indexed, file=sys.stderr)
     sys.exit(1)
+denied_recent = call("CALL workspace.recent")
+if "needs_workspace_cap" not in denied_recent:
+    print("error: workspace.recent must require files=1", file=sys.stderr)
+    print(denied_recent, file=sys.stderr)
+    sys.exit(1)
+recent = call("CALL workspace.recent k=3 files=1")
+if not recent.startswith("OK workspace.recent") or "file://" not in recent:
+    print("error: workspace.recent files=1 must return file:// rows", file=sys.stderr)
+    print(recent, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: workspace.recent files=1 ok")
 ws_hit = call("CALL search.query q=Smoke-Workspace-Alpha k=3 files=1")
 if "Smoke Workspace Alpha" not in ws_hit:
     print("error: search.query files=1 missed seeded workspace doc", file=sys.stderr)

@@ -62,6 +62,7 @@ unsafe extern "C" fn kmain() -> ! {
 
     // Paint UI immediately (don't block on MCP). Bridge is optional.
     let mut mail = mcp::MailPeek::empty(mcp::BridgeStatus::Offline);
+    let mut files = mcp::FilePeek::empty(mcp::BridgeStatus::Offline, false);
     let mut skill_peek = skills::SkillPeek::from_builtin();
     if let Some(resp) = FRAMEBUFFER_REQUEST.get_response() {
         if let Some(fb_info) = resp.framebuffers().next() {
@@ -134,6 +135,7 @@ unsafe extern "C" fn kmain() -> ! {
                 ui::draw_home(
                     surface,
                     &mail,
+                    &files,
                     &skill_peek,
                     "",
                     caps::Caps::none(),
@@ -156,6 +158,7 @@ unsafe extern "C" fn kmain() -> ! {
                 ui::draw_home(
                     surface,
                     &mail,
+                    &files,
                     &skill_peek,
                     "",
                     caps::Caps::none(),
@@ -207,7 +210,7 @@ unsafe extern "C" fn kmain() -> ! {
                 }
 
                 let mut brief = agent::Brief::empty();
-                ui::draw_home(surface, &mail, &skill_peek, "", grants, &brief, level);
+                ui::draw_home(surface, &mail, &files, &skill_peek, "", grants, &brief, level);
                 let mut cursor = mouse::Cursor::new();
                 let mut x = cx;
                 let mut y = cy;
@@ -332,6 +335,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     serial_port.write_str("caps: warming teddy + market portals\n");
                                 }
                                 mail = mcp::fetch_mail_peek(grants);
+                                files = mcp::fetch_files_peek(grants);
                                 // First act: run the plan/act skill under the
                                 // grants just chosen so home is never empty
                                 // theatre — the OS does something immediately.
@@ -397,6 +401,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 ui::draw_home_full(
                                     surface,
                                     &mail,
+                                    &files,
                                     &skill_peek,
                                     status_str(&status_buf, status_len),
                                     query.as_str(),
@@ -540,6 +545,14 @@ unsafe extern "C" fn kmain() -> ! {
                                         != grants.allows(caps::Cap::EmailSearch)
                                     {
                                         mail = mcp::fetch_mail_peek(grants);
+                                    }
+                                    // Your files grant flips the home peek;
+                                    // refresh after index/forget so Recent files
+                                    // matches the switch.
+                                    if before.allows(caps::Cap::WorkspaceIndex)
+                                        != grants.allows(caps::Cap::WorkspaceIndex)
+                                    {
+                                        files = mcp::fetch_files_peek(grants);
                                     }
                                     // Save skills revoke purges user playbooks —
                                     // refresh the Skills list so src=saved rows
@@ -706,6 +719,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     ui::draw_home(
                                         surface,
                                         &mail,
+                                        &files,
                                         &skill_peek,
                                         status_str(&status_buf, status_len),
                                         grants,
@@ -721,7 +735,7 @@ unsafe extern "C" fn kmain() -> ! {
                         let left_down = buttons & 1 != 0;
                         let left_was = prev_buttons & 1 != 0;
                         if left_down && !left_was {
-                            let targets = ui::home_targets(w, h, &skill_peek, &brief, &mail);
+                            let targets = ui::home_targets(w, h, &skill_peek, &brief, &mail, &files);
                             let mut clicked = false;
                             match targets.hit(x, y) {
                                 Some(ui::HomeHit::Cta(ui::CtaId::Ready)) => {
@@ -810,6 +824,29 @@ unsafe extern "C" fn kmain() -> ! {
                                     }
                                     clicked = false;
                                 }
+                                Some(ui::HomeHit::File(i)) => {
+                                    let url = files.url_at(i);
+                                    if !url.is_empty() {
+                                        open_title.clear();
+                                        for b in files.title_at(i).bytes() {
+                                            open_title.apply(keyboard::Key::Char(b));
+                                        }
+                                        page = mcp::fetch_doc(grants, url);
+                                        view = screens::View::Reader;
+                                        serial_port.write_str("ui: open file\n");
+                                        cursor.hide(surface);
+                                        searchui::draw_reader(
+                                            surface,
+                                            open_title.as_str(),
+                                            &page,
+                                        );
+                                        cursor.show_at(surface, x, y);
+                                        enter(&screen, &mut motion, x, y);
+                                    } else {
+                                        serial_port.write_str("ui: file missing url\n");
+                                    }
+                                    clicked = false;
+                                }
                                 None => {}
                             }
                             if clicked && setup.is_finished() {
@@ -817,6 +854,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 ui::draw_home(
                                     surface,
                                     &mail,
+                                    &files,
                                     &skill_peek,
                                     status_str(&status_buf, status_len),
                                     grants,
@@ -862,6 +900,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 ui::draw_home_full(
                                     surface,
                                     &mail,
+                                    &files,
                                     &skill_peek,
                                     status_str(&status_buf, status_len),
                                     query.as_str(),

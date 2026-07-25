@@ -77,6 +77,43 @@ impl MailPeek {
     }
 }
 
+/// One row from `workspace.recent` (needs `files=1` / Your files).
+pub struct FileRow {
+    pub title: [u8; 48],
+    pub url: [u8; 72],
+}
+
+/// Short workspace peek for the home Recent files strip.
+pub struct FilePeek {
+    pub status: BridgeStatus,
+    pub denied: bool,
+    pub count: usize,
+    pub rows: [FileRow; 3],
+}
+
+impl FilePeek {
+    pub const fn empty(status: BridgeStatus, denied: bool) -> Self {
+        const EMPTY: FileRow = FileRow {
+            title: [0; 48],
+            url: [0; 72],
+        };
+        Self {
+            status,
+            denied,
+            count: 0,
+            rows: [EMPTY; 3],
+        }
+    }
+
+    pub fn title_at(&self, i: usize) -> &str {
+        str_prefix(trim_buf(&self.rows[i].title))
+    }
+
+    pub fn url_at(&self, i: usize) -> &str {
+        str_prefix(trim_buf(&self.rows[i].url))
+    }
+}
+
 /// One row from `calendar.list` (same `email=1` consent as mail).
 pub struct CalRow {
     pub id: [u8; 20],
@@ -269,6 +306,55 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
         }
     }
 
+    peek
+}
+
+/// Peek top-ranked workspace files for Home. Cap refusal never opens COM2.
+pub fn fetch_files_peek(caps: crate::caps::Caps) -> FilePeek {
+    if !caps.allows(crate::caps::Cap::WorkspaceIndex) {
+        return FilePeek::empty(BridgeStatus::Offline, true);
+    }
+
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+
+    match ping_bridge(&com2, &mut line) {
+        BridgeStatus::Offline => return FilePeek::empty(BridgeStatus::Offline, false),
+        BridgeStatus::Online => {}
+    }
+
+    com2.write_str("CALL workspace.recent k=3 files=1\n");
+
+    let mut peek = FilePeek::empty(BridgeStatus::Online, false);
+    let mut first = true;
+    for _ in 0..16 {
+        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
+        let Some(n) = com2.read_line(&mut line, timeout) else {
+            break;
+        };
+        first = false;
+        let resp = str_prefix(&line[..n]);
+        if resp.starts_with("ERR ") || resp == "END" {
+            if resp.contains("needs_workspace_cap") {
+                peek.denied = true;
+            }
+            break;
+        }
+        if resp.starts_with("OK workspace.recent") {
+            continue;
+        }
+        if resp.starts_with("ROW ") && peek.count < peek.rows.len() {
+            let title = parse_row_field(resp, "title").unwrap_or("(file)");
+            let url = parse_row_field(resp, "url").unwrap_or("");
+            if !url.starts_with("file://") {
+                continue;
+            }
+            copy_field(&mut peek.rows[peek.count].title, title);
+            copy_field(&mut peek.rows[peek.count].url, url);
+            peek.count += 1;
+        }
+    }
     peek
 }
 
@@ -1062,6 +1148,14 @@ mod tests {
         use crate::caps::Caps;
         // Cap denial must not touch the serial — same rule as transcribe/save.
         let peek = fetch_calendar_peek(Caps::none());
+        assert!(peek.denied);
+        assert_eq!(peek.count, 0);
+    }
+
+    #[test]
+    fn files_peek_refuses_without_opening_com2() {
+        use crate::caps::Caps;
+        let peek = fetch_files_peek(Caps::none());
         assert!(peek.denied);
         assert_eq!(peek.count, 0);
     }
