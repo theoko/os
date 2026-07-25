@@ -3,7 +3,7 @@
 
 use core::hint::black_box;
 
-use kernel::{anim, beep, caps, fb, hello_message, keyboard, mcp, mouse, screens, searchui, serial, setup, skills, ui, usb_tablet};
+use kernel::{anim, beep, caps, fault, fb, hello_message, inputdiag, keyboard, mcp, mouse, pci, screens, searchui, serial, setup, skills, ui, usb_tablet};
 use limine::BaseRevision;
 use limine::request::{
     FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
@@ -54,6 +54,12 @@ unsafe extern "C" fn kmain() -> ! {
 
     let serial_port = serial::Serial::com1();
     serial_port.init();
+
+    // Before anything can fault. Without this a bad pointer or an overflow
+    // check triple-faults and the machine silently resets, which is
+    // indistinguishable from "it just randomly crashes".
+    fault::init();
+
     serial_port.write_str(hello_message());
     serial_port.write_str(serial::LINE_ENDING);
 
@@ -190,8 +196,33 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut x = cx;
                 let mut y = cy;
                 let mut prev_buttons = 0u8;
-                let mut status_buf = [0u8; 72];
-                let mut status_len = grants.describe(&mut status_buf);
+                // What actually came up. Under QEMU this is always fine; on
+                // real hardware it is the whole story, and a machine with no
+                // driveable pointer renders a perfect home screen with a
+                // cursor that never moves - indistinguishable from a hang.
+                let inputs = inputdiag::Inputs {
+                    ps2_keyboard: keyboard::Keyboard::present(),
+                    ps2_mouse: mice.present,
+                    usb_tablet: tablet.is_some(),
+                    usb: pci::usb_survey(),
+                };
+                if let Some(note) = inputs.note() {
+                    serial_port.write_str("input: ");
+                    serial_port.write_str(note);
+                    serial_port.write_str("\n");
+                }
+
+                let mut status_buf = [0u8; 128];
+                // A dead pointer outranks the capability summary: it is the
+                // only thing the person can act on.
+                let mut status_len = match inputs.note() {
+                    Some(note) => {
+                        let n = note.len().min(status_buf.len());
+                        status_buf[..n].copy_from_slice(&note.as_bytes()[..n]);
+                        n
+                    }
+                    None => grants.describe(&mut status_buf),
+                };
                 let mut setup = setup::Setup::new();
                 let animate = can_animate(&screen);
                 serial_port.write_str(if animate {
@@ -336,6 +367,32 @@ unsafe extern "C" fn kmain() -> ! {
                             cursor.show_at(surface, x, y);
                             enter(&screen, animate);
                             moved = false;
+                        }
+
+                        // Recent mail rows open like search results. They were
+                        // drawn but unclickable, so listed mail could be seen
+                        // and never read.
+                        if left_down && !was_down {
+                            if let Some(i) = ui::mail_hit(w, h, mail.count, x, y) {
+                                open_title.clear();
+                                for b in mail.row_subj(i).bytes() {
+                                    open_title.apply(keyboard::Key::Char(b));
+                                }
+                                page = mcp::fetch_doc(grants, mail.row_url(i));
+                                scroll = 0;
+                                view = screens::View::Reader;
+                                serial_port.write_str("ui: open mail\n");
+                                cursor.hide(surface);
+                                searchui::draw_reader(
+                                    surface,
+                                    open_title.as_str(),
+                                    &page,
+                                    scroll,
+                                );
+                                cursor.show_at(surface, x, y);
+                                enter(&screen, animate);
+                                moved = false;
+                            }
                         }
 
                         // Type straight into the home field - no click first.
@@ -567,6 +624,23 @@ unsafe extern "C" fn kmain() -> ! {
                         let left_down = buttons & 1 != 0;
                         let left_was = prev_buttons & 1 != 0;
                         if left_down && !left_was {
+                            if let Some(i) = ui::mail_hit(w, h, mail.count, x, y)
+                                && !mail.row_url(i).is_empty()
+                            {
+                                open_title.clear();
+                                for b in mail.row_subj(i).bytes() {
+                                    open_title.apply(keyboard::Key::Char(b));
+                                }
+                                page = mcp::fetch_doc(grants, mail.row_url(i));
+                                scroll = 0;
+                                view = screens::View::Reader;
+                                serial_port.write_str("ui: open mail\n");
+                                cursor.hide(surface);
+                                searchui::draw_reader(surface, open_title.as_str(), &page, scroll);
+                                cursor.show_at(surface, x, y);
+                                enter(&screen, animate);
+                                moved = false;
+                            } else {
                             let targets = ui::home_targets(w, h, &skill_peek);
                             let mut clicked = false;
                             match targets.hit(x, y) {
@@ -672,6 +746,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 enter(&screen, animate);
                                 moved = false;
                             }
+                            }
                         }
                     }
                     prev_buttons = buttons;
@@ -755,7 +830,7 @@ fn write_u64(port: &serial::Serial, mut v: u64) {
     port.write_bytes(&buf[i..]);
 }
 
-fn write_status(buf: &mut [u8; 72], s: &str) {
+fn write_status(buf: &mut [u8], s: &str) {
     buf.fill(0);
     let bytes = s.as_bytes();
     let n = bytes.len().min(buf.len().saturating_sub(1));
@@ -766,7 +841,40 @@ fn status_str(buf: &[u8], len: usize) -> &str {
     core::str::from_utf8(&buf[..len.min(buf.len())]).unwrap_or("")
 }
 
+/// A panic used to exit silently. Under QEMU that at least stopped the run;
+/// under UTM there is no debug-exit device, so the screen simply froze with
+/// nothing written anywhere. Say what happened first.
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    let com1 = serial::Serial::com1();
+    com1.write_str("os: PANIC ");
+    if let Some(loc) = info.location() {
+        com1.write_str(loc.file());
+        com1.write_str(":");
+        let mut n = [0u8; 12];
+        com1.write_str(u32_str(&mut n, loc.line()));
+    } else {
+        com1.write_str("(no location)");
+    }
+    com1.write_str("\n");
     serial::exit_qemu(false);
+}
+
+/// Decimal, without an allocator or `write!` (which can itself panic).
+fn u32_str(buf: &mut [u8; 12], mut v: u32) -> &str {
+    if v == 0 {
+        buf[0] = b'0';
+        return core::str::from_utf8(&buf[..1]).unwrap_or("0");
+    }
+    let mut tmp = [0u8; 12];
+    let mut len = 0;
+    while v > 0 {
+        tmp[len] = b'0' + (v % 10) as u8;
+        v /= 10;
+        len += 1;
+    }
+    for i in 0..len {
+        buf[i] = tmp[len - 1 - i];
+    }
+    core::str::from_utf8(&buf[..len]).unwrap_or("?")
 }

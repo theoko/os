@@ -130,6 +130,23 @@ impl Keyboard {
         }
     }
 
+    /// Is there an i8042 controller at all?
+    ///
+    /// A machine without one floats the bus, so every read comes back 0xFF.
+    /// This is worth asking on real hardware: modern laptops route the built-in
+    /// keyboard over USB or I2C-HID and have no i8042 to find, and assuming one
+    /// is present means the UI silently claims a keyboard that is not there.
+    pub fn present() -> bool {
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { port::inb(STATUS) != 0xFF }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
+        }
+    }
+
     /// Drain pending keyboard bytes from the i8042.
     ///
     /// Leaves AUX (mouse) bytes alone so a PS/2 pointer keeps working.

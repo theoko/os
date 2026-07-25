@@ -6,8 +6,10 @@
 pub mod anim;
 pub mod beep;
 pub mod caps;
+pub mod fault;
 pub mod fb;
 pub mod font;
+pub mod inputdiag;
 pub mod keyboard;
 pub mod mcp;
 pub mod mouse;

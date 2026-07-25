@@ -240,3 +240,86 @@ pub mod heapless_vec {
 
 #[cfg(target_arch = "x86_64")]
 pub use port::{inb, inw, outb, outw};
+
+
+/// What USB host controllers this machine actually has.
+///
+/// The guest only drives UHCI, which is a QEMU-era controller. Real machines
+/// built in the last fifteen years expose xHCI instead, so booting this on
+/// hardware can leave the pointer dead with nothing on screen explaining why.
+/// Counting the controllers lets the UI say "there is an xHCI here and I
+/// cannot speak to it" rather than showing a cursor that never moves.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct UsbSurvey {
+    pub uhci: u8,
+    pub ohci: u8,
+    pub ehci: u8,
+    pub xhci: u8,
+}
+
+impl UsbSurvey {
+    /// True when a controller exists that we have no driver for.
+    pub fn has_unsupported(&self) -> bool {
+        self.xhci > 0 || self.ohci > 0
+    }
+
+    pub fn none_at_all(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// USB controller `prog_if` values, from the PCI spec.
+const PROG_IF_UHCI: u32 = 0x00;
+const PROG_IF_OHCI: u32 = 0x10;
+const PROG_IF_EHCI: u32 = 0x20;
+const PROG_IF_XHCI: u32 = 0x30;
+
+pub fn usb_survey() -> UsbSurvey {
+    let mut out = UsbSurvey::default();
+    for bus in 0..=255u16 {
+        for slot in 0..32u8 {
+            for func in 0..8u8 {
+                let vendor = read16(bus as u8, slot, func, 0x00);
+                if vendor == 0xFFFF {
+                    continue;
+                }
+                let class = read32(bus as u8, slot, func, 0x08);
+                if (class >> 24) & 0xFF != 0x0C || (class >> 16) & 0xFF != 0x03 {
+                    continue;
+                }
+                let counter = match (class >> 8) & 0xFF {
+                    PROG_IF_UHCI => &mut out.uhci,
+                    PROG_IF_OHCI => &mut out.ohci,
+                    PROG_IF_EHCI => &mut out.ehci,
+                    PROG_IF_XHCI => &mut out.xhci,
+                    _ => continue,
+                };
+                *counter = counter.saturating_add(1);
+            }
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod survey_tests {
+    use super::*;
+
+    #[test]
+    fn a_machine_with_only_xhci_is_flagged_as_undrivable() {
+        let s = UsbSurvey { xhci: 1, ..Default::default() };
+        assert!(s.has_unsupported());
+        assert!(!s.none_at_all());
+    }
+
+    #[test]
+    fn the_controller_we_can_drive_is_not_flagged() {
+        let s = UsbSurvey { uhci: 1, ehci: 1, ..Default::default() };
+        assert!(!s.has_unsupported(), "UHCI and EHCI are both handled");
+    }
+
+    #[test]
+    fn an_empty_survey_is_not_mistaken_for_a_working_bus() {
+        assert!(UsbSurvey::default().none_at_all());
+    }
+}
