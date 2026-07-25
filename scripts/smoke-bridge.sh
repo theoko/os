@@ -30,9 +30,12 @@ if [[ ! -f "$ISO" ]]; then
 fi
 
 BRIDGE_BIN="target/debug/os-mcp-bridge"
-if [[ ! -x "$BRIDGE_BIN" ]]; then
-  cargo build -p os-mcp-bridge
-fi
+# The smoke must exercise this checkout's bridge. After a branch switch or
+# rebase, Cargo can otherwise retain an older executable in target/ when the
+# checked-out source mtime predates that artifact. Cleaning just this package
+# is cheap and makes the wire contract test deterministic.
+cargo clean -p os-mcp-bridge >/dev/null
+cargo build -p os-mcp-bridge
 
 SERIAL_OUT="$(mktemp "${TMPDIR:-/tmp}/os-bridge-serial.XXXXXX")"
 BRIDGE_LOG="$(mktemp "${TMPDIR:-/tmp}/os-bridge-log.XXXXXX")"
