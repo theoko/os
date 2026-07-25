@@ -1054,6 +1054,31 @@ fn status_str(buf: &[u8], len: usize) -> &str {
 }
 
 #[panic_handler]
-fn panic(_info: &core::panic::PanicInfo) -> ! {
+fn panic(info: &core::panic::PanicInfo) -> ! {
+    // Best-effort breadcrumb on COM1 so a UTM freeze is distinguishable from
+    // a triple-fault reboot (which never reaches here).
+    let port = serial::Serial::com1();
+    port.write_str("panic: ");
+    if let Some(loc) = info.location() {
+        port.write_str(loc.file());
+        port.write_str(":");
+        let mut nbuf = [0u8; 10];
+        let mut n = loc.line();
+        let mut i = nbuf.len();
+        if n == 0 {
+            i -= 1;
+            nbuf[i] = b'0';
+        } else {
+            while n > 0 && i > 0 {
+                i -= 1;
+                nbuf[i] = b'0' + (n % 10) as u8;
+                n /= 10;
+            }
+        }
+        port.write_bytes(&nbuf[i..]);
+    } else {
+        port.write_str("(no location)");
+    }
+    port.write_str("\n");
     serial::exit_qemu(false);
 }
