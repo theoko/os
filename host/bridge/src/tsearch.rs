@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock, RwLock};
 
 /// Live corpus published by the tsearch front-end.
 pub const DEFAULT_URL: &str = "https://teddysearch.com/tsearch/corpus.json";
@@ -155,25 +155,53 @@ pub fn sync() -> Result<(usize, String), String> {
     Ok((n, parsed.crawled_at))
 }
 
-static CACHE: OnceLock<Vec<RawDoc>> = OnceLock::new();
+/// Parsed corpus, reloadable.
+///
+/// This was a OnceLock. A sync writes a new file, but the lock had already
+/// resolved — to an EMPTY vec when the bridge started before any corpus
+/// existed — so the freshly downloaded corpus stayed invisible until the
+/// bridge was restarted. The status screen said "Downloaded, but empty" and
+/// searches found nothing, which is exactly what it looked like.
+static CACHE: RwLock<Option<Arc<Vec<RawDoc>>>> = RwLock::new(None);
 
 /// Cached corpus documents, parsed once per process.
 ///
 /// Re-reading 64 MB on every `search.query` would make the search field
 /// unusable; this is why the source is a cache rather than a live call.
-pub fn docs() -> &'static [RawDoc] {
-    CACHE.get_or_init(|| {
-        let Ok(raw) = fs::read_to_string(cache_path()) else {
-            return Vec::new();
-        };
-        match serde_json::from_str::<CorpusFile>(&raw) {
+pub fn docs() -> Arc<Vec<RawDoc>> {
+    if let Ok(guard) = CACHE.read() {
+        if let Some(d) = guard.as_ref() {
+            return Arc::clone(d);
+        }
+    }
+    let loaded = match fs::read_to_string(cache_path()) {
+        Ok(raw) => match serde_json::from_str::<CorpusFile>(&raw) {
             Ok(c) => c.docs,
             Err(e) => {
                 eprintln!("tsearch: cache unreadable ({e}); run CALL tsearch.sync");
                 Vec::new()
             }
-        }
-    })
+        },
+        Err(_) => Vec::new(),
+    };
+    let arc = Arc::new(loaded);
+    if let Ok(mut guard) = CACHE.write() {
+        *guard = Some(Arc::clone(&arc));
+    }
+    arc
+}
+
+/// Drop the parsed corpus and its index so the next read picks up new content.
+///
+/// Called after a sync and after a purge; without it either leaves the process
+/// serving whatever it happened to parse first.
+pub fn invalidate() {
+    if let Ok(mut g) = CACHE.write() {
+        *g = None;
+    }
+    if let Ok(mut g) = INDEX.write() {
+        *g = None;
+    }
 }
 
 pub fn is_available() -> bool {
@@ -266,7 +294,7 @@ pub struct Term {
     len: usize,
 }
 
-static INDEX: OnceLock<Index> = OnceLock::new();
+static INDEX: RwLock<Option<Arc<Index>>> = RwLock::new(None);
 
 /// Tokeniser shared with the rest of the bridge.
 fn tok(text: &str) -> Vec<String> {
@@ -277,8 +305,13 @@ fn tok(text: &str) -> Vec<String> {
         .collect()
 }
 
-pub fn index() -> &'static Index {
-    INDEX.get_or_init(|| {
+pub fn index() -> Arc<Index> {
+    if let Ok(guard) = INDEX.read() {
+        if let Some(i) = guard.as_ref() {
+            return Arc::clone(i);
+        }
+    }
+    let built = {
         let docs = docs();
         let n = docs.len() as f64;
         // term -> doc -> tf
@@ -310,7 +343,12 @@ pub fn index() -> &'static Index {
             terms.push(Term { word: w, idf, start, len: per_doc.len() });
         }
         Index { terms, postings }
-    })
+    };
+    let arc = Arc::new(built);
+    if let Ok(mut guard) = INDEX.write() {
+        *guard = Some(Arc::clone(&arc));
+    }
+    arc
 }
 
 impl Index {
@@ -478,10 +516,73 @@ pub fn sync_background() -> &'static str {
     }
     std::thread::spawn(|| {
         match sync() {
-            Ok((n, at)) => eprintln!("tsearch: synced {n} docs (crawled {at})"),
+            Ok((n, at)) => {
+                // The whole point: make the new corpus visible without a restart.
+                invalidate();
+                eprintln!("tsearch: synced {n} docs (crawled {at})");
+            }
             Err(e) => eprintln!("tsearch: sync failed: {e}"),
         }
         SYNCING.store(false, Ordering::SeqCst);
     });
     "started"
+}
+
+#[cfg(test)]
+mod reload_tests {
+    use super::*;
+
+    #[test]
+    fn a_sync_becomes_visible_without_restarting() {
+        // The bug this replaces: docs() was a OnceLock, so a bridge that
+        // started before any corpus existed resolved to empty and stayed that
+        // way. The status screen read "Downloaded, but empty" while a 67MB
+        // corpus sat on disk.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = env::temp_dir().join(format!("os-reload-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let cache = dir.join("teddy.json");
+        unsafe { env::set_var("OS_TSEARCH_CACHE", &cache) };
+
+        invalidate();
+        assert!(docs().is_empty(), "nothing on disk yet");
+
+        fs::write(
+            &cache,
+            r#"{"crawled_at":"now","docs":[{"t":"Fresh","u":"u","c":"web","b":"body","pr":0.5}]}"#,
+        )
+        .unwrap();
+
+        // Without invalidation this would still report empty.
+        invalidate();
+        assert_eq!(docs().len(), 1, "new corpus not picked up");
+        assert_eq!(docs()[0].t, "Fresh");
+
+        let _ = fs::remove_dir_all(&dir);
+        unsafe { env::remove_var("OS_TSEARCH_CACHE") };
+        invalidate();
+    }
+
+    #[test]
+    fn purging_drops_the_resident_copy() {
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = env::temp_dir().join(format!("os-purge-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let cache = dir.join("teddy.json");
+        unsafe { env::set_var("OS_TSEARCH_CACHE", &cache) };
+
+        fs::write(&cache, r#"{"crawled_at":"now","docs":[{"t":"Gone","u":"u"}]}"#).unwrap();
+        invalidate();
+        assert_eq!(docs().len(), 1);
+
+        fs::remove_file(&cache).unwrap();
+        invalidate();
+        assert!(docs().is_empty(), "revoked corpus still resident");
+
+        let _ = fs::remove_dir_all(&dir);
+        unsafe { env::remove_var("OS_TSEARCH_CACHE") };
+        invalidate();
+    }
 }

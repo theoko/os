@@ -464,7 +464,12 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             ]
         }
         "portal.forget" => match std::fs::remove_file(tsearch::cache_path()) {
-            Ok(()) => vec!["OK portal.forget removed".into(), "END".into()],
+            Ok(()) => {
+                // Drop the parsed copy as well; deleting the file alone leaves
+                // the corpus resident and still searchable.
+                tsearch::invalidate();
+                vec!["OK portal.forget removed".into(), "END".into()]
+            }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 vec!["OK portal.forget nothing_to_remove".into(), "END".into()]
             }
