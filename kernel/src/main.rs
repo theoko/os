@@ -198,7 +198,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut sview = searchui::SearchView::new();
                 let mut view = screens::View::Home;
-                let mut caret = true;
+                let caret = true;
                 // First boot: run the setup journey before the home screen.
                 cursor.hide(surface);
                 setup.draw(surface, &mail, &skill_peek);
@@ -266,7 +266,60 @@ unsafe extern "C" fn kmain() -> ! {
                             prev_x = x;
                             prev_y = y;
                         }
-                    } else if view != screens::View::Home {
+                    } else if view == screens::View::Home {
+                        // Type straight into the home field - no click first.
+                        let mut dirty = false;
+                        while let Some(key) = kb.poll() {
+                            match key {
+                                keyboard::Key::Enter => {
+                                    if !query.is_empty() {
+                                        sview.run(query.as_str());
+                                        view = screens::View::Search;
+                                        serial_port.write_str("search: ran from home\n");
+                                        dirty = true;
+                                    }
+                                }
+                                keyboard::Key::Escape => {
+                                    if !query.is_empty() {
+                                        query.clear();
+                                        dirty = true;
+                                    }
+                                }
+                                other => {
+                                    if query.apply(other) {
+                                        dirty = true;
+                                    }
+                                }
+                            }
+                        }
+                        if dirty {
+                            cursor.hide(surface);
+                            if view == screens::View::Search {
+                                searchui::draw(
+                                    surface,
+                                    &sview,
+                                    query.as_str(),
+                                    caret,
+                                    bridge_note(&mail),
+                                );
+                            } else {
+                                ui::draw_home_full(
+                                    surface,
+                                    &mail,
+                                    &skill_peek,
+                                    status_str(&status_buf),
+                                    query.as_str(),
+                                    caret,
+                                );
+                            }
+                            cursor.show_at(surface, x, y);
+                            screen.present();
+                            moved = false;
+                            prev_x = x;
+                            prev_y = y;
+                        }
+                    }
+                    if view != screens::View::Home {
                         // --- search screen: keyboard drives it ---
                         let mut dirty = false;
                         while let Some(key) = kb.poll() {

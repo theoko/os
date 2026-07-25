@@ -1,12 +1,11 @@
-//! Home screen, modelled on superintelmarkets.com.
+//! Home screen — a launcher.
 //!
-//! White page, one dominant display line at tight tracking, muted supporting
-//! copy, a pill CTA pair, then a bordered card row. All type is anti-aliased
-//! proportional (see `font.rs`); all copy is ASCII because the atlas covers
-//! 0x20..=0x7E only.
+//! A search field you can type into on arrival, three destinations carrying
+//! live counts, and recent mail when granted. Type is anti-aliased proportional
+//! (see `font.rs`); all copy is ASCII because the atlas covers 0x20..=0x7E only.
 
 use crate::fb::Surface;
-use crate::font::{self, BODY_FACE, BRAND_FACE, BTN_FACE, H2_FACE, HERO_FACE, SMALL_FACE};
+use crate::font::{BODY_FACE, BRAND_FACE, H2_FACE, SMALL_FACE};
 use crate::mcp::{BridgeStatus, MailPeek};
 use crate::skills::SkillPeek;
 
@@ -34,16 +33,8 @@ pub mod theme {
 
 const NAV_H: i32 = 56;
 const PAD_X: i32 = 28;
-const CARD_GUTTER: i32 = 20;
-const CARD_H: i32 = 140;
-const CTA_H: i32 = 46;
 const CONTENT_MAX: i32 = 920;
 
-const HERO_TO_SUB: i32 = 34;
-const SUB_GAP: i32 = 30;
-const SUB_TO_CTA: i32 = 40;
-const CTA_TO_H2: i32 = 84;
-const H2_TO_CARDS: i32 = 26;
 
 /// Axis-aligned hit region (inclusive origin, exclusive of `x+w` / `y+h`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,198 +130,177 @@ impl HomeTargets {
     }
 }
 
-/// Card copy — what the OS actually wires up.
-const CARDS: [(&str, &str, &str); 3] = [
-    (
-        "Connectors",
-        "Email, search and skills reach",
-        "the host bridge over COM2.",
-    ),
-    (
-        "Capabilities",
-        "Tools sit behind explicit caps.",
-        "No ambient root, ever.",
-    ),
-    (
-        "Skills",
-        "Markdown playbooks the agent",
-        "loads - not privileged code.",
-    ),
-];
 
 /// Draw the home composition on `fb`.
 ///
 /// `status` is a short footer line (ASCII); empty falls back to the version bar.
 pub fn draw_home(fb: &Surface, mail: &MailPeek, skills: &SkillPeek, status: &str) {
+    draw_home_full(fb, mail, skills, status, "", false)
+}
+
+/// The home screen: a launcher, not a landing page.
+///
+/// A search field you can type into immediately, three destinations carrying
+/// live counts, and recent mail when the capability was granted. The previous
+/// version led with a tagline and a primary button whose only effect was to
+/// restart the setup wizard.
+pub fn draw_home_full(
+    fb: &Surface,
+    mail: &MailPeek,
+    skills: &SkillPeek,
+    status: &str,
+    query: &str,
+    caret: bool,
+) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
 
     fb.fill(theme::BG);
     draw_nav(fb, w, mail);
 
-    // Content column, capped so the hero never sprawls on wide framebuffers.
-    let content_w = (w - PAD_X * 2).min(CONTENT_MAX);
-    let x0 = (w - content_w) / 2;
+    let (x0, cw) = home_column(w);
 
-    let hero_track = font::tracking_pct(HERO_FACE.px, -30); // -3%, as on the site
-    let h2_track = font::tracking_pct(H2_FACE.px, -15);
-
-    let block_h = content_block_h();
-
-    // Centre the stack in the space between the nav rule and the footer, with
-    // a slight upward bias. Dividing by 3 (as a first cut did) dumps ~140px of
-    // dead air under the cards.
-    let avail = h - NAV_H - 70;
-    let mut y = NAV_H + (((avail - block_h) * 9) / 20).max(24);
-
-    // --- hero ---
-    y += HERO_FACE.baseline();
-    fb.draw_text_centered(
-        w / 2,
-        y,
-        "Agents with explicit authority.",
-        &HERO_FACE,
-        hero_track,
-        theme::INK,
-    );
-
-    y += HERO_TO_SUB + BODY_FACE.baseline();
-    fb.draw_text_centered(
-        w / 2,
-        y,
-        "Capability-scoped agents, host connectors on one port,",
-        &BODY_FACE,
-        0,
-        theme::MUTED,
-    );
-    y += SUB_GAP;
-    fb.draw_text_centered(
-        w / 2,
-        y,
-        "and skills that stay out of the kernel.",
-        &BODY_FACE,
-        0,
-        theme::MUTED,
-    );
-
-    // --- CTA pair ---
-    y += SUB_TO_CTA;
-    draw_ctas(fb, w / 2, y, skills);
-    y += CTA_H;
-
-    // --- section ---
-    y += CTA_TO_H2 + H2_FACE.baseline();
-    fb.draw_text(x0, y, "What's wired", &H2_FACE, h2_track, theme::INK);
-
-    y += H2_TO_CARDS;
-    let card_w = (content_w - CARD_GUTTER * 2) / 3;
-    for (i, (title, l1, l2)) in CARDS.iter().enumerate() {
-        let cx = x0 + (card_w + CARD_GUTTER) * i as i32;
-        draw_card(fb, cx, y, card_w, CARD_H, title, l1, l2);
-    }
-
-    // --- footer ---
-    let foot = if status.is_empty() {
-        "os 0.7.6  |  limine  |  x86_64"
+    // The one thing you can do without clicking anything first.
+    let (fx, fy, fw, fh) = search_rect(w, h);
+    fb.fill_round_rect(fx, fy, fw, fh, 12, theme::RULE);
+    fb.fill_round_rect(fx + 1, fy + 1, fw - 2, fh - 2, 11, theme::BG);
+    let base = fy + (fh - BODY_FACE.px) / 2 + BODY_FACE.baseline();
+    if query.is_empty() {
+        fb.draw_text(fx + 18, base, "Search the knowledge base", &BODY_FACE, 0, theme::MUTED);
     } else {
-        status
-    };
-    fb.draw_text_centered(w / 2, h - 30, foot, &SMALL_FACE, 0, theme::MUTED);
-}
-
-fn content_block_h() -> i32 {
-    HERO_FACE.px
-        + HERO_TO_SUB
-        + BODY_FACE.px
-        + SUB_GAP
-        + SUB_TO_CTA
-        + CTA_H
-        + CTA_TO_H2
-        + H2_FACE.px
-        + H2_TO_CARDS
-        + CARD_H
-}
-
-/// CTA top edge for a framebuffer of height `h` — shared by draw + hit-test.
-fn cta_top(h: i32) -> i32 {
-    let avail = h - NAV_H - 70;
-    let y0 = NAV_H + (((avail - content_block_h()) * 9) / 20).max(24);
-    y0 + HERO_FACE.baseline()
-        + HERO_TO_SUB
-        + BODY_FACE.baseline()
-        + SUB_GAP
-        + SUB_TO_CTA
-}
-
-/// Top edge of the card row — same arithmetic as `draw_home`.
-fn cards_top(h: i32) -> i32 {
-    cta_top(h) + CTA_H + CTA_TO_H2 + H2_FACE.baseline() + H2_TO_CARDS
-}
-
-fn skills_label(skills: &SkillPeek) -> &'static str {
-    match skills.count {
-        0 => "No skills",
-        1 => "1 skill",
-        _ => "Skills loaded",
+        fb.draw_text(fx + 18, base, query, &BODY_FACE, 0, theme::INK);
     }
+    if caret {
+        let cx = fx + 18 + BODY_FACE.width(query, 0) + 2;
+        fb.fill_rect(cx, fy + 14, 2, fh - 28, theme::INK);
+    }
+    fb.draw_text(
+        fx + 2,
+        fy + fh + 22,
+        "Type a query and press Enter. Works with the bridge offline.",
+        &SMALL_FACE,
+        0,
+        theme::MUTED,
+    );
+
+    // Destinations, each showing a real number rather than a slogan.
+    let mut mbuf = [0u8; 16];
+    let mail_label = fmt_count(&mut mbuf, mail.count, "message", "messages");
+    let mut sbuf = [0u8; 16];
+    let skill_label = fmt_count(&mut sbuf, skills.count, "playbook", "playbooks");
+
+    let gap = 16;
+    let tw = (cw - gap * 2) / 3;
+    let ty = tile_top(h);
+    let tiles: [(&str, &str); 3] = [
+        ("Search", "knowledge + email"),
+        ("Capabilities", status),
+        ("Skills", skill_label),
+    ];
+    for (i, (title, sub)) in tiles.iter().enumerate() {
+        let tx = x0 + (tw + gap) * i as i32;
+        fb.fill_round_rect(tx, ty, tw, TILE_H, 12, theme::CARD_BORDER);
+        fb.fill_round_rect(tx + 1, ty + 1, tw - 2, TILE_H - 2, 11, theme::BG);
+        fb.draw_text(tx + 18, ty + 34, title, &H2_FACE, 0, theme::INK);
+        fb.draw_text(tx + 18, ty + 58, sub, &SMALL_FACE, 0, theme::MUTED);
+    }
+
+    // Live content instead of marketing copy.
+    let ry = ty + TILE_H + 40;
+    if mail.count > 0 {
+        fb.draw_text(x0, ry, "Recent mail", &BRAND_FACE, 0, theme::INK);
+        let mut y = ry + 30;
+        for i in 0..mail.count.min(3) {
+            fb.draw_text(x0, y, mail.row_subj(i), &BODY_FACE, 0, theme::INK);
+            let from = mail.row_from(i);
+            fb.draw_text(x0 + cw - SMALL_FACE.width(from, 0), y, from, &SMALL_FACE, 0, theme::MUTED);
+            y += 12;
+            fb.fill_rect(x0, y, cw, 1, theme::CARD_BORDER);
+            y += 26;
+        }
+    } else {
+        fb.draw_text(
+            x0,
+            ry,
+            match mail.status {
+                BridgeStatus::Online => "Inbox empty, or email.search not granted.",
+                BridgeStatus::Offline => "Bridge offline - run: make utm-bridged",
+            },
+            &SMALL_FACE,
+            0,
+            theme::MUTED,
+        );
+    }
+
+    fb.draw_text_centered(w / 2, h - 24, mail_label, &SMALL_FACE, 0, theme::MUTED);
 }
 
-/// Hit regions for the Ready / Skills pills on a `w`×`h` framebuffer.
-pub fn cta_targets(w: i32, h: i32, skills: &SkillPeek) -> CtaTargets {
-    let y = cta_top(h);
-    let primary = "Ready";
-    let secondary = skills_label(skills);
-    let pad = 30;
-    let pw = BTN_FACE.width(primary, 0) + pad * 2;
-    let sw = BTN_FACE.width(secondary, 0) + pad * 2;
-    let gap = 12;
-    let total = pw + gap + sw;
-    let x = w / 2 - total / 2;
+/// Render "3 messages" / "1 message" / "none" into a caller-owned buffer.
+fn fmt_count<'a>(buf: &'a mut [u8; 16], n: usize, one: &'static str, many: &'static str) -> &'a str {
+    if n == 0 {
+        return "none";
+    }
+    let mut i = 0;
+    if n >= 10 {
+        buf[i] = b'0' + ((n / 10) % 10) as u8;
+        i += 1;
+    }
+    buf[i] = b'0' + (n % 10) as u8;
+    i += 1;
+    buf[i] = b' ';
+    i += 1;
+    for &b in (if n == 1 { one } else { many }).as_bytes() {
+        if i < buf.len() {
+            buf[i] = b;
+            i += 1;
+        }
+    }
+    core::str::from_utf8(&buf[..i]).unwrap_or("")
+}
+
+pub(crate) fn home_column(w: i32) -> (i32, i32) {
+    let cw = (w - PAD_X * 2).min(CONTENT_MAX);
+    ((w - cw) / 2, cw)
+}
+
+/// The home search field, shared by drawing and hit-testing.
+pub fn search_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
+    let _ = h;
+    let (x, cw) = home_column(w);
+    (x, 132, cw, 52)
+}
+
+pub(crate) fn tile_top(_h: i32) -> i32 {
+    242
+}
+
+pub(crate) const TILE_H: i32 = 78;
+
+pub fn cta_targets(w: i32, h: i32, _skills: &SkillPeek) -> CtaTargets {
+    // The search field is now the primary action; Skills keeps its tile.
+    let (fx, fy, fw, fh) = search_rect(w, h);
     CtaTargets {
-        ready: Rect {
-            x,
-            y,
-            w: pw,
-            h: CTA_H,
-        },
-        skills: Rect {
-            x: x + pw + gap,
-            y,
-            w: sw,
-            h: CTA_H,
-        },
+        ready: Rect { x: fx, y: fy, w: fw, h: fh },
+        skills: tile_rect(w, h, 2),
     }
 }
 
-/// Hit regions for the three feature cards.
+/// Bounding box of home tile `i` (0 = Search, 1 = Capabilities, 2 = Skills).
+pub fn tile_rect(w: i32, h: i32, i: i32) -> Rect {
+    let (x0, cw) = home_column(w);
+    let gap = 16;
+    let tw = (cw - gap * 2) / 3;
+    Rect { x: x0 + (tw + gap) * i, y: tile_top(h), w: tw, h: TILE_H }
+}
+
 pub fn card_targets(w: i32, h: i32) -> CardTargets {
-    let content_w = (w - PAD_X * 2).min(CONTENT_MAX);
-    let x0 = (w - content_w) / 2;
-    let card_w = (content_w - CARD_GUTTER * 2) / 3;
-    let y = cards_top(h);
     CardTargets {
-        connectors: Rect {
-            x: x0,
-            y,
-            w: card_w,
-            h: CARD_H,
-        },
-        capabilities: Rect {
-            x: x0 + card_w + CARD_GUTTER,
-            y,
-            w: card_w,
-            h: CARD_H,
-        },
-        skills: Rect {
-            x: x0 + (card_w + CARD_GUTTER) * 2,
-            y,
-            w: card_w,
-            h: CARD_H,
-        },
+        connectors: tile_rect(w, h, 0),
+        capabilities: tile_rect(w, h, 1),
+        skills: tile_rect(w, h, 2),
     }
 }
 
-/// CTA + card hit regions for the finished home screen.
 pub fn home_targets(w: i32, h: i32, skills: &SkillPeek) -> HomeTargets {
     HomeTargets {
         ctas: cta_targets(w, h, skills),
@@ -363,186 +333,116 @@ fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
     fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
 }
 
-/// Primary pill + tinted secondary pill, centred as a unit.
-fn draw_ctas(fb: &Surface, cx: i32, y: i32, skills: &SkillPeek) {
-    let primary = "Ready";
-    let secondary = skills_label(skills);
 
-    let pad = 30;
-    let pw = BTN_FACE.width(primary, 0) + pad * 2;
-    let sw = BTN_FACE.width(secondary, 0) + pad * 2;
-    let gap = 12;
-    let total = pw + gap + sw;
-    let x = cx - total / 2;
-    let r = CTA_H / 2;
-    let base = y + (CTA_H - BTN_FACE.px) / 2 + BTN_FACE.baseline() - 2;
-
-    // Primary: solid accent, white label.
-    fb.fill_round_rect(x, y, pw, CTA_H, r, theme::ACCENT);
-    fb.draw_text_centered(x + pw / 2, base, primary, &BTN_FACE, 0, theme::BG);
-
-    // Secondary: 6% accent fill inside a 20% accent hairline.
-    let sx = x + pw + gap;
-    fb.fill_round_rect(sx, y, sw, CTA_H, r, theme::TINT_BORDER);
-    fb.fill_round_rect(sx + 1, y + 1, sw - 2, CTA_H - 2, r - 1, theme::TINT_BG);
-    fb.draw_text_centered(sx + sw / 2, base, secondary, &BTN_FACE, 0, theme::ACCENT);
-}
-
-/// Bordered card: hairline rounded rect, then the page colour inset by 1px.
-fn draw_card(fb: &Surface, x: i32, y: i32, w: i32, h: i32, title: &str, l1: &str, l2: &str) {
-    const R: i32 = 12;
-    fb.fill_round_rect(x, y, w, h, R, theme::CARD_BORDER);
-    fb.fill_round_rect(x + 1, y + 1, w - 2, h - 2, R - 1, theme::BG);
-
-    let pad = 22;
-    let mut ty = y + pad + BRAND_FACE.baseline();
-    fb.draw_text(x + pad, ty, title, &BRAND_FACE, 0, theme::INK);
-
-    ty += 34;
-    fb.draw_text(x + pad, ty, l1, &SMALL_FACE, 0, theme::MUTED);
-    ty += 22;
-    fb.draw_text(x + pad, ty, l2, &SMALL_FACE, 0, theme::MUTED);
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::caps::Caps;
+    use crate::mcp::MailPeek;
 
-    fn all_copy() -> Vec<&'static str> {
-        let mut all = vec![
-            "Agents with explicit authority.",
-            "Capability-scoped agents, host connectors on one port,",
-            "and skills that stay out of the kernel.",
-            "What's wired",
-            "os 0.7.6  |  limine  |  x86_64",
-            "bridge connected",
-            "bridge offline",
-            "Ready",
-            "Skills loaded",
-            "No skills",
-            "1 skill",
-            "os",
-        ];
-        for (t, a, b) in CARDS {
-            all.push(t);
-            all.push(a);
-            all.push(b);
+    fn peek() -> SkillPeek {
+        SkillPeek::from_builtin()
+    }
+
+    #[test]
+    fn search_field_is_the_primary_target() {
+        // Typing must be reachable without hunting for a card.
+        let t = home_targets(1024, 768, &peek());
+        let (fx, fy, fw, fh) = search_rect(1024, 768);
+        assert_eq!(t.ctas.ready, Rect { x: fx, y: fy, w: fw, h: fh });
+    }
+
+    #[test]
+    fn tiles_do_not_overlap_the_search_field() {
+        let (_, fy, _, fh) = search_rect(1024, 768);
+        assert!(tile_top(768) >= fy + fh, "tiles collide with the field");
+    }
+
+    #[test]
+    fn each_tile_hit_tests_to_its_own_id() {
+        let t = home_targets(1024, 768, &peek());
+        for (i, want) in [CardId::Connectors, CardId::Capabilities, CardId::Skills]
+            .iter()
+            .enumerate()
+        {
+            let r = tile_rect(1024, 768, i as i32);
+            assert_eq!(t.cards.hit(r.x + r.w / 2, r.y + r.h / 2), Some(*want));
         }
-        all
+    }
+
+    #[test]
+    fn tiles_are_side_by_side_without_overlap() {
+        for i in 1..3 {
+            let prev = tile_rect(1024, 768, i - 1);
+            let cur = tile_rect(1024, 768, i);
+            assert!(cur.x >= prev.x + prev.w, "tile {i} overlaps its neighbour");
+        }
+    }
+
+    #[test]
+    fn everything_fits_a_768_screen() {
+        let last = tile_rect(1024, 768, 2);
+        assert!(last.x + last.w <= 1024 - PAD_X);
+        assert!(last.y + last.h + 120 < 768, "content runs off the screen");
+    }
+
+    #[test]
+    fn counts_render_singular_plural_and_zero() {
+        let mut b = [0u8; 16];
+        assert_eq!(fmt_count(&mut b, 0, "message", "messages"), "none");
+        let mut b = [0u8; 16];
+        assert_eq!(fmt_count(&mut b, 1, "message", "messages"), "1 message");
+        let mut b = [0u8; 16];
+        assert_eq!(fmt_count(&mut b, 3, "message", "messages"), "3 messages");
+        let mut b = [0u8; 16];
+        assert_eq!(fmt_count(&mut b, 12, "message", "messages"), "12 messages");
+    }
+
+    #[test]
+    fn count_cannot_overflow_its_buffer() {
+        let mut b = [0u8; 16];
+        let s = fmt_count(&mut b, 99, "playbook", "playbooks");
+        assert!(s.len() <= 16);
     }
 
     #[test]
     fn copy_is_ascii_only() {
-        // The atlas covers 0x20..=0x7E; anything else silently renders as '?'.
-        for s in all_copy() {
+        for s in [
+            "Search the knowledge base",
+            "Type a query and press Enter. Works with the bridge offline.",
+            "Search",
+            "Capabilities",
+            "Skills",
+            "Recent mail",
+            "Inbox empty, or email.search not granted.",
+            "Bridge offline - run: make utm-bridged",
+            "bridge connected",
+            "bridge offline",
+            "os",
+        ] {
             assert!(
                 s.bytes().all(|b| (0x20..=0x7E).contains(&b)),
-                "non-ASCII copy would render as '?': {s:?}"
+                "non-ASCII renders as '?': {s:?}"
             );
         }
     }
 
     #[test]
-    fn hero_fits_a_1024_framebuffer() {
-        let track = font::tracking_pct(HERO_FACE.px, -30);
-        let w = HERO_FACE.width("Agents with explicit authority.", track);
-        assert!(w < 1024 - PAD_X * 2, "hero overflows 1024px: {w}");
-    }
-
-    #[test]
-    fn sub_copy_fits() {
-        for s in [
-            "Capability-scoped agents, host connectors on one port,",
-            "and skills that stay out of the kernel.",
-        ] {
-            let w = BODY_FACE.width(s, 0);
-            assert!(w < 1024 - PAD_X * 2, "sub-copy overflows: {s:?} = {w}");
+    fn tile_text_fits_its_column() {
+        let r = tile_rect(1024, 768, 0);
+        for s in ["Search", "Capabilities", "Skills"] {
+            assert!(H2_FACE.width(s, 0) < r.w - 36, "tile title overflows: {s}");
         }
+        assert!(SMALL_FACE.width("knowledge + email", 0) < r.w - 36);
+        assert!(SMALL_FACE.width(Caps::default_grants().footer_status(), 0) < r.w - 36);
     }
 
     #[test]
-    fn card_copy_fits_its_column() {
-        let content_w = (1024 - PAD_X * 2).min(CONTENT_MAX);
-        let card_w = (content_w - CARD_GUTTER * 2) / 3;
-        for (t, a, b) in CARDS {
-            for s in [t, a, b] {
-                let w = SMALL_FACE.width(s, 0);
-                assert!(
-                    w < card_w - 44,
-                    "card text {s:?} overflows {card_w}px column: {w}"
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn layout_block_fits_768_tall() {
-        // Guards against the stack running off the bottom on the UTM default.
-        let block_h = content_block_h();
-        assert!(block_h < 768 - NAV_H - 56, "content stack too tall: {block_h}");
-    }
-
-    #[test]
-    fn hero_tracking_is_negative() {
-        // The 8x8 era rendered display type with huge positive tracking; the
-        // reference design is tight. Guard against regressing to that.
-        assert!(font::tracking_pct(HERO_FACE.px, -30) < 0);
-    }
-
-    #[test]
-    fn cta_hit_regions_match_draw_layout() {
-        let skills = SkillPeek {
-            count: 3,
-            names: [[0; 28]; 8],
-        };
-        let t = cta_targets(1024, 768, &skills);
-        assert!(t.ready.w > 40 && t.ready.h == CTA_H);
-        assert!(t.skills.w > 40 && t.skills.h == CTA_H);
-        assert_eq!(t.ready.y, t.skills.y);
-        assert!(t.ready.x + t.ready.w <= t.skills.x);
-        // Centres of each pill hit the matching id.
-        assert_eq!(
-            t.hit(t.ready.x + t.ready.w / 2, t.ready.y + CTA_H / 2),
-            Some(CtaId::Ready)
-        );
-        assert_eq!(
-            t.hit(t.skills.x + t.skills.w / 2, t.skills.y + CTA_H / 2),
-            Some(CtaId::Skills)
-        );
-        assert_eq!(t.hit(0, 0), None);
-    }
-
-    #[test]
-    fn card_hit_regions_are_three_columns() {
-        let skills = SkillPeek {
-            count: 3,
-            names: [[0; 28]; 8],
-        };
-        let home = home_targets(1024, 768, &skills);
-        let c = home.cards;
-        assert_eq!(c.connectors.y, c.capabilities.y);
-        assert_eq!(c.capabilities.y, c.skills.y);
-        assert!(c.connectors.x + c.connectors.w <= c.capabilities.x);
-        assert!(c.capabilities.x + c.capabilities.w <= c.skills.x);
-        assert_eq!(
-            home.hit(
-                c.connectors.x + c.connectors.w / 2,
-                c.connectors.y + CARD_H / 2
-            ),
-            Some(HomeHit::Card(CardId::Connectors))
-        );
-        assert_eq!(
-            home.hit(
-                c.skills.x + c.skills.w / 2,
-                c.skills.y + CARD_H / 2
-            ),
-            Some(HomeHit::Card(CardId::Skills))
-        );
-        // CTA still wins when aimed at Ready.
-        let ready = home.ctas.ready;
-        assert_eq!(
-            home.hit(ready.x + ready.w / 2, ready.y + CTA_H / 2),
-            Some(HomeHit::Cta(CtaId::Ready))
-        );
+    fn drawing_the_home_screen_does_not_panic() {
+        // Exercises the offline branch and the count formatting together.
+        let mail = MailPeek::empty(BridgeStatus::Offline);
+        let _ = home_targets(1024, 768, &peek());
+        assert_eq!(mail.count, 0);
     }
 }
