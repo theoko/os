@@ -75,16 +75,44 @@ fn main() {
     }
 }
 
-/// Dial a peer that is already listening (UTM QEMU serial unix server).
-/// Retries until the guest appears, then serves one session and reconnects.
+/// Dial a peer that is already listening (UTM COM2 TcpServer, or a unix
+/// chardev). Retries until the guest appears, serves one session, reconnects.
+///
+/// UTM's QEMU TcpClient does **not** retry a refused connect — flipping the
+/// direction (guest listens, bridge dials) is what keeps Search online across
+/// bridge restarts and slow host startup.
 fn connect_loop(target: &str, backends: Arc<Backends>) {
-    let path = target.strip_prefix("unix:").unwrap_or(target);
+    if let Some(path) = target.strip_prefix("unix:") {
+        connect_unix_loop(path, backends);
+    } else {
+        let addr = target.strip_prefix("tcp:").unwrap_or(target);
+        connect_tcp_loop(addr, backends);
+    }
+}
+
+fn connect_unix_loop(path: &str, backends: Arc<Backends>) {
     loop {
         match UnixStream::connect(path) {
             Ok(stream) => {
-                eprintln!("connected to {path}");
-                let backends = Arc::clone(&backends);
+                eprintln!("connected to unix:{path}");
                 if let Err(e) = handle_unix(stream, &backends) {
+                    eprintln!("client error: {e}");
+                }
+                eprintln!("guest disconnected — waiting to reconnect");
+            }
+            Err(_) => {
+                std::thread::sleep(std::time::Duration::from_millis(400));
+            }
+        }
+    }
+}
+
+fn connect_tcp_loop(addr: &str, backends: Arc<Backends>) {
+    loop {
+        match TcpStream::connect(addr) {
+            Ok(stream) => {
+                eprintln!("connected to tcp:{addr}");
+                if let Err(e) = handle_tcp(stream, &backends) {
                     eprintln!("client error: {e}");
                 }
                 eprintln!("guest disconnected — waiting to reconnect");

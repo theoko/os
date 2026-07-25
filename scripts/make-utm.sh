@@ -188,18 +188,20 @@ EXTRA_ARGS = [
 # Set outright rather than merging token-by-token: EXTRA_ARGS repeats "-device",
 # so a per-token dedup would collapse the two devices into one.
 cfg.setdefault("QEMU", {})["AdditionalArguments"] = list(EXTRA_ARGS)
-# COM1 = PTTY (utmctl attach). Optional COM2 = TCP client → host MCP bridge.
-# Use UTM's Serial device (not AdditionalArguments -unix): TcpClient is a
-# first-class mode and is allowed through the sandbox.
+# COM1 = PTTY (utmctl attach). Optional COM2 = TCP *server* for the host bridge.
+# QEMU's TcpClient mode does not retry a refused connect — if the bridge is
+# briefly down at VM start, Search stays "Bridge offline" forever. TcpServer +
+# WaitForConnection lets the bridge dial (with retry) and keeps COM2 live.
 serial = [{"Mode": "Ptty", "Target": "Auto"}]
 if os.environ.get("UTM_BRIDGE", "0") == "1":
     addr = os.environ.get("OS_MCP_BRIDGE_ADDR", "127.0.0.1:7420")
-    host, _, port = addr.rpartition(":")
+    _host, _, port = addr.rpartition(":")
     serial.append({
-        "Mode": "TcpClient",
+        "Mode": "TcpServer",
         "Target": "Auto",
-        "TcpHostAddress": host or "127.0.0.1",
         "TcpPort": int(port or "7420"),
+        "WaitForConnection": True,
+        "RemoteConnectionAllowed": False,
     })
 cfg["Serial"] = serial
 # The PC speaker needs an emulated sound card to reach the host. UTM creates
@@ -219,7 +221,7 @@ cfg["Display"] = [{
 p.write_bytes(plistlib.dumps(cfg, fmt=plistlib.FMT_XML))
 print("bundled", Path(os.environ["UTM_DIR"]) / "Data" / "os.iso")
 if os.environ.get("UTM_BRIDGE", "0") == "1":
-    print("com2 TcpClient ->", os.environ.get("OS_MCP_BRIDGE_ADDR", "127.0.0.1:7420"))
+    print("com2 TcpServer <-", os.environ.get("OS_MCP_BRIDGE_ADDR", "127.0.0.1:7420"), "(bridge dials)")
 PY
 
 # Reload so UTM picks up ImageName (in-memory config would ignore our plist edit).
@@ -232,7 +234,7 @@ fi
 
 echo "utm ok: $(du -h "$UTM_DIR/Data/os.iso" | awk '{print $1}') ISO in VM bundle"
 if [[ "$BRIDGE" == "1" ]]; then
-  echo ">>> COM2 TcpClient → MCP bridge at $BRIDGE_ADDR"
+  echo ">>> COM2 TcpServer on $BRIDGE_ADDR — host bridge dials in (retries)"
 fi
 echo ">>> Double-click 'os' in the sidebar to open the guest display window."
 echo ">>> The black rectangle in the library list is only a thumbnail — not the GUI."

@@ -91,11 +91,11 @@ utm-run: iso
 	chmod +x scripts/make-utm.sh
 	UTM_START=1 ./scripts/make-utm.sh
 
-# Host bridge on TCP :7420; UTM COM2 = Serial TcpClient to that address.
+# UTM COM2 = Serial TcpServer on :7420; host bridge dials (retries). QEMU's
+# TcpClient mode never retries a refused connect, which left Search offline.
 utm-bridged: iso bridge
 	chmod +x scripts/ensure-bridge.sh scripts/make-utm.sh
-	@kill `cat .bridge.pid 2>/dev/null` 2>/dev/null || true; rm -f .bridge.pid
-	OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) ./scripts/ensure-bridge.sh
+	OS_MCP_BRIDGE_CONNECT=tcp:$(BRIDGE_ADDR) ./scripts/ensure-bridge.sh
 	UTM_BRIDGE=1 UTM_START=1 OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) ./scripts/make-utm.sh
 
 test: test-host smoke smoke-bridge

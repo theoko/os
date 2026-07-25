@@ -72,10 +72,12 @@ recreates once. Subsequent runs only refresh the ISO + config in place.
 
 ### Live connectors (COM2 → host bridge)
 
-`make utm-bridged` starts the host bridge on `127.0.0.1:7420` and adds a second
-UTM **Serial** device in `TcpClient` mode (COM2) pointing at that address —
-first-class UTM config, not a raw `-serial` flag. Finish setup, click
-**Connectors** for a live `search.query` hit in the footer.
+`make utm-bridged` adds a second UTM **Serial** device in `TcpServer` mode
+(COM2) on `127.0.0.1:7420` with **Wait for Connection**, and starts the host
+bridge in dial mode (`OS_MCP_BRIDGE_CONNECT=tcp:…`) so it retries until the
+guest appears. QEMU's TcpClient mode does not retry a refused connect — that
+left Search stuck on "Bridge offline". Finish setup, then Search uses the live
+bridge.
 
 Serial should show `mouse: usb-tablet ready` then `mouse: ps2 ready`, then
 `ui: setup welcome`. With the bridge up you should also see `mcp: email connected`
