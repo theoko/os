@@ -201,8 +201,8 @@ pub fn draw_home_full(
         let tx = x0 + (tw + gap) * i as i32;
         fb.fill_round_rect(tx, ty, tw, TILE_H, 12, theme::CARD_BORDER);
         fb.fill_round_rect(tx + 1, ty + 1, tw - 2, TILE_H - 2, 11, theme::BG);
-        fb.draw_text(tx + 18, ty + 34, title, &H2_FACE, 0, theme::INK);
-        fb.draw_text(tx + 18, ty + 58, sub, &SMALL_FACE, 0, theme::MUTED);
+        fb.draw_text_clipped(tx + 18, ty + 34, title, &H2_FACE, 0, theme::INK, tw - 36);
+        fb.draw_text_clipped(tx + 18, ty + 58, sub, &SMALL_FACE, 0, theme::MUTED, tw - 36);
     }
 
     // Live content instead of marketing copy.

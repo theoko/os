@@ -193,6 +193,12 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut status_buf = [0u8; 72];
                 let mut status_len = grants.describe(&mut status_buf);
                 let mut setup = setup::Setup::new();
+                let animate = can_animate(&screen);
+                serial_port.write_str(if animate {
+                    "ui: transitions on\n"
+                } else {
+                    "ui: transitions off (full blit too slow)\n"
+                });
                 let mut kb = keyboard::Keyboard::new();
                 let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut sview = searchui::SearchView::new();
@@ -204,7 +210,7 @@ unsafe extern "C" fn kmain() -> ! {
                 cursor.hide(surface);
                 setup.draw(surface, &mail, &skill_peek);
                 cursor.show_at(surface, x, y);
-                enter(&screen);
+                enter(&screen, animate);
                 serial_port.write_str("ui: setup welcome\n");
                 // Chime after the first frame is up, so the screen is never
                 // waiting on the speaker.
@@ -295,7 +301,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 setup.draw(surface, &mail, &skill_peek);
                             }
                             cursor.show_at(surface, x, y);
-                            enter(&screen);
+                            enter(&screen, animate);
                             moved = false;
                         }
                     } else if view == screens::View::Home {
@@ -345,7 +351,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 );
                             }
                             cursor.show_at(surface, x, y);
-                            enter(&screen);
+                            enter(&screen, animate);
                             moved = false;
                         }
                     }
@@ -491,7 +497,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 }
                             }
                             cursor.show_at(surface, x, y);
-                            enter(&screen);
+                            enter(&screen, animate);
                             moved = false;
                         }
                     } else {
@@ -507,7 +513,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     cursor.hide(surface);
                                     setup.draw(surface, &mail, &skill_peek);
                                     cursor.show_at(surface, x, y);
-                                    enter(&screen);
+                                    enter(&screen, animate);
                                     clicked = true;
                                     moved = false;
                                 }
@@ -524,7 +530,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     cursor.hide(surface);
                                     screens::draw_skills(surface, &skill_peek);
                                     cursor.show_at(surface, x, y);
-                                    enter(&screen);
+                                    enter(&screen, animate);
                                     // Don't fall through to the home redraw below.
                                     clicked = false;
                                     moved = false;
@@ -543,7 +549,7 @@ unsafe extern "C" fn kmain() -> ! {
                                         bridge_note(&mail),
                                     );
                                     cursor.show_at(surface, x, y);
-                                    enter(&screen);
+                                    enter(&screen, animate);
                                     clicked = true;
                                     moved = false;
                                 }
@@ -600,7 +606,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     status_str(&status_buf, status_len),
                                 );
                                 cursor.show_at(surface, x, y);
-                                enter(&screen);
+                                enter(&screen, animate);
                                 moved = false;
                             }
                         }
@@ -641,13 +647,33 @@ fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
 ///
 /// Snapping between screens is what made this feel unlike a desktop; an
 /// eased slide-and-fade costs a handful of blits and reads as intentional.
-fn enter(screen: &fb::Screen) {
+fn enter(screen: &fb::Screen, animate: bool) {
+    if !animate {
+        // Under software emulation a slide costs 11 full-screen blits — about
+        // a quarter of a second — so the "polish" reads as a stutter on every
+        // click. Dirty-rect present is ~600x cheaper; just show the frame.
+        screen.present_all();
+        return;
+    }
     let mut mark = serial::rdtsc();
     for i in 0..=anim::SLIDE_IN.frames {
         let (dy, a) = anim::SLIDE_IN.at(i);
         screen.present_slide(dy, a, ui::theme::BG);
         mark = anim::pace(mark, anim::SLIDE_IN.frame_us);
     }
+}
+
+/// Is a full-screen blit cheap enough to animate with?
+///
+/// Measured rather than assumed: the same code should animate on hardware
+/// virtualisation and stay still under TCG, without a build flag.
+fn can_animate(screen: &fb::Screen) -> bool {
+    let t0 = serial::rdtsc();
+    screen.present_all();
+    let cost = serial::rdtsc().wrapping_sub(t0);
+    // A 10-frame entrance needs each blit well inside a 16ms frame. At the
+    // ~1GHz the timing code assumes, that is a few million cycles.
+    cost < 4_000_000
 }
 
 /// Decimal u64 to COM1, for the perf line.

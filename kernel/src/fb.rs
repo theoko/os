@@ -20,7 +20,11 @@ pub struct Surface {
     width: usize,
     height: usize,
     pitch: usize,
+    /// Up to two disjoint dirty regions. The common frame is a cursor move,
+    /// which dirties its old and new footprint — unioning those spans the
+    /// distance travelled and turns a 600-pixel update into a full-screen one.
     dirty: Cell<Option<(i32, i32, i32, i32)>>,
+    dirty2: Cell<Option<(i32, i32, i32, i32)>>,
 }
 
 impl Surface {
@@ -39,10 +43,25 @@ impl Surface {
         if nx0 >= nx1 || ny0 >= ny1 {
             return;
         }
-        self.dirty.set(Some(match self.dirty.get() {
-            None => (nx0, ny0, nx1, ny1),
-            Some((x0, y0, x1, y1)) => (x0.min(nx0), y0.min(ny0), x1.max(nx1), y1.max(ny1)),
-        }));
+        let new = (nx0, ny0, nx1, ny1);
+        let overlaps = |a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)| {
+            a.0 < b.2 && b.0 < a.2 && a.1 < b.3 && b.1 < a.3
+        };
+        let merge = |a: (i32, i32, i32, i32), b: (i32, i32, i32, i32)| {
+            (a.0.min(b.0), a.1.min(b.1), a.2.max(b.2), a.3.max(b.3))
+        };
+        match (self.dirty.get(), self.dirty2.get()) {
+            (None, _) => self.dirty.set(Some(new)),
+            // Merge into whichever slot it touches; otherwise take the free
+            // slot; otherwise fall back to a union, which is still correct.
+            (Some(a), _) if overlaps(a, new) => self.dirty.set(Some(merge(a, new))),
+            (Some(_), Some(b)) if overlaps(b, new) => self.dirty2.set(Some(merge(b, new))),
+            (Some(_), None) => self.dirty2.set(Some(new)),
+            (Some(a), Some(b)) => {
+                self.dirty.set(Some(merge(a, new)));
+                self.dirty2.set(Some(b));
+            }
+        }
     }
 
     /// Current dirty rectangle as `(x0, y0, x1, y1)`, if anything changed.
@@ -50,8 +69,14 @@ impl Surface {
         self.dirty.get()
     }
 
+    /// The second disjoint region, if any.
+    pub fn dirty_rect2(&self) -> Option<(i32, i32, i32, i32)> {
+        self.dirty2.get()
+    }
+
     pub fn clear_dirty(&self) {
         self.dirty.set(None);
+        self.dirty2.set(None);
     }
 }
 
@@ -99,6 +124,7 @@ impl Surface {
             height: height as usize,
             pitch: pitch as usize,
             dirty: Cell::new(None),
+            dirty2: Cell::new(None),
         })
     }
 
@@ -107,7 +133,7 @@ impl Surface {
     /// # Safety
     /// `addr` must point to at least `width * height` u32s.
     pub unsafe fn in_memory(addr: *mut u32, width: usize, height: usize) -> Self {
-        Self { addr: addr.cast::<u8>(), width, height, pitch: width * 4, dirty: Cell::new(None) }
+        Self { addr: addr.cast::<u8>(), width, height, pitch: width * 4, dirty: Cell::new(None), dirty2: Cell::new(None) }
     }
 
     pub fn width(&self) -> usize {
@@ -350,6 +376,50 @@ impl Surface {
         }
     }
 
+    /// Draw `text`, truncating with an ellipsis if it exceeds `max_w`.
+    ///
+    /// Tile subtitles are generated (grant lists, counts) and can be longer
+    /// than the box that holds them; without this they run into whatever is
+    /// drawn to the right.
+    pub fn draw_text_clipped(
+        &self,
+        x: i32,
+        baseline_y: i32,
+        text: &str,
+        face: &Face,
+        tracking64: i32,
+        color: u32,
+        max_w: i32,
+    ) {
+        if face.width(text, tracking64) <= max_w {
+            self.draw_text(x, baseline_y, text, face, tracking64, color);
+            return;
+        }
+        let ell = "...";
+        let ell_w = face.width(ell, tracking64);
+        let mut end = 0;
+        let mut w = 0;
+        for (i, _) in text.char_indices() {
+            let candidate = &text[..i];
+            let cw = face.width(candidate, tracking64);
+            if cw + ell_w > max_w {
+                break;
+            }
+            end = i;
+            w = cw;
+        }
+        let _ = w;
+        self.draw_text(x, baseline_y, &text[..end], face, tracking64, color);
+        self.draw_text(
+            x + face.width(&text[..end], tracking64),
+            baseline_y,
+            ell,
+            face,
+            tracking64,
+            color,
+        );
+    }
+
     /// Draw `text` horizontally centred on `cx`.
     pub fn draw_text_centered(
         &self,
@@ -368,7 +438,7 @@ impl Surface {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::font::{BODY_FACE, HERO_FACE};
+    use crate::font::{BODY_FACE, HERO_FACE, SMALL_FACE};
 
     /// Off-screen surface so drawing can be asserted on the host.
     struct Canvas {
@@ -388,6 +458,7 @@ mod tests {
                 height: self.h,
                 pitch: self.w * 4,
                 dirty: Cell::new(None),
+            dirty2: Cell::new(None),
             }
         }
         fn get(&self, x: usize, y: usize) -> u32 {
@@ -411,15 +482,63 @@ mod tests {
     }
 
     #[test]
-    fn dirty_region_unions_and_clips() {
+    fn distant_regions_stay_separate_rather_than_unioning() {
+        // The frame that matters: a cursor move dirties its old and new
+        // footprint. Unioning them spans the distance travelled and turns a
+        // few hundred pixels into a full-screen blit.
         let mut c = Canvas::new(100, 100);
         {
             let s = c.surface();
-            s.fill_rect(10, 10, 10, 10, 0);
+            s.fill_rect(0, 0, 10, 10, 0);
+            s.fill_rect(80, 80, 10, 10, 0);
+            let a = s.dirty_rect().expect("first region");
+            let b = s.dirty_rect2().expect("second region should not be merged");
+            assert_eq!(a, (0, 0, 10, 10));
+            assert_eq!(b, (80, 80, 90, 90));
+            let area = |r: (i32, i32, i32, i32)| (r.2 - r.0) * (r.3 - r.1);
+            assert_eq!(area(a) + area(b), 200, "regions grew beyond what was drawn");
+        }
+    }
+
+    #[test]
+    fn overlapping_regions_do_merge() {
+        let mut c = Canvas::new(100, 100);
+        {
+            let s = c.surface();
+            s.fill_rect(10, 10, 20, 20, 0);
+            s.fill_rect(20, 20, 20, 20, 0);
+            assert_eq!(s.dirty_rect().unwrap(), (10, 10, 40, 40));
+            assert!(s.dirty_rect2().is_none(), "touching rects should not take a slot");
+        }
+    }
+
+    #[test]
+    fn dirty_regions_clip_to_the_surface() {
+        let mut c = Canvas::new(100, 100);
+        {
+            let s = c.surface();
             s.fill_rect(80, 80, 40, 40, 0); // runs off the right/bottom edge
-            let (x0, y0, x1, y1) = s.dirty_rect().unwrap();
-            assert_eq!((x0, y0), (10, 10));
-            assert_eq!((x1, y1), (100, 100), "dirty rect escaped the surface");
+            assert_eq!(s.dirty_rect().unwrap(), (80, 80, 100, 100));
+        }
+    }
+
+    #[test]
+    fn a_third_region_falls_back_to_a_union_not_a_loss() {
+        // Correctness over optimality: with both slots taken, merging is fine,
+        // dropping the region would leave stale pixels on screen.
+        let mut c = Canvas::new(100, 100);
+        {
+            let s = c.surface();
+            s.fill_rect(0, 0, 5, 5, 0);
+            s.fill_rect(50, 50, 5, 5, 0);
+            s.fill_rect(90, 90, 5, 5, 0);
+            let a = s.dirty_rect().unwrap();
+            let b = s.dirty_rect2().unwrap();
+            // Every drawn pixel must sit inside one of the two regions.
+            for (px, py) in [(2, 2), (52, 52), (92, 92)] {
+                let inside = |r: (i32, i32, i32, i32)| px >= r.0 && px < r.2 && py >= r.1 && py < r.3;
+                assert!(inside(a) || inside(b), "({px},{py}) not covered");
+            }
         }
     }
 
@@ -455,6 +574,51 @@ mod tests {
             assert!(x0 <= 20 && x1 >= 20 + BODY_FACE.width("Hello", 0));
             assert!(y0 < 60 && y1 > 60, "box must straddle the baseline");
         }
+    }
+
+    #[test]
+    fn long_text_is_truncated_to_the_box() {
+        let mut c = Canvas::new(400, 60);
+        let long = "On: Email, Built-in docs, Your files, Recordings, Save skills";
+        {
+            let s = c.surface();
+            s.draw_text_clipped(10, 40, long, &SMALL_FACE, 0, 0, 150);
+        }
+        // Nothing may be drawn past the limit.
+        let mut max_x = 0;
+        for y in 0..c.h {
+            for x in 0..c.w {
+                if c.get(x, y) != 0x00FF_FFFF {
+                    max_x = max_x.max(x);
+                }
+            }
+        }
+        assert!(max_x <= 10 + 150, "text overran its box to x={max_x}");
+    }
+
+    #[test]
+    fn short_text_is_untouched() {
+        let mut a = Canvas::new(300, 60);
+        let mut b = Canvas::new(300, 60);
+        {
+            let s = a.surface();
+            s.draw_text(10, 40, "Skills", &SMALL_FACE, 0, 0);
+        }
+        {
+            let s = b.surface();
+            s.draw_text_clipped(10, 40, "Skills", &SMALL_FACE, 0, 0, 250);
+        }
+        assert_eq!(a.buf, b.buf, "clipping altered text that already fit");
+    }
+
+    #[test]
+    fn a_box_too_small_for_the_ellipsis_draws_nothing_wild() {
+        let mut c = Canvas::new(200, 60);
+        {
+            let s = c.surface();
+            s.draw_text_clipped(10, 40, "some long label", &SMALL_FACE, 0, 0, 4);
+        }
+        assert_eq!(c.buf.len(), 200 * 60, "clipping corrupted the surface");
     }
 
     #[test]
@@ -623,9 +787,10 @@ impl Screen {
                 height: h,
                 pitch: w * 4,
                 dirty: Cell::new(None),
+            dirty2: Cell::new(None),
             }
         } else {
-            Surface { addr, width: w, height: h, pitch: pitch as usize, dirty: Cell::new(None) }
+            Surface { addr, width: w, height: h, pitch: pitch as usize, dirty: Cell::new(None), dirty2: Cell::new(None) }
         };
         Some(Self { back, fb: addr, fb_pitch: pitch as usize, w, h, buffered })
     }
@@ -668,11 +833,15 @@ impl Screen {
             self.back.clear_dirty();
             return;
         }
-        let Some((x0, y0, x1, y1)) = self.back.dirty_rect() else {
-            return;
-        };
+        let first = self.back.dirty_rect();
+        let second = self.back.dirty_rect2();
         self.back.clear_dirty();
-        self.blit(x0, y0, x1, y1);
+        if let Some((x0, y0, x1, y1)) = first {
+            self.blit(x0, y0, x1, y1);
+        }
+        if let Some((x0, y0, x1, y1)) = second {
+            self.blit(x0, y0, x1, y1);
+        }
     }
 
     /// Blit the back buffer shifted down by `dy` and faded toward `bg`.
@@ -729,3 +898,4 @@ impl Screen {
     }
 
 }
+
