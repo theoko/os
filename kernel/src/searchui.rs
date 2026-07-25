@@ -12,7 +12,7 @@ use crate::font::{self, BODY_FACE, BRAND_FACE, SMALL_FACE, TITLE_FACE};
 use crate::screens;
 use crate::search;
 use crate::skills::{copy_field, str_at};
-use crate::ui::{theme, PAD_X};
+use crate::ui::theme;
 
 /// Longest query we accept. Comfortably wider than the field renders.
 pub const QUERY_MAX: usize = 64;
