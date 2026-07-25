@@ -28,6 +28,10 @@ pub const BUILTIN: &[SkillRef] = &[
         name: "knowledge-search",
         blurb: "Corpus search",
     },
+    SkillRef {
+        name: "teddy-portals",
+        blurb: "Teddy API + live portals",
+    },
 ];
 
 /// Names (+ short descs) from builtins or `CALL skills.list`.

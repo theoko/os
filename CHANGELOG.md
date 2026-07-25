@@ -1,8 +1,20 @@
 ---
-version: 0.9.2
+version: 0.9.3
 ---
 
 # Changelog
+
+## 0.9.3 — 2026-07-25
+
+Teddy is two connectors, not one:
+
+- **Teddy API** — `tsearch.sync` + `search.query portal=1` over
+  `teddysearch.com/tsearch/corpus.json` (corpus file is the API).
+- **Teddy portals** — live HTTPS tools `teddy.health`, `teddy.fear_greed`,
+  `teddy.gex` on the same host. Cap-gated with `portal=1` (markets too).
+
+Guest skill `teddy-portals` runs both paths under `portal.sync` and paints a
+Brief. LIST exposes the new tools.
 
 ## 0.9.2 — 2026-07-25
 
@@ -11,7 +23,8 @@ current grants and opens a Brief: plan steps, then tagged outcomes — or the
 name of the switch still blocking the call. No inference in the kernel.
 
 - **Skill runner** (`agent.rs`): `inbox-brief`, `email-triage`,
-  `knowledge-search`, `agent-plan-act`, `capability-safe-tools`.
+  `knowledge-search`, `agent-plan-act`, `capability-safe-tools`,
+  and (0.9.3) `teddy-portals`.
 - After setup, `agent-plan-act` runs immediately so the first screen is a
   report, not an empty launcher.
 - Capabilities tile opens the live switches (it only rewrote the footer

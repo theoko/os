@@ -545,6 +545,103 @@ fn search_offline() -> SearchPeek {
 /// What the home screen asks for when nothing else was requested.
 const OFFLINE_QUERY: &str = "capability agent bridge";
 
+/// One field/value pair from a portal tool (`teddy.*` / `market.*`).
+pub struct PortalRow {
+    pub field: [u8; 28],
+    pub value: [u8; 48],
+}
+
+/// Short peek from a live portal call.
+pub struct PortalPeek {
+    pub status: BridgeStatus,
+    pub denied: bool,
+    pub count: usize,
+    pub rows: [PortalRow; 8],
+}
+
+impl PortalPeek {
+    pub const fn empty(status: BridgeStatus, denied: bool) -> Self {
+        const EMPTY: PortalRow = PortalRow {
+            field: [0; 28],
+            value: [0; 48],
+        };
+        Self {
+            status,
+            denied,
+            count: 0,
+            rows: [EMPTY; 8],
+        }
+    }
+
+    pub fn field_at(&self, i: usize) -> &str {
+        str_prefix(trim_buf(&self.rows[i].field))
+    }
+
+    pub fn value_at(&self, i: usize) -> &str {
+        str_prefix(trim_buf(&self.rows[i].value))
+    }
+}
+
+/// Live portal tools the guest may call (must match bridge `portals::ENDPOINTS`).
+pub const TEDDY_PORTALS: &[&str] = &["teddy.health", "teddy.fear_greed", "teddy.gex"];
+
+/// Call a portal tool when `portal.sync` is granted.
+///
+/// Distinct from the teddy *API* (`tsearch.sync` / corpus search): portals are
+/// live HTTPS round-trips. Both need the same consent bit on the wire.
+pub fn fetch_portal(caps: crate::caps::Caps, tool: &str) -> PortalPeek {
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+
+    if !caps.allows(crate::caps::Cap::PortalSync) {
+        let status = ping_bridge(&com2, &mut line);
+        return PortalPeek::empty(status, true);
+    }
+    let known = TEDDY_PORTALS.contains(&tool) || tool.starts_with("market.");
+    if tool.is_empty() || !known {
+        return PortalPeek::empty(BridgeStatus::Online, true);
+    }
+
+    match ping_bridge(&com2, &mut line) {
+        BridgeStatus::Offline => return PortalPeek::empty(BridgeStatus::Offline, false),
+        BridgeStatus::Online => {}
+    }
+
+    com2.write_str("CALL ");
+    com2.write_str(tool);
+    com2.write_str(" portal=1\n");
+
+    let mut peek = PortalPeek::empty(BridgeStatus::Online, false);
+    let mut first = true;
+    for _ in 0..24 {
+        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
+        let Some(n) = com2.read_line(&mut line, timeout) else {
+            break;
+        };
+        first = false;
+        let resp = str_prefix(&line[..n]);
+        if resp == "END" {
+            break;
+        }
+        if resp.starts_with("ERR ") {
+            peek.denied = resp.contains("needs_portal_cap");
+            break;
+        }
+        if resp.starts_with("OK ") {
+            continue;
+        }
+        if resp.starts_with("ROW ") && peek.count < peek.rows.len() {
+            let field = parse_row_field(resp, "field").unwrap_or("?");
+            let value = parse_row_field(resp, "value").unwrap_or("");
+            copy_field(&mut peek.rows[peek.count].field, field);
+            copy_field(&mut peek.rows[peek.count].value, value);
+            peek.count += 1;
+        }
+    }
+    peek
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -595,5 +692,23 @@ mod tests {
         let line = "ROW name=email-triage|src=default|desc=Inbox via MCP email";
         assert_eq!(parse_row_field(line, "name"), Some("email-triage"));
         assert_eq!(parse_row_field(line, "desc"), Some("Inbox via MCP email"));
+    }
+
+    #[test]
+    fn portal_tools_stay_behind_portal_sync() {
+        use crate::caps::{Cap, Caps};
+        // Do not call fetch_portal here: host unit tests cannot touch COM2.
+        // The guest gate is Cap::PortalSync; search alone must not unlock it.
+        let mut caps = Caps::none();
+        caps.set(Cap::SearchQuery, true);
+        assert!(!caps.allows(Cap::PortalSync));
+        assert!(TEDDY_PORTALS.iter().all(|t| t.starts_with("teddy.")));
+    }
+
+    #[test]
+    fn teddy_portal_names_are_listed() {
+        assert!(TEDDY_PORTALS.contains(&"teddy.health"));
+        assert!(TEDDY_PORTALS.contains(&"teddy.fear_greed"));
+        assert!(TEDDY_PORTALS.contains(&"teddy.gex"));
     }
 }

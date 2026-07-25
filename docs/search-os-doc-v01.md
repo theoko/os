@@ -44,11 +44,22 @@ body `b`, optional PageRank-ish boost `pr`.
 | `OS_MCP_SEARCH_BACKEND=mock` | Fixed demo rows (CI without corpus) |
 | `OS_MCP_SEARCH_BACKEND=tsearch` | Shells to `TSEARCH_DATA/tsearch_mcp.py` |
 
+## Teddy API vs teddy portals
+
+| Path | Tools | What it is |
+|------|-------|------------|
+| **Teddy API** | `tsearch.sync`, `search.query … portal=1` | Cached `corpus.json` ranked locally |
+| **Teddy portals** | `teddy.health`, `teddy.fear_greed`, `teddy.gex` | Live HTTPS JSON on teddysearch.com |
+
+Both require `portal=1` / guest `Cap::PortalSync`. Corpus hits also need
+`search.query`. See skill `teddy-portals`.
+
 Override corpus path with `OS_SEARCH_CORPUS`.
 
 ## Skill
 
 `knowledge-search` — playbook for agents; see `skills/defaults/knowledge-search/SKILL.md`.
+`teddy-portals` — corpus API plus live portal tools under the same grant.
 
 ## Non-goals (v1)
 

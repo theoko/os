@@ -17,6 +17,8 @@ pub enum Kind {
     KnowledgeSearch,
     PlanAct,
     CapSafe,
+    /// Teddy corpus search + live teddysearch.com portals.
+    TeddyPortals,
     /// Listed, but not a runnable guest plan (show blurb only).
     Unknown,
 }
@@ -129,6 +131,7 @@ pub fn classify(name: &str) -> Kind {
         "knowledge-search" => Kind::KnowledgeSearch,
         "agent-plan-act" => Kind::PlanAct,
         "capability-safe-tools" => Kind::CapSafe,
+        "teddy-portals" => Kind::TeddyPortals,
         _ => Kind::Unknown,
     }
 }
@@ -149,6 +152,7 @@ pub fn run(name: &str, caps: Caps) -> Brief {
         Kind::KnowledgeSearch => run_knowledge(&mut brief, caps, "capability-agent"),
         Kind::PlanAct => run_plan_act(&mut brief, caps),
         Kind::CapSafe => run_cap_safe(&mut brief, caps),
+        Kind::TeddyPortals => run_teddy(&mut brief, caps),
         Kind::Unknown => {
             brief.set_heading("No guest plan for this skill");
             brief.push_plan("Load playbook text from the host");
@@ -384,7 +388,7 @@ fn run_plan_act(brief: &mut Brief, caps: Caps) {
         brief.push_line("Info", "Email off - skipping inbox.");
     }
 
-    // Knowledge lane when granted.
+    // Knowledge lane when granted (includes teddy corpus when portal=1).
     if caps.allows(Cap::SearchQuery) {
         let peek = mcp::fetch_search_peek(caps, "capability-agent");
         if brief.status != BridgeStatus::Online {
@@ -401,6 +405,103 @@ fn run_plan_act(brief: &mut Brief, caps: Caps) {
         }
     } else {
         brief.push_line("Need", Cap::SearchQuery.label());
+    }
+
+    // Live teddy portals when Online services is on.
+    if caps.allows(Cap::PortalSync) {
+        fill_portal_lines(brief, caps, "teddy.health", 2);
+    }
+}
+
+/// Teddy API (corpus via search) + teddy portals (live HTTPS tools).
+fn run_teddy(brief: &mut Brief, caps: Caps) {
+    brief.set_heading("Teddy API + portals");
+    brief.push_plan("Check portal.sync grant");
+    brief.push_plan("CALL search.query with portal=1 (corpus API)");
+    brief.push_plan("CALL teddy.health / fear_greed / gex");
+    brief.push_plan("Report live fields alongside corpus hits");
+
+    if !caps.allows(Cap::PortalSync) {
+        brief.need(Cap::PortalSync);
+        brief.push_line("Info", "Grant Online services, then re-run.");
+        return;
+    }
+
+    // Corpus side of teddy — needs search.query as well as portal.sync.
+    if caps.allows(Cap::SearchQuery) {
+        let peek = mcp::fetch_search_peek(caps, "teddy-search");
+        brief.status = peek.status;
+        if peek.count > 0 {
+            for i in 0..peek.count.min(2) {
+                brief.push_line("Hit", peek.title_at(i));
+            }
+        } else if peek.status == BridgeStatus::Offline {
+            brief.push_line("Info", "Bridge offline - corpus unavailable.");
+        } else {
+            brief.push_line("Info", "Teddy corpus returned no hits.");
+        }
+    } else {
+        brief.push_line("Need", Cap::SearchQuery.label());
+        brief.push_line("Info", "Corpus search needs Built-in docs too.");
+    }
+
+    fill_portal_lines(brief, caps, "teddy.health", 2);
+    fill_portal_lines(brief, caps, "teddy.fear_greed", 2);
+    fill_portal_lines(brief, caps, "teddy.gex", 2);
+}
+
+fn fill_portal_lines(brief: &mut Brief, caps: Caps, tool: &str, max: usize) {
+    if brief.count >= brief.lines.len() {
+        return;
+    }
+    let peek = mcp::fetch_portal(caps, tool);
+    if brief.status != BridgeStatus::Online {
+        brief.status = peek.status;
+    }
+    if peek.denied {
+        brief.need(Cap::PortalSync);
+        return;
+    }
+    if peek.status == BridgeStatus::Offline {
+        brief.push_line("Info", "Bridge offline for portals.");
+        return;
+    }
+    if peek.count == 0 {
+        brief.push_line("Info", tool);
+        return;
+    }
+    let room = brief.lines.len().saturating_sub(brief.count).min(max);
+    for i in 0..peek.count.min(room) {
+        let mut text = [0u8; 68];
+        let mut n = 0;
+        for &b in tool.as_bytes().iter().take(12) {
+            text[n] = b;
+            n += 1;
+        }
+        if n + 1 < text.len() {
+            text[n] = b' ';
+            n += 1;
+        }
+        for &b in peek.field_at(i).as_bytes() {
+            if n >= 28 {
+                break;
+            }
+            text[n] = b;
+            n += 1;
+        }
+        if n + 1 < text.len() {
+            text[n] = b'=';
+            n += 1;
+        }
+        for &b in peek.value_at(i).as_bytes() {
+            if n >= text.len() {
+                break;
+            }
+            text[n] = b;
+            n += 1;
+        }
+        let line = core::str::from_utf8(&text[..n]).unwrap_or(peek.field_at(i));
+        brief.push_line("Live", line);
     }
 }
 
@@ -444,9 +545,19 @@ mod tests {
         assert_eq!(classify("inbox-brief"), Kind::InboxBrief);
         assert_eq!(classify("knowledge-search"), Kind::KnowledgeSearch);
         assert_eq!(classify("agent-plan-act"), Kind::PlanAct);
+        assert_eq!(classify("teddy-portals"), Kind::TeddyPortals);
         assert_eq!(classify("mystery"), Kind::Unknown);
         assert!(is_runnable("email-triage"));
+        assert!(is_runnable("teddy-portals"));
         assert!(!is_runnable("custom-saved"));
+    }
+
+    #[test]
+    fn teddy_skill_names_the_portal_cap_when_missing() {
+        let b = run("teddy-portals", Caps::none());
+        assert!(b.denied);
+        assert_eq!(b.deny_name(), "portal.sync");
+        assert!(b.plan_n >= 3);
     }
 
     #[test]
@@ -541,7 +652,9 @@ mod tests {
             "Knowledge search",
             "Plan, act, report",
             "Capability check",
+            "Teddy API + portals",
             "Grant Email on Capabilities, then re-run.",
+            "Grant Online services, then re-run.",
             "Bridge offline - cannot read mail.",
             "Acting only with switches that are on.",
         ] {

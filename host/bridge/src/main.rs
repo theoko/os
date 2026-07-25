@@ -290,7 +290,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
     match cmd {
         "PING" => vec!["OK pong".into()],
         "LIST" => {
-            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,doc.read".into()]
+            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,teddy.health,teddy.fear_greed,teddy.gex,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,doc.read".into()]
         }
         "CALL" => {
             let (tool, rest) = split_word(rest);
@@ -364,8 +364,11 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                 Err(e) => vec![format!("ERR skills.save {e}")],
             }
         }
-        // Portal connectors: the OS reaching the user's own live services.
-        tool if portals::find(tool).is_some() => {
+        // Portal connectors leave the machine — same consent bit as tsearch.sync.
+        tool if portals::is_portal_tool(tool) && !matches!(arg_val(args, "portal"), Some("1")) => {
+            vec![format!("ERR {tool} needs_portal_cap")]
+        }
+        tool if portals::is_portal_tool(tool) => {
             let ep = portals::find(tool).expect("checked");
             match portals::fetch(ep, args) {
                 Ok(body) => {
@@ -789,6 +792,36 @@ mod tests {
     fn list_includes_search() {
         let r = dispatch("LIST", &test_backends());
         assert!(r[0].contains("search.query"));
+    }
+
+    #[test]
+    fn list_includes_teddy_api_and_teddy_portals() {
+        // Corpus sync (teddy API) and live teddy.* tools must both be listed.
+        let r = dispatch("LIST", &test_backends());
+        assert!(r[0].contains("tsearch.sync"), "teddy API missing: {}", r[0]);
+        assert!(r[0].contains("teddy.health"), "teddy portal missing: {}", r[0]);
+        assert!(r[0].contains("teddy.fear_greed"), "{}", r[0]);
+        assert!(r[0].contains("teddy.gex"), "{}", r[0]);
+    }
+
+    #[test]
+    fn teddy_portals_need_the_portal_cap() {
+        let denied = dispatch("CALL teddy.health", &test_backends());
+        assert!(
+            denied[0].contains("needs_portal_cap"),
+            "ungated portal call: {denied:?}"
+        );
+        let denied_gex = dispatch("CALL teddy.gex", &test_backends());
+        assert!(denied_gex[0].contains("needs_portal_cap"), "{denied_gex:?}");
+        // Markets share the same consent bit.
+        let denied_m = dispatch("CALL market.health", &test_backends());
+        assert!(denied_m[0].contains("needs_portal_cap"), "{denied_m:?}");
+    }
+
+    #[test]
+    fn tsearch_sync_still_needs_portal_cap() {
+        let denied = dispatch("CALL tsearch.sync", &test_backends());
+        assert!(denied[0].contains("needs_portal_cap"), "{denied:?}");
     }
 }
 

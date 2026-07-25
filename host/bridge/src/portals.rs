@@ -1,13 +1,17 @@
 //! Portal connectors — the OS reaching the user's own live services.
 //!
-//! Two are known: superintelmarkets.com (market intelligence) and
-//! teddysearch.com (the knowledge corpus, handled in `tsearch`). Both are
-//! plain HTTPS JSON, so this is a small fetch-and-shape layer rather than a
-//! client library.
+//! teddysearch.com exposes two different things the bridge must keep distinct:
 //!
-//! Responses are cached with a short TTL. Probing these endpoints during
-//! development got the caller rate-limited into `000` responses, and a search
-//! field that hits a live API per keystroke would do the same to the user.
+//! * **Teddy API** (`tsearch` module) — the knowledge corpus at
+//!   `/tsearch/corpus.json`. There is no server-side query endpoint; the file
+//!   *is* the API, synced once and ranked locally.
+//! * **Teddy portals** (this module) — live JSON tools on the same host
+//!   (`/health`, `/api/fear-greed`, `/api/gex`). These leave the machine on
+//!   every call and therefore require `portal=1`.
+//!
+//! `market.*` tools hit superintelmarkets.com (same response shapes). Both
+//! families are plain HTTPS JSON with a short TTL cache — probing without a
+//! TTL rate-limited the caller into `000` responses.
 
 use serde_json::Value;
 use std::collections::HashMap;
@@ -26,9 +30,26 @@ pub struct Endpoint {
     pub params: &'static [&'static str],
 }
 
-/// Confirmed-live endpoints. `/api/screen` and `/api/search` return 404 on the
-/// public host, so they are deliberately absent rather than listed and broken.
+/// Confirmed-live endpoints. `/api/screen` and `/api/search` still 404 on the
+/// public host, so they stay absent rather than listed and broken.
 pub const ENDPOINTS: &[Endpoint] = &[
+    // Teddy portals — live services on teddysearch.com (not the corpus dump).
+    Endpoint {
+        tool: "teddy.health",
+        url: "https://teddysearch.com/health",
+        params: &[],
+    },
+    Endpoint {
+        tool: "teddy.fear_greed",
+        url: "https://teddysearch.com/api/fear-greed",
+        params: &["ticker", "purpose"],
+    },
+    Endpoint {
+        tool: "teddy.gex",
+        url: "https://teddysearch.com/api/gex",
+        params: &[],
+    },
+    // Markets family — same shapes, different origin.
     Endpoint {
         tool: "market.health",
         url: "https://superintelmarkets.com/health",
@@ -40,6 +61,11 @@ pub const ENDPOINTS: &[Endpoint] = &[
         params: &["ticker", "purpose"],
     },
 ];
+
+/// Tools that leave the machine and therefore need `portal=1`.
+pub fn is_portal_tool(tool: &str) -> bool {
+    find(tool).is_some()
+}
 
 pub fn find(tool: &str) -> Option<&'static Endpoint> {
     ENDPOINTS.iter().find(|e| e.tool == tool)
@@ -134,47 +160,78 @@ pub fn rows_for(tool: &str, body: &str) -> Vec<String> {
         return vec!["ROW error=unparseable response".into()];
     };
     match tool {
-        "market.health" => {
-            let mut rows = Vec::new();
-            let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("unknown");
-            rows.push(format!("ROW field=status|value={status}"));
-            if let Some(d) = v.get("degraded").and_then(|d| d.as_array()) {
-                let names: Vec<&str> = d.iter().filter_map(|x| x.as_str()).collect();
-                if !names.is_empty() {
-                    rows.push(format!("ROW field=degraded|value={}", names.join(" ")));
-                }
-            }
-            if let Some(svcs) = v.get("services").and_then(|s| s.as_object()) {
-                for (name, s) in svcs.iter().take(6) {
-                    let ok = s.get("ok").and_then(|o| o.as_bool()).unwrap_or(false);
-                    rows.push(format!(
-                        "ROW field={name}|value={}",
-                        if ok { "ok" } else { "down" }
-                    ));
-                }
-            }
-            rows
-        }
-        "market.fear_greed" => {
-            let mut rows = Vec::new();
-            for key in ["score", "label", "available_count"] {
-                if let Some(x) = v.get(key) {
-                    if !x.is_null() {
-                        rows.push(format!("ROW field={key}|value={}", scalar(x)));
-                    }
-                }
-            }
-            if let Some(c) = v.get("components").and_then(|c| c.as_array()) {
-                for comp in c.iter().take(5) {
-                    let name = comp.get("name").and_then(|n| n.as_str()).unwrap_or("?");
-                    let val = comp.get("value_fmt").and_then(|n| n.as_str()).unwrap_or("N/A");
-                    rows.push(format!("ROW field={name}|value={val}"));
-                }
-            }
-            rows
-        }
+        "teddy.health" | "market.health" => rows_health(&v),
+        "teddy.fear_greed" | "market.fear_greed" => rows_fear_greed(&v),
+        "teddy.gex" => rows_gex(&v),
         _ => vec![format!("ROW body={}", scalar(&v))],
     }
+}
+
+fn rows_health(v: &Value) -> Vec<String> {
+    let mut rows = Vec::new();
+    let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("unknown");
+    rows.push(format!("ROW field=status|value={status}"));
+    if let Some(d) = v.get("degraded").and_then(|d| d.as_array()) {
+        let names: Vec<&str> = d.iter().filter_map(|x| x.as_str()).collect();
+        if !names.is_empty() {
+            rows.push(format!("ROW field=degraded|value={}", names.join(" ")));
+        }
+    }
+    if let Some(svcs) = v.get("services").and_then(|s| s.as_object()) {
+        for (name, s) in svcs.iter().take(6) {
+            let ok = s.get("ok").and_then(|o| o.as_bool()).unwrap_or(false);
+            rows.push(format!(
+                "ROW field={name}|value={}",
+                if ok { "ok" } else { "down" }
+            ));
+        }
+    }
+    rows
+}
+
+fn rows_fear_greed(v: &Value) -> Vec<String> {
+    let mut rows = Vec::new();
+    for key in ["score", "label", "available_count"] {
+        if let Some(x) = v.get(key) {
+            if !x.is_null() {
+                rows.push(format!("ROW field={key}|value={}", scalar(x)));
+            }
+        }
+    }
+    if let Some(c) = v.get("components").and_then(|c| c.as_array()) {
+        for comp in c.iter().take(5) {
+            let name = comp.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+            let val = comp
+                .get("value_fmt")
+                .and_then(|n| n.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| comp.get("value").map(scalar))
+                .unwrap_or_else(|| "N/A".into());
+            rows.push(format!("ROW field={name}|value={val}"));
+        }
+    }
+    rows
+}
+
+fn rows_gex(v: &Value) -> Vec<String> {
+    let mut rows = Vec::new();
+    for key in [
+        "regime",
+        "spot",
+        "net_gex",
+        "call_wall",
+        "put_wall",
+        "zero_gamma",
+        "pcr",
+        "n_strikes",
+    ] {
+        if let Some(x) = v.get(key) {
+            if !x.is_null() {
+                rows.push(format!("ROW field={key}|value={}", scalar(x)));
+            }
+        }
+    }
+    rows
 }
 
 fn scalar(v: &Value) -> String {
@@ -229,9 +286,45 @@ mod tests {
             assert!(!e.url.contains("/api/screen"));
             assert!(!e.url.contains("/api/search"));
         }
+        assert!(find("teddy.health").is_some());
+        assert!(find("teddy.fear_greed").is_some());
+        assert!(find("teddy.gex").is_some());
         assert!(find("market.health").is_some());
         assert!(find("market.fear_greed").is_some());
         assert!(find("market.nope").is_none());
+        assert!(is_portal_tool("teddy.health"));
+        assert!(!is_portal_tool("search.query"));
+    }
+
+    #[test]
+    fn teddy_and_market_portals_are_distinct_origins() {
+        let teddy = find("teddy.health").unwrap().url;
+        let market = find("market.health").unwrap().url;
+        assert!(teddy.contains("teddysearch.com"), "{teddy}");
+        assert!(market.contains("superintelmarkets.com"), "{market}");
+        // Corpus dump is the teddy *API*, not a portal tool.
+        assert!(find("tsearch.sync").is_none());
+        assert!(!ENDPOINTS.iter().any(|e| e.url.contains("corpus.json")));
+    }
+
+    #[test]
+    fn gex_rows_surface_regime_and_walls() {
+        let body = r#"{"regime":"positive","spot":7413.1,"net_gex":1.2e9,
+            "call_wall":7530.0,"put_wall":7300.0,"zero_gamma":7350.0,
+            "pcr":0.9,"n_strikes":40,"intraday":[]}"#;
+        let rows = rows_for("teddy.gex", body);
+        assert!(rows.iter().any(|r| r.contains("regime") && r.contains("positive")));
+        assert!(rows.iter().any(|r| r.contains("call_wall") && r.contains("7530")));
+        // Nested arrays are summarised away — guest gets scalars only.
+        assert!(!rows.iter().any(|r| r.contains("intraday")));
+    }
+
+    #[test]
+    fn teddy_health_reuses_market_shaping() {
+        let body = r#"{"status":"ok","degraded":[],"services":{"celery":{"ok":true}}}"#;
+        let t = rows_for("teddy.health", body);
+        let m = rows_for("market.health", body);
+        assert_eq!(t, m);
     }
 
     #[test]

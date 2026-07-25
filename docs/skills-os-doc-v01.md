@@ -38,6 +38,7 @@ Guest always knows **builtin** defaults even if the bridge is offline.
 | `email-triage` | Inbox via MCP email connector |
 | `inbox-brief` | Short mail brief for UI/chat |
 | `knowledge-search` | Curated corpus via `search.query` (tSearch-style) |
+| `teddy-portals` | Teddy corpus API + live `teddy.*` portals |
 
 ## Guest runner (v0.9.2)
 
