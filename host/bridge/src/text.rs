@@ -1,4 +1,12 @@
-//! Shared wire-text scrubbing for guest-facing ROW fields.
+//! Shared wire-text scrubbing and reply framing for guest-facing lines.
+
+/// `OK …` header, zero or more body lines, then `END`.
+pub fn framed_ok(header: String, rows: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut out = vec![header];
+    out.extend(rows);
+    out.push("END".into());
+    out
+}
 
 /// Map line breaks / pipes / controls to spaces, optionally drop non-ASCII,
 /// then take at most `max` chars (and optionally trim).

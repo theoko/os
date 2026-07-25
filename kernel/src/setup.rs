@@ -13,7 +13,7 @@ use crate::fb::Surface;
 use crate::font::{self, BODY_FACE, BRAND_FACE, BTN_FACE, HERO_FACE, SMALL_FACE, TITLE_FACE};
 use crate::mcp::{BridgeStatus, MailPeek};
 use crate::skills::SkillPeek;
-use crate::ui::theme;
+use crate::ui::{self, theme};
 
 /// Where a click landed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -317,16 +317,9 @@ impl Setup {
         }
 
         if toggle {
-            // Pill switch, filled when granted.
-            let tw = 40;
-            let th = 22;
-            let tx = x + cw - pad - tw;
-            let ty = y + (ROW_H - th) / 2;
-            let track_col = if on { theme::ACCENT } else { theme::RULE };
-            fb.fill_round_rect(tx, ty, tw, th, th / 2, track_col);
-            let knob = th - 6;
-            let kx = if on { tx + tw - knob - 3 } else { tx + 3 };
-            fb.fill_round_rect(kx, ty + 3, knob, knob, knob / 2, theme::BG);
+            let tx = x + cw - pad - ui::SWITCH_W;
+            let ty = y + (ROW_H - ui::SWITCH_H) / 2;
+            ui::draw_switch(fb, tx, ty, on);
         } else if on {
             // Selection dot.
             let d = 10;

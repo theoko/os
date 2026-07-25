@@ -37,7 +37,7 @@ pub fn store_path() -> PathBuf {
     env::var("OS_TRANSCRIPT_STORE")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            crate::paths::home().join("Library/Application Support/os/knowledge/transcripts.json")
+            crate::paths::knowledge("transcripts.json")
         })
 }
 

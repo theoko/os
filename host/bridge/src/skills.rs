@@ -19,7 +19,7 @@ pub fn skills_dirs() -> (PathBuf, PathBuf) {
         .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/defaults"));
     let user = env::var("OS_SKILLS_USER")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| crate::paths::home().join("Library/Application Support/os/skills"));
+        .unwrap_or_else(|_| crate::paths::app_support().join("skills"));
     (defaults, user)
 }
 
@@ -126,32 +126,28 @@ pub fn save_skill(name: &str, body: &str) -> Result<PathBuf, String> {
 pub fn list_response() -> Vec<String> {
     let skills = list_skills();
     let n = skills.len();
-    let mut out = vec![format!("OK skills.list n={n}")];
-    for s in &skills {
+    let rows = skills.iter().map(|s| {
         // Frontmatter names are untrusted text: sanitize like desc so a '|'
         // in a name cannot inject ROW fields.
         let name = sanitize(&s.name);
         let desc = sanitize(&s.description);
         let src = if s.builtin { "default" } else { "saved" };
-        out.push(format!("ROW name={name}|src={src}|desc={desc}"));
-    }
-    out.push("END".into());
-    out
+        format!("ROW name={name}|src={src}|desc={desc}")
+    });
+    crate::text::framed_ok(format!("OK skills.list n={n}"), rows)
 }
 
 pub fn get_response(name: &str) -> Vec<String> {
     match get_skill_body(name) {
         Some(body) => {
-            let mut out = vec!["OK skills.get".into()];
-            for line in body.lines() {
-                // LINE payload is the whole rest of the line, not a ROW with
-                // '|'-separated fields — preserve it verbatim so save→get
-                // round-trips; only strip control chars that would break the
-                // line framing (keep tabs for markdown code blocks).
-                out.push(format!("LINE {}", strip_line_controls(line)));
-            }
-            out.push("END".into());
-            out
+            // LINE payload is the whole rest of the line, not a ROW with
+            // '|'-separated fields — preserve it verbatim so save→get
+            // round-trips; only strip control chars that would break the
+            // line framing (keep tabs for markdown code blocks).
+            let lines = body
+                .lines()
+                .map(|line| format!("LINE {}", strip_line_controls(line)));
+            crate::text::framed_ok("OK skills.get".into(), lines)
         }
         None => vec!["ERR skills.get not_found".into()],
     }

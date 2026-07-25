@@ -52,7 +52,7 @@ pub fn cache_path() -> PathBuf {
     env::var("OS_TSEARCH_CACHE")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            crate::paths::home().join("Library/Application Support/os/knowledge/teddysearch.json")
+            crate::paths::knowledge("teddysearch.json")
         })
 }
 

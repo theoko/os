@@ -144,10 +144,7 @@ fn handle_client<R: Read, W: Write>(
                 let body = format!(
                     "---\nname: {name}\ndescription: {desc}\n---\n\n# {name}\n\n(edit me)\n"
                 );
-                match skills::save_skill(&name, &body) {
-                    Ok(path) => vec![format!("OK skills.save path={}", path.display())],
-                    Err(e) => vec![format!("ERR skills.save {e}")],
-                }
+                save_skill_reply(&name, &body)
             } else {
                 let mut body = String::new();
                 let mut ended = false;
@@ -175,31 +172,34 @@ fn handle_client<R: Read, W: Write>(
                     // Disconnect mid-body: do not write a truncated skill.
                     vec!["ERR skills.save truncated_body".into()]
                 } else {
-                    match skills::save_skill(&name, &body) {
-                        Ok(path) => vec![format!("OK skills.save path={}", path.display())],
-                        Err(e) => vec![format!("ERR skills.save {e}")],
-                    }
+                    save_skill_reply(&name, &body)
                 }
             };
-            for r in &reply {
-                eprintln!("→ {r}");
-                writeln!(writer, "{r}")?;
-            }
-            writer.flush()?;
+            write_reply(&mut writer, &reply)?;
             continue;
         }
 
         let reply = dispatch(&line, backends);
-        if reply.is_empty() {
-            continue;
+        if !reply.is_empty() {
+            write_reply(&mut writer, &reply)?;
         }
-        for r in &reply {
-            eprintln!("→ {r}");
-            writeln!(writer, "{r}")?;
-        }
-        writer.flush()?;
     }
     Ok(())
+}
+
+fn write_reply<W: Write>(writer: &mut W, reply: &[String]) -> std::io::Result<()> {
+    for r in reply {
+        eprintln!("→ {r}");
+        writeln!(writer, "{r}")?;
+    }
+    writer.flush()
+}
+
+fn save_skill_reply(name: &str, body: &str) -> Vec<String> {
+    match skills::save_skill(name, body) {
+        Ok(path) => vec![format!("OK skills.save path={}", path.display())],
+        Err(e) => vec![format!("ERR skills.save {e}")],
+    }
 }
 
 /// Drop ANSI CSI sequences and other controls; keep printable ASCII protocol.
@@ -292,9 +292,9 @@ fn parse_args(rest: &str) -> Vec<(String, String)> {
 /// Delete a capability-produced store. Missing file is success (`nothing_to_remove`).
 fn forget_file(tool: &str, path: &std::path::Path) -> Vec<String> {
     match std::fs::remove_file(path) {
-        Ok(()) => vec![format!("OK {tool} removed"), "END".into()],
+        Ok(()) => text::framed_ok(format!("OK {tool} removed"), []),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            vec![format!("OK {tool} nothing_to_remove"), "END".into()]
+            text::framed_ok(format!("OK {tool} nothing_to_remove"), [])
         }
         Err(e) => vec![format!("ERR {tool} {e}")],
     }
@@ -326,24 +326,23 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                     let (title, words, secs) = (t.title.clone(), t.words, t.seconds);
                     store.upsert(t);
                     let _ = store.save();
-                    let mut out = vec![format!(
-                        "OK audio.transcribe words={words} seconds={secs:.0}"
+                    let mut rows = vec![format!(
+                        "ROW field=title|value={}",
+                        sanitize_field(&title)
                     )];
-                    out.push(format!("ROW field=title|value={}", sanitize_field(&title)));
-                    for line in summary {
-                        out.push(format!("ROW field=summary|value={}", sanitize_field(&line)));
-                    }
-                    out.push("END".into());
-                    out
+                    rows.extend(summary.into_iter().map(|line| {
+                        format!("ROW field=summary|value={}", sanitize_field(&line))
+                    }));
+                    text::framed_ok(
+                        format!("OK audio.transcribe words={words} seconds={secs:.0}"),
+                        rows,
+                    )
                 }
                 Err(e) => vec![format!("ERR audio.transcribe {e}")],
             }
         }
         "tsearch.sync" => match tsearch::sync() {
-            Ok((n, at)) => vec![
-                format!("OK tsearch.sync n={n} crawled={at}"),
-                "END".into(),
-            ],
+            Ok((n, at)) => text::framed_ok(format!("OK tsearch.sync n={n} crawled={at}"), []),
             Err(e) => vec![format!("ERR tsearch.sync {e}")],
         },
         // Revoking a grant should remove what it produced, not merely hide it.
@@ -359,10 +358,7 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                 .clamp(1, 200);
             match read_doc(url, max, args) {
                 Ok(lines) => {
-                    let mut out = vec![format!("OK doc.read n={}", lines.len())];
-                    out.extend(lines);
-                    out.push("END".into());
-                    out
+                    text::framed_ok(format!("OK doc.read n={}", lines.len()), lines)
                 }
                 Err(e) => vec![format!("ERR doc.read {e}")],
             }
@@ -379,10 +375,10 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             let ix = workspace::build(&roots);
             let n = ix.entries.len();
             match ix.save() {
-                Ok(p) => vec![
+                Ok(p) => text::framed_ok(
                     format!("OK workspace.index n={n} path={}", p.display()),
-                    "END".into(),
-                ],
+                    [],
+                ),
                 Err(e) => vec![format!("ERR workspace.index {e}")],
             }
         }
@@ -520,12 +516,11 @@ fn email_search_mock(query: &str, max: usize) -> Vec<String> {
         ("os bridge", &format!("Mock hit for {query}")),
     ];
     let n = samples.len().min(max);
-    let mut out = vec![format!("OK email.search n={n}")];
-    for (from, subj) in samples.iter().take(n) {
-        out.push(format!("ROW from={from}|subj={subj}"));
-    }
-    out.push("END".into());
-    out
+    let rows = samples
+        .iter()
+        .take(n)
+        .map(|(from, subj)| format!("ROW from={from}|subj={subj}"));
+    text::framed_ok(format!("OK email.search n={n}"), rows)
 }
 
 fn email_search_gog(query: &str, max: usize) -> Vec<String> {
@@ -598,10 +593,7 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
     }
 
     let n = rows.len();
-    let mut out = vec![format!("OK email.search n={n}")];
-    out.extend(rows);
-    out.push("END".into());
-    out
+    text::framed_ok(format!("OK email.search n={n}"), rows)
 }
 
 fn sanitize_field(s: &str) -> String {

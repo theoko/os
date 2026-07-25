@@ -125,6 +125,36 @@ fn for_each_reply(
     }
 }
 
+/// Drain a typical OK / ROW* / END reply. Skips the `OK …` header; stops on
+/// `ERR` / `END`. `on_row` returns `false` to stop early (e.g. buffer full).
+/// Returns whether an `ERR` line was seen.
+fn for_each_ok_rows(
+    com2: &Serial,
+    line: &mut [u8],
+    max: usize,
+    ok_prefix: &str,
+    mut on_row: impl FnMut(&str) -> bool,
+) -> bool {
+    let mut saw_err = false;
+    for_each_reply(com2, line, max, |resp| {
+        if resp.starts_with("ERR ") {
+            saw_err = true;
+            return false;
+        }
+        if resp == "END" {
+            return false;
+        }
+        if resp.starts_with(ok_prefix) {
+            return true;
+        }
+        if resp.starts_with("ROW ") {
+            return on_row(resp);
+        }
+        true
+    });
+    saw_err
+}
+
 fn open_com2(line: &mut [u8]) -> (Serial, BridgeStatus) {
     let com2 = Serial::com2();
     com2.init();
@@ -160,20 +190,15 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
     com2.write_str("CALL email.search q=in:inbox max=3\n");
 
     let mut peek = MailPeek::empty(BridgeStatus::Online);
-    for_each_reply(&com2, &mut line, 16, |resp| {
-        if resp.starts_with("ERR ") || resp == "END" {
+    let _ = for_each_ok_rows(&com2, &mut line, 16, "OK email.search", |resp| {
+        if peek.count >= peek.rows.len() {
             return false;
         }
-        if resp.starts_with("OK email.search") {
-            return true;
-        }
-        if resp.starts_with("ROW ") && peek.count < peek.rows.len() {
-            let from = parse_row_field(resp, "from").unwrap_or("?");
-            let subj = parse_row_field(resp, "subj").unwrap_or("(no subject)");
-            copy_field(&mut peek.rows[peek.count].from, from);
-            copy_field(&mut peek.rows[peek.count].subj, subj);
-            peek.count += 1;
-        }
+        let from = parse_row_field(resp, "from").unwrap_or("?");
+        let subj = parse_row_field(resp, "subj").unwrap_or("(no subject)");
+        copy_field(&mut peek.rows[peek.count].from, from);
+        copy_field(&mut peek.rows[peek.count].subj, subj);
+        peek.count += 1;
         true
     });
     peek
@@ -218,22 +243,13 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
     com2.write_str("\n");
 
     let mut page = DocPage::empty(BridgeStatus::Online, false);
-    for_each_reply(&com2, &mut line, 40, |resp| {
-        if resp == "END" {
+    page.denied = for_each_ok_rows(&com2, &mut line, 40, "OK doc.read", |resp| {
+        if page.count >= DocPage::MAX {
             return false;
         }
-        if resp.starts_with("ERR ") {
-            page.denied = true;
-            return false;
-        }
-        if resp.starts_with("OK doc.read") {
-            return true;
-        }
-        if resp.starts_with("ROW ") && page.count < DocPage::MAX {
-            let text = parse_row_field(resp, "line").unwrap_or("");
-            copy_field(&mut page.lines[page.count], text);
-            page.count += 1;
-        }
+        let text = parse_row_field(resp, "line").unwrap_or("");
+        copy_field(&mut page.lines[page.count], text);
+        page.count += 1;
         true
     });
     page
@@ -280,21 +296,10 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
 
     let mut peek = crate::skills::SkillPeek::empty();
     peek.from_bridge = true;
-    for_each_reply(&com2, &mut line, 24, |resp| {
-        if resp.starts_with("ERR ") || resp == "END" {
-            return false;
-        }
-        if resp.starts_with("OK skills.list") {
-            return true;
-        }
-        if resp.starts_with("ROW ") {
-            let name = parse_row_field(resp, "name").unwrap_or("?");
-            let desc = parse_row_field(resp, "desc").unwrap_or("");
-            if !peek.push(name, desc) {
-                return false;
-            }
-        }
-        true
+    let _ = for_each_ok_rows(&com2, &mut line, 24, "OK skills.list", |resp| {
+        let name = parse_row_field(resp, "name").unwrap_or("?");
+        let desc = parse_row_field(resp, "desc").unwrap_or("");
+        peek.push(name, desc)
     });
 
     if peek.count == 0 {
@@ -410,22 +415,17 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     com2.write_str("\n");
 
     let mut peek = SearchPeek::empty(BridgeStatus::Online, false);
-    for_each_reply(&com2, &mut line, 16, |resp| {
-        if resp.starts_with("ERR ") || resp == "END" {
+    let _ = for_each_ok_rows(&com2, &mut line, 16, "OK search.query", |resp| {
+        if peek.count >= peek.hits.len() {
             return false;
         }
-        if resp.starts_with("OK search.query") {
-            return true;
-        }
-        if resp.starts_with("ROW ") && peek.count < peek.hits.len() {
-            let title = parse_row_field(resp, "title").unwrap_or("?");
-            copy_field(&mut peek.hits[peek.count].title, title);
-            copy_field(
-                &mut peek.hits[peek.count].url,
-                parse_row_field(resp, "url").unwrap_or(""),
-            );
-            peek.count += 1;
-        }
+        let title = parse_row_field(resp, "title").unwrap_or("?");
+        copy_field(&mut peek.hits[peek.count].title, title);
+        copy_field(
+            &mut peek.hits[peek.count].url,
+            parse_row_field(resp, "url").unwrap_or(""),
+        );
+        peek.count += 1;
         true
     });
     peek

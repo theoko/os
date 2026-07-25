@@ -248,20 +248,18 @@ pub fn query_all(
         hits.truncate(k);
     }
     let n = hits.len();
-    let mut out = vec![format!("OK search.query n={n} backend=tfidf-pr")];
-    for (score, i) in hits {
+    let rows = hits.into_iter().map(|(score, i)| {
         let d = &docs[i];
-        out.push(format!(
+        format!(
             "ROW title={}|cat={}|score={:.3}|snip={}|url={}",
             sanitize(&d.t),
             sanitize(&d.c),
             score,
             sanitize(&snip(&d.b, q)),
             sanitize(&d.u)
-        ));
-    }
-    out.push("END".into());
-    out
+        )
+    });
+    crate::text::framed_ok(format!("OK search.query n={n} backend=tfidf-pr"), rows)
 }
 
 #[cfg(test)]

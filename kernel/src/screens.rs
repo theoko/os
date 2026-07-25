@@ -14,7 +14,7 @@ use crate::setup::CAP_BLURBS;
 use crate::skills::SkillPeek;
 #[cfg(test)]
 use crate::skills::BUILTIN;
-use crate::ui::theme;
+use crate::ui::{self, theme, NAV_H, PAD_X};
 
 /// Which full-screen view is showing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -26,8 +26,6 @@ pub enum View {
     /// Reading a document opened from a search result.
     Reader,
 }
-
-use crate::ui::{NAV_H, PAD_X};
 
 /// Column width cap for Skills / Caps / Search (home uses a wider max).
 pub const CONTENT_MAX: i32 = 720;
@@ -149,15 +147,9 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
         let on = grants.allows(*cap);
         let (x, y, cw, h) = row(fb, w, i, cap.name(), CAP_BLURBS[i], false);
 
-        // Pill switch, filled when granted.
-        let tw = 40;
-        let th = 22;
-        let tx = x + cw - 18 - tw;
-        let ty = y + (h - th) / 2;
-        fb.fill_round_rect(tx, ty, tw, th, th / 2, if on { theme::ACCENT } else { theme::RULE });
-        let knob = th - 6;
-        let kx = if on { tx + tw - knob - 3 } else { tx + 3 };
-        fb.fill_round_rect(kx, ty + 3, knob, knob, knob / 2, theme::BG);
+        let tx = x + cw - 18 - ui::SWITCH_W;
+        let ty = y + (h - ui::SWITCH_H) / 2;
+        ui::draw_switch(fb, tx, ty, on);
     }
 
     let (x, _) = column(w);

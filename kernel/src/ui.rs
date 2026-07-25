@@ -35,6 +35,29 @@ pub const NAV_H: i32 = 56;
 pub const PAD_X: i32 = 28;
 const CONTENT_MAX: i32 = 920;
 
+/// Pill on/off switch width/height (Capabilities + setup).
+pub const SWITCH_W: i32 = 40;
+pub const SWITCH_H: i32 = 22;
+
+/// Draw a pill switch with its origin at `(tx, ty)`.
+pub fn draw_switch(fb: &Surface, tx: i32, ty: i32, on: bool) {
+    fb.fill_round_rect(
+        tx,
+        ty,
+        SWITCH_W,
+        SWITCH_H,
+        SWITCH_H / 2,
+        if on { theme::ACCENT } else { theme::RULE },
+    );
+    let knob = SWITCH_H - 6;
+    let kx = if on {
+        tx + SWITCH_W - knob - 3
+    } else {
+        tx + 3
+    };
+    fb.fill_round_rect(kx, ty + 3, knob, knob, knob / 2, theme::BG);
+}
+
 
 /// Axis-aligned hit region (inclusive origin, exclusive of `x+w` / `y+h`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -159,24 +182,21 @@ pub fn draw_home_full(
     let mut sbuf = [0u8; 16];
     let skill_label = fmt_count(&mut sbuf, skills.count, "playbook", "playbooks");
 
-    let gap = 16;
-    let tw = (cw - gap * 2) / 3;
-    let ty = TILE_TOP;
     let tiles: [(&str, &str); 3] = [
         ("Search", "knowledge + email"),
         ("Capabilities", status),
         ("Skills", skill_label),
     ];
     for (i, (title, sub)) in tiles.iter().enumerate() {
-        let tx = x0 + (tw + gap) * i as i32;
-        fb.fill_round_rect(tx, ty, tw, TILE_H, 12, theme::CARD_BORDER);
-        fb.fill_round_rect(tx + 1, ty + 1, tw - 2, TILE_H - 2, 11, theme::BG);
-        fb.draw_text(tx + 18, ty + 34, title, &H2_FACE, 0, theme::INK);
-        fb.draw_text(tx + 18, ty + 58, sub, &SMALL_FACE, 0, theme::MUTED);
+        let r = tile_rect(w, h, i as i32);
+        fb.fill_round_rect(r.x, r.y, r.w, r.h, 12, theme::CARD_BORDER);
+        fb.fill_round_rect(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 11, theme::BG);
+        fb.draw_text(r.x + 18, r.y + 34, title, &H2_FACE, 0, theme::INK);
+        fb.draw_text(r.x + 18, r.y + 58, sub, &SMALL_FACE, 0, theme::MUTED);
     }
 
     // Live content instead of marketing copy.
-    let ry = ty + TILE_H + 40;
+    let ry = TILE_TOP + TILE_H + 40;
     if mail.count > 0 {
         fb.draw_text(x0, ry, "Recent mail", &BRAND_FACE, 0, theme::INK);
         let mut y = ry + 30;

@@ -69,7 +69,7 @@ pub fn index_path() -> PathBuf {
     env::var("OS_WORKSPACE_INDEX")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            crate::paths::home().join("Library/Application Support/os/knowledge/workspace.json")
+            crate::paths::knowledge("workspace.json")
         })
 }
 

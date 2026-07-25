@@ -287,109 +287,89 @@ unsafe extern "C" fn kmain() -> ! {
                             enter(&screen);
                             moved = false;
                         }
-                    } else if view == screens::View::Home {
-                        // Type straight into the home field - no click first.
-                        let mut dirty = false;
-                        while let Some(key) = kb.poll() {
-                            match key {
-                                keyboard::Key::Enter => {
-                                    if !query.is_empty() {
-                                        sview.run_via(query.as_str(), grants);
-                                        view = screens::View::Search;
-                                        serial_port.write_str("search: ran from home\n");
-                                        dirty = true;
-                                    }
-                                }
-                                keyboard::Key::Escape => {
-                                    if !query.is_empty() {
-                                        query.clear();
-                                        dirty = true;
-                                    }
-                                }
-                                other => {
-                                    if query.apply(other) {
-                                        dirty = true;
-                                    }
-                                }
-                            }
-                        }
-                        let left_down = buttons & 1 != 0;
-                        let left_was = prev_buttons & 1 != 0;
-                        if left_down && !left_was {
-                            let targets = ui::home_targets(w, h);
-                            match targets.hit(x, y) {
-                                Some(ui::HomeHit::SearchField)
-                                | Some(ui::HomeHit::Card(ui::CardId::Search)) => {
-                                    serial_port.write_str("ui: open search\n");
-                                    view = screens::View::Search;
-                                    query.clear();
-                                    sview = searchui::SearchView::new();
-                                    dirty = true;
-                                }
-                                Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
-                                    serial_port.write_str("ui: click Skills\n");
-                                    skill_peek = mcp::fetch_skill_peek();
-                                    log_skill_source(&serial_port, &skill_peek);
-                                    view = screens::View::Skills;
-                                    dirty = true;
-                                }
-                                Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
-                                    serial_port.write_str("ui: click Capabilities\n");
-                                    skills::copy_field(&mut status_buf, grants.footer_status());
-                                    view = screens::View::Caps;
-                                    dirty = true;
-                                }
-                                None => {}
-                            }
-                        }
-                        if dirty {
-                            repaint(
-                                &mut cursor,
-                                surface,
-                                &screen,
-                                x,
-                                y,
-                                &mut moved,
-                                view,
-                                &mail,
-                                &skill_peek,
-                                skills::str_at(&status_buf),
-                                query.as_str(),
-                                caret,
-                                &sview,
-                                open_title.as_str(),
-                                &page,
-                                grants,
-                            );
-                        }
                     } else {
-                        // Non-home screens: keyboard + clicks (mutually exclusive
-                        // with the Home arm so a same-frame tile open is not
-                        // double-handled).
                         let mut dirty = false;
-                        while let Some(key) = kb.poll() {
-                            match key {
-                                keyboard::Key::Enter => {
-                                    if view == screens::View::Search {
-                                        sview.run_via(query.as_str(), grants);
-                                        serial_port.write_str("search: ran\n");
-                                        dirty = true;
+                        if view == screens::View::Home {
+                            // Type straight into the home field - no click first.
+                            while let Some(key) = kb.poll() {
+                                match key {
+                                    keyboard::Key::Enter => {
+                                        if !query.is_empty() {
+                                            sview.run_via(query.as_str(), grants);
+                                            view = screens::View::Search;
+                                            serial_port.write_str("search: ran from home\n");
+                                            dirty = true;
+                                        }
                                     }
-                                }
-                                keyboard::Key::Escape => {
-                                    view = screens::View::Home;
-                                    dirty = true;
-                                }
-                                other => {
-                                    // Only the search screen has a field.
-                                    // Without this, typing on Skills or
-                                    // Capabilities silently built a query you
-                                    // could not see.
-                                    if view == screens::View::Search && query.apply(other) {
-                                        dirty = true;
+                                    keyboard::Key::Escape => {
+                                        if !query.is_empty() {
+                                            query.clear();
+                                            dirty = true;
+                                        }
+                                    }
+                                    other => {
+                                        if query.apply(other) {
+                                            dirty = true;
+                                        }
                                     }
                                 }
                             }
+                            let left_down = buttons & 1 != 0;
+                            let left_was = prev_buttons & 1 != 0;
+                            if left_down && !left_was {
+                                let targets = ui::home_targets(w, h);
+                                match targets.hit(x, y) {
+                                    Some(ui::HomeHit::SearchField)
+                                    | Some(ui::HomeHit::Card(ui::CardId::Search)) => {
+                                        serial_port.write_str("ui: open search\n");
+                                        view = screens::View::Search;
+                                        query.clear();
+                                        sview = searchui::SearchView::new();
+                                        dirty = true;
+                                    }
+                                    Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
+                                        serial_port.write_str("ui: click Skills\n");
+                                        skill_peek = mcp::fetch_skill_peek();
+                                        log_skill_source(&serial_port, &skill_peek);
+                                        view = screens::View::Skills;
+                                        dirty = true;
+                                    }
+                                    Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
+                                        serial_port.write_str("ui: click Capabilities\n");
+                                        skills::copy_field(&mut status_buf, grants.footer_status());
+                                        view = screens::View::Caps;
+                                        dirty = true;
+                                    }
+                                    None => {}
+                                }
+                            }
+                        } else {
+                            // Non-home screens: keyboard + clicks (mutually exclusive
+                            // with the Home arm so a same-frame tile open is not
+                            // double-handled).
+                            while let Some(key) = kb.poll() {
+                                match key {
+                                    keyboard::Key::Enter => {
+                                        if view == screens::View::Search {
+                                            sview.run_via(query.as_str(), grants);
+                                            serial_port.write_str("search: ran\n");
+                                            dirty = true;
+                                        }
+                                    }
+                                    keyboard::Key::Escape => {
+                                        view = screens::View::Home;
+                                        dirty = true;
+                                    }
+                                    other => {
+                                        // Only the search screen has a field.
+                                        // Without this, typing on Skills or
+                                        // Capabilities silently built a query you
+                                        // could not see.
+                                        if view == screens::View::Search && query.apply(other) {
+                                            dirty = true;
+                                        }
+                                    }
+                                }
                         }
                         // Clicking Back leaves the search screen.
                         let left_down = buttons & 0x01 != 0;
@@ -458,6 +438,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     dirty = true;
                                 }
                             }
+                        }
                         }
                         if dirty {
                             repaint(

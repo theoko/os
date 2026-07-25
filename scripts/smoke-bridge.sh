@@ -4,10 +4,11 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+# shellcheck source=rust-path.sh
+source "$ROOT/scripts/rust-path.sh"
 
 ISO="${IMAGE_NAME:-os}.iso"
 ADDR="${OS_MCP_BRIDGE_ADDR:-127.0.0.1:7420}"
-export PATH="/opt/homebrew/opt/rustup/bin:${HOME}/.cargo/bin:/opt/homebrew/bin:${PATH}"
 
 if [[ ! -f "$ISO" ]]; then
   echo "error: $ISO missing" >&2

@@ -6,13 +6,14 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+# shellcheck source=rust-path.sh
+source "$ROOT/scripts/rust-path.sh"
 
 CONNECT="${OS_MCP_BRIDGE_CONNECT:-tcp:127.0.0.1:7420}"
 ADDR="${CONNECT#tcp:}"
 PORT="${ADDR##*:}"
 PID_FILE="${ROOT}/.bridge.pid"
 LOG_FILE="${ROOT}/.bridge.log"
-export PATH="/opt/homebrew/opt/rustup/bin:${HOME}/.cargo/bin:/opt/homebrew/bin:${PATH}"
 
 bridge_alive() {
   [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null

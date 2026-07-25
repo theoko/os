@@ -14,6 +14,16 @@ pub fn home() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// `~/Library/Application Support/os` — skills, knowledge indexes, etc.
+pub fn app_support() -> PathBuf {
+    home().join("Library/Application Support/os")
+}
+
+/// A file under `app_support()/knowledge/`.
+pub fn knowledge(file: &str) -> PathBuf {
+    app_support().join("knowledge").join(file)
+}
+
 /// Create parent dirs and write `value` as compact JSON.
 pub fn write_json<T: Serialize>(path: impl AsRef<Path>, value: &T) -> Result<PathBuf, String> {
     let path = path.as_ref();

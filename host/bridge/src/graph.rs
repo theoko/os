@@ -48,7 +48,7 @@ pub fn graph_path() -> PathBuf {
     env::var("OS_GRAPH_PATH")
         .map(PathBuf::from)
         .unwrap_or_else(|_| {
-            crate::paths::home().join("Library/Application Support/os/knowledge/emails.json")
+            crate::paths::knowledge("emails.json")
         })
 }
 

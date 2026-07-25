@@ -1,5 +1,7 @@
 /target/
 /kernel/target/
+**/__pycache__/
+*.pyc
 /kernel/kernel
 /limine/
 /kernel/.cargo/
