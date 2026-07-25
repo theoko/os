@@ -36,7 +36,7 @@ endif
 RUSTUP_BIN := $(patsubst %/,%,$(dir $(CARGO)))
 WITH_RUST := PATH="$(RUSTUP_BIN):$$PATH"
 
-.PHONY: all build kernel iso bridge bridge-run run run-bridged utm utm-run utm-bridged test test-host smoke smoke-bridge clean distclean
+.PHONY: all build kernel iso bridge bridge-run run run-bridged utm utm-run utm-bridged linux-vm test test-host smoke smoke-bridge clean distclean
 
 all: build
 
@@ -97,6 +97,12 @@ utm-bridged: iso bridge
 	@kill `cat .bridge.pid 2>/dev/null` 2>/dev/null || true; rm -f .bridge.pid
 	OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) ./scripts/ensure-bridge.sh
 	UTM_BRIDGE=1 UTM_START=1 OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) ./scripts/make-utm.sh
+
+# Substrate proof for docs/linux-os-doc-v02.md: aarch64 Linux under Apple's
+# hypervisor, to check the frame ceiling is emulation and not our kernel.
+linux-vm:
+	chmod +x scripts/linux-vm.sh
+	./scripts/linux-vm.sh -serial stdio -display none
 
 test: test-host smoke smoke-bridge
 
