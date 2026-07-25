@@ -67,12 +67,32 @@ fn main() {
     );
 
     if let Some(target) = connect {
+        // Connect mode has no listen port; warm before dialing so the first
+        // guest session does not pay the cold-index cost.
+        warm_tsearch();
         connect_loop(&target, backends);
     } else if let Some(path) = addr.strip_prefix("unix:") {
         serve_unix(path, backends);
     } else {
         serve_tcp(&addr, backends);
     }
+}
+
+/// Build the corpus index. Must run *after* bind in listen modes so UTM/QEMU
+/// can connect while a cold index is still building (SYN sits in the backlog).
+/// Indexing before bind made `ensure-bridge` report "started" for seconds
+/// while nothing accepted on :7420 → Connection refused.
+fn warm_tsearch() {
+    if !tsearch::is_available() {
+        return;
+    }
+    let t0 = std::time::Instant::now();
+    let n = tsearch::docs().len();
+    let terms = tsearch::index().term_count();
+    eprintln!(
+        "tsearch: indexed {n} docs / {terms} terms in {:.1}s",
+        t0.elapsed().as_secs_f64()
+    );
 }
 
 /// Dial a peer that is already listening (UTM QEMU serial unix server).
@@ -98,6 +118,8 @@ fn connect_loop(target: &str, backends: Arc<Backends>) {
 
 fn serve_tcp(addr: &str, backends: Arc<Backends>) {
     let listener = TcpListener::bind(addr).expect("bind bridge tcp");
+    eprintln!("bound tcp {addr}");
+    warm_tsearch();
     for conn in listener.incoming() {
         match conn {
             Ok(stream) => {
@@ -122,6 +144,8 @@ fn serve_unix(path: &str, backends: Arc<Backends>) {
         let _ = fs::remove_file(path);
     }
     let listener = UnixListener::bind(path).expect("bind bridge unix");
+    eprintln!("bound unix {}", path.display());
+    warm_tsearch();
     for conn in listener.incoming() {
         match conn {
             Ok(stream) => {
