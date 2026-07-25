@@ -24,7 +24,7 @@ pub enum Action {
     Row(usize),
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 struct Zone {
     x: i32,
     y: i32,
@@ -226,7 +226,7 @@ impl Setup {
         let sel = self.region;
         let mut y = top;
         for (i, name) in REGIONS.iter().enumerate() {
-            self.row(fb, w, y, name, None, i == sel, false, Action::Row(i));
+            self.row(fb, w, y, ROW_H, name, None, i == sel, false, Action::Row(i));
             y += ROW_H + 8;
         }
         self.footer(fb, w, h, y, true);
@@ -259,12 +259,13 @@ impl Setup {
             "Every tool sits behind a grant. Turn on only what you need.",
         );
         let mut y = top;
+        let pitch = row_pitch(top, h, cap_rows().count(), true);
         for (i, (name, blurb)) in cap_rows().enumerate() {
             let on = self.caps[i];
-            self.row(fb, w, y, name, Some(blurb), on, true, Action::Row(i));
-            y += ROW_H + 8;
+            self.row(fb, w, y, pitch - ROW_GAP, name, Some(blurb), on, true, Action::Row(i));
+            y += pitch;
         }
-        self.footer(fb, w, h, y, true);
+        self.footer(fb, w, h, y - pitch + ROW_H, true);
     }
 
     fn draw_skills(&mut self, fb: &Surface, w: i32, h: i32, skills: &SkillPeek) {
@@ -280,16 +281,19 @@ impl Setup {
             },
         );
         let mut y = top;
-        for i in 0..skills.count.min(4) {
+        let n = skills.count.min(4);
+        let pitch = row_pitch(top, h, n, true);
+        for i in 0..n {
             let desc = skills.desc_at(i);
             let blurb = if desc.is_empty() { None } else { Some(desc) };
-            self.row(fb, w, y, skills.name_at(i), blurb, true, false, Action::Row(i));
-            y += ROW_H + 8;
+            self.row(fb, w, y, pitch - ROW_GAP, skills.name_at(i), blurb, true, false, Action::Row(i));
+            y += pitch;
         }
-        self.footer(fb, w, h, y, true);
+        self.footer(fb, w, h, y - pitch.min(y) + ROW_H, true);
     }
 
     fn draw_done(&mut self, fb: &Surface, w: i32, h: i32) {
+        self.nav_back(fb);
         let track = font::tracking_pct(TITLE_FACE.px, -20);
         let cy = h / 2 - 40;
         fb.draw_text_centered(w / 2, cy, "You're all set.", &TITLE_FACE, track, theme::INK);
@@ -310,6 +314,7 @@ impl Setup {
     /// Title + subtitle. Returns the y where content should start.
     fn header(&mut self, fb: &Surface, w: i32, h: i32, title: &str, sub: &str) -> i32 {
         let _ = h;
+        self.nav_back(fb);
         let track = font::tracking_pct(TITLE_FACE.px, -20);
         let y = 132;
         fb.draw_text_centered(w / 2, y, title, &TITLE_FACE, track, theme::INK);
@@ -317,13 +322,31 @@ impl Setup {
         y + 76
     }
 
+    /// Keep navigation in the empty top bar. On a capability form it must not
+    /// compete with the final switch or the primary action below the list.
+    fn nav_back(&mut self, fb: &Surface) {
+        if self.step == Step::Welcome {
+            return;
+        }
+        let x = 32;
+        let y = 28;
+        fb.draw_text(x, y + BTN_FACE.baseline(), "Back", &BTN_FACE, 0, theme::ACCENT);
+        self.push_zone(x - 12, y - 10, BTN_FACE.width("Back", 0) + 24, BTN_FACE.px + 20, Action::Back);
+    }
+
     /// A selectable row. `toggle` draws a switch instead of a checkmark.
     #[allow(clippy::too_many_arguments)]
+    /// One list row, `rh` tall.
+    ///
+    /// The height is passed in rather than fixed: on a short screen six rows
+    /// at the ideal height cannot fit, and a fixed height meant they were
+    /// drawn on top of each other instead of simply being smaller.
     fn row(
         &mut self,
         fb: &Surface,
         w: i32,
         y: i32,
+        rh: i32,
         title: &str,
         blurb: Option<&str>,
         on: bool,
@@ -334,15 +357,15 @@ impl Setup {
         let x = (w - cw) / 2;
 
         let border = if on && !toggle { theme::ACCENT } else { theme::CARD_BORDER };
-        fb.fill_round_rect(x, y, cw, ROW_H, 10, border);
+        fb.fill_round_rect(x, y, cw, rh, 10, border);
         let inner = if on && !toggle { theme::TINT_BG } else { theme::BG };
-        fb.fill_round_rect(x + 1, y + 1, cw - 2, ROW_H - 2, 9, inner);
+        fb.fill_round_rect(x + 1, y + 1, cw - 2, rh - 2, 9, inner);
 
         // Single baseline: label left, consequence beside it in muted grey.
         // Stacking a subtitle under every row made six of them overflow the
         // window, and the second line was never the thing being decided.
         let pad = 16;
-        let base = y + ROW_H / 2 + BRAND_FACE.px / 3;
+        let base = y + rh / 2 + BRAND_FACE.px / 3;
         fb.draw_text(x + pad, base, title, &BRAND_FACE, 0, theme::INK);
         if let Some(b) = blurb {
             let lx = x + pad + BRAND_FACE.width(title, 0) + 12;
@@ -353,7 +376,7 @@ impl Setup {
             let tw = 36;
             let th = 20;
             let tx = x + cw - pad - tw;
-            let ty = y + (ROW_H - th) / 2;
+            let ty = y + (rh - th) / 2;
             let track_col = if on { theme::ACCENT } else { theme::RULE };
             fb.fill_round_rect(tx, ty, tw, th, th / 2, track_col);
             let knob = th - 6;
@@ -361,10 +384,10 @@ impl Setup {
             fb.fill_round_rect(kx, ty + 3, knob, knob, knob / 2, theme::BG);
         } else if on {
             let d = 9;
-            fb.fill_round_rect(x + cw - pad - d, y + (ROW_H - d) / 2, d, d, d / 2, theme::ACCENT);
+            fb.fill_round_rect(x + cw - pad - d, y + (rh - d) / 2, d, d, d / 2, theme::ACCENT);
         }
 
-        self.push_zone(x, y, cw, ROW_H, action);
+        self.push_zone(x, y, cw, rh, action);
     }
 
     fn status_card(&mut self, fb: &Surface, w: i32, y: i32, label: &str, detail: &str, tint: u32) {
@@ -402,14 +425,52 @@ impl Setup {
     /// `content_bottom` = y just below the last row/card: on short
     /// framebuffers the pill moves down rather than overlapping the rows
     /// (zones are hit first-match, so an overlap misroutes clicks).
-    fn footer(&mut self, fb: &Surface, w: i32, h: i32, content_bottom: i32, back: bool) {
-        let y = (h - 150).max(content_bottom + 24);
+    fn footer(&mut self, fb: &Surface, w: i32, h: i32, content_bottom: i32, _back: bool) {
+        // Push down to clear the content, but never past the bottom edge.
+        //
+        // `(h - 150).max(content_bottom + 24)` let tall content win with
+        // nothing stopping it. On Capabilities - six rows, the longest screen
+        // in the journey - that pinned Continue to the last visible pixels and
+        // pushed "Go Back" up under the final row where it could not be seen,
+        // so the only way out of the step was forward.
+        let top = h - footer_height(false) - EDGE_MARGIN;
+        let y = (content_bottom + 24).min(top).max(0);
         self.primary(fb, w, y, "Continue");
-        if back {
-            self.back_link(fb, w, y + CTA_H + 26);
-        }
     }
 }
+
+/// Vertical pitch for a list of `n` rows starting at `top`, on a screen of
+/// height `h` that still has to fit a footer.
+///
+/// Clamping the footer onto the screen only moved the problem: with six
+/// capability rows the footer landed *on top of* the last one. Rows have to
+/// give up the space, so the pitch tightens until the list fits.
+fn row_pitch(top: i32, h: i32, n: usize, back: bool) -> i32 {
+    let ideal = ROW_H + ROW_GAP;
+    if n == 0 {
+        return ideal;
+    }
+    let available = h - footer_height(back) - EDGE_MARGIN - 24 - top;
+    (available / n as i32).clamp(MIN_ROW_PITCH, ideal)
+}
+
+/// Below this a row cannot hold its label, so a truly tiny screen clips rather
+/// than rendering a list nobody can read.
+const MIN_ROW_PITCH: i32 = 30;
+
+/// Gap between rows; the rest of the pitch is the row itself.
+const ROW_GAP: i32 = 8;
+
+/// Gap between the back link and the primary action above it.
+const BACK_GAP: i32 = 32;
+
+/// Room the footer needs below `content_bottom`, back link included.
+fn footer_height(back: bool) -> i32 {
+    CTA_H + if back { BACK_GAP } else { 0 }
+}
+
+/// Breathing room below the primary action.
+const EDGE_MARGIN: i32 = 20;
 
 const CONTENT_W: i32 = 520;
 const ROW_H: i32 = 46;
@@ -668,6 +729,14 @@ mod layout_tests {
     }
 
     #[test]
+    fn back_link_sits_above_the_continue_button_on_a_short_screen() {
+        let continue_y = footer_top(768);
+        let back_y = continue_y - 32;
+        assert!(back_y >= rows_bottom(N_CAPS) + 24);
+        assert!(continue_y + CTA_H <= 768);
+    }
+
+    #[test]
     fn skills_rows_also_clear_the_footer() {
         let bottom = rows_bottom(4); // draw_skills caps the list at 4
         assert!(bottom < footer_top(768));
@@ -717,6 +786,95 @@ mod layout_tests {
             // side by side without reaching the switch.
             let used = BRAND_FACE.width(name, 0) + 12 + SMALL_FACE.width(blurb, 0);
             assert!(used < CONTENT_W - 80, "row {name:?} overruns the switch: {used}px");
+        }
+    }
+}
+
+#[cfg(test)]
+mod footer_visibility_tests {
+    use super::*;
+    use crate::fb::Surface;
+
+    /// Draw every step of the journey and collect the zones it registered.
+    pub(super) fn walk(w: i32, h: i32) -> Vec<(Step, Vec<Zone>)> {
+        let mut s = Setup::new();
+        let mut buf = vec![0u32; (w * h) as usize];
+        let surface = unsafe { Surface::in_memory(buf.as_mut_ptr(), w as usize, h as usize) };
+        let mail = crate::mcp::MailPeek::empty(crate::mcp::BridgeStatus::Offline);
+        let skills = crate::skills::SkillPeek::from_builtin();
+        let mut out = Vec::new();
+        for _ in 0..8 {
+            if s.step == Step::Finished {
+                break;
+            }
+            s.draw(&surface, &mail, &skills);
+            out.push((s.step, s.zones[..s.n_zones].to_vec()));
+            s.apply(Action::Continue);
+        }
+        out
+    }
+
+    #[test]
+    fn every_clickable_zone_lands_on_screen() {
+        // An off-screen zone is the worst kind of broken: the code believes
+        // the affordance exists and the person cannot see or reach it.
+        for (w, h) in [(800, 600), (1024, 768), (1280, 800)] {
+            for (step, zones) in walk(w, h) {
+                for z in zones {
+                    assert!(
+                        z.y >= 0 && z.y + z.h <= h,
+                        "{step:?} at {w}x{h}: zone spans {}..{} outside 0..{h}",
+                        z.y,
+                        z.y + z.h
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn the_longest_step_still_offers_a_visible_way_back() {
+        // Capabilities has the most rows, so it is the step whose own footer
+        // pushed the back link out of sight.
+        for (w, h) in [(800, 600), (1024, 768), (1280, 800)] {
+            let (_, zones) = walk(w, h)
+                .into_iter()
+                .find(|(step, _)| *step == Step::Capabilities)
+                .expect("capabilities is in the journey");
+            assert!(
+                zones.iter().any(|z| z.action == Action::Back && z.y >= 0 && z.y + z.h <= h),
+                "no visible way back from Capabilities at {w}x{h}"
+            );
+        }
+    }
+}
+
+#[cfg(test)]
+mod no_overlap_tests {
+    use super::*;
+
+    fn overlaps(a: &Zone, b: &Zone) -> bool {
+        a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    }
+
+    #[test]
+    fn no_two_clickable_zones_sit_on_top_of_each_other() {
+        // Continue was drawn over the last capability row: the click still
+        // worked, but the row underneath it was unreadable and its own zone
+        // was unreachable.
+        for (w, h) in [(800, 600), (1024, 768), (1280, 800)] {
+            for (step, zones) in super::footer_visibility_tests::walk(w, h) {
+                for i in 0..zones.len() {
+                    for j in i + 1..zones.len() {
+                        assert!(
+                            !overlaps(&zones[i], &zones[j]),
+                            "{step:?} at {w}x{h}: {:?} overlaps {:?}",
+                            zones[i].action,
+                            zones[j].action
+                        );
+                    }
+                }
+            }
         }
     }
 }
