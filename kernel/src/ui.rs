@@ -1,9 +1,12 @@
 //! Home screen — a launcher.
 //!
 //! A search field you can type into on arrival, three destinations carrying
-//! live counts, and recent mail when granted. Type is anti-aliased proportional
-//! (see `font.rs`); all copy is ASCII because the atlas covers 0x20..=0x7E only.
+//! live counts, the last agent Brief when one has run, and recent mail when
+//! granted. Type is anti-aliased proportional (see `font.rs`); all copy is
+//! ASCII because the atlas covers 0x20..=0x7E only.
 
+use crate::agent::Brief;
+use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{BODY_FACE, BRAND_FACE, H2_FACE, SMALL_FACE};
 use crate::mcp::{BridgeStatus, MailPeek};
@@ -71,6 +74,8 @@ pub enum CardId {
 pub enum HomeHit {
     Cta(CtaId),
     Card(CardId),
+    /// Re-open the last agent Brief.
+    Brief,
 }
 
 /// Hit targets for the CTA pair, computed with the same layout as `draw_home`.
@@ -121,6 +126,7 @@ impl CardTargets {
 pub struct HomeTargets {
     pub ctas: CtaTargets,
     pub cards: CardTargets,
+    pub brief: Rect,
 }
 
 impl HomeTargets {
@@ -128,24 +134,36 @@ impl HomeTargets {
         if let Some(c) = self.ctas.hit(px, py) {
             return Some(HomeHit::Cta(c));
         }
-        self.cards.hit(px, py).map(HomeHit::Card)
+        if let Some(c) = self.cards.hit(px, py) {
+            return Some(HomeHit::Card(c));
+        }
+        if self.brief.w > 0 && self.brief.contains(px, py) {
+            return Some(HomeHit::Brief);
+        }
+        None
     }
 }
 
-
 /// Draw the home composition on `fb`.
 ///
-/// `status` is a short footer line (ASCII); empty falls back to the version bar.
-pub fn draw_home(fb: &Surface, mail: &MailPeek, skills: &SkillPeek, status: &str) {
-    draw_home_full(fb, mail, skills, status, "", false)
+/// `status` is a short Capabilities-tile line (ASCII). `brief` is the last
+/// agent report; when present it replaces the empty mail placeholder.
+pub fn draw_home(
+    fb: &Surface,
+    mail: &MailPeek,
+    skills: &SkillPeek,
+    status: &str,
+    caps: Caps,
+    brief: &Brief,
+) {
+    draw_home_full(fb, mail, skills, status, "", false, caps, brief)
 }
 
 /// The home screen: a launcher, not a landing page.
 ///
 /// A search field you can type into immediately, three destinations carrying
-/// live counts, and recent mail when the capability was granted. The previous
-/// version led with a tagline and a primary button whose only effect was to
-/// restart the setup wizard.
+/// live counts, the last Brief when a skill has run, and recent mail when
+/// granted.
 pub fn draw_home_full(
     fb: &Surface,
     mail: &MailPeek,
@@ -153,6 +171,8 @@ pub fn draw_home_full(
     status: &str,
     query: &str,
     caret: bool,
+    caps: Caps,
+    brief: &Brief,
 ) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
@@ -190,12 +210,14 @@ pub fn draw_home_full(
     let mail_label = fmt_count(&mut mbuf, mail.count, "message", "messages");
     let mut sbuf = [0u8; 16];
     let skill_label = fmt_count(&mut sbuf, skills.count, "playbook", "playbooks");
+    let mut src_buf = [0u8; 40];
+    let search_sub = search_tile_sub(caps, &mut src_buf);
 
     let gap = 16;
     let tw = (cw - gap * 2) / 3;
     let ty = tile_top(h);
     let tiles: [(&str, &str); 3] = [
-        ("Search", "knowledge + email"),
+        ("Search", search_sub),
         ("Capabilities", status),
         ("Skills", skill_label),
     ];
@@ -207,9 +229,12 @@ pub fn draw_home_full(
         fb.draw_text(tx + 18, ty + 58, sub, &SMALL_FACE, 0, theme::MUTED);
     }
 
-    // Live content instead of marketing copy.
+    // Prefer the last agent report over an empty mail placeholder — Back from
+    // Brief used to land on a launcher that pretended nothing had happened.
     let ry = ty + TILE_H + 40;
-    if mail.count > 0 {
+    if brief.has_report() {
+        draw_brief_residue(fb, x0, ry, cw, brief);
+    } else if mail.count > 0 {
         fb.draw_text(x0, ry, "Recent mail", &BRAND_FACE, 0, theme::INK);
         let mut y = ry + 30;
         for i in 0..mail.count.min(3) {
@@ -235,6 +260,110 @@ pub fn draw_home_full(
     }
 
     fb.draw_text_centered(w / 2, h - 24, mail_label, &SMALL_FACE, 0, theme::MUTED);
+}
+
+/// Short Search-tile subtitle naming the sources the current grants unlock.
+pub fn search_tile_sub<'a>(caps: Caps, buf: &'a mut [u8; 40]) -> &'a str {
+    buf.fill(0);
+    let mut n = 0;
+    let mut push = |s: &str, n: &mut usize| {
+        for &b in s.as_bytes() {
+            if *n < buf.len() {
+                buf[*n] = b;
+                *n += 1;
+            }
+        }
+    };
+    if caps.allows(Cap::SearchQuery) {
+        push("docs", &mut n);
+    }
+    if caps.allows(Cap::EmailSearch) {
+        if n > 0 {
+            push(" + ", &mut n);
+        }
+        push("mail", &mut n);
+    }
+    if caps.allows(Cap::WorkspaceIndex) {
+        if n > 0 {
+            push(" + ", &mut n);
+        }
+        push("files", &mut n);
+    }
+    if caps.allows(Cap::PortalSync) {
+        if n > 0 {
+            push(" + ", &mut n);
+        }
+        push("teddy", &mut n);
+    }
+    if n == 0 {
+        "grant search first"
+    } else {
+        core::str::from_utf8(&buf[..n]).unwrap_or("docs")
+    }
+}
+
+fn draw_brief_residue(fb: &Surface, x0: i32, ry: i32, cw: i32, brief: &Brief) {
+    fb.draw_text(x0, ry, "Last brief", &BRAND_FACE, 0, theme::INK);
+    let hint = "Tap to reopen";
+    fb.draw_text(
+        x0 + cw - SMALL_FACE.width(hint, 0),
+        ry,
+        hint,
+        &SMALL_FACE,
+        0,
+        theme::MUTED,
+    );
+    let title = if brief.heading().is_empty() {
+        brief.skill_name()
+    } else {
+        brief.heading()
+    };
+    fb.draw_text(x0, ry + 28, title, &BODY_FACE, 0, theme::INK);
+    let mut y = ry + 52;
+    for i in 0..brief.count.min(3) {
+        let mut line = [0u8; 72];
+        let mut n = 0;
+        for &b in brief.lines[i].tag().as_bytes().iter().take(8) {
+            line[n] = b;
+            n += 1;
+        }
+        if n + 2 < line.len() {
+            line[n] = b':';
+            line[n + 1] = b' ';
+            n += 2;
+        }
+        for &b in brief.lines[i].text().as_bytes() {
+            if n >= line.len() {
+                break;
+            }
+            line[n] = b;
+            n += 1;
+        }
+        let s = core::str::from_utf8(&line[..n]).unwrap_or(brief.lines[i].text());
+        fb.draw_text(x0, y, s, &SMALL_FACE, 0, theme::MUTED);
+        y += 20;
+    }
+}
+
+/// Hit box for the last-brief strip on home (empty when none).
+pub fn brief_rect(w: i32, h: i32, brief: &Brief) -> Rect {
+    if !brief.has_report() {
+        return Rect {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+        };
+    }
+    let (x0, cw) = home_column(w);
+    let ry = tile_top(h) + TILE_H + 40;
+    let lines = brief.count.min(3) as i32;
+    Rect {
+        x: x0,
+        y: ry,
+        w: cw,
+        h: 52 + lines * 20 + 8,
+    }
 }
 
 /// Render "3 messages" / "1 message" / "none" into a caller-owned buffer.
@@ -315,10 +444,11 @@ pub fn card_targets(w: i32, h: i32) -> CardTargets {
     }
 }
 
-pub fn home_targets(w: i32, h: i32, skills: &SkillPeek) -> HomeTargets {
+pub fn home_targets(w: i32, h: i32, skills: &SkillPeek, brief: &Brief) -> HomeTargets {
     HomeTargets {
         ctas: cta_targets(w, h, skills),
         cards: card_targets(w, h),
+        brief: brief_rect(w, h, brief),
     }
 }
 
@@ -370,6 +500,7 @@ pub fn setup_rect(_w: i32) -> (i32, i32, i32, i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::Brief;
     use crate::caps::Caps;
     use crate::mcp::MailPeek;
 
@@ -377,10 +508,14 @@ mod tests {
         SkillPeek::from_builtin()
     }
 
+    fn empty_brief() -> Brief {
+        Brief::empty()
+    }
+
     #[test]
     fn search_field_is_not_a_cta() {
         // Clicking the query box used to fire CtaId::Ready and restart setup.
-        let t = home_targets(1024, 768, &peek());
+        let t = home_targets(1024, 768, &peek(), &empty_brief());
         let (fx, fy, fw, fh) = search_rect(1024, 768);
         assert_eq!(t.hit(fx + fw / 2, fy + fh / 2), None);
         let (sx, sy, sw, sh) = setup_rect(1024);
@@ -398,7 +533,7 @@ mod tests {
 
     #[test]
     fn each_tile_hit_tests_to_its_own_id() {
-        let t = home_targets(1024, 768, &peek());
+        let t = home_targets(1024, 768, &peek(), &empty_brief());
         for (i, want) in [CardId::Connectors, CardId::Capabilities, CardId::Skills]
             .iter()
             .enumerate()
@@ -452,6 +587,10 @@ mod tests {
             "Capabilities",
             "Skills",
             "Recent mail",
+            "Last brief",
+            "Tap to reopen",
+            "grant search first",
+            "docs + mail + files + teddy",
             "Inbox empty, or email.search not granted.",
             "Bridge offline - run: make utm-bridged",
             "bridge connected",
@@ -472,7 +611,14 @@ mod tests {
         for s in ["Search", "Capabilities", "Skills"] {
             assert!(H2_FACE.width(s, 0) < r.w - 36, "tile title overflows: {s}");
         }
-        assert!(SMALL_FACE.width("knowledge + email", 0) < r.w - 36);
+        let mut src = [0u8; 40];
+        let mut caps = Caps::none();
+        caps.set(Cap::SearchQuery, true);
+        caps.set(Cap::EmailSearch, true);
+        caps.set(Cap::WorkspaceIndex, true);
+        caps.set(Cap::PortalSync, true);
+        let sub = search_tile_sub(caps, &mut src);
+        assert!(SMALL_FACE.width(sub, 0) < r.w - 36, "search sub overflows: {sub}");
         let mut buf = [0u8; 96];
         let n = Caps::default_grants().describe(&mut buf);
         let status = core::str::from_utf8(&buf[..n]).unwrap();
@@ -480,10 +626,34 @@ mod tests {
     }
 
     #[test]
+    fn search_tile_sub_follows_grants() {
+        let mut buf = [0u8; 40];
+        assert_eq!(search_tile_sub(Caps::none(), &mut buf), "grant search first");
+        let mut caps = Caps::none();
+        caps.set(Cap::SearchQuery, true);
+        assert_eq!(search_tile_sub(caps, &mut buf), "docs");
+        caps.set(Cap::PortalSync, true);
+        assert_eq!(search_tile_sub(caps, &mut buf), "docs + teddy");
+    }
+
+    #[test]
+    fn brief_strip_is_hittable_when_a_report_exists() {
+        // capability-safe-tools never touches COM2 — safe in host unit tests.
+        let brief = crate::agent::run("capability-safe-tools", Caps::default_grants());
+        assert!(brief.has_report());
+        let r = brief_rect(1024, 768, &brief);
+        assert!(r.w > 0 && r.h > 0);
+        let t = home_targets(1024, 768, &peek(), &brief);
+        assert_eq!(t.hit(r.x + 8, r.y + 8), Some(HomeHit::Brief));
+        let empty = home_targets(1024, 768, &peek(), &empty_brief());
+        assert_ne!(empty.hit(r.x + 8, r.y + 8), Some(HomeHit::Brief));
+    }
+
+    #[test]
     fn drawing_the_home_screen_does_not_panic() {
         // Exercises the offline branch and the count formatting together.
         let mail = MailPeek::empty(BridgeStatus::Offline);
-        let _ = home_targets(1024, 768, &peek());
+        let _ = home_targets(1024, 768, &peek(), &empty_brief());
         assert_eq!(mail.count, 0);
     }
 }

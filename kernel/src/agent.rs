@@ -93,6 +93,11 @@ impl Brief {
         str_at(&self.plans[i])
     }
 
+    /// True when there is something worth keeping on the home screen.
+    pub fn has_report(&self) -> bool {
+        self.count > 0 || self.plan_n > 0 || !self.heading().is_empty()
+    }
+
     fn set_skill(&mut self, name: &str) {
         copy_field(&mut self.skill, name);
     }
@@ -539,6 +544,13 @@ fn copy_field(dst: &mut [u8], src: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn empty_brief_has_no_report() {
+        assert!(!Brief::empty().has_report());
+        let b = run("capability-safe-tools", Caps::default_grants());
+        assert!(b.has_report());
+    }
 
     #[test]
     fn builtins_classify() {

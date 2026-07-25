@@ -127,7 +127,8 @@ unsafe extern "C" fn kmain() -> ! {
                 // Everything composes in cached RAM; `present()` is the only
                 // thing that touches video memory.
                 let surface = screen.surface();
-                ui::draw_home(surface, &mail, &skill_peek, "");
+                let boot_brief = agent::Brief::empty();
+                ui::draw_home(surface, &mail, &skill_peek, "", caps::Caps::none(), &boot_brief);
                 screen.present();
 
                 // Liveness only until the user consents. Reading the inbox
@@ -140,7 +141,7 @@ unsafe extern "C" fn kmain() -> ! {
                     mcp::BridgeStatus::Offline => serial_port.write_str("mcp: email offline\n"),
                 }
                 serial_port.write_str("skills: builtins ready\n");
-                ui::draw_home(surface, &mail, &skill_peek, "");
+                ui::draw_home(surface, &mail, &skill_peek, "", caps::Caps::none(), &boot_brief);
 
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
@@ -185,7 +186,8 @@ unsafe extern "C" fn kmain() -> ! {
                     mice.present = true;
                 }
 
-                ui::draw_home(surface, &mail, &skill_peek, "");
+                let mut brief = agent::Brief::empty();
+                ui::draw_home(surface, &mail, &skill_peek, "", grants, &brief);
                 let mut cursor = mouse::Cursor::new();
                 let mut x = cx;
                 let mut y = cy;
@@ -198,7 +200,6 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut sview = searchui::SearchView::new();
                 let mut page = mcp::DocPage::empty(mcp::BridgeStatus::Offline, false);
                 let mut open_title = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
-                let mut brief = agent::Brief::empty();
                 let mut view = screens::View::Home;
                 let caret = true;
                 // First boot: run the setup journey before the home screen.
@@ -351,6 +352,8 @@ unsafe extern "C" fn kmain() -> ! {
                                     status_str(&status_buf, status_len),
                                     query.as_str(),
                                     caret,
+                                    grants,
+                                    &brief,
                                 );
                             }
                             cursor.show_at(surface, x, y);
@@ -524,6 +527,8 @@ unsafe extern "C" fn kmain() -> ! {
                                         &mail,
                                         &skill_peek,
                                         status_str(&status_buf, status_len),
+                                        grants,
+                                        &brief,
                                     )
                                 }
                             }
@@ -535,7 +540,7 @@ unsafe extern "C" fn kmain() -> ! {
                         let left_down = buttons & 1 != 0;
                         let left_was = prev_buttons & 1 != 0;
                         if left_down && !left_was {
-                            let targets = ui::home_targets(w, h, &skill_peek);
+                            let targets = ui::home_targets(w, h, &skill_peek, &brief);
                             let mut clicked = false;
                             match targets.hit(x, y) {
                                 Some(ui::HomeHit::Cta(ui::CtaId::Ready)) => {
@@ -595,6 +600,16 @@ unsafe extern "C" fn kmain() -> ! {
                                     clicked = false;
                                     moved = false;
                                 }
+                                Some(ui::HomeHit::Brief) => {
+                                    serial_port.write_str("ui: reopen brief\n");
+                                    view = screens::View::Brief;
+                                    cursor.hide(surface);
+                                    screens::draw_brief(surface, &brief);
+                                    cursor.show_at(surface, x, y);
+                                    enter(&screen);
+                                    clicked = false;
+                                    moved = false;
+                                }
                                 None => {}
                             }
                             if clicked && setup.is_finished() {
@@ -604,6 +619,8 @@ unsafe extern "C" fn kmain() -> ! {
                                     &mail,
                                     &skill_peek,
                                     status_str(&status_buf, status_len),
+                                    grants,
+                                    &brief,
                                 );
                                 cursor.show_at(surface, x, y);
                                 enter(&screen);

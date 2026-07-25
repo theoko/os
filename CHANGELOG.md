@@ -1,8 +1,17 @@
 ---
-version: 0.9.5
+version: 0.9.6
 ---
 
 # Changelog
+
+## 0.9.6 — 2026-07-25
+
+Home keeps the agent report:
+
+- After Back from Brief, a **Last brief** strip shows the heading and top
+  lines; tap it to reopen. The launcher no longer pretends nothing ran.
+- Search tile subtitle follows grants (`docs`, `mail`, `files`, `teddy`)
+  instead of the hardcoded "knowledge + email".
 
 ## 0.9.5 — 2026-07-25
 

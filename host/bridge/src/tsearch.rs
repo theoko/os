@@ -157,6 +157,7 @@ fn loaded() -> Arc<Corpus> {
 }
 
 /// Drop in-memory state so the next access reloads from disk (or emptiness).
+#[cfg(test)]
 pub fn clear_memory() {
     if let Ok(mut g) = CORPUS.lock() {
         *g = None;
