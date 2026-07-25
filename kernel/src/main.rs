@@ -3,7 +3,7 @@
 
 use core::hint::black_box;
 
-use kernel::{fb, hello_message, mcp, mouse, serial, skills, ui, usb_tablet};
+use kernel::{fb, hello_message, mcp, mouse, serial, setup, skills, ui, usb_tablet};
 use limine::BaseRevision;
 use limine::request::{
     FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
@@ -119,7 +119,7 @@ unsafe extern "C" fn kmain() -> ! {
                     fb_info.bpp(),
                 )
             } {
-                ui::draw_home(&surface, &mail, &skill_peek);
+                ui::draw_home(&surface, &mail, &skill_peek, "");
 
                 mail = mcp::fetch_mail_peek();
                 match mail.status {
@@ -127,7 +127,7 @@ unsafe extern "C" fn kmain() -> ! {
                     mcp::BridgeStatus::Offline => serial_port.write_str("mcp: email offline\n"),
                 }
                 serial_port.write_str("skills: builtins ready\n");
-                ui::draw_home(&surface, &mail, &skill_peek);
+                ui::draw_home(&surface, &mail, &skill_peek, "");
 
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
@@ -171,35 +171,89 @@ unsafe extern "C" fn kmain() -> ! {
                     mice.present = true;
                 }
 
-                ui::draw_home(&surface, &mail, &skill_peek);
+                ui::draw_home(&surface, &mail, &skill_peek, "");
                 let mut cursor = mouse::Cursor::new();
                 let mut x = cx;
                 let mut y = cy;
+                let mut prev_buttons = 0u8;
+                let mut status = "";
+                let mut setup = setup::Setup::new();
+                // First boot: run the setup journey before the home screen.
+                cursor.hide(&surface);
+                setup.draw(&surface, &mail, &skill_peek);
                 cursor.show_at(&surface, x, y);
+                serial_port.write_str("ui: setup welcome\n");
 
                 loop {
                     let w = surface.width() as i32;
                     let h = surface.height() as i32;
+                    let mut buttons = prev_buttons;
                     let mut moved = false;
                     if let Some(ref mut t) = tablet {
                         if t.poll(w, h) {
                             x = t.x;
                             y = t.y;
+                            buttons = t.buttons;
                             mice.x = x;
                             mice.y = y;
+                            mice.buttons = buttons;
                             moved = true;
-                            if t.hits <= 5 {
-                                serial_port.write_str("mouse: tablet hit ");
-                                let d = b'0' + (t.hits.min(9) as u8);
-                                serial_port.write_bytes(&[d, b'\n']);
+                        }
+                    } else if mice.poll(w, h) {
+                        // PS/2 only when no tablet — otherwise aux noise
+                        // clears tablet button edges and kills clicks.
+                        x = mice.x;
+                        y = mice.y;
+                        buttons = mice.buttons;
+                        moved = true;
+                    }
+
+                    if !setup.is_finished() {
+                        // Setup owns click handling (with its own edge detect).
+                        if setup.pointer(x, y, buttons) {
+                            cursor.hide(&surface);
+                            if setup.is_finished() {
+                                serial_port.write_str("ui: setup done\n");
+                                ui::draw_home(&surface, &mail, &skill_peek, status);
+                            } else {
+                                setup.draw(&surface, &mail, &skill_peek);
+                            }
+                            cursor.show_at(&surface, x, y);
+                            moved = false;
+                        }
+                    } else {
+                        // Home: left-button rising edge → CTA click.
+                        let left_down = buttons & 1 != 0;
+                        let left_was = prev_buttons & 1 != 0;
+                        if left_down && !left_was {
+                            let targets = ui::cta_targets(w, h, &skill_peek);
+                            let mut clicked = false;
+                            match targets.hit(x, y) {
+                                Some(ui::CtaId::Ready) => {
+                                    serial_port.write_str("ui: click Ready\n");
+                                    setup = setup::Setup::new();
+                                    cursor.hide(&surface);
+                                    setup.draw(&surface, &mail, &skill_peek);
+                                    cursor.show_at(&surface, x, y);
+                                    clicked = true;
+                                    moved = false;
+                                }
+                                Some(ui::CtaId::Skills) => {
+                                    serial_port.write_str("ui: click Skills\n");
+                                    status = "Skills - markdown playbooks on the host.";
+                                    clicked = true;
+                                }
+                                None => {}
+                            }
+                            if clicked && setup.is_finished() {
+                                cursor.hide(&surface);
+                                ui::draw_home(&surface, &mail, &skill_peek, status);
+                                cursor.show_at(&surface, x, y);
+                                moved = false;
                             }
                         }
                     }
-                    if !moved && mice.poll(w, h) {
-                        x = mice.x;
-                        y = mice.y;
-                        moved = true;
-                    }
+                    prev_buttons = buttons;
                     if moved {
                         cursor.show_at(&surface, x, y);
                     }

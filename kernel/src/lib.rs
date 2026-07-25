@@ -9,6 +9,7 @@ pub mod mcp;
 pub mod mouse;
 pub mod pci;
 pub mod serial;
+pub mod setup;
 pub mod skills;
 pub mod ui;
 pub mod usb_tablet;

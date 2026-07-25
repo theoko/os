@@ -23,6 +23,8 @@ struct Style {
 
 const STYLES: &[Style] = &[
     Style { name: "HERO", px: 44.0, weight: 600.0 },
+    // Setup-assistant step titles.
+    Style { name: "TITLE", px: 30.0, weight: 600.0 },
     Style { name: "H2", px: 22.0, weight: 600.0 },
     Style { name: "BRAND", px: 17.0, weight: 600.0 },
     Style { name: "BODY", px: 17.0, weight: 400.0 },

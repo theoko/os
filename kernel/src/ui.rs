@@ -39,6 +39,53 @@ const CARD_H: i32 = 140;
 const CTA_H: i32 = 46;
 const CONTENT_MAX: i32 = 920;
 
+const HERO_TO_SUB: i32 = 34;
+const SUB_GAP: i32 = 30;
+const SUB_TO_CTA: i32 = 40;
+const CTA_TO_H2: i32 = 84;
+const H2_TO_CARDS: i32 = 26;
+
+/// Axis-aligned hit region (inclusive origin, exclusive of `x+w` / `y+h`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rect {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl Rect {
+    pub fn contains(self, px: i32, py: i32) -> bool {
+        px >= self.x && py >= self.y && px < self.x + self.w && py < self.y + self.h
+    }
+}
+
+/// Which home CTA was under the pointer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CtaId {
+    Ready,
+    Skills,
+}
+
+/// Hit targets for the CTA pair, computed with the same layout as `draw_home`.
+#[derive(Clone, Copy, Debug)]
+pub struct CtaTargets {
+    pub ready: Rect,
+    pub skills: Rect,
+}
+
+impl CtaTargets {
+    pub fn hit(self, px: i32, py: i32) -> Option<CtaId> {
+        if self.ready.contains(px, py) {
+            Some(CtaId::Ready)
+        } else if self.skills.contains(px, py) {
+            Some(CtaId::Skills)
+        } else {
+            None
+        }
+    }
+}
+
 /// Card copy — what the OS actually wires up.
 const CARDS: [(&str, &str, &str); 3] = [
     (
@@ -59,7 +106,9 @@ const CARDS: [(&str, &str, &str); 3] = [
 ];
 
 /// Draw the home composition on `fb`.
-pub fn draw_home(fb: &Surface, mail: &MailPeek, skills: &SkillPeek) {
+///
+/// `status` is a short footer line (ASCII); empty falls back to the version bar.
+pub fn draw_home(fb: &Surface, mail: &MailPeek, skills: &SkillPeek, status: &str) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
 
@@ -73,22 +122,7 @@ pub fn draw_home(fb: &Surface, mail: &MailPeek, skills: &SkillPeek) {
     let hero_track = font::tracking_pct(HERO_FACE.px, -30); // -3%, as on the site
     let h2_track = font::tracking_pct(H2_FACE.px, -15);
 
-    const SUB_GAP: i32 = 30;
-    const HERO_TO_SUB: i32 = 34;
-    const SUB_TO_CTA: i32 = 40;
-    const CTA_TO_H2: i32 = 84;
-    const H2_TO_CARDS: i32 = 26;
-
-    let block_h = HERO_FACE.px
-        + HERO_TO_SUB
-        + BODY_FACE.px
-        + SUB_GAP
-        + SUB_TO_CTA
-        + CTA_H
-        + CTA_TO_H2
-        + H2_FACE.px
-        + H2_TO_CARDS
-        + CARD_H;
+    let block_h = content_block_h();
 
     // Centre the stack in the space between the nav rule and the footer, with
     // a slight upward bias. Dividing by 3 (as a first cut did) dumps ~140px of
@@ -143,14 +177,71 @@ pub fn draw_home(fb: &Surface, mail: &MailPeek, skills: &SkillPeek) {
     }
 
     // --- footer ---
-    fb.draw_text_centered(
-        w / 2,
-        h - 30,
-        "os 0.7.0  |  limine  |  x86_64",
-        &SMALL_FACE,
-        0,
-        theme::MUTED,
-    );
+    let foot = if status.is_empty() {
+        "os 0.7.2  |  limine  |  x86_64"
+    } else {
+        status
+    };
+    fb.draw_text_centered(w / 2, h - 30, foot, &SMALL_FACE, 0, theme::MUTED);
+}
+
+fn content_block_h() -> i32 {
+    HERO_FACE.px
+        + HERO_TO_SUB
+        + BODY_FACE.px
+        + SUB_GAP
+        + SUB_TO_CTA
+        + CTA_H
+        + CTA_TO_H2
+        + H2_FACE.px
+        + H2_TO_CARDS
+        + CARD_H
+}
+
+/// CTA top edge for a framebuffer of height `h` — shared by draw + hit-test.
+fn cta_top(h: i32) -> i32 {
+    let avail = h - NAV_H - 70;
+    let y0 = NAV_H + (((avail - content_block_h()) * 9) / 20).max(24);
+    y0 + HERO_FACE.baseline()
+        + HERO_TO_SUB
+        + BODY_FACE.baseline()
+        + SUB_GAP
+        + SUB_TO_CTA
+}
+
+fn skills_label(skills: &SkillPeek) -> &'static str {
+    match skills.count {
+        0 => "No skills",
+        1 => "1 skill",
+        _ => "Skills loaded",
+    }
+}
+
+/// Hit regions for the Ready / Skills pills on a `w`×`h` framebuffer.
+pub fn cta_targets(w: i32, h: i32, skills: &SkillPeek) -> CtaTargets {
+    let y = cta_top(h);
+    let primary = "Ready";
+    let secondary = skills_label(skills);
+    let pad = 30;
+    let pw = BTN_FACE.width(primary, 0) + pad * 2;
+    let sw = BTN_FACE.width(secondary, 0) + pad * 2;
+    let gap = 12;
+    let total = pw + gap + sw;
+    let x = w / 2 - total / 2;
+    CtaTargets {
+        ready: Rect {
+            x,
+            y,
+            w: pw,
+            h: CTA_H,
+        },
+        skills: Rect {
+            x: x + pw + gap,
+            y,
+            w: sw,
+            h: CTA_H,
+        },
+    }
 }
 
 fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
@@ -181,12 +272,7 @@ fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
 /// Primary pill + tinted secondary pill, centred as a unit.
 fn draw_ctas(fb: &Surface, cx: i32, y: i32, skills: &SkillPeek) {
     let primary = "Ready";
-    // The skill count is the only live number worth surfacing here.
-    let secondary: &str = match skills.count {
-        0 => "No skills",
-        1 => "1 skill",
-        _ => "Skills loaded",
-    };
+    let secondary = skills_label(skills);
 
     let pad = 30;
     let pw = BTN_FACE.width(primary, 0) + pad * 2;
@@ -234,7 +320,7 @@ mod tests {
             "Capability-scoped agents, host connectors on one port,",
             "and skills that stay out of the kernel.",
             "What's wired",
-            "os 0.7.0  |  limine  |  x86_64",
+            "os 0.7.2  |  limine  |  x86_64",
             "bridge connected",
             "bridge offline",
             "Ready",
@@ -298,7 +384,7 @@ mod tests {
     #[test]
     fn layout_block_fits_768_tall() {
         // Guards against the stack running off the bottom on the UTM default.
-        let block_h = HERO_FACE.px + 34 + BODY_FACE.px + 30 + 40 + CTA_H + 84 + H2_FACE.px + 26 + CARD_H;
+        let block_h = content_block_h();
         assert!(block_h < 768 - NAV_H - 56, "content stack too tall: {block_h}");
     }
 
@@ -307,5 +393,28 @@ mod tests {
         // The 8x8 era rendered display type with huge positive tracking; the
         // reference design is tight. Guard against regressing to that.
         assert!(font::tracking_pct(HERO_FACE.px, -30) < 0);
+    }
+
+    #[test]
+    fn cta_hit_regions_match_draw_layout() {
+        let skills = SkillPeek {
+            count: 3,
+            names: [[0; 28]; 8],
+        };
+        let t = cta_targets(1024, 768, &skills);
+        assert!(t.ready.w > 40 && t.ready.h == CTA_H);
+        assert!(t.skills.w > 40 && t.skills.h == CTA_H);
+        assert_eq!(t.ready.y, t.skills.y);
+        assert!(t.ready.x + t.ready.w <= t.skills.x);
+        // Centres of each pill hit the matching id.
+        assert_eq!(
+            t.hit(t.ready.x + t.ready.w / 2, t.ready.y + CTA_H / 2),
+            Some(CtaId::Ready)
+        );
+        assert_eq!(
+            t.hit(t.skills.x + t.skills.w / 2, t.skills.y + CTA_H / 2),
+            Some(CtaId::Skills)
+        );
+        assert_eq!(t.hit(0, 0), None);
     }
 }
