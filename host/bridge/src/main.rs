@@ -3,6 +3,7 @@
 //! Speaks the line protocol in docs/mcp-connectors-os-doc-v01.md over TCP.
 //! Email backends: mock (default) or `gog`. Skills: defaults + saved on host.
 
+mod graph;
 mod search;
 mod skills;
 
@@ -353,14 +354,48 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                 .unwrap_or(5)
                 .clamp(1, 20);
             let cat = arg_val(args, "cat");
+            // Email content is opt-in per call. The guest only sets this when
+            // the user granted email.search at setup, so holding search.query
+            // alone cannot reach mail.
+            let with_email = matches!(arg_val(args, "email"), Some("1"));
             if q.is_empty() {
                 vec!["ERR search.query missing_q".into()]
             } else {
-                search::query(q, k, cat, &backends.search)
+                search::query_with(q, k, cat, &backends.search, with_email)
             }
         }
         _ => vec![format!("ERR {tool} not_found")],
     }
+}
+
+/// Parse `ROW from=…|subj=…` lines back into graph messages.
+///
+/// Only sender and subject are kept — never the body.
+fn ingest_rows(rows: &[String]) {
+    let msgs: Vec<(String, String, String)> = rows
+        .iter()
+        .filter_map(|r| {
+            let from = parse_row_field(r, "from")?;
+            let subj = parse_row_field(r, "subj").unwrap_or("");
+            Some((from.to_string(), subj.to_string(), String::new()))
+        })
+        .collect();
+    if msgs.is_empty() {
+        return;
+    }
+    let mut g = graph::Graph::load();
+    if g.ingest(&msgs) > 0 {
+        if let Err(e) = g.save() {
+            eprintln!("graph: save failed: {e}");
+        }
+    }
+}
+
+/// Read `key=value` out of a `ROW a=1|b=2` line.
+fn parse_row_field<'a>(row: &'a str, key: &str) -> Option<&'a str> {
+    let body = row.strip_prefix("ROW ")?;
+    body.split('|')
+        .find_map(|f| f.strip_prefix(key).and_then(|r| r.strip_prefix('=')))
 }
 
 fn arg_val<'a>(args: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -466,6 +501,10 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
             }
         }
     }
+
+    // Fold what we just fetched into the knowledge graph. Best effort: a
+    // failure to index must not fail the search the caller asked for.
+    ingest_rows(&rows);
 
     let n = rows.len();
     let mut out = vec![format!("OK email.search n={n}")];

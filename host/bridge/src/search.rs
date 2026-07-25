@@ -29,6 +29,22 @@ struct Doc {
     pr: f64,
 }
 
+/// Email graph entries, projected into corpus documents.
+fn email_docs() -> Vec<Doc> {
+    crate::graph::Graph::load()
+        .messages
+        .into_iter()
+        .map(|m| Doc {
+            t: m.subject,
+            u: format!("email://{}", m.id),
+            c: "email".to_string(),
+            // Sender is indexed so "from alice" style queries hit.
+            b: format!("{} {}", m.from, m.snippet),
+            pr: m.pr,
+        })
+        .collect()
+}
+
 fn corpus_path() -> PathBuf {
     env::var("OS_SEARCH_CORPUS")
         .map(PathBuf::from)
@@ -160,7 +176,22 @@ fn sanitize(s: &str) -> String {
 }
 
 pub fn query_builtin(q: &str, k: usize, cat: Option<&str>) -> Result<Vec<String>, String> {
-    let docs = load_docs()?;
+    query_builtin_with(q, k, cat, false)
+}
+
+/// `include_email` folds the runtime email graph in alongside the static
+/// corpus. It defaults to *off* everywhere: email content must stay behind the
+/// email capability, or a caller holding only `search.query` could read mail.
+pub fn query_builtin_with(
+    q: &str,
+    k: usize,
+    cat: Option<&str>,
+    include_email: bool,
+) -> Result<Vec<String>, String> {
+    let mut docs = load_docs()?;
+    if include_email {
+        docs.extend(email_docs());
+    }
     let hits = search_tfidf(&docs, q, k, cat);
     let n = hits.len();
     let mut out = vec![format!("OK search.query n={n} backend=tfidf-pr")];
@@ -265,10 +296,21 @@ print(json.dumps(hits))
 }
 
 pub fn query(q: &str, k: usize, cat: Option<&str>, backend: &str) -> Vec<String> {
+    query_with(q, k, cat, backend, false)
+}
+
+pub fn query_with(
+    q: &str,
+    k: usize,
+    cat: Option<&str>,
+    backend: &str,
+    include_email: bool,
+) -> Vec<String> {
     match backend {
         "mock" => query_mock(q, k),
         "tsearch" => query_tsearch(q, k).unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
-        _ => query_builtin(q, k, cat).unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
+        _ => query_builtin_with(q, k, cat, include_email)
+            .unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
     }
 }
 
