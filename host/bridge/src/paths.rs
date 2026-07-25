@@ -4,6 +4,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 /// `$HOME`, or `.` when unset (tests / odd hosts).
@@ -22,4 +23,12 @@ pub fn write_json<T: Serialize>(path: impl AsRef<Path>, value: &T) -> Result<Pat
     let raw = serde_json::to_string(value).map_err(|e| e.to_string())?;
     fs::write(path, raw).map_err(|e| format!("write {}: {e}", path.display()))?;
     Ok(path.to_path_buf())
+}
+
+/// Read JSON from `path`, or `T::default()` when missing / invalid.
+pub fn read_json_or_default<T: DeserializeOwned + Default>(path: impl AsRef<Path>) -> T {
+    match fs::read_to_string(path) {
+        Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
+        Err(_) => T::default(),
+    }
 }

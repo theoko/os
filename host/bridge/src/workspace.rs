@@ -241,10 +241,7 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<Entry>, depth: usize) {
 
 impl Index {
     pub fn load() -> Self {
-        match fs::read_to_string(index_path()) {
-            Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-            Err(_) => Self::default(),
-        }
+        crate::paths::read_json_or_default(index_path())
     }
 
     pub fn save(&self) -> Result<PathBuf, String> {

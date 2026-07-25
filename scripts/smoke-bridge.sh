@@ -30,8 +30,12 @@ export OS_SMOKE_ADDR="$ADDR"
 export OS_SMOKE_SERIAL="$SERIAL_OUT"
 
 python3 <<'PY'
-import os, subprocess, sys
+import os
+import sys
 from pathlib import Path
+
+sys.path.insert(0, str(Path(os.environ["OS_SMOKE_ROOT"]) / "scripts"))
+import smoke_common as sc
 
 root = Path(os.environ["OS_SMOKE_ROOT"])
 iso = root / os.environ["OS_SMOKE_ISO"]
@@ -40,41 +44,8 @@ serial_path = Path(os.environ["OS_SMOKE_SERIAL"])
 serial_path.write_bytes(b"")
 
 # Guest listens; wait for the dialing bridge before the guest runs (early PING).
-proc = subprocess.Popen(
-    [
-        "qemu-system-x86_64",
-        "-M", "q35",
-        "-m", "512M",
-        "-cdrom", str(iso),
-        "-boot", "d",
-        "-display", "none",
-        "-serial", f"file:{serial_path}",
-        "-serial", f"tcp:{addr},server",
-        "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
-        "-no-reboot",
-    ],
-    cwd=root,
-)
-try:
-    status = proc.wait(timeout=120)
-except subprocess.TimeoutExpired:
-    proc.kill()
-    proc.wait()
-    print("error: QEMU timed out", file=sys.stderr)
-    sys.exit(1)
-
-serial = serial_path.read_bytes()
-if status != 33:
-    print(f"error: QEMU status {status} (expected 33)", file=sys.stderr)
-    sys.stderr.buffer.write(serial + b"\n")
-    sys.exit(1)
-if b"os: hello from kernel" not in serial:
-    print("error: missing hello banner", file=sys.stderr)
-    sys.stderr.buffer.write(serial + b"\n")
-    sys.exit(1)
-if b"mcp: email connected" not in serial:
-    print("error: MCP bridge not connected", file=sys.stderr)
-    sys.stderr.buffer.write(serial + b"\n")
-    sys.exit(1)
+argv = sc.qemu_argv(iso, serial_path, com2=addr)
+status, serial = sc.run_qemu(argv, cwd=root, serial_path=serial_path, timeout=120)
+sc.check_smoke(status, serial, need_mcp=True)
 print("smoke-bridge ok: hello + mcp email connected")
 PY

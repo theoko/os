@@ -132,6 +132,16 @@ fn open_com2(line: &mut [u8]) -> (Serial, BridgeStatus) {
     (com2, status)
 }
 
+/// Opt-in scope flags shared by `doc.read` / `search.query`.
+fn write_scope_flags(com2: &Serial, caps: crate::caps::Caps) {
+    if caps.allows(crate::caps::Cap::WorkspaceIndex) {
+        com2.write_str(" files=1");
+    }
+    if caps.allows(crate::caps::Cap::AudioTranscribe) {
+        com2.write_str(" audio=1");
+    }
+}
+
 /// Probe the host bridge and optionally fetch a short inbox peek.
 ///
 /// `email.search` is refused when `caps` does not grant [`crate::caps::Cap::EmailSearch`].
@@ -204,12 +214,7 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
     com2.write_str("CALL doc.read url=");
     com2.write_str(url);
     com2.write_str(" lines=18");
-    if caps.allows(crate::caps::Cap::WorkspaceIndex) {
-        com2.write_str(" files=1");
-    }
-    if caps.allows(crate::caps::Cap::AudioTranscribe) {
-        com2.write_str(" audio=1");
-    }
+    write_scope_flags(&com2, caps);
     com2.write_str("\n");
 
     let mut page = DocPage::empty(BridgeStatus::Online, false);
@@ -376,19 +381,17 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
 /// Run `search.query` when granted. `q` must be ASCII without spaces (use `-`).
 pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     let mut line = [0u8; LINE_BUF];
-    let com2 = Serial::com2();
-    com2.init();
+    let (com2, status) = open_com2(&mut line);
 
     if !caps.allows(crate::caps::Cap::SearchQuery) {
         // No CALL: a denied cap is denied whether or not a bridge is listening.
-        // Still PING so the UI can show Online vs Offline alongside denied.
-        let status = ping_bridge(&com2, &mut line);
+        // PING still ran so the UI can show Online vs Offline alongside denied.
         return SearchPeek::empty(status, true);
     }
 
     // Offline: UI falls back to the baked index via SearchView::run(q).
     // Do not run a fixed offline query here — it was ignored and wrong.
-    if ping_bridge(&com2, &mut line) != BridgeStatus::Online {
+    if status != BridgeStatus::Online {
         return SearchPeek::empty(BridgeStatus::Offline, false);
     }
 
@@ -403,14 +406,7 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     if caps.allows(crate::caps::Cap::EmailSearch) {
         com2.write_str(" email=1");
     }
-    // Personal documents are a separate grant from the built-in corpus:
-    // search.query alone must not reach the user's own file tree.
-    if caps.allows(crate::caps::Cap::WorkspaceIndex) {
-        com2.write_str(" files=1");
-    }
-    if caps.allows(crate::caps::Cap::AudioTranscribe) {
-        com2.write_str(" audio=1");
-    }
+    write_scope_flags(&com2, caps);
     com2.write_str("\n");
 
     let mut peek = SearchPeek::empty(BridgeStatus::Online, false);

@@ -96,13 +96,7 @@ impl Graph {
     }
 
     pub fn save(&self) -> Result<PathBuf, String> {
-        let path = graph_path();
-        if let Some(dir) = path.parent() {
-            fs::create_dir_all(dir).map_err(|e| format!("mkdir {}: {e}", dir.display()))?;
-        }
-        let raw = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
-        fs::write(&path, raw).map_err(|e| format!("write {}: {e}", path.display()))?;
-        Ok(path)
+        crate::paths::write_json(graph_path(), self)
     }
 
     /// Cap on retained messages. Without this the index grows forever: the

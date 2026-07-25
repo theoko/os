@@ -336,7 +336,8 @@ fn ensure_mask() {
     }
 }
 
-fn draw_arrow(fb: &Surface, x: i32, y: i32) {
+/// Paint a pointer (no save buffer) — safe during the first UI frame.
+pub fn draw_arrow(fb: &Surface, x: i32, y: i32) {
     // Ink body under a white keyline, so the pointer stays legible on both the
     // white page and the blue CTA.
     const INK: u32 = 0x001D_1D1F;
@@ -364,11 +365,6 @@ fn draw_arrow(fb: &Surface, x: i32, y: i32) {
             }
         }
     }
-}
-
-/// Paint a one-shot pointer (no save buffer) — safe during first UI frame.
-pub fn paint_pointer(fb: &Surface, x: i32, y: i32) {
-    draw_arrow(fb, x, y);
 }
 
 #[cfg(test)]

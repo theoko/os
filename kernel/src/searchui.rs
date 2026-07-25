@@ -304,6 +304,7 @@ mod tests {
 
     #[test]
     fn field_fits_a_1024_screen() {
+        use crate::ui::PAD_X;
         let (x, _y, w, _h) = field_rect(1024, 768);
         assert!(x >= PAD_X);
         assert!(x + w <= 1024 - PAD_X);

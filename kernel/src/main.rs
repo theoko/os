@@ -138,7 +138,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
                 ui::draw_home_full(surface, &mail, &skill_peek, "", "", false);
-                mouse::paint_pointer(surface, cx, cy);
+                mouse::draw_arrow(surface, cx, cy);
                 screen.present();
                 serial_port.write_str("mouse: pointer painted\n");
 

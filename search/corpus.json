@@ -97,7 +97,7 @@
       "t": "Host MCP bridge",
       "u": "os://host/bridge",
       "c": "code",
-      "b": "Rust os-mcp-bridge TCP 7420. Mock or gog email. Skills list get save. Search query over curated corpus. Line protocol for guest COM2.",
+      "b": "Rust os-mcp-bridge. Guest COM2 listens; bridge dials TCP 7420. Mock or gog email. Skills list get save. Search over curated corpus.",
       "pr": 0.85
     },
     {

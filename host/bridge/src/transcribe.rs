@@ -166,10 +166,7 @@ fn title_for(path: &Path, text: &str) -> String {
 
 impl Store {
     pub fn load() -> Self {
-        match fs::read_to_string(store_path()) {
-            Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-            Err(_) => Self::default(),
-        }
+        crate::paths::read_json_or_default(store_path())
     }
 
     pub fn save(&self) -> Result<PathBuf, String> {
