@@ -178,6 +178,18 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
     peek
 }
 
+/// Liveness only: PING the bridge without reading any mailbox.
+///
+/// Used before the user has consented on the Capabilities step. Calling
+/// `fetch_mail_peek` there would read — and, since the bridge indexes results,
+/// *persist* — the inbox before anyone agreed to it.
+pub fn probe_bridge() -> BridgeStatus {
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+    ping_bridge(&com2, &mut line)
+}
+
 fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
     for _ in 0..64 {
         if com2.try_read_byte().is_none() {
@@ -290,6 +302,14 @@ mod tests {
         let mut both = search_only;
         both.set(Cap::EmailSearch, true);
         assert!(both.allows(Cap::EmailSearch));
+    }
+
+    #[test]
+    fn probe_does_not_imply_a_mailbox_read() {
+        // Guard the consent rule: the pre-consent path must expose liveness
+        // only. MailPeek::empty carries no rows.
+        let p = MailPeek::empty(BridgeStatus::Offline);
+        assert_eq!(p.count, 0);
     }
 
     #[test]

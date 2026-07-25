@@ -130,10 +130,11 @@ unsafe extern "C" fn kmain() -> ! {
                 ui::draw_home(surface, &mail, &skill_peek, "");
                 screen.present();
 
-                // Early peek uses default grants so smoke still exercises COM2
-                // before the setup journey runs (smoke exits before setup).
-                let mut grants = caps::Caps::default_grants();
-                mail = mcp::fetch_mail_peek(grants);
+                // Liveness only until the user consents. Reading the inbox
+                // here would fetch — and, because the bridge indexes results,
+                // persist to disk — mail before anyone agreed to it.
+                let mut grants = caps::Caps::none();
+                mail = mcp::MailPeek::empty(mcp::probe_bridge());
                 match mail.status {
                     mcp::BridgeStatus::Online => serial_port.write_str("mcp: email connected\n"),
                     mcp::BridgeStatus::Offline => serial_port.write_str("mcp: email offline\n"),
@@ -228,7 +229,9 @@ unsafe extern "C" fn kmain() -> ! {
                             // Entering the Bridge step: re-probe COM2 so the
                             // status card reflects a bridge that came up after boot.
                             if setup.step == setup::Step::Bridge && before != setup::Step::Bridge {
-                                mail = mcp::fetch_mail_peek(setup.grants());
+                                // Still pre-consent: the Capabilities step
+                                // comes after this one, so probe, don't read.
+                                mail = mcp::MailPeek::empty(mcp::probe_bridge());
                                 serial_port.write_str(match mail.status {
                                     mcp::BridgeStatus::Online => "mcp: bridge live\n",
                                     mcp::BridgeStatus::Offline => "mcp: bridge still offline\n",
@@ -255,6 +258,8 @@ unsafe extern "C" fn kmain() -> ! {
                             cursor.show_at(surface, x, y);
                             screen.present();
                             moved = false;
+                            prev_x = x;
+                            prev_y = y;
                         }
                     } else {
                         let left_down = buttons & 1 != 0;
@@ -272,6 +277,8 @@ unsafe extern "C" fn kmain() -> ! {
                                     screen.present();
                                     clicked = true;
                                     moved = false;
+                                    prev_x = x;
+                                    prev_y = y;
                                 }
                                 Some(ui::HomeHit::Cta(ui::CtaId::Skills))
                                 | Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
@@ -343,6 +350,8 @@ unsafe extern "C" fn kmain() -> ! {
                                 cursor.show_at(surface, x, y);
                                 screen.present();
                                 moved = false;
+                                prev_x = x;
+                                prev_y = y;
                             }
                         }
                     }
