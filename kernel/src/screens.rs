@@ -29,7 +29,8 @@ pub enum View {
 
 use crate::ui::{NAV_H, PAD_X};
 
-const CONTENT_MAX: i32 = 720;
+/// Column width cap for Skills / Caps / Search (home uses a wider max).
+pub const CONTENT_MAX: i32 = 720;
 const ROW_H: i32 = 62;
 const ROW_GAP: i32 = 8;
 const TOP: i32 = 150;

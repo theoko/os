@@ -5,7 +5,6 @@
 
 mod graph;
 mod workspace;
-mod portals;
 mod search;
 mod transcribe;
 mod tsearch;
@@ -242,7 +241,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
     match cmd {
         "PING" => vec!["OK pong".into()],
         "LIST" => {
-            vec!["OK tools=email.search,email.send,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,doc.read".into()]
+            vec!["OK tools=email.search,email.send,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,audio.transcribe,workspace.forget,audio.forget,doc.read".into()]
         }
         "CALL" => {
             let (tool, rest) = split_word(rest);
@@ -309,21 +308,6 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             match skills::save_skill(name, &body) {
                 Ok(path) => vec![format!("OK skills.save path={}", path.display())],
                 Err(e) => vec![format!("ERR skills.save {e}")],
-            }
-        }
-        // Portal connectors: the OS reaching the user's own live services.
-        tool if portals::find(tool).is_some() => {
-            let ep = portals::find(tool).expect("checked");
-            match portals::fetch(ep, args) {
-                Ok(body) => {
-                    portals::save_snapshot(tool, &body);
-                    let rows = portals::rows_for(tool, &body);
-                    let mut out = vec![format!("OK {tool} n={}", rows.len())];
-                    out.extend(rows);
-                    out.push("END".into());
-                    out
-                }
-                Err(e) => vec![format!("ERR {tool} {e}")],
             }
         }
         "audio.transcribe" => {

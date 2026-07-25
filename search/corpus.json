@@ -13,7 +13,7 @@
       "t": "MCP connectors",
       "u": "os://docs/mcp-connectors-os-doc-v01.md",
       "c": "docs",
-      "b": "Host bridge over COM2. Tools email.search email.send calendar.list skills.list search.query. Secrets stay in gog keyring. Exact protocol PING LIST CALL.",
+      "b": "Host bridge over COM2. Tools email.search email.send skills.list skills.get search.query workspace.index doc.read. Secrets stay in gog keyring. Exact protocol PING LIST CALL.",
       "pr": 0.9
     },
     {
@@ -48,7 +48,7 @@
       "t": "UI home screen",
       "u": "os://docs/ui-os-doc-v01.md",
       "c": "docs",
-      "b": "SuperIntel-like white minimal home. Brand os first. Blue Ready pill. Email connector strip. Skills strip.",
+      "b": "Home is a launcher. Search field on arrival. Tiles for Search Capabilities Skills. Recent mail when granted.",
       "pr": 0.6
     },
     {

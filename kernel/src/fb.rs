@@ -635,30 +635,6 @@ impl Screen {
         &self.back
     }
 
-    /// Whether composition is off-screen. False means direct-to-video fallback.
-    pub fn is_buffered(&self) -> bool {
-        self.buffered
-    }
-
-    /// Blit one region. Used for cursor motion — blitting the whole screen
-    /// per mouse event would make tracking crawl over uncached MMIO.
-    pub fn present_rect(&self, x: i32, y: i32, w: i32, h: i32) {
-        if !self.buffered {
-            return;
-        }
-        let x0 = x.max(0) as usize;
-        let y0 = y.max(0) as usize;
-        let x1 = ((x + w).max(0) as usize).min(self.w);
-        let y1 = ((y + h).max(0) as usize).min(self.h);
-        for py in y0..y1 {
-            let src = unsafe { self.back.addr.add(py * self.back.pitch).cast::<u32>() };
-            let dst = unsafe { self.fb.add(py * self.fb_pitch).cast::<u32>() };
-            for px in x0..x1 {
-                unsafe { dst.add(px).write_volatile(src.add(px).read()) };
-            }
-        }
-    }
-
     /// Blit whatever changed since the last present.
     ///
     /// Falls back to nothing at all when no draw call marked a region, so an

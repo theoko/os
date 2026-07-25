@@ -185,12 +185,11 @@ impl SearchView {
 
 const FIELD_H: i32 = 52;
 const ROW_H: i32 = 64;
-const CONTENT_MAX: i32 = 720;
 
 /// Geometry shared by the renderer and hit-testing.
 pub fn field_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
     let _ = h;
-    let cw = (w - PAD_X * 2).min(CONTENT_MAX);
+    let cw = (w - PAD_X * 2).min(screens::CONTENT_MAX);
     ((w - cw) / 2, 150, cw, FIELD_H)
 }
 

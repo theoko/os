@@ -9,7 +9,6 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 #[derive(Debug, Deserialize)]
 struct CorpusFile {
@@ -290,76 +289,6 @@ pub fn query_mock(q: &str, k: usize) -> Vec<String> {
     out
 }
 
-/// Optional: shell out to tsearch-revival's MCP search helper when configured.
-pub fn query_tsearch(q: &str, k: usize) -> Result<Vec<String>, String> {
-    let data = env::var("TSEARCH_DATA").map_err(|_| "TSEARCH_DATA unset".to_string())?;
-    let script = PathBuf::from(&data).join("tsearch_mcp.py");
-    if !script.is_file() {
-        return Err("tsearch_mcp.py missing".into());
-    }
-    // Tiny driver: import t_search via python -c. The query and data path go
-    // through env vars — Rust's {:?} escaping is not valid Python for
-    // non-ASCII/control chars, and embedding untrusted text in code invites
-    // injection.
-    let py = format!(
-        r#"
-import json, os, sys
-data = os.environ["TSEARCH_DATA"]
-sys.path.insert(0, data)
-import tsearch_mcp as m
-g = m.Graph()
-hits = m.t_search(g, os.environ["TSEARCH_QUERY"], k={k})
-print(json.dumps(hits))
-"#,
-    );
-    let output = Command::new("python3")
-        .args(["-c", &py])
-        .env("TSEARCH_DATA", &data)
-        .env("TSEARCH_QUERY", q)
-        .output()
-        .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        let err = String::from_utf8_lossy(&output.stderr);
-        return Err(err.lines().next().unwrap_or("tsearch_failed").chars().take(80).collect());
-    }
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let val: serde_json::Value =
-        serde_json::from_str(stdout.lines().last().unwrap_or("{}")).map_err(|e| e.to_string())?;
-    // Accept either list of cards or {results:[...]}
-    let items = val
-        .get("hits")
-        .and_then(|r| r.as_array().cloned())
-        .or_else(|| val.as_array().cloned())
-        .or_else(|| val.get("results").and_then(|r| r.as_array().cloned()))
-        .unwrap_or_default();
-    let mut out = vec![format!("OK search.query n={} backend=tsearch", items.len().min(k))];
-    for item in items.into_iter().take(k) {
-        let title = item
-            .get("t")
-            .or_else(|| item.get("title"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("?");
-        let cat = item.get("c").or_else(|| item.get("cat")).and_then(|v| v.as_str()).unwrap_or("");
-        let snip = item
-            .get("snippet")
-            .or_else(|| item.get("b"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
-        let score = item.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let url = item.get("u").or_else(|| item.get("url")).and_then(|v| v.as_str()).unwrap_or("");
-        out.push(format!(
-            "ROW title={}|cat={}|score={:.3}|snip={}|url={}",
-            sanitize(title),
-            sanitize(cat),
-            score,
-            sanitize(snip),
-            sanitize(url)
-        ));
-    }
-    out.push("END".into());
-    Ok(out)
-}
-
 pub fn query_scoped(
     q: &str,
     k: usize,
@@ -371,7 +300,8 @@ pub fn query_scoped(
 ) -> Vec<String> {
     match backend {
         "mock" => query_mock(q, k),
-        "tsearch" => query_tsearch(q, k).unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
+        // Native teddy index is already folded into the default `query_all`
+        // path; the old Python `tsearch_mcp.py` shell-out is gone.
         _ => query_all(q, k, cat, include_email, include_files, include_audio)
             .unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
     }
