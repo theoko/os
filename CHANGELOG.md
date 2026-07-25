@@ -1,8 +1,65 @@
 ---
-version: 0.8.0
+version: 0.9.0
 ---
 
 # Changelog
+
+## 0.9.0 — 2026-07-25
+
+The OS stopped being a landing page and became something you can use: type a
+query on arrival and get answers from five sources, behind capabilities you
+choose at first boot.
+
+### It does something now
+
+- Keyboard input (PS/2 set 1) and a search screen. Previously clicking a card
+  ran a search and wrote the hits to COM1 — invisible unless you were watching
+  a serial console — and there was no keyboard driver to type a query with.
+- Home is a launcher: a field that takes keystrokes immediately, three tiles
+  carrying live counts, recent mail inline. The old hero's primary button only
+  restarted the setup wizard.
+- Skills and Capabilities screens; capability switches are live, so grants can
+  be changed after setup without reinstalling.
+
+### Sources
+
+- **Offline corpus** compiled into the kernel by `build.rs` as a fixed-point
+  inverted index — no `ln()` or float division at runtime, because the kernel
+  never enables the FPU. Search works with no bridge at all.
+- **Your files** — 308 documents indexed from project roots you choose, ranked
+  by recency, depth and README-ness, with backup and vendor trees excluded.
+- **Email**, folded into a sender→message PageRank graph.
+- **teddysearch.com** — 12,448 documents. The site is a client-side app, so the
+  corpus file *is* the API; it is fetched, validated and indexed once.
+- **Transcripts** — `ffmpeg` + `whisper.cpp`, entirely local, so speech is
+  searchable next to everything else.
+- Live portal calls to superintelmarkets.com (`market.health`,
+  `market.fear_greed`), cached 120s so the guest cannot rate-limit the host.
+
+### Consent
+
+Five capabilities, chosen at first boot, off unless they need to be on:
+`email.search`, `search.query`, `skills.save`, `workspace.index`,
+`audio.transcribe`. Each is enforced on the wire, not just in the UI.
+
+- The inbox is no longer read before the user consents. It used to be probed at
+  boot with default grants — and once the bridge indexed results, that mail was
+  written to disk.
+- Personal files and recordings each need their own grant; neither rides along
+  on `search.query` or on each other.
+
+### Rendering
+
+- Dirty-rectangle presents: **655x** cheaper frames, measured with `rdtsc`
+  (67,468k cycles → 103k). Full-screen blits only happen when the screen
+  actually changes.
+- The cursor is a pre-rendered coverage mask; it used to re-rasterise five
+  supersampled polygons — ~185k edge tests — on every mouse move.
+- Anti-aliased proportional type from a build-time atlas, vendored Inter.
+- UTM: `UpscalingFilter=Linear` (nearest-neighbour was undoing the AA on a
+  Retina display), COM2 wired to the bridge (it had one serial port, so the
+  bridge was unreachable by construction), and an `intel-hda` device so the
+  new PC-speaker chime is audible.
 
 ## 0.8.0 — 2026-07-25
 
