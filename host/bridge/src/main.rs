@@ -6,6 +6,7 @@
 mod graph;
 mod workspace;
 mod search;
+mod tsearch;
 mod skills;
 
 use std::env;
@@ -274,7 +275,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
     match cmd {
         "PING" => vec!["OK pong".into()],
         "LIST" => {
-            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index".into()]
+            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync".into()]
         }
         "CALL" => {
             let (tool, rest) = split_word(rest);
@@ -348,6 +349,13 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                 Err(e) => vec![format!("ERR skills.save {e}")],
             }
         }
+        "tsearch.sync" => match tsearch::sync() {
+            Ok((n, at)) => vec![
+                format!("OK tsearch.sync n={n} crawled={at}"),
+                "END".into(),
+            ],
+            Err(e) => vec![format!("ERR tsearch.sync {e}")],
+        },
         "workspace.index" => {
             // Building the index reads the user's files, so it needs the same
             // grant as searching them.
