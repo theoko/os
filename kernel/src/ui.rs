@@ -435,7 +435,10 @@ mod tests {
             assert!(H2_FACE.width(s, 0) < r.w - 36, "tile title overflows: {s}");
         }
         assert!(SMALL_FACE.width("knowledge + email", 0) < r.w - 36);
-        assert!(SMALL_FACE.width(Caps::default_grants().footer_status(), 0) < r.w - 36);
+        let mut buf = [0u8; 96];
+        let n = Caps::default_grants().describe(&mut buf);
+        let status = core::str::from_utf8(&buf[..n]).unwrap();
+        assert!(SMALL_FACE.width(status, 0) < r.w - 36, "status overruns the tile: {status}");
     }
 
     #[test]

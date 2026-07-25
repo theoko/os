@@ -51,7 +51,9 @@ pub fn url() -> String {
 pub fn cache_path() -> PathBuf {
     env::var("OS_TSEARCH_CACHE")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| home().join("Library/Application Support/os/knowledge/teddysearch.json"))
+        // Renamed from teddysearch.json; an existing cache is simply re-synced
+        // rather than migrated, since it is a downloadable artifact.
+        .unwrap_or_else(|_| home().join("Library/Application Support/os/knowledge/teddy.json"))
 }
 
 fn home() -> PathBuf {
@@ -132,6 +134,9 @@ mod tests {
 
     #[test]
     fn default_url_is_the_published_corpus() {
+        // Serialised: these tests mutate process env, which cargo's
+        // parallel runner would otherwise leak between them.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::remove_var("OS_TSEARCH_URL") };
         assert_eq!(url(), DEFAULT_URL);
         assert!(url().starts_with("https://"), "corpus must be fetched over TLS");
@@ -139,6 +144,9 @@ mod tests {
 
     #[test]
     fn url_is_overridable() {
+        // Serialised: these tests mutate process env, which cargo's
+        // parallel runner would otherwise leak between them.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_TSEARCH_URL", "https://example.test/c.json") };
         assert_eq!(url(), "https://example.test/c.json");
         unsafe { env::remove_var("OS_TSEARCH_URL") };
@@ -146,6 +154,9 @@ mod tests {
 
     #[test]
     fn cache_lives_outside_the_repo() {
+        // Serialised: these tests mutate process env, which cargo's
+        // parallel runner would otherwise leak between them.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
         let p = cache_path().to_string_lossy().to_string();
         assert!(!p.contains("/os/search"), "cache must not land in the repo: {p}");
@@ -154,6 +165,9 @@ mod tests {
 
     #[test]
     fn missing_cache_yields_no_documents_not_a_panic() {
+        // Serialised: these tests mutate process env, which cargo's
+        // parallel runner would otherwise leak between them.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_TSEARCH_CACHE", "/nonexistent/os-teddy/none.json") };
         assert!(!is_available());
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
@@ -173,6 +187,9 @@ mod tests {
 
     #[test]
     fn a_truncated_corpus_is_rejected_not_silently_empty() {
+        // Serialised: these tests mutate process env, which cargo's
+        // parallel runner would otherwise leak between them.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let bad = r#"{"crawled_at":"now","docs":[{"t":"A","u":"x"#;
         assert!(serde_json::from_str::<CorpusFile>(bad).is_err());
     }
@@ -305,6 +322,9 @@ mod index_tests {
 
     #[test]
     fn an_absent_corpus_indexes_to_empty() {
+        // Serialised: these tests mutate process env, which cargo's
+        // parallel runner would otherwise leak between them.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_TSEARCH_CACHE", "/nonexistent/os-teddy/none.json") };
         // Must not panic when there is nothing to index.
         assert!(docs().is_empty());

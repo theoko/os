@@ -14,7 +14,10 @@ cd "$ROOT"
 VM_NAME="${UTM_VM_NAME:-os}"
 ISO="${IMAGE_NAME:-os}.iso"
 START="${UTM_START:-0}"
-BRIDGE="${UTM_BRIDGE:-0}"
+# COM2 defaults ON. A TCP client with nothing listening is harmless — the guest
+# reports the bridge offline, which is true. Gating it off by default meant a
+# plain `make utm` produced a VM that could never reach the bridge.
+BRIDGE="${UTM_BRIDGE:-1}"
 BRIDGE_ADDR="${OS_MCP_BRIDGE_ADDR:-127.0.0.1:7420}"
 UTM_DOCS="$HOME/Library/Containers/com.utmapp.UTM/Data/Documents"
 UTM_DIR="$UTM_DOCS/${VM_NAME}.utm"
@@ -188,11 +191,17 @@ EXTRA_ARGS = [
 # Set outright rather than merging token-by-token: EXTRA_ARGS repeats "-device",
 # so a per-token dedup would collapse the two devices into one.
 cfg.setdefault("QEMU", {})["AdditionalArguments"] = list(EXTRA_ARGS)
-# COM1 = PTTY (utmctl attach). Optional COM2 = TCP client → host MCP bridge.
+# COM1 = PTTY (utmctl attach). COM2 = TCP client -> host MCP bridge.
 # Use UTM's Serial device (not AdditionalArguments -unix): TcpClient is a
 # first-class mode and is allowed through the sandbox.
+#
+# COM2 is wired unconditionally. It used to be gated behind UTM_BRIDGE=1, which
+# meant a plain `make utm` silently dropped the port and the guest reported
+# "bridge offline" forever — a config trap that reads as a bridge bug. A TCP
+# client with nothing listening is harmless: the guest just sees it offline,
+# which is the truth. Set UTM_BRIDGE=0 to leave the port out entirely.
 serial = [{"Mode": "Ptty", "Target": "Auto"}]
-if os.environ.get("UTM_BRIDGE", "0") == "1":
+if os.environ.get("UTM_BRIDGE", "1") != "0":
     addr = os.environ.get("OS_MCP_BRIDGE_ADDR", "127.0.0.1:7420")
     host, _, port = addr.rpartition(":")
     serial.append({

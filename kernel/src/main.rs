@@ -191,7 +191,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut y = cy;
                 let mut prev_buttons = 0u8;
                 let mut status_buf = [0u8; 72];
-                write_status(&mut status_buf, grants.footer_status());
+                let mut status_len = grants.describe(&mut status_buf);
                 let mut setup = setup::Setup::new();
                 let mut kb = keyboard::Keyboard::new();
                 let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
@@ -272,17 +272,24 @@ unsafe extern "C" fn kmain() -> ! {
                             cursor.hide(surface);
                             if setup.is_finished() {
                                 grants = setup.grants();
-                                write_status(&mut status_buf, grants.footer_status());
+                                status_len = grants.describe(&mut status_buf);
                                 serial_port.write_str("ui: setup done\n");
                                 serial_port.write_str("caps: ");
-                                serial_port.write_str(status_str(&status_buf));
+                                serial_port.write_str(status_str(&status_buf, status_len));
                                 serial_port.write_str("\n");
+                                if grants.allows(caps::Cap::WorkspaceIndex) {
+                                    // Chosen during setup: build it now rather
+                                    // than leaving an empty index behind a
+                                    // switch that reads as on.
+                                    mcp::build_index("workspace.index");
+                                    serial_port.write_str("caps: indexing workspace\n");
+                                }
                                 mail = mcp::fetch_mail_peek(grants);
                                 ui::draw_home(
                                     surface,
                                     &mail,
                                     &skill_peek,
-                                    status_str(&status_buf),
+                                    status_str(&status_buf, status_len),
                                 );
                             } else {
                                 setup.draw(surface, &mail, &skill_peek);
@@ -332,7 +339,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     surface,
                                     &mail,
                                     &skill_peek,
-                                    status_str(&status_buf),
+                                    status_str(&status_buf, status_len),
                                     query.as_str(),
                                     caret,
                                 );
@@ -404,18 +411,36 @@ unsafe extern "C" fn kmain() -> ! {
                                     grants = screens::toggle(grants, i);
                                     // Revoked? Have the host delete what that
                                     // grant produced.
-                                    for (cap, tool) in [
-                                        (caps::Cap::WorkspaceIndex, "workspace.forget"),
-                                        (caps::Cap::AudioTranscribe, "audio.forget"),
+                                    for (cap, forget_tool, build_tool) in [
+                                        (
+                                            caps::Cap::WorkspaceIndex,
+                                            "workspace.forget",
+                                            Some("workspace.index"),
+                                        ),
+                                        (caps::Cap::AudioTranscribe, "audio.forget", None),
+                                        // Granting the portal grant also pulls
+                                        // the corpus, or the switch is on with
+                                        // nothing behind it.
+                                        (caps::Cap::PortalSync, "", Some("tsearch.sync")),
                                     ] {
-                                        if before.allows(cap) && !grants.allows(cap) {
-                                            mcp::forget(tool);
+                                        let was = before.allows(cap);
+                                        let now = grants.allows(cap);
+                                        if was && !now && !forget_tool.is_empty() {
+                                            mcp::forget(forget_tool);
                                             serial_port.write_str("caps: revoked ");
                                             serial_port.write_str(cap.name());
                                             serial_port.write_str(" - purged\n");
+                                        } else if !was && now {
+                                            // Granting must also make it useful.
+                                            if let Some(t) = build_tool {
+                                                mcp::build_index(t);
+                                                serial_port.write_str("caps: granted ");
+                                                serial_port.write_str(cap.name());
+                                                serial_port.write_str(" - indexed\n");
+                                            }
                                         }
                                     }
-                                    write_status(&mut status_buf, grants.footer_status());
+                                    status_len = grants.describe(&mut status_buf);
                                     dirty = true;
                                 }
                             } else if view == screens::View::Skills {
@@ -461,7 +486,7 @@ unsafe extern "C" fn kmain() -> ! {
                                         surface,
                                         &mail,
                                         &skill_peek,
-                                        status_str(&status_buf),
+                                        status_str(&status_buf, status_len),
                                     )
                                 }
                             }
@@ -561,7 +586,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 }
                                 Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
                                     serial_port.write_str("ui: click Capabilities\n");
-                                    write_status(&mut status_buf, grants.footer_status());
+                                    status_len = grants.describe(&mut status_buf);
                                     clicked = true;
                                 }
                                 None => {}
@@ -572,7 +597,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     surface,
                                     &mail,
                                     &skill_peek,
-                                    status_str(&status_buf),
+                                    status_str(&status_buf, status_len),
                                 );
                                 cursor.show_at(surface, x, y);
                                 enter(&screen);
@@ -648,9 +673,8 @@ fn write_status(buf: &mut [u8; 72], s: &str) {
     buf[..n].copy_from_slice(&bytes[..n]);
 }
 
-fn status_str(buf: &[u8; 72]) -> &str {
-    let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    core::str::from_utf8(&buf[..n]).unwrap_or("")
+fn status_str(buf: &[u8], len: usize) -> &str {
+    core::str::from_utf8(&buf[..len.min(buf.len())]).unwrap_or("")
 }
 
 #[panic_handler]

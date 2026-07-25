@@ -16,17 +16,49 @@ pub enum Cap {
     /// Transcribe local audio/video and index the text. Off by default: a
     /// recording can contain anyone, not just the user.
     AudioTranscribe = 4,
+    /// Exchange data with external portals (teddy, markets). OFF by
+    /// default: every other capability is local, this one leaves the machine.
+    PortalSync = 5,
 }
 
 impl Cap {
-    pub const ALL: [Cap; 5] = [
+    /// Screen order. `setup::CAPS[i]` labels `ALL[i]`, so these must agree —
+    /// a mismatch shows the right switch against the wrong name.
+    pub const ALL: [Cap; 6] = [
         Cap::EmailSearch,
         Cap::SearchQuery,
-        Cap::SkillsSave,
         Cap::WorkspaceIndex,
         Cap::AudioTranscribe,
+        Cap::SkillsSave,
+        Cap::PortalSync,
     ];
 
+    /// What this is called on screen. Plain language: someone deciding what
+    /// the machine may touch is not reading an API.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Cap::EmailSearch => "Email",
+            Cap::SearchQuery => "Built-in docs",
+            Cap::WorkspaceIndex => "Your files",
+            Cap::AudioTranscribe => "Recordings",
+            Cap::SkillsSave => "Save skills",
+            Cap::PortalSync => "Online services",
+        }
+    }
+
+    /// The consequence of granting it, in one clause.
+    pub const fn detail(self) -> &'static str {
+        match self {
+            Cap::EmailSearch => "Read your inbox",
+            Cap::SearchQuery => "Search what ships with the OS",
+            Cap::WorkspaceIndex => "Search documents on this machine",
+            Cap::AudioTranscribe => "Transcribe audio you point it at",
+            Cap::SkillsSave => "Write new playbooks to disk",
+            Cap::PortalSync => "Sends queries off this machine",
+        }
+    }
+
+    /// The wire/tool identifier. Not shown to the user.
     pub const fn name(self) -> &'static str {
         match self {
             Cap::EmailSearch => "email.search",
@@ -34,6 +66,7 @@ impl Cap {
             Cap::SkillsSave => "skills.save",
             Cap::WorkspaceIndex => "workspace.index",
             Cap::AudioTranscribe => "audio.transcribe",
+            Cap::PortalSync => "portal.sync",
         }
     }
 
@@ -60,11 +93,19 @@ impl Caps {
         Self { bits: 0 }
     }
 
+    /// Build a grant set from switch states, in `Cap::ALL` (screen) order.
+    ///
+    /// The bit is taken from the capability itself, NOT from the flag's
+    /// position. Those were the same until `ALL` was reordered to match the
+    /// setup screen, after which position `i` addressed whatever enum variant
+    /// happened to have discriminant `i` — so enabling "Your files" granted
+    /// "Save skills". A consent screen that grants something other than what
+    /// it names is the worst failure this model can have.
     pub fn from_bools(flags: &[bool]) -> Self {
         let mut bits = 0u8;
         for (i, on) in flags.iter().enumerate().take(Cap::ALL.len()) {
             if *on {
-                bits |= 1 << i;
+                bits |= 1 << Cap::ALL[i].index();
             }
         }
         Self { bits }
@@ -83,20 +124,40 @@ impl Caps {
     }
 
     /// Short ASCII status for the home footer (fits a 1024px row).
-    pub fn footer_status(self) -> &'static str {
-        let e = self.allows(Cap::EmailSearch);
-        let s = self.allows(Cap::SearchQuery);
-        let w = self.allows(Cap::SkillsSave);
-        match (e, s, w) {
-            (true, true, false) => "caps: email.search + search.query",
-            (true, true, true) => "caps: email + search + skills.save",
-            (true, false, false) => "caps: email.search only",
-            (false, true, false) => "caps: search.query only",
-            (false, false, false) => "caps: none granted",
-            (true, false, true) => "caps: email.search + skills.save",
-            (false, true, true) => "caps: search.query + skills.save",
-            (false, false, true) => "caps: skills.save only",
+    /// Describe the grant set in plain language, into `buf`. Returns bytes
+    /// written.
+    ///
+    /// The previous version returned one of eight fixed strings covering only
+    /// three capabilities, so enabling Your files, Recordings or Online
+    /// services changed nothing on screen — the home footer quietly disagreed
+    /// with the switches the user had just set.
+    pub fn describe(self, buf: &mut [u8]) -> usize {
+        let mut n = 0;
+        let mut push = |s: &str, n: &mut usize| {
+            for &b in s.as_bytes() {
+                if *n < buf.len() {
+                    buf[*n] = b;
+                    *n += 1;
+                }
+            }
+        };
+        if self.count() == 0 {
+            push("Nothing enabled", &mut n);
+            return n;
         }
+        push("On: ", &mut n);
+        let mut first = true;
+        for cap in Cap::ALL {
+            if !self.allows(cap) {
+                continue;
+            }
+            if !first {
+                push(", ", &mut n);
+            }
+            first = false;
+            push(cap.label(), &mut n);
+        }
+        n
     }
 
     /// Count of granted caps.
@@ -119,20 +180,24 @@ mod tests {
 
     #[test]
     fn from_bools_round_trips() {
+        // Flags are in Cap::ALL (screen) order, so index 2 is whatever the
+        // third row shows — not whichever variant has discriminant 2.
         let c = Caps::from_bools(&[false, true, true]);
-        assert!(!c.allows(Cap::EmailSearch));
-        assert!(c.allows(Cap::SearchQuery));
-        assert!(c.allows(Cap::SkillsSave));
+        assert!(!c.allows(Cap::ALL[0]));
+        assert!(c.allows(Cap::ALL[1]));
+        assert!(c.allows(Cap::ALL[2]));
         assert_eq!(c.count(), 2);
     }
 
     #[test]
     fn footer_is_ascii_and_short() {
-        for bits in 0u8..8 {
+        for bits in 0u8..64 {
             let c = Caps { bits };
-            let s = c.footer_status();
+            let mut buf = [0u8; 96];
+            let n = c.describe(&mut buf);
+            let s = core::str::from_utf8(&buf[..n]).unwrap();
             assert!(s.bytes().all(|b| (0x20..=0x7E).contains(&b)));
-            assert!(s.len() < 48, "footer too long: {s}");
+            assert!(s.len() < 96, "footer too long: {s}");
         }
     }
 
@@ -141,5 +206,48 @@ mod tests {
         assert_eq!(Cap::EmailSearch.name(), "email.search");
         assert_eq!(Cap::SearchQuery.name(), "search.query");
         assert_eq!(Cap::SkillsSave.name(), "skills.save");
+    }
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::*;
+
+    #[test]
+    fn a_switch_grants_the_capability_it_names() {
+        // Regression: Cap::ALL is in screen order while index() is the enum
+        // discriminant. Mapping flag position straight to bit position meant a
+        // reorder silently granted the wrong capability.
+        for (i, cap) in Cap::ALL.iter().enumerate() {
+            let mut flags = [false; Cap::ALL.len()];
+            flags[i] = true;
+            let g = Caps::from_bools(&flags);
+            assert!(g.allows(*cap), "flag {i} did not grant {}", cap.name());
+            for other in Cap::ALL.iter().filter(|c| c.index() != cap.index()) {
+                assert!(
+                    !g.allows(*other),
+                    "flag {i} ({}) also granted {}",
+                    cap.name(),
+                    other.name()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn every_capability_has_a_distinct_bit() {
+        let mut seen = 0u8;
+        for cap in Cap::ALL {
+            let bit = 1u8 << cap.index();
+            assert_eq!(seen & bit, 0, "{} shares a bit with another cap", cap.name());
+            seen |= bit;
+        }
+    }
+
+    #[test]
+    fn no_capability_exceeds_the_bitset() {
+        for cap in Cap::ALL {
+            assert!(cap.index() < 8, "{} does not fit in u8", cap.name());
+        }
     }
 }

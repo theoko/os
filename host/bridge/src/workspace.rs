@@ -345,6 +345,9 @@ mod tests {
 
     #[test]
     fn default_roots_exclude_personal_folders() {
+        // Serialised: these tests mutate process env, which cargo's
+        // parallel runner would otherwise leak between them.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // "Search my machine" must not silently mean "index my paperwork".
         unsafe { env::remove_var("OS_WORKSPACE_ROOTS") };
         let r = roots();
@@ -357,6 +360,9 @@ mod tests {
 
     #[test]
     fn roots_are_configurable() {
+        // Serialised: these tests mutate process env, which cargo's
+        // parallel runner would otherwise leak between them.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_WORKSPACE_ROOTS", "/tmp/a:/tmp/b") };
         assert_eq!(roots(), vec![PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")]);
         unsafe { env::remove_var("OS_WORKSPACE_ROOTS") };
@@ -445,7 +451,7 @@ mod ascii_tests {
     fn non_ascii_titles_are_stripped_for_the_guest() {
         // Real document titles contain emoji; the kernel atlas cannot render
         // them and would show '?' for each byte.
-        let out = crate::search::query_with("greek events engine", 3, None, "tfidf", false);
+        let out = crate::search::query_scoped("greek events engine", 3, None, "tfidf", false, true, false, false);
         for row in &out {
             assert!(row.is_ascii(), "non-ASCII reached the wire: {row}");
         }
@@ -470,8 +476,8 @@ mod consent_tests {
         unsafe { env::set_var("OS_WORKSPACE_INDEX", &ix_path) };
         build(&[dir.clone()]).save().expect("save index");
 
-        let without = crate::search::query_scoped("zygote notary", 5, None, "tfidf", false, false, false);
-        let with = crate::search::query_scoped("zygote notary", 5, None, "tfidf", false, true, false);
+        let without = crate::search::query_scoped("zygote notary", 5, None, "tfidf", false, false, false, false);
+        let with = crate::search::query_scoped("zygote notary", 5, None, "tfidf", false, true, false, false);
 
         assert!(
             !without.iter().any(|r| r.contains("Zygote Notary")),

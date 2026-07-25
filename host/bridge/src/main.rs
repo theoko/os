@@ -66,6 +66,19 @@ fn main() {
         user.display()
     );
 
+    // Build the corpus index before serving. Lazily, whichever query arrives
+    // first pays ~10s while every other one is instant — this was here before
+    // the merge and the regression is invisible until you time a cold search.
+    if tsearch::is_available() {
+        let t0 = std::time::Instant::now();
+        let n = tsearch::docs().len();
+        let terms = tsearch::index().term_count();
+        eprintln!(
+            "tsearch: indexed {n} docs / {terms} terms in {:.1}s",
+            t0.elapsed().as_secs_f64()
+        );
+    }
+
     if let Some(target) = connect {
         connect_loop(&target, backends);
     } else if let Some(path) = addr.strip_prefix("unix:") {
@@ -395,6 +408,9 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                 Err(e) => vec![format!("ERR audio.transcribe {e}")],
             }
         }
+        "tsearch.sync" if !matches!(arg_val(args, "portal"), Some("1")) => {
+            vec!["ERR tsearch.sync needs_portal_cap".into()]
+        }
         "tsearch.sync" => match tsearch::sync() {
             Ok((n, at)) => vec![
                 format!("OK tsearch.sync n={n} crawled={at}"),
@@ -469,10 +485,11 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             // Recordings have their own grant, so they get their own scope:
             // enabling workspace.index must not surface transcripts.
             let with_audio = matches!(arg_val(args, "audio"), Some("1"));
+            let with_portal = matches!(arg_val(args, "portal"), Some("1"));
             if q.is_empty() {
                 vec!["ERR search.query missing_q".into()]
             } else {
-                search::query_scoped(q, k, cat, &backends.search, with_email, with_files, with_audio)
+                search::query_scoped(q, k, cat, &backends.search, with_email, with_files, with_audio, with_portal)
             }
         }
         _ => vec![format!("ERR {tool} not_found")],
@@ -549,7 +566,7 @@ fn read_doc(url: &str, max: usize, args: &[(String, String)]) -> Result<Vec<Stri
             .map(|t| t.text)
             .ok_or("no such transcript")?
     } else {
-        // Corpus and teddysearch documents carry their body in the index.
+        // Corpus and teddy documents carry their body in the index.
         return search::body_for(url, max).ok_or_else(|| "no readable body".into());
     };
 
