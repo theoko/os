@@ -285,6 +285,9 @@ mod tests {
 
     #[test]
     fn store_lives_outside_the_repo() {
+        // Serialised: these tests mutate process env, which cargo's
+        // parallel runner would otherwise leak between them.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::remove_var("OS_TRANSCRIPT_STORE") };
         let p = store_path().to_string_lossy().to_string();
         assert!(!p.contains("/os/search"), "transcripts must not land in the repo: {p}");
@@ -292,6 +295,9 @@ mod tests {
 
     #[test]
     fn model_resolves_to_an_existing_cache_entry_or_is_overridable() {
+        // Serialised: these tests mutate process env, which cargo's
+        // parallel runner would otherwise leak between them.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_WHISPER_MODEL", "/tmp/custom.bin") };
         assert_eq!(model_path(), PathBuf::from("/tmp/custom.bin"));
         unsafe { env::remove_var("OS_WHISPER_MODEL") };

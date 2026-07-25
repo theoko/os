@@ -345,6 +345,9 @@ mod tests {
 
     #[test]
     fn default_roots_exclude_personal_folders() {
+        // Serialised: these tests mutate process env, which cargo's
+        // parallel runner would otherwise leak between them.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         // "Search my machine" must not silently mean "index my paperwork".
         unsafe { env::remove_var("OS_WORKSPACE_ROOTS") };
         let r = roots();
@@ -357,6 +360,9 @@ mod tests {
 
     #[test]
     fn roots_are_configurable() {
+        // Serialised: these tests mutate process env, which cargo's
+        // parallel runner would otherwise leak between them.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_WORKSPACE_ROOTS", "/tmp/a:/tmp/b") };
         assert_eq!(roots(), vec![PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")]);
         unsafe { env::remove_var("OS_WORKSPACE_ROOTS") };

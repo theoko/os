@@ -282,6 +282,9 @@ mod tests {
 
     #[test]
     fn snapshot_lives_outside_the_repo() {
+        // Serialised: these tests mutate process env, which cargo's
+        // parallel runner would otherwise leak between them.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::remove_var("OS_PORTAL_SNAPSHOT") };
         let p = snapshot_path().to_string_lossy().to_string();
         assert!(!p.contains("/os/search"), "snapshot must not land in the repo: {p}");
