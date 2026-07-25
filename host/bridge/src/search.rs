@@ -184,6 +184,10 @@ fn floor_char_boundary(s: &str, mut i: usize) -> usize {
 
 fn sanitize(s: &str) -> String {
     s.chars()
+        // The guest font atlas covers ASCII 0x20..=0x7E only; anything else
+        // renders as '?'. Emoji in document titles are common, so drop
+        // non-ASCII rather than shipping rows of question marks.
+        .filter(|c| c.is_ascii())
         .map(|c| match c {
             '\n' | '\r' | '|' => ' ',
             c if c.is_control() => ' ',

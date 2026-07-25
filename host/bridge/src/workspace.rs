@@ -18,6 +18,7 @@ use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Entry {
@@ -40,6 +41,12 @@ const SKIP_DIRS: &[&str] = &[
     ".git", "node_modules", ".venv", "venv", "target", "dist", "build",
     "__pycache__", ".pytest_cache", ".ruff_cache", ".hypothesis", ".next",
     ".cargo", "Pods", ".terraform", "site-packages", ".mypy_cache",
+    // Third-party source: someone else's README is never the answer to a
+    // question about *your* work.
+    "vendor", "third_party", "3rdparty", "deps", "Carthage",
+    // Machine backups and inventories. A mac-backup tree is thousands of
+    // plists that swamp real documents on any query mentioning a tool name.
+    "mac-backup", "inventory", "backups", "backup", "Library",
 ];
 
 /// Files that may carry credentials. Skipped on name alone — we never read
@@ -166,6 +173,32 @@ pub fn build(roots: &[PathBuf]) -> Index {
     Index { entries }
 }
 
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Relevance prior for a document, 0..1.
+///
+/// Three signals, all cheap: shallow paths are entry points, READMEs are
+/// summaries, and something edited last week matters more than something
+/// untouched for two years. Recency is the one that stops an archived tree
+/// from outranking work in progress.
+pub fn rank(rel: &str, name: &str, mtime: u64, now: u64) -> f64 {
+    let depth = rel.matches('/').count() as f64;
+    let mut pr = 1.0 / (1.0 + depth);
+    if name.to_ascii_uppercase().starts_with("README") {
+        pr = (pr + 0.5).min(1.0);
+    }
+    // Half-life of roughly a year: 1.0 today, ~0.5 at 12 months, floor 0.25 so
+    // old-but-relevant documents never drop out entirely.
+    let age_days = now.saturating_sub(mtime) as f64 / 86_400.0;
+    let recency = 0.25 + 0.75 / (1.0 + age_days / 365.0);
+    (pr * recency).clamp(0.0, 1.0)
+}
+
 fn walk(root: &Path, dir: &Path, out: &mut Vec<Entry>, depth: usize) {
     if depth > 8 || out.len() >= MAX_ENTRIES {
         return;
@@ -192,12 +225,13 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<Entry>, depth: usize) {
         }
         let Ok(body) = fs::read_to_string(&path) else { continue };
         let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().to_string();
-        // Shallow files and READMEs are usually the entry points people want.
-        let d = rel.matches('/').count() as f64;
-        let mut pr = 1.0 / (1.0 + d);
-        if name.to_ascii_uppercase().starts_with("README") {
-            pr = (pr + 0.5).min(1.0);
-        }
+        let mtime = fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let pr = rank(&rel, name, mtime, now_secs());
         out.push(Entry {
             title: title_of(&body, &path),
             path: rel,
@@ -337,5 +371,83 @@ mod tests {
     fn missing_root_is_not_an_error() {
         let ix = build(&[PathBuf::from("/nonexistent/os-ws")]);
         assert!(ix.entries.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod rank_tests {
+    use super::*;
+
+    const DAY: u64 = 86_400;
+    const NOW: u64 = 1_800_000_000;
+
+    #[test]
+    fn recent_beats_stale_at_equal_depth() {
+        let fresh = rank("a/b.md", "b.md", NOW - 7 * DAY, NOW);
+        let stale = rank("a/b.md", "b.md", NOW - 1200 * DAY, NOW);
+        assert!(fresh > stale, "recency ignored: {fresh} vs {stale}");
+    }
+
+    #[test]
+    fn shallow_beats_deep_at_equal_age() {
+        let shallow = rank("top.md", "top.md", NOW, NOW);
+        let deep = rank("a/b/c/d.md", "d.md", NOW, NOW);
+        assert!(shallow > deep);
+    }
+
+    #[test]
+    fn readme_gets_a_boost() {
+        let readme = rank("p/README.md", "README.md", NOW, NOW);
+        let other = rank("p/notes.md", "notes.md", NOW, NOW);
+        assert!(readme > other);
+    }
+
+    #[test]
+    fn old_documents_keep_a_floor() {
+        // A decade-old file should rank low, never zero — it may still be the
+        // only match for a query.
+        let ancient = rank("a.md", "a.md", 0, NOW);
+        assert!(ancient > 0.0, "old documents fell out of the index entirely");
+    }
+
+    #[test]
+    fn rank_stays_in_range() {
+        for (rel, name, mt) in [
+            ("README.md", "README.md", NOW),
+            ("a/b/c/d/e/f.md", "f.md", 0),
+            ("x.md", "x.md", NOW + 10 * DAY), // clock skew: mtime in the future
+        ] {
+            let r = rank(rel, name, mt, NOW);
+            assert!((0.0..=1.0).contains(&r), "{rel} scored {r}");
+        }
+    }
+
+    #[test]
+    fn future_mtime_does_not_explode() {
+        // saturating_sub keeps a skewed clock from producing a negative age.
+        let r = rank("a.md", "a.md", NOW + 999 * DAY, NOW);
+        assert!(r.is_finite() && r <= 1.0);
+    }
+
+    #[test]
+    fn vendor_and_backup_trees_are_skipped() {
+        for d in ["vendor", "mac-backup", "inventory", "third_party", "Library"] {
+            assert!(skipped_dir(d), "{d} should be skipped");
+        }
+        assert!(!skipped_dir("projects"));
+        assert!(!skipped_dir("docs"));
+    }
+}
+
+#[cfg(test)]
+mod ascii_tests {
+    #[test]
+    fn non_ascii_titles_are_stripped_for_the_guest() {
+        // Real document titles contain emoji; the kernel atlas cannot render
+        // them and would show '?' for each byte.
+        let out = crate::search::query_with("greek events engine", 3, None, "tfidf", false);
+        for row in &out {
+            assert!(row.is_ascii(), "non-ASCII reached the wire: {row}");
+        }
     }
 }
