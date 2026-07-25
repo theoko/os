@@ -6,7 +6,22 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 ISO="${IMAGE_NAME:-os}.iso"
-ADDR="${OS_MCP_BRIDGE_ADDR:-127.0.0.1:7420}"
+# A fixed default port lets another local bridge satisfy the probe while this
+# script's bridge failed to bind. Pick an isolated loopback port unless the
+# caller deliberately supplied one.
+ADDR="${OS_MCP_BRIDGE_ADDR:-}"
+if [[ -z "$ADDR" ]]; then
+  PORT="$(python3 - <<'PY'
+import socket
+
+s = socket.socket()
+s.bind(("127.0.0.1", 0))
+print(s.getsockname()[1])
+s.close()
+PY
+)"
+  ADDR="127.0.0.1:${PORT}"
+fi
 export PATH="/opt/homebrew/opt/rustup/bin:${HOME}/.cargo/bin:/opt/homebrew/bin:${PATH}"
 
 if [[ ! -f "$ISO" ]]; then
@@ -21,13 +36,16 @@ fi
 
 SERIAL_OUT="$(mktemp "${TMPDIR:-/tmp}/os-bridge-serial.XXXXXX")"
 BRIDGE_LOG="$(mktemp "${TMPDIR:-/tmp}/os-bridge-log.XXXXXX")"
+SKILLS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/os-bridge-skills.XXXXXX")"
 cleanup() {
   if [[ -n "${BRIDGE_PID:-}" ]]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi
+  rm -rf "$SKILLS_DIR"
   rm -f "$SERIAL_OUT" "$BRIDGE_LOG"
 }
 trap cleanup EXIT
 
-OS_MCP_BRIDGE_ADDR="$ADDR" OS_MCP_EMAIL_BACKEND=mock "$BRIDGE_BIN" >"$BRIDGE_LOG" 2>&1 &
+OS_MCP_BRIDGE_ADDR="$ADDR" OS_MCP_EMAIL_BACKEND=mock OS_SKILLS_USER="$SKILLS_DIR" \
+  "$BRIDGE_BIN" >"$BRIDGE_LOG" 2>&1 &
 BRIDGE_PID=$!
 
 # Wait until the bridge is actually accepting connections (a fixed sleep races
