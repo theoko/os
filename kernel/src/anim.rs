@@ -7,7 +7,7 @@
 //! Everything is fixed point. The kernel never enables the FPU, so a cubic
 //! curve is evaluated in Q16 integers rather than floats.
 
-use crate::serial::rdtsc;
+use crate::serial::{rdtsc, ASSUMED_HZ};
 
 /// Fixed-point one.
 pub const ONE: i32 = 1 << 16;
@@ -29,12 +29,6 @@ pub fn ease_out_cubic(t: i32) -> i32 {
 pub fn lerp(a: i32, b: i32, t: i32) -> i32 {
     a + (((b - a) as i64 * t.clamp(0, ONE) as i64) / ONE as i64) as i32
 }
-
-/// Assumed cycle rate for frame pacing.
-///
-/// TCG's clock is not the host's, so this paces frames approximately. It only
-/// has to stop an animation running faster than it can be seen.
-const ASSUMED_HZ: u64 = 1_000_000_000;
 
 /// Busy-wait until `us` microseconds after `since`, returning the new mark.
 ///

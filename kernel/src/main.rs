@@ -3,7 +3,7 @@
 
 use core::hint::black_box;
 
-use kernel::{anim, beep, caps, fb, hello_message, keyboard, mcp, mouse, screens, searchui, serial, setup, skills, ui, usb_tablet};
+use kernel::{anim, beep, caps, fb, keyboard, mcp, mouse, screens, searchui, serial, setup, skills, ui, usb_tablet, HELLO_MESSAGE};
 use limine::BaseRevision;
 use limine::request::{
     FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
@@ -54,7 +54,7 @@ unsafe extern "C" fn kmain() -> ! {
 
     let serial_port = serial::Serial::com1();
     serial_port.init();
-    serial_port.write_str(hello_message());
+    serial_port.write_str(HELLO_MESSAGE);
     serial_port.write_str(serial::LINE_ENDING);
 
     // Liveness only until the user consents. Reading the inbox here would

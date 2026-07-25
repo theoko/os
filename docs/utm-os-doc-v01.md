@@ -37,10 +37,10 @@ The VM is created via UTM’s AppleScript API:
 - memory: 1024 MiB
 - removable drive: repo `os.iso`
 
-## Seeing the hello banner
+## What you should see
 
-**Display (easiest):** after `make utm-run`, the UTM window should show
-`os: hello from kernel` on a dark background (Limine framebuffer text).
+**Display:** after `make utm-run`, the UTM window shows the white setup
+assistant, then the home launcher (search field + tiles).
 
 **Serial:** UTM does **not** have View → Serial. Default serial is a PTTY. Use:
 
@@ -49,8 +49,7 @@ utmctl attach os   # prints PTTY: /dev/ttysN  (attach itself is not wired yet)
 cat /dev/ttysN     # then read the guest COM1 log
 ```
 
-That shows the guest serial. (Start the VM first; if you
-attach after the Phase 1 halt you may miss the line — the framebuffer stays.)
+Start the VM first so you catch `os: hello from kernel` and later UI lines.
 
 Optional GUI serial: VM settings (✏️) → Devices → New → Serial → Mode:
 **Built-in Terminal**.

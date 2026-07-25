@@ -179,6 +179,12 @@ pub fn halt() -> ! {
     }
 }
 
+/// Assumed cycle rate for busy-wait pacing (anim frames, beep notes).
+///
+/// TCG's clock is not the host's; this only has to stop waits from spinning
+/// faster than they can be heard or seen.
+pub const ASSUMED_HZ: u64 = 1_000_000_000;
+
 /// Read the cycle counter. Used to measure frame cost honestly rather than
 /// asserting a frame rate.
 #[cfg(target_arch = "x86_64")]

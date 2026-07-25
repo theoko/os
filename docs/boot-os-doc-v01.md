@@ -1,7 +1,7 @@
 ---
 project: os
 type: boot
-purpose: Limine + QEMU boot notes for Phase 1
+purpose: Limine + QEMU boot notes
 status: active
 ---
 
@@ -27,7 +27,7 @@ Placed in `.requests` (see `kernel/linker-x86_64.ld`):
 
 - `BaseRevision`
 - `StackSizeRequest` (128 KiB)
-- `HhdmRequest` / `MemoryMapRequest` (for Phase 2; requested early so the protocol path is live)
+- `HhdmRequest` / `MemoryMapRequest` (USB tablet DMA pages use the memory map)
 
 ## Serial + smoke exit
 

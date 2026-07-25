@@ -297,17 +297,7 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             let name = arg_val(args, "name").unwrap_or("");
             skills::get_response(name)
         }
-        "skills.save" => {
-            // Reached only via dispatch (tests); the socket path handles
-            // skills.save in handle_client so it can read a LINE…END body.
-            let name = arg_val(args, "name").unwrap_or("");
-            let desc = arg_val(args, "desc").unwrap_or("User-saved skill.");
-            let body = format!("---\nname: {name}\ndescription: {desc}\n---\n\n# {name}\n\n(edit me)\n");
-            match skills::save_skill(name, &body) {
-                Ok(path) => vec![format!("OK skills.save path={}", path.display())],
-                Err(e) => vec![format!("ERR skills.save {e}")],
-            }
-        }
+        // skills.save is handled in handle_client (LINE…END body on the socket).
         "audio.transcribe" => {
             // Reads media and puts the words in a searchable index, so it
             // needs the grant just like workspace.index does.

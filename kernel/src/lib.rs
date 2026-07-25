@@ -21,13 +21,8 @@ pub mod skills;
 pub mod ui;
 pub mod usb_tablet;
 
-/// Canonical early-boot banner printed to COM1 / framebuffer.
+/// Canonical early-boot banner printed to COM1.
 pub const HELLO_MESSAGE: &str = "os: hello from kernel";
-
-/// Returns the hello banner (kept as a function so host tests can call it).
-pub fn hello_message() -> &'static str {
-    HELLO_MESSAGE
-}
 
 #[cfg(test)]
 mod tests {
@@ -35,7 +30,7 @@ mod tests {
 
     #[test]
     fn hello_message_is_stable() {
-        assert_eq!(hello_message(), "os: hello from kernel");
-        assert!(hello_message().starts_with("os:"));
+        assert_eq!(HELLO_MESSAGE, "os: hello from kernel");
+        assert!(HELLO_MESSAGE.starts_with("os:"));
     }
 }

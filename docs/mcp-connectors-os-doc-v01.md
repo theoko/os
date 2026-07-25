@@ -9,22 +9,21 @@ status: active
 
 ## Principle
 
-Connectors (**email**, calendar, drive, …) are **not** linked into the kernel.
+Connectors (**email**, search, skills, …) are **not** linked into the kernel.
 They are MCP-shaped tools behind **capabilities**. Until the guest has a network
 stack, the guest talks to a **host bridge** on the Mac over COM2 (QEMU TCP serial).
 
 ```
-UI / agent  --(cap: email.search)-->  guest MCP client (COM2)
+UI / agent  --(cap: email.search)-->  guest MCP client (COM2 TcpServer :7420)
                                             |
-                                     QEMU -serial tcp:7420
+                              host bridge dials tcp:127.0.0.1:7420
                                             |
-                                      host/bridge
-                                            |
-                              gog gmail / mock / future MCP servers
+                              gog gmail / mock / skills / search indexes
 ```
 
-Secrets stay on the host (`gog` keyring under Application Support). Nothing
-secret enters `os/` or the ISO.
+One topology everywhere: the guest listens; the bridge dials and retries
+(`make run-bridged` / `utm-bridged`). Secrets stay on the host (`gog` keyring).
+Nothing secret enters `os/` or the ISO.
 
 ## Wire protocol (line-oriented, ASCII)
 
@@ -35,8 +34,11 @@ Guest → host:
 | `PING` | Liveness |
 | `LIST` | Tool names |
 | `CALL email.search q=<gmail query> max=<n>` | Search mail |
-| `CALL email.send to=<addr> subj=<s> body=<b>` | Send (cap-gated; bridge may require confirm) |
-| `CALL search.query q=<keywords> k=<n> cat=<opt>` | Knowledge search (curated corpus) |
+| `CALL email.send …` | Always `ERR … disabled_until_cap_confirm` (policy stub) |
+| `CALL search.query q=<keywords> k=<n> …` | Knowledge search (+ optional email/files/audio scopes) |
+| `CALL skills.list` / `skills.get` / `skills.save` | Skill playbooks |
+| `CALL doc.read url=…` | Open a result body |
+| `CALL workspace.index` / `audio.transcribe` / `*.forget` | Host indexes + revoke |
 
 Host → guest:
 
@@ -45,7 +47,7 @@ Host → guest:
 | `OK pong` | Alive |
 | `OK tools=a,b,c` | Tool list |
 | `OK email.search n=<N>` / `ROW from=…\|subj=…` / `END` | Mail hits |
-| `OK search.query n=<N> backend=…` / `ROW title=…\|…` / `END` | Knowledge hits |
+| `OK search.query n=<N> …` / `ROW title=…\|…` / `END` | Knowledge hits |
 | `ERR <tool> <reason>` | Failure |
 
 Fields use `key=value`; use `|` between fields. Values are single-line; spaces allowed after `=`.

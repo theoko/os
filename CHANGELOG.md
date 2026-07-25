@@ -10,8 +10,9 @@ Dropped unused host portals (`market.health`, `market.fear_greed`) and the
 Python `tsearch_mcp.py` search shell-out. Guest never called either path;
 native teddy indexing covers live corpus search. Also dropped the mock search
 backend / `OS_MCP_SEARCH_BACKEND`, folded five bridge `home()` copies into
-`paths::home`, shared the bridge tokenizer, and folded setup cap names into
-`Cap::name()` (blurbs-only table).
+`paths::home`, shared the bridge tokenizer, folded setup cap names into
+`Cap::name()` (blurbs-only table), and removed the unused `skills.save`
+`call_tool` arm (socket path owns saves).
 
 ## 0.9.1 — 2026-07-25
 

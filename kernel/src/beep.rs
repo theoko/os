@@ -8,7 +8,7 @@
 //! else's copyright baked into a build artifact in a public repo — see
 //! `docs/` for pointing this at your own licensed audio instead.
 
-use crate::serial::rdtsc;
+use crate::serial::{rdtsc, ASSUMED_HZ};
 
 const PIT_CMD: u16 = 0x43;
 const PIT_CH2: u16 = 0x42;
@@ -92,13 +92,6 @@ fn tone_off() {
         port::outb(SPEAKER, v & !0x03);
     }
 }
-
-/// Assumed cycle rate when converting milliseconds to a spin count.
-///
-/// There is no calibrated timer here and TCG's clock is not the host's, so
-/// note lengths are approximate by design — close enough for a jingle, and
-/// never used for anything that needs real time.
-const ASSUMED_HZ: u64 = 1_000_000_000;
 
 fn sleep_ms(ms: u32) {
     let target = rdtsc().wrapping_add(ASSUMED_HZ / 1000 * ms as u64);
