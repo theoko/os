@@ -13,11 +13,11 @@
 //!   it is parsed once per process and held behind a `OnceLock`.
 
 use serde::Deserialize;
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, RwLock};
 
@@ -58,7 +58,9 @@ pub fn cache_path() -> PathBuf {
 }
 
 fn home() -> PathBuf {
-    env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Keychain service the portal credential is stored under.
@@ -81,7 +83,14 @@ fn credential() -> Option<(String, String)> {
     }
     let user = env::var("OS_PORTAL_USER").ok().filter(|u| !u.is_empty())?;
     let out = Command::new("security")
-        .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", &user, "-w"])
+        .args([
+            "find-generic-password",
+            "-s",
+            KEYCHAIN_SERVICE,
+            "-a",
+            &user,
+            "-w",
+        ])
         .output()
         .ok()?;
     if !out.status.success() {
@@ -123,14 +132,22 @@ pub fn sync() -> Result<(usize, String), String> {
             cfg.push_str(&format!("user = \"{u}:{pw}\"\n"));
         }
         let stdin = child.stdin.as_mut().ok_or("curl stdin")?;
-        stdin.write_all(cfg.as_bytes()).map_err(|e| format!("curl stdin: {e}"))?;
+        stdin
+            .write_all(cfg.as_bytes())
+            .map_err(|e| format!("curl stdin: {e}"))?;
     }
 
     let out = child.wait_with_output().map_err(|e| format!("curl: {e}"))?;
     if !out.status.success() {
         let _ = fs::remove_file(&tmp);
         let err = String::from_utf8_lossy(&out.stderr);
-        let brief: String = err.lines().last().unwrap_or("fetch failed").chars().take(120).collect();
+        let brief: String = err
+            .lines()
+            .last()
+            .unwrap_or("fetch failed")
+            .chars()
+            .take(120)
+            .collect();
         // 401 is the one failure with an obvious remedy, so name it.
         if brief.contains("401") {
             return Err(format!(
@@ -174,7 +191,19 @@ pub fn docs() -> Arc<Vec<RawDoc>> {
             return Arc::clone(d);
         }
     }
-    let loaded = match fs::read_to_string(cache_path()) {
+    let arc = Arc::new(load_corpus());
+    if let Ok(mut guard) = CACHE.write() {
+        *guard = Some(Arc::clone(&arc));
+    }
+    arc
+}
+
+/// Read the cached corpus from disk without publishing it.
+///
+/// Split out so a background refresh can build a replacement while readers
+/// keep serving the current one.
+fn load_corpus() -> Vec<RawDoc> {
+    match fs::read_to_string(cache_path()) {
         Ok(raw) => match serde_json::from_str::<CorpusFile>(&raw) {
             Ok(c) => c.docs,
             Err(e) => {
@@ -183,12 +212,20 @@ pub fn docs() -> Arc<Vec<RawDoc>> {
             }
         },
         Err(_) => Vec::new(),
-    };
-    let arc = Arc::new(loaded);
-    if let Ok(mut guard) = CACHE.write() {
-        *guard = Some(Arc::clone(&arc));
     }
-    arc
+}
+
+/// Publish a corpus and its index together.
+///
+/// Together matters: swapping the corpus first leaves a window where the index
+/// describes documents that are no longer there.
+fn publish(docs: Arc<Vec<RawDoc>>, idx: Arc<Index>) {
+    if let Ok(mut g) = CACHE.write() {
+        *g = Some(docs);
+    }
+    if let Ok(mut g) = INDEX.write() {
+        *g = Some(idx);
+    }
 }
 
 /// Drop the parsed corpus and its index so the next read picks up new content.
@@ -216,17 +253,24 @@ mod tests {
     fn default_url_is_the_published_corpus() {
         // Serialised: these tests mutate process env, which cargo's
         // parallel runner would otherwise leak between them.
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { env::remove_var("OS_TSEARCH_URL") };
         assert_eq!(url(), DEFAULT_URL);
-        assert!(url().starts_with("https://"), "corpus must be fetched over TLS");
+        assert!(
+            url().starts_with("https://"),
+            "corpus must be fetched over TLS"
+        );
     }
 
     #[test]
     fn url_is_overridable() {
         // Serialised: these tests mutate process env, which cargo's
         // parallel runner would otherwise leak between them.
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_TSEARCH_URL", "https://example.test/c.json") };
         assert_eq!(url(), "https://example.test/c.json");
         unsafe { env::remove_var("OS_TSEARCH_URL") };
@@ -236,10 +280,15 @@ mod tests {
     fn cache_lives_outside_the_repo() {
         // Serialised: these tests mutate process env, which cargo's
         // parallel runner would otherwise leak between them.
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
         let p = cache_path().to_string_lossy().to_string();
-        assert!(!p.contains("/os/search"), "cache must not land in the repo: {p}");
+        assert!(
+            !p.contains("/os/search"),
+            "cache must not land in the repo: {p}"
+        );
         assert!(p.ends_with(".json"));
     }
 
@@ -247,7 +296,9 @@ mod tests {
     fn missing_cache_yields_no_documents_not_a_panic() {
         // Serialised: these tests mutate process env, which cargo's
         // parallel runner would otherwise leak between them.
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_TSEARCH_CACHE", "/nonexistent/os-teddy/none.json") };
         assert!(!is_available());
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
@@ -269,7 +320,9 @@ mod tests {
     fn a_truncated_corpus_is_rejected_not_silently_empty() {
         // Serialised: these tests mutate process env, which cargo's
         // parallel runner would otherwise leak between them.
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let bad = r#"{"crawled_at":"now","docs":[{"t":"A","u":"x"#;
         assert!(serde_json::from_str::<CorpusFile>(bad).is_err());
     }
@@ -311,8 +364,17 @@ pub fn index() -> Arc<Index> {
             return Arc::clone(i);
         }
     }
-    let built = {
-        let docs = docs();
+    let built = build_index(&docs());
+    let arc = Arc::new(built);
+    if let Ok(mut guard) = INDEX.write() {
+        *guard = Some(Arc::clone(&arc));
+    }
+    arc
+}
+
+/// Build a tf-idf index over `docs` without touching the published caches.
+fn build_index(docs: &[RawDoc]) -> Index {
+    {
         let n = docs.len() as f64;
         // term -> doc -> tf
         let mut acc: HashMap<String, HashMap<usize, f64>> = HashMap::new();
@@ -340,15 +402,15 @@ pub fn index() -> Arc<Index> {
             for id in ids {
                 postings.push((id, per_doc[&id] / lens[id] as f64));
             }
-            terms.push(Term { word: w, idf, start, len: per_doc.len() });
+            terms.push(Term {
+                word: w,
+                idf,
+                start,
+                len: per_doc.len(),
+            });
         }
         Index { terms, postings }
-    };
-    let arc = Arc::new(built);
-    if let Ok(mut guard) = INDEX.write() {
-        *guard = Some(Arc::clone(&arc));
     }
-    arc
 }
 
 impl Index {
@@ -417,7 +479,9 @@ mod index_tests {
         // env change had no effect. It passed only while no corpus existed on
         // disk, and started failing the moment one did. A test that passed for
         // the wrong reason. is_available() consults the filesystem every call.
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_TSEARCH_CACHE", "/nonexistent/os-teddy/none.json") };
         assert!(!is_available());
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
@@ -425,7 +489,10 @@ mod index_tests {
 
     #[test]
     fn tokeniser_matches_the_bridge_rules() {
-        assert_eq!(tok("Capability-based Agents v2 a"), vec!["capability", "based", "agents", "v2"]);
+        assert_eq!(
+            tok("Capability-based Agents v2 a"),
+            vec!["capability", "based", "agents", "v2"]
+        );
     }
 }
 
@@ -438,7 +505,9 @@ mod forget_tests {
         // "Off" has to mean gone here too: the corpus is ~64MB fetched from a
         // remote site, and leaving it behind after the grant is withdrawn is
         // the loudest possible version of the inconsistency.
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = env::temp_dir().join(format!("os-portal-forget-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -463,7 +532,9 @@ mod auth_tests {
     #[test]
     fn no_credential_configured_is_not_an_error() {
         // An unauthenticated portal must keep working; auth is opt-in.
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { env::remove_var("OS_PORTAL_USER") };
         unsafe { env::remove_var("OS_PORTAL_PASS") };
         assert!(credential().is_none());
@@ -471,7 +542,9 @@ mod auth_tests {
 
     #[test]
     fn env_credential_is_used_when_both_parts_are_present() {
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_PORTAL_USER", "theo") };
         unsafe { env::set_var("OS_PORTAL_PASS", "hunter2") };
         assert_eq!(credential(), Some(("theo".into(), "hunter2".into())));
@@ -483,7 +556,9 @@ mod auth_tests {
     fn a_username_alone_does_not_produce_an_empty_password() {
         // Without a keychain entry this must yield None rather than
         // authenticating as user-with-blank-password.
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_PORTAL_USER", "no-such-user-for-tests") };
         unsafe { env::remove_var("OS_PORTAL_PASS") };
         assert!(credential().is_none());
@@ -517,9 +592,24 @@ pub fn sync_background() -> &'static str {
     std::thread::spawn(|| {
         match sync() {
             Ok((n, at)) => {
-                // The whole point: make the new corpus visible without a restart.
-                invalidate();
-                eprintln!("tsearch: synced {n} docs (crawled {at})");
+                // Make the new corpus visible without a restart - and without
+                // making somebody's next search pay for it.
+                //
+                // `invalidate()` alone left the caches empty, so the very next
+                // query rebuilt a 12k-document index inline. That takes ~10s,
+                // which is longer than the guest waits for a reply, so the
+                // guest concluded the bridge was offline and silently answered
+                // from the ISO's built-in corpus instead. Connecting a portal
+                // account appeared to break search.
+                //
+                // Warming here keeps the stall on this thread, where nobody is
+                // waiting. Queries arriving during the rebuild still serve the
+                // old corpus, which is stale by seconds rather than absent.
+                let fresh = Arc::new(load_corpus());
+                let idx = Arc::new(build_index(&fresh));
+                let warmed = idx.term_count();
+                publish(fresh, idx);
+                eprintln!("tsearch: synced {n} docs (crawled {at}), {warmed} terms ready");
             }
             Err(e) => eprintln!("tsearch: sync failed: {e}"),
         }
@@ -538,7 +628,9 @@ mod reload_tests {
         // started before any corpus existed resolved to empty and stayed that
         // way. The status screen read "Downloaded, but empty" while a 67MB
         // corpus sat on disk.
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = env::temp_dir().join(format!("os-reload-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -566,14 +658,20 @@ mod reload_tests {
 
     #[test]
     fn purging_drops_the_resident_copy() {
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = env::temp_dir().join(format!("os-purge-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
         let cache = dir.join("teddy.json");
         unsafe { env::set_var("OS_TSEARCH_CACHE", &cache) };
 
-        fs::write(&cache, r#"{"crawled_at":"now","docs":[{"t":"Gone","u":"u"}]}"#).unwrap();
+        fs::write(
+            &cache,
+            r#"{"crawled_at":"now","docs":[{"t":"Gone","u":"u"}]}"#,
+        )
+        .unwrap();
         invalidate();
         assert_eq!(docs().len(), 1);
 
@@ -583,6 +681,50 @@ mod reload_tests {
 
         let _ = fs::remove_dir_all(&dir);
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
+        invalidate();
+    }
+}
+
+#[cfg(test)]
+mod refresh_tests {
+    use super::*;
+
+    fn doc(u: &str, t: &str, b: &str) -> RawDoc {
+        RawDoc { t: t.into(), u: u.into(), c: String::new(), b: b.into(), pr: 0.0 }
+    }
+
+    #[test]
+    fn a_refresh_never_leaves_the_corpus_empty() {
+        // invalidate() used to run before the rebuild, so the next query found
+        // nothing cached and rebuilt a 12k-document index inline - about ten
+        // seconds, longer than the guest waits. The guest declared the bridge
+        // offline and answered from the ISO instead, so connecting a portal
+        // account looked like it broke search.
+        let before = Arc::new(vec![doc("u", "old title", "old body")]);
+        let idx = Arc::new(build_index(&before));
+        publish(Arc::clone(&before), idx);
+
+        // A reader during a refresh still gets the previous corpus.
+        assert_eq!(docs().len(), 1, "publishing must not empty the cache");
+        assert!(!index().is_empty(), "the index must stay usable");
+
+        invalidate();
+    }
+
+    #[test]
+    fn an_index_built_off_line_matches_one_built_through_the_cache() {
+        // build_index was extracted so a refresh can build without publishing.
+        // If the extracted path diverged, a synced corpus would be searched by
+        // an index describing something else.
+        let corpus = vec![
+            doc("a", "alpha beta", "gamma"),
+            doc("b", "beta delta", "alpha"),
+        ];
+        let direct = build_index(&corpus);
+        publish(Arc::new(corpus.clone()), Arc::new(build_index(&corpus)));
+        let through_cache = index();
+        assert_eq!(direct.term_count(), through_cache.term_count());
+        assert_eq!(direct.terms.len(), through_cache.terms.len());
         invalidate();
     }
 }

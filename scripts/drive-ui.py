@@ -411,7 +411,11 @@ def main():
                     x, y = CAP_ROW_X, CAP_ROW_TOP + i * CAP_ROW_PITCH + CAP_ROW_H // 2
                     print(f"  granting capability row {i} at ({x}, {y})")
                     qmp.click(x, y)
-                    time.sleep(0.8)
+                    # Granting a capability makes the guest call the host to
+                    # build that source's index, and it blocks the UI loop
+                    # while it waits. Clicks that land during the wait are
+                    # dropped, so three quick toggles registered as one.
+                    time.sleep(6.0)
                 target = snap("04b-granted")
 
         # Type straight into the home field, no click needed.
