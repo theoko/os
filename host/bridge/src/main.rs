@@ -411,10 +411,15 @@ fn email_search(args: &[(String, String)], backend: &str) -> Vec<String> {
         .unwrap_or(5)
         .clamp(1, 20);
 
-    match backend {
+    let out = match backend {
         "gog" => email_search_gog(query, max),
         _ => email_search_mock(query, max),
-    }
+    };
+    // Fold what we just fetched into the knowledge graph. Hooked here rather
+    // than inside a backend so every backend feeds it. Best effort: failing to
+    // index must not fail the search the caller asked for.
+    ingest_rows(&out);
+    out
 }
 
 fn email_search_mock(query: &str, max: usize) -> Vec<String> {
@@ -501,10 +506,6 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
             }
         }
     }
-
-    // Fold what we just fetched into the knowledge graph. Best effort: a
-    // failure to index must not fail the search the caller asked for.
-    ingest_rows(&rows);
 
     let n = rows.len();
     let mut out = vec![format!("OK email.search n={n}")];

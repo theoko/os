@@ -216,10 +216,18 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
         BridgeStatus::Online => {}
     }
 
-    // CALL search.query q=… k=3
+    // CALL search.query q=… k=3 [email=1]
+    //
+    // The email graph is opt-in per call on the bridge. Ask for it only when
+    // the user granted email.search at setup: holding search.query alone must
+    // not reach mail content.
     com2.write_str("CALL search.query q=");
     com2.write_str(q);
-    com2.write_str(" k=3\n");
+    com2.write_str(" k=3");
+    if caps.allows(crate::caps::Cap::EmailSearch) {
+        com2.write_str(" email=1");
+    }
+    com2.write_str("\n");
 
     let mut peek = SearchPeek::empty(BridgeStatus::Online, false);
     let mut first = true;
@@ -266,6 +274,23 @@ const OFFLINE_QUERY: &str = "capability agent bridge";
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn email_graph_requested_only_with_the_email_cap() {
+        use crate::caps::{Cap, Caps};
+        // Search-only grants must not ask the bridge for mail.
+        let mut search_only = Caps::none();
+        search_only.set(Cap::SearchQuery, true);
+        assert!(search_only.allows(Cap::SearchQuery));
+        assert!(
+            !search_only.allows(Cap::EmailSearch),
+            "search.query alone must not reach the email graph"
+        );
+
+        let mut both = search_only;
+        both.set(Cap::EmailSearch, true);
+        assert!(both.allows(Cap::EmailSearch));
+    }
 
     #[test]
     fn offline_search_still_returns_hits() {

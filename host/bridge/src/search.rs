@@ -175,10 +175,6 @@ fn sanitize(s: &str) -> String {
         .collect()
 }
 
-pub fn query_builtin(q: &str, k: usize, cat: Option<&str>) -> Result<Vec<String>, String> {
-    query_builtin_with(q, k, cat, false)
-}
-
 /// `include_email` folds the runtime email graph in alongside the static
 /// corpus. It defaults to *off* everywhere: email content must stay behind the
 /// email capability, or a caller holding only `search.query` could read mail.
@@ -293,10 +289,6 @@ print(json.dumps(hits))
     }
     out.push("END".into());
     Ok(out)
-}
-
-pub fn query(q: &str, k: usize, cat: Option<&str>, backend: &str) -> Vec<String> {
-    query_with(q, k, cat, backend, false)
 }
 
 pub fn query_with(
