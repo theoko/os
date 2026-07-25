@@ -55,12 +55,13 @@ pub enum Step {
 pub const REGIONS: [&str; 4] = ["United States", "United Kingdom", "Greece", "Japan"];
 
 /// Capabilities the agent may be granted up front. Mirrors [`Cap`] / bridge tools.
-pub const CAPS: [(&str, &str); 5] = [
+pub const CAPS: [(&str, &str); 6] = [
     ("email.search", "Read the inbox through the host bridge"),
     ("search.query", "Query the built-in knowledge corpus"),
     ("skills.save", "Write new skill playbooks to disk"),
     ("workspace.index", "Search your own files on this machine"),
     ("audio.transcribe", "Transcribe recordings and index what was said"),
+    ("portal.sync", "Send queries to teddysearch and market portals"),
 ];
 
 const MAX_ZONES: usize = 12;
@@ -82,7 +83,7 @@ impl Setup {
             region: 0,
             // Read-only tools on; anything that writes to disk or reaches
             // personal files is opt-in, matching the "no ambient root" rule.
-            caps: [true, true, false, false, false],
+            caps: [true, true, false, false, false, false],
             zones: [Zone {
                 x: 0,
                 y: 0,
@@ -640,12 +641,22 @@ mod layout_tests {
     }
 
     #[test]
-    fn there_is_headroom_for_one_more_capability() {
-        // Capabilities have grown 3 -> 5 in this session; make the next
-        // addition fail loudly here rather than silently on screen.
+    fn the_capability_list_is_at_its_layout_limit() {
+        // Six rows is what fits above the footer at 768px, and we are at six.
+        // A seventh needs the step to scroll or paginate — shrinking the rows
+        // to squeeze it in would push the blurbs into the switches.
+        //
+        // This is deliberately a hard stop: the previous version of this test
+        // demanded room for one more, and the honest answer is that there
+        // isn't any. Add scrolling before adding a capability.
         assert!(
-            rows_bottom(CAPS.len() + 1) < footer_top(768),
-            "adding another capability would collide with the footer"
+            rows_bottom(CAPS.len()) < footer_top(768),
+            "{} capability rows already collide with the footer",
+            CAPS.len()
+        );
+        assert!(
+            rows_bottom(7) >= footer_top(768),
+            "layout gained room for a 7th row — update this guard deliberately"
         );
     }
 

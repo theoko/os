@@ -16,15 +16,19 @@ pub enum Cap {
     /// Transcribe local audio/video and index the text. Off by default: a
     /// recording can contain anyone, not just the user.
     AudioTranscribe = 4,
+    /// Exchange data with external portals (teddysearch, markets). OFF by
+    /// default: every other capability is local, this one leaves the machine.
+    PortalSync = 5,
 }
 
 impl Cap {
-    pub const ALL: [Cap; 5] = [
+    pub const ALL: [Cap; 6] = [
         Cap::EmailSearch,
         Cap::SearchQuery,
         Cap::SkillsSave,
         Cap::WorkspaceIndex,
         Cap::AudioTranscribe,
+        Cap::PortalSync,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -34,6 +38,7 @@ impl Cap {
             Cap::SkillsSave => "skills.save",
             Cap::WorkspaceIndex => "workspace.index",
             Cap::AudioTranscribe => "audio.transcribe",
+            Cap::PortalSync => "portal.sync",
         }
     }
 

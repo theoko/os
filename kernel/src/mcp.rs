@@ -228,6 +228,10 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
     if caps.allows(crate::caps::Cap::AudioTranscribe) {
         com2.write_str(" audio=1");
     }
+    // Portals are the only source that leaves this machine.
+    if caps.allows(crate::caps::Cap::PortalSync) {
+        com2.write_str(" portal=1");
+    }
     com2.write_str("\n");
 
     let mut page = DocPage::empty(BridgeStatus::Online, false);
@@ -256,6 +260,36 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
         }
     }
     page
+}
+
+/// Ask the bridge to build what a newly granted capability needs.
+///
+/// Granting a capability should make it work, not merely permit it. Without
+/// this, `workspace.index` could be on while no index existed — search then
+/// reported "the bridge searched your files" and returned nothing, which is
+/// the worst of both: permission taken, no benefit, and a message that lies.
+pub fn build_index(tool: &str) -> BridgeStatus {
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+    if matches!(ping_bridge(&com2, &mut line), BridgeStatus::Offline) {
+        return BridgeStatus::Offline;
+    }
+    com2.write_str("CALL ");
+    com2.write_str(tool);
+    // The tool checks the same flag search.query does.
+    com2.write_str(" files=1 audio=1\n");
+    // Indexing walks the disk, so allow a generous first read.
+    for _ in 0..12 {
+        let Some(n) = com2.read_line(&mut line, TIMEOUT_REPLY) else {
+            break;
+        };
+        let resp = str_prefix(&line[..n]);
+        if resp == "END" || resp.starts_with("ERR ") {
+            break;
+        }
+    }
+    BridgeStatus::Online
 }
 
 /// Ask the bridge to delete what a revoked capability produced.

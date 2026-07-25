@@ -104,7 +104,12 @@ impl Source {
         if !self.mail_in_scope {
             return "No matches in your files. Turn on email.search to include mail.";
         }
-        "No matches. The bridge searched your files and mail."
+        // Deliberately claims nothing about WHAT was searched. The guest
+        // cannot see whether an index has content, and this line previously
+        // asserted "the bridge searched your files and mail" while the
+        // workspace index did not exist — permission taken, nothing gained,
+        // and a message that lied about it.
+        "No matches."
     }
 }
 
@@ -504,5 +509,37 @@ mod reader_tests {
         v.run("capability agent");
         assert!(v.count > 0);
         assert!(!v.rows[0].url().is_empty(), "offline results must be openable too");
+    }
+}
+
+#[cfg(test)]
+mod honesty_tests {
+    use super::*;
+
+    #[test]
+    fn the_all_granted_message_claims_nothing_it_cannot_verify() {
+        // The guest cannot tell whether an index has content, so it must not
+        // say what was searched — only that nothing matched.
+        let s = Source {
+            bridge_online: true,
+            errored: false,
+            files_in_scope: true,
+            mail_in_scope: true,
+        };
+        let m = s.empty_reason();
+        assert!(!m.contains("searched"), "claims knowledge it does not have: {m}");
+        assert!(m.contains("No matches"));
+    }
+
+    #[test]
+    fn actionable_states_still_name_the_missing_grant() {
+        // Softening the all-granted line must not soften the useful ones.
+        let no_files = Source {
+            bridge_online: true,
+            errored: false,
+            files_in_scope: false,
+            mail_in_scope: true,
+        };
+        assert!(no_files.empty_reason().contains("workspace.index"));
     }
 }
