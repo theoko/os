@@ -200,15 +200,6 @@ fn sanitize(s: &str) -> String {
 /// `include_email` folds the runtime email graph in alongside the static
 /// corpus. It defaults to *off* everywhere: email content must stay behind the
 /// email capability, or a caller holding only `search.query` could read mail.
-pub fn query_builtin_with(
-    q: &str,
-    k: usize,
-    cat: Option<&str>,
-    include_email: bool,
-) -> Result<Vec<String>, String> {
-    query_all(q, k, cat, include_email, false)
-}
-
 /// `include_files` folds in the user's own indexed documents. Off by default
 /// for the same reason as email: holding `search.query` grants the built-in
 /// corpus, not a personal file tree.

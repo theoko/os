@@ -302,6 +302,7 @@ fn save(fb: &Surface, x: i32, y: i32, out: &mut [u32; SAVE_LEN]) {
 }
 
 fn restore(fb: &Surface, x: i32, y: i32, saved: &[u32; SAVE_LEN]) {
+    fb.mark_dirty(x, y, SAVE_W as i32, SAVE_H as i32);
     for row in 0..SAVE_H {
         for col in 0..SAVE_W {
             fb.put_pixel(x - 1 + col as i32, y - 1 + row as i32, saved[row * SAVE_W + col]);
@@ -367,6 +368,7 @@ fn draw_arrow(fb: &Surface, x: i32, y: i32) {
     // Origin is shifted back by the 1px keyline margin baked into the mask.
     let ox = x - 1;
     let oy = y - 1;
+    fb.mark_dirty(ox, oy, SAVE_W as i32, SAVE_H as i32);
     for row in 0..SAVE_H {
         for col in 0..SAVE_W {
             let i = row * SAVE_W + col;

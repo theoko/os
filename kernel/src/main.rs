@@ -206,6 +206,21 @@ unsafe extern "C" fn kmain() -> ! {
                 screen.present();
                 serial_port.write_str("ui: setup welcome\n");
 
+                // Measure what a frame actually costs, rather than guessing.
+                {
+                    let t0 = serial::rdtsc();
+                    screen.present_all();
+                    let t1 = serial::rdtsc();
+                    surface.mark_dirty(0, 0, 24, 32);
+                    screen.present();
+                    let t2 = serial::rdtsc();
+                    serial_port.write_str("perf: full=");
+                    write_u64(&serial_port, (t1 - t0) / 1000);
+                    serial_port.write_str("kcyc dirty=");
+                    write_u64(&serial_port, (t2 - t1) / 1000);
+                    serial_port.write_str("kcyc\n");
+                }
+
                 loop {
                     let w = surface.width() as i32;
                     let h = surface.height() as i32;
@@ -502,10 +517,9 @@ unsafe extern "C" fn kmain() -> ! {
                     prev_buttons = buttons;
                     if moved {
                         cursor.show_at(surface, x, y);
-                        // Blit only the two cursor footprints, not the screen.
-                        const PAD: i32 = 40;
-                        screen.present_rect(prev_x - 2, prev_y - 2, PAD, PAD);
-                        screen.present_rect(x - 2, y - 2, PAD, PAD);
+                        // hide()/show_at() marked both footprints; present()
+                        // blits exactly that union and nothing else.
+                        screen.present();
                         prev_x = x;
                         prev_y = y;
                     }
@@ -532,6 +546,22 @@ fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
         mcp::BridgeStatus::Online => "Answers come from the local index and the host bridge.",
         mcp::BridgeStatus::Offline => "Bridge offline - answering from the index baked into the kernel.",
     }
+}
+
+/// Decimal u64 to COM1, for the perf line.
+fn write_u64(port: &serial::Serial, mut v: u64) {
+    let mut buf = [0u8; 20];
+    let mut i = buf.len();
+    if v == 0 {
+        i -= 1;
+        buf[i] = b'0';
+    }
+    while v > 0 {
+        i -= 1;
+        buf[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+    }
+    port.write_bytes(&buf[i..]);
 }
 
 fn write_status(buf: &mut [u8; 72], s: &str) {

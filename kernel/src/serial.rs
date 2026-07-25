@@ -205,3 +205,20 @@ mod tests {
         }
     }
 }
+
+/// Read the cycle counter. Used to measure frame cost honestly rather than
+/// asserting a frame rate.
+#[cfg(target_arch = "x86_64")]
+pub fn rdtsc() -> u64 {
+    let lo: u32;
+    let hi: u32;
+    unsafe {
+        core::arch::asm!("rdtsc", out("eax") lo, out("edx") hi, options(nomem, nostack));
+    }
+    ((hi as u64) << 32) | lo as u64
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+pub fn rdtsc() -> u64 {
+    0
+}
