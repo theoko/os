@@ -1,0 +1,118 @@
+{
+  "crawled_at": "2026-07-25",
+  "source": "os curated slice — tsearch-style {t,u,c,b,pr}",
+  "docs": [
+    {
+      "t": "os identity",
+      "u": "os://AGENTS.md",
+      "c": "docs",
+      "b": "Agent-centric hobby operating system in Rust. Capability-based agents. MCP connectors on host bridge. QEMU and UTM. No secrets in the tree.",
+      "pr": 1.0
+    },
+    {
+      "t": "MCP connectors",
+      "u": "os://docs/mcp-connectors-os-doc-v01.md",
+      "c": "docs",
+      "b": "Host bridge over COM2. Tools email.search email.send calendar.list skills.list search.query. Secrets stay in gog keyring. Exact protocol PING LIST CALL.",
+      "pr": 0.9
+    },
+    {
+      "t": "Agent skills",
+      "u": "os://docs/skills-os-doc-v01.md",
+      "c": "docs",
+      "b": "Cursor-style SKILL.md packages. Defaults agent-plan-act capability-safe-tools email-triage inbox-brief knowledge-search. Saved under Application Support os skills.",
+      "pr": 0.85
+    },
+    {
+      "t": "Architecture capability IPC",
+      "u": "os://docs/architecture-os-doc-v01.md",
+      "c": "docs",
+      "b": "Kernel owns scheduling memory capability tables message bus. Userspace owns agentd sandboxed tools. No ambient root. Syscalls send recv grant mint_cap.",
+      "pr": 0.95
+    },
+    {
+      "t": "Boot Limine QEMU",
+      "u": "os://docs/boot-os-doc-v01.md",
+      "c": "docs",
+      "b": "Limine bootloader x86_64 freestanding Rust kernel. Serial COM1 hello. Framebuffer home UI. isa-debug-exit smoke tests.",
+      "pr": 0.7
+    },
+    {
+      "t": "UTM desktop front-end",
+      "u": "os://docs/utm-os-doc-v01.md",
+      "c": "docs",
+      "b": "UTM on Apple Silicon for x86_64 TCG. Parallels cannot run x86 guests. Bundle ISO inside utm Data. Double-click guest window.",
+      "pr": 0.65
+    },
+    {
+      "t": "UI home screen",
+      "u": "os://docs/ui-os-doc-v01.md",
+      "c": "docs",
+      "b": "SuperIntel-like white minimal home. Brand os first. Blue Ready pill. Email connector strip. Skills strip.",
+      "pr": 0.6
+    },
+    {
+      "t": "email-triage skill",
+      "u": "os://skills/defaults/email-triage/SKILL.md",
+      "c": "skills",
+      "b": "Triage inbox via email MCP connector. Search summarize draft. Never send without email.send cap.",
+      "pr": 0.75
+    },
+    {
+      "t": "capability-safe-tools skill",
+      "u": "os://skills/defaults/capability-safe-tools/SKILL.md",
+      "c": "skills",
+      "b": "Invoke tools through explicit capabilities. Least privilege. Stop on disabled_until_cap_confirm.",
+      "pr": 0.8
+    },
+    {
+      "t": "agent-plan-act skill",
+      "u": "os://skills/defaults/agent-plan-act/SKILL.md",
+      "c": "skills",
+      "b": "Baseline plan act loop. Clarify goal list caps plan steps act via MCP report outcomes.",
+      "pr": 0.8
+    },
+    {
+      "t": "inbox-brief skill",
+      "u": "os://skills/defaults/inbox-brief/SKILL.md",
+      "c": "skills",
+      "b": "Short morning brief from email.search. Urgent FYI Noise. Max five bullets cite subject and from.",
+      "pr": 0.55
+    },
+    {
+      "t": "knowledge-search skill",
+      "u": "os://skills/defaults/knowledge-search/SKILL.md",
+      "c": "skills",
+      "b": "Search curated OS corpus via search.query. tSearch-style tf-idf PageRank. Cite title and url. Not for live email.",
+      "pr": 0.7
+    },
+    {
+      "t": "tSearch revival inspiration",
+      "u": "https://github.com/theoko/tsearch-revival",
+      "c": "web",
+      "b": "Static-first personal search. BM25 and tf-idf with PageRank. Exact-first synonym ladder. Corpus docs t u c b. MCP GraphRAG search get_node neighbors path.",
+      "pr": 0.9
+    },
+    {
+      "t": "Host MCP bridge",
+      "u": "os://host/bridge",
+      "c": "code",
+      "b": "Rust os-mcp-bridge TCP 7420. Mock or gog email. Skills list get save. Search query over curated corpus. Line protocol for guest COM2.",
+      "pr": 0.85
+    },
+    {
+      "t": "PageRank",
+      "u": "os://concepts/pagerank",
+      "c": "learning",
+      "b": "Authority score from link graph used by tSearch to blend with BM25 or tf-idf so important docs rise. OS search uses optional pr field as a boost.",
+      "pr": 0.5
+    },
+    {
+      "t": "BM25",
+      "u": "os://concepts/bm25",
+      "c": "learning",
+      "b": "Lexical ranking function. tSearch browser uses BM25 hybrid with LSA. Agent MCP path prefers FTS5 BM25. OS bridge v1 uses tf-idf plus PageRank boost mirroring the agent ladder.",
+      "pr": 0.5
+    }
+  ]
+}

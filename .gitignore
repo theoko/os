@@ -1,0 +1,16 @@
+/target/
+/kernel/target/
+/kernel/kernel
+/limine/
+/edk2-ovmf/
+/kernel/.cargo/
+/iso_root/
+*.iso
+*.hdd
+/serial.out
+/.smoke-*
+.DS_Store
+*.swp
+*~
+utm-diag*.out
+/docs/ui-preview.png

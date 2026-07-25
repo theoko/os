@@ -1,0 +1,13 @@
+[package]
+name = "os-mcp-bridge"
+version = "0.5.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "os-mcp-bridge"
+path = "src/main.rs"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
