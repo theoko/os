@@ -55,28 +55,21 @@ pub enum Step {
 pub const REGIONS: [&str; 4] = ["United States", "United Kingdom", "Greece", "Japan"];
 
 /// Capabilities the agent may be granted up front. Mirrors [`Cap`] / bridge tools.
-/// What each capability is called on screen, and what it costs you.
-///
-/// Plain language, not dotted identifiers: someone at first boot is deciding
-/// what this machine may touch, not reading an API. The second column is the
-/// consequence, phrased so the honest answer to "should I?" is visible — and
-/// where something leaves the machine, it says so, because that is the only
-/// distinction that really matters here.
-pub const CAPS: [(&str, &str); 6] = [
-    ("Email", "Read your inbox"),
-    ("Built-in docs", "Search what ships with the OS"),
-    ("Your files", "Search documents on this machine"),
-    ("Recordings", "Transcribe audio you point it at"),
-    ("Save skills", "Write new playbooks to disk"),
-    ("Online services", "Sends queries off this machine"),
-];
+/// Screen rows come straight from `Cap::ALL`, so a label can never drift from
+/// the capability it grants — they used to be two lists kept in step by hand.
+pub fn cap_rows() -> impl Iterator<Item = (&'static str, &'static str)> {
+    crate::caps::Cap::ALL.iter().map(|c| (c.label(), c.detail()))
+}
+
+/// Number of capability rows.
+pub const N_CAPS: usize = crate::caps::Cap::ALL.len();
 
 const MAX_ZONES: usize = 12;
 
 pub struct Setup {
     pub step: Step,
     pub region: usize,
-    pub caps: [bool; CAPS.len()],
+    pub caps: [bool; N_CAPS],
     zones: [Zone; MAX_ZONES],
     n_zones: usize,
     /// Edge detection: a held button must not advance every frame.
@@ -185,7 +178,7 @@ impl Setup {
                     false
                 }
                 Step::Capabilities => {
-                    if i < CAPS.len() {
+                    if i < N_CAPS {
                         self.caps[i] = !self.caps[i];
                         return true;
                     }
@@ -266,7 +259,7 @@ impl Setup {
             "Every tool sits behind a grant. Turn on only what you need.",
         );
         let mut y = top;
-        for (i, (name, blurb)) in CAPS.iter().enumerate() {
+        for (i, (name, blurb)) in cap_rows().enumerate() {
             let on = self.caps[i];
             self.row(fb, w, y, name, Some(blurb), on, true, Action::Row(i));
             y += ROW_H + 8;
@@ -526,11 +519,11 @@ mod tests {
         // What still has to hold is that row i drives Cap::ALL[i] — a mismatch
         // would put the right switch against the wrong capability, which is a
         // consent bug, not a cosmetic one.
-        assert_eq!(CAPS.len(), Cap::ALL.len());
+        assert_eq!(N_CAPS, Cap::ALL.len());
         let s = setup();
         let g = s.grants();
         for (i, cap) in Cap::ALL.iter().enumerate() {
-            assert_eq!(s.caps[i], g.allows(*cap), "row {i} ({}) drives the wrong cap", CAPS[i].0);
+            assert_eq!(s.caps[i], g.allows(*cap), "row {i} ({}) drives the wrong cap", crate::caps::Cap::ALL[i].label());
         }
     }
 
@@ -539,7 +532,7 @@ mod tests {
         use crate::caps::Cap;
         // Stronger than the mapping check: flip one row and confirm only that
         // capability moved.
-        for i in 0..CAPS.len() {
+        for i in 0..N_CAPS {
             let mut s = setup();
             let before = s.grants();
             s.step = Step::Capabilities;
@@ -622,7 +615,7 @@ mod tests {
             "Host bridge",
         ];
         all.extend(REGIONS);
-        for (n, b) in CAPS {
+        for (n, b) in cap_rows() {
             all.push(n);
             all.push(b);
         }
@@ -636,7 +629,7 @@ mod tests {
 
     #[test]
     fn step_copy_fits_the_content_column() {
-        for (n, b) in CAPS {
+        for (n, b) in cap_rows() {
             assert!(BRAND_FACE.width(n, 0) < CONTENT_W - 90, "cap name too wide: {n}");
             assert!(SMALL_FACE.width(b, 0) < CONTENT_W - 90, "cap blurb too wide: {b}");
         }
@@ -665,11 +658,11 @@ mod layout_tests {
     fn capability_rows_clear_the_footer_at_768() {
         // Overlapping rows and the Continue pill would misroute clicks — the
         // exact failure a previous review caught on a short framebuffer.
-        let bottom = rows_bottom(CAPS.len());
+        let bottom = rows_bottom(N_CAPS);
         assert!(
             bottom < footer_top(768),
             "{} capability rows reach {bottom}px, footer starts at {}",
-            CAPS.len(),
+            N_CAPS,
             footer_top(768)
         );
     }
@@ -690,9 +683,9 @@ mod layout_tests {
         // demanded room for one more, and the honest answer is that there
         // isn't any. Add scrolling before adding a capability.
         assert!(
-            rows_bottom(CAPS.len()) < footer_top(768),
+            rows_bottom(N_CAPS) < footer_top(768),
             "{} capability rows already collide with the footer",
-            CAPS.len()
+            N_CAPS
         );
         // Single-line rows fit more than the old stacked ones. Recomputed
         // rather than relaxed: this is the count that actually fits.
@@ -710,7 +703,7 @@ mod layout_tests {
     fn every_capability_row_is_reachable_by_click() {
         let mut s = Setup::new();
         s.step = Step::Capabilities;
-        for i in 0..CAPS.len() {
+        for i in 0..N_CAPS {
             let before = s.caps[i];
             assert!(s.apply(Action::Row(i)), "row {i} did nothing");
             assert_ne!(s.caps[i], before, "row {i} did not toggle");
@@ -719,7 +712,7 @@ mod layout_tests {
 
     #[test]
     fn capability_names_and_blurbs_fit_the_column() {
-        for (name, blurb) in CAPS {
+        for (name, blurb) in cap_rows() {
             // Label and consequence share one baseline, so they must fit
             // side by side without reaching the switch.
             let used = BRAND_FACE.width(name, 0) + 12 + SMALL_FACE.width(blurb, 0);
