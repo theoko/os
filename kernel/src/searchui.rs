@@ -46,7 +46,8 @@ pub fn is_media_path(q: &str) -> bool {
         return false;
     }
     for (i, b) in ext.bytes().enumerate() {
-        if !b.is_ascii_alphabetic() {
+        // Digits are legal (mp3, mp4, …).
+        if !b.is_ascii_alphanumeric() {
             return false;
         }
         buf[i] = b.to_ascii_lowercase();
