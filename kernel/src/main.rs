@@ -273,7 +273,7 @@ unsafe extern "C" fn kmain() -> ! {
                             match key {
                                 keyboard::Key::Enter => {
                                     if !query.is_empty() {
-                                        sview.run(query.as_str());
+                                        sview.run_via(query.as_str(), grants);
                                         view = screens::View::Search;
                                         serial_port.write_str("search: ran from home\n");
                                         dirty = true;
@@ -325,7 +325,7 @@ unsafe extern "C" fn kmain() -> ! {
                         while let Some(key) = kb.poll() {
                             match key {
                                 keyboard::Key::Enter => {
-                                    sview.run(query.as_str());
+                                    sview.run_via(query.as_str(), grants);
                                     serial_port.write_str("search: ran\n");
                                     dirty = true;
                                 }

@@ -16,11 +16,58 @@ use crate::ui::theme;
 pub const QUERY_MAX: usize = 64;
 
 /// A rendered result row.
+///
+/// Owns its text: bridge results are parsed out of a COM2 line buffer that is
+/// reused on the next call, so borrowing from it would dangle. Copying into
+/// fixed slots keeps the whole path free of unsafe lifetime tricks.
 #[derive(Clone, Copy)]
 pub struct Row {
-    pub title: &'static str,
-    pub cat: &'static str,
-    pub url: &'static str,
+    title: [u8; 56],
+    url: [u8; 72],
+    cat: &'static str,
+}
+
+impl Row {
+    pub const fn empty() -> Self {
+        Self { title: [0; 56], url: [0; 72], cat: "" }
+    }
+
+    fn set(&mut self, title: &str, url: &str, cat: &'static str) {
+        copy_into(&mut self.title, title);
+        copy_into(&mut self.url, url);
+        self.cat = cat;
+    }
+
+    pub fn title(&self) -> &str {
+        as_str(&self.title)
+    }
+
+    pub fn url(&self) -> &str {
+        as_str(&self.url)
+    }
+
+    pub fn cat(&self) -> &str {
+        self.cat
+    }
+}
+
+fn copy_into(dst: &mut [u8], src: &str) {
+    dst.fill(0);
+    let b = src.as_bytes();
+    let n = b.len().min(dst.len());
+    dst[..n].copy_from_slice(&b[..n]);
+}
+
+fn as_str(buf: &[u8]) -> &str {
+    let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    core::str::from_utf8(&buf[..n]).unwrap_or("")
+}
+
+/// Where the current results came from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Source {
+    Offline,
+    Bridge,
 }
 
 pub struct SearchView {
@@ -28,18 +75,27 @@ pub struct SearchView {
     pub count: usize,
     /// True once a query has been run, so we can tell "no results" from "idle".
     pub searched: bool,
+    pub source: Source,
 }
 
 impl SearchView {
     pub const fn new() -> Self {
-        const EMPTY: Row = Row { title: "", cat: "", url: "" };
-        Self { rows: [EMPTY; search::MAX_HITS], count: 0, searched: false }
+        Self {
+            rows: [Row::empty(); search::MAX_HITS],
+            count: 0,
+            searched: false,
+            source: Source::Offline,
+        }
     }
 
-    /// Run `q` against the in-kernel index.
+    /// Run `q` against the in-kernel index only.
+    ///
+    /// The baked corpus is a handful of documents about the OS itself, so a
+    /// question about the user's own work legitimately finds nothing here.
     pub fn run(&mut self, q: &str) {
         self.searched = true;
         self.count = 0;
+        self.source = Source::Offline;
         if q.trim().is_empty() {
             return;
         }
@@ -47,9 +103,35 @@ impl SearchView {
         let n = search::query(q, &mut hits);
         for h in hits.iter().take(n) {
             let d = &search::DOCS[h.doc];
-            self.rows[self.count] = Row { title: d.title, cat: d.cat, url: d.url };
+            self.rows[self.count].set(d.title, d.url, d.cat);
             self.count += 1;
         }
+    }
+
+    /// Ask the bridge first, fall back to the baked index when it is down.
+    ///
+    /// Without this the screen only ever saw the built-in documents, so every
+    /// question about the user's own files or mail came back empty even though
+    /// the bridge had them indexed.
+    pub fn run_via(&mut self, q: &str, caps: crate::caps::Caps) {
+        self.searched = true;
+        self.count = 0;
+        if q.trim().is_empty() {
+            self.source = Source::Offline;
+            return;
+        }
+        let peek = crate::mcp::fetch_search_peek(caps, q);
+        if matches!(peek.status, crate::mcp::BridgeStatus::Online) && !peek.denied {
+            for i in 0..peek.count.min(search::MAX_HITS) {
+                self.rows[self.count].set(peek.title_at(i), "", "bridge");
+                self.count += 1;
+            }
+            if self.count > 0 {
+                self.source = Source::Bridge;
+                return;
+            }
+        }
+        self.run(q);
     }
 }
 
@@ -119,19 +201,23 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
         return;
     }
     if view.count == 0 {
-        fb.draw_text_centered(w / 2, y + 30, "No matches in the local index.", &BODY_FACE, 0, theme::MUTED);
+        let msg = match view.source {
+            Source::Bridge => "No matches. The bridge searched your files and mail.",
+            Source::Offline => "No matches. Bridge offline - only built-in docs are searchable.",
+        };
+        fb.draw_text_centered(w / 2, y + 30, msg, &BODY_FACE, 0, theme::MUTED);
         return;
     }
 
     for i in 0..view.count {
-        let r = view.rows[i];
+        let r = &view.rows[i];
         fb.fill_round_rect(fx, y, fw, ROW_H, 10, theme::CARD_BORDER);
         fb.fill_round_rect(fx + 1, y + 1, fw - 2, ROW_H - 2, 9, theme::BG);
-        fb.draw_text(fx + 18, y + 26, r.title, &BRAND_FACE, 0, theme::INK);
+        fb.draw_text(fx + 18, y + 26, r.title(), &BRAND_FACE, 0, theme::INK);
         // Category chip, right-aligned.
-        let cw = SMALL_FACE.width(r.cat, 0);
-        fb.draw_text(fx + fw - 18 - cw, y + 26, r.cat, &SMALL_FACE, 0, theme::ACCENT);
-        fb.draw_text(fx + 18, y + 48, r.url, &SMALL_FACE, 0, theme::MUTED);
+        let cw = SMALL_FACE.width(r.cat(), 0);
+        fb.draw_text(fx + fw - 18 - cw, y + 26, r.cat(), &SMALL_FACE, 0, theme::ACCENT);
+        fb.draw_text(fx + 18, y + 48, r.url(), &SMALL_FACE, 0, theme::MUTED);
         y += ROW_H + 10;
     }
 }
@@ -153,7 +239,7 @@ mod tests {
         v.run("capability agent");
         assert!(v.searched);
         assert!(v.count > 0, "expected hits from the baked index");
-        assert!(!v.rows[0].title.is_empty());
+        assert!(!v.rows[0].title().is_empty());
     }
 
     #[test]

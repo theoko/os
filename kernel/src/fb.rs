@@ -61,6 +61,14 @@ impl Surface {
         })
     }
 
+    /// A surface over caller-owned RAM, for off-screen rasterisation.
+    ///
+    /// # Safety
+    /// `addr` must point to at least `width * height` u32s.
+    pub unsafe fn in_memory(addr: *mut u32, width: usize, height: usize) -> Self {
+        Self { addr: addr.cast::<u8>(), width, height, pitch: width * 4 }
+    }
+
     pub fn width(&self) -> usize {
         self.width
     }
