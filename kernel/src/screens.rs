@@ -12,7 +12,9 @@ use crate::fb::Surface;
 use crate::font::{self, BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
 use crate::searchui::back_rect;
 use crate::setup::CAPS;
-use crate::skills::{SkillPeek, BUILTIN};
+use crate::skills::SkillPeek;
+#[cfg(test)]
+use crate::skills::BUILTIN;
 use crate::ui::theme;
 
 /// Which full-screen view is showing.
@@ -80,18 +82,30 @@ fn row(fb: &Surface, w: i32, i: usize, title: &str, sub: &str, accent: bool) -> 
     (x, y, cw, h)
 }
 
-/// Skills the agent can load. Read-only: these ship with the ISO.
+/// Skills the agent can load — names from bridge `skills.list`, else builtins.
 pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
     let w = fb.width() as i32;
     chrome(fb, w, "Skills", "Playbooks the agent can load");
 
-    let n = BUILTIN.len().min(6);
-    for (i, s) in BUILTIN.iter().take(n).enumerate() {
-        row(fb, w, i, s.name, s.blurb, false);
+    let n = peek.count.min(6);
+    for i in 0..n {
+        let desc = peek.desc_at(i);
+        let sub = if desc.is_empty() {
+            if peek.from_bridge {
+                "From host bridge"
+            } else {
+                "Shipped with the ISO"
+            }
+        } else {
+            desc
+        };
+        row(fb, w, i, peek.name_at(i), sub, false);
     }
 
     let (x, cw) = column(w);
-    let note = if peek.count > 0 {
+    let note = if peek.from_bridge {
+        "Listed live from the host bridge (skills.list)."
+    } else if peek.count > 0 {
         "Compiled into the ISO. Saved skills live on the host."
     } else {
         "No skills loaded."
@@ -105,6 +119,14 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
         theme::MUTED,
     );
     let _ = cw;
+}
+
+/// Which skill row contains this point, if any.
+pub fn skills_hit(w: i32, count: usize, x: i32, y: i32) -> Option<usize> {
+    (0..count.min(6)).find(|&i| {
+        let (rx, ry, rw, rh) = row_rect(w, i);
+        x >= rx && x < rx + rw && y >= ry && y < ry + rh
+    })
 }
 
 /// Live capability switches. Clicking a row toggles the grant.
@@ -217,11 +239,14 @@ mod tests {
             "Playbooks the agent can load",
             "What the agent may do",
             "Compiled into the ISO. Saved skills live on the host.",
+            "Listed live from the host bridge (skills.list).",
             "Tap a row to grant or revoke. Takes effect immediately.",
             "No skills loaded.",
             "Skills",
             "Capabilities",
             "Back",
+            "From host bridge",
+            "Shipped with the ISO",
         ];
         for s in BUILTIN {
             all.push(s.name);
@@ -238,10 +263,26 @@ mod tests {
     #[test]
     fn skill_text_fits_its_row() {
         let (_, _, cw, _) = row_rect(1024, 0);
-        for s in BUILTIN.iter().take(6) {
-            assert!(BRAND_FACE.width(s.name, 0) < cw - 36, "name overflows: {}", s.name);
-            assert!(SMALL_FACE.width(s.blurb, 0) < cw - 36, "blurb overflows: {}", s.blurb);
+        let peek = SkillPeek::from_builtin();
+        for i in 0..peek.count.min(6) {
+            assert!(
+                BRAND_FACE.width(peek.name_at(i), 0) < cw - 36,
+                "name overflows: {}",
+                peek.name_at(i)
+            );
+            assert!(
+                SMALL_FACE.width(peek.desc_at(i), 0) < cw - 36,
+                "blurb overflows: {}",
+                peek.desc_at(i)
+            );
         }
+    }
+
+    #[test]
+    fn skills_hit_finds_first_row() {
+        let (x, y, _, _) = row_rect(1024, 0);
+        assert_eq!(skills_hit(1024, 3, x + 4, y + 4), Some(0));
+        assert_eq!(skills_hit(1024, 0, x + 4, y + 4), None);
     }
 
     #[test]

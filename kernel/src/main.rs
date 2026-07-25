@@ -59,7 +59,7 @@ unsafe extern "C" fn kmain() -> ! {
 
     // Paint UI immediately (don't block on MCP). Bridge is optional.
     let mut mail = mcp::MailPeek::empty(mcp::BridgeStatus::Offline);
-    let skill_peek = skills::SkillPeek::from_builtin();
+    let mut skill_peek = skills::SkillPeek::from_builtin();
     if let Some(resp) = FRAMEBUFFER_REQUEST.get_response() {
         if let Some(fb_info) = resp.framebuffers().next() {
             // Always log geometry so UTM/QEMU serial shows why the window may be blank.
@@ -261,6 +261,14 @@ unsafe extern "C" fn kmain() -> ! {
                                     mcp::BridgeStatus::Offline => "mcp: bridge still offline\n",
                                 });
                             }
+                            if setup.step == setup::Step::Skills && before != setup::Step::Skills {
+                                skill_peek = mcp::fetch_skill_peek();
+                                serial_port.write_str(if skill_peek.from_bridge {
+                                    "skills: listed from bridge\n"
+                                } else {
+                                    "skills: builtins (bridge offline)\n"
+                                });
+                            }
                             cursor.hide(surface);
                             if setup.is_finished() {
                                 grants = setup.grants();
@@ -410,6 +418,27 @@ unsafe extern "C" fn kmain() -> ! {
                                     write_status(&mut status_buf, grants.footer_status());
                                     dirty = true;
                                 }
+                            } else if view == screens::View::Skills {
+                                if let Some(i) = screens::skills_hit(w, skill_peek.count, x, y) {
+                                    let name = skill_peek.name_at(i);
+                                    let mut blurb = [0u8; 72];
+                                    if mcp::fetch_skill_blurb(name, &mut blurb) {
+                                        let n = blurb.iter().position(|&b| b == 0).unwrap_or(blurb.len());
+                                        write_status(
+                                            &mut status_buf,
+                                            core::str::from_utf8(&blurb[..n]).unwrap_or(name),
+                                        );
+                                        serial_port.write_str("skills: got ");
+                                        serial_port.write_str(name);
+                                        serial_port.write_str("\n");
+                                    } else {
+                                        write_status(&mut status_buf, name);
+                                        serial_port.write_str("skills: get offline ");
+                                        serial_port.write_str(name);
+                                        serial_port.write_str("\n");
+                                    }
+                                    dirty = true;
+                                }
                             }
                         }
                         if dirty {
@@ -460,18 +489,20 @@ unsafe extern "C" fn kmain() -> ! {
                                 Some(ui::HomeHit::Cta(ui::CtaId::Skills))
                                 | Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
                                     serial_port.write_str("ui: click Skills\n");
-                                    if grants.allows(caps::Cap::SkillsSave) {
-                                        write_status(
-                                            &mut status_buf,
-                                            "skills.save granted - playbooks writable",
-                                        );
+                                    skill_peek = mcp::fetch_skill_peek();
+                                    serial_port.write_str(if skill_peek.from_bridge {
+                                        "skills: listed from bridge\n"
                                     } else {
-                                        write_status(
-                                            &mut status_buf,
-                                            "skills.save denied - playbooks read-only",
-                                        );
-                                    }
-                                    clicked = true;
+                                        "skills: builtins (bridge offline)\n"
+                                    });
+                                    view = screens::View::Skills;
+                                    cursor.hide(surface);
+                                    screens::draw_skills(surface, &skill_peek);
+                                    cursor.show_at(surface, x, y);
+                                    enter(&screen);
+                                    // Don't fall through to the home redraw below.
+                                    clicked = false;
+                                    moved = false;
                                 }
                                 Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
                                     serial_port.write_str("ui: open search\n");

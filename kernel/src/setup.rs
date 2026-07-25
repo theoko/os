@@ -269,11 +269,17 @@ impl Setup {
             w,
             h,
             "Default Skills",
-            "Markdown playbooks the agent can load. Editable later.",
+            if skills.from_bridge {
+                "Live from the host bridge. Tap Continue when ready."
+            } else {
+                "Markdown playbooks the agent can load. Editable later."
+            },
         );
         let mut y = top;
         for i in 0..skills.count.min(4) {
-            self.row(fb, w, y, skills.name_at(i), None, true, false, Action::Row(i));
+            let desc = skills.desc_at(i);
+            let blurb = if desc.is_empty() { None } else { Some(desc) };
+            self.row(fb, w, y, skills.name_at(i), blurb, true, false, Action::Row(i));
             y += ROW_H + 8;
         }
         self.footer(fb, w, h, y, true);
@@ -566,6 +572,7 @@ mod tests {
             "Every tool sits behind a grant. Turn on only what you need.",
             "Default Skills",
             "Markdown playbooks the agent can load. Editable later.",
+            "Live from the host bridge. Tap Continue when ready.",
             "You're all set.",
             "Capabilities granted. Skills loaded.",
             "Continue",

@@ -297,6 +297,114 @@ pub fn probe_bridge() -> BridgeStatus {
     ping_bridge(&com2, &mut line)
 }
 
+/// List playbooks via `CALL skills.list`. Offline → builtins baked into the ISO.
+pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+
+    match ping_bridge(&com2, &mut line) {
+        BridgeStatus::Offline => return crate::skills::SkillPeek::from_builtin(),
+        BridgeStatus::Online => {}
+    }
+
+    com2.write_str("CALL skills.list\n");
+
+    let mut peek = crate::skills::SkillPeek::empty();
+    peek.from_bridge = true;
+    let mut first = true;
+    for _ in 0..24 {
+        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
+        let Some(n) = com2.read_line(&mut line, timeout) else {
+            break;
+        };
+        first = false;
+        let resp = str_prefix(&line[..n]);
+        if resp.starts_with("ERR ") || resp == "END" {
+            break;
+        }
+        if resp.starts_with("OK skills.list") {
+            continue;
+        }
+        if resp.starts_with("ROW ") {
+            let name = parse_row_field(resp, "name").unwrap_or("?");
+            let desc = parse_row_field(resp, "desc").unwrap_or("");
+            if !peek.push(name, desc) {
+                break;
+            }
+        }
+    }
+
+    if peek.count == 0 {
+        // Bridge answered but listed nothing — still show ISO defaults.
+        crate::skills::SkillPeek::from_builtin()
+    } else {
+        peek
+    }
+}
+
+/// First useful body line from `CALL skills.get name=…` (for a clicked row).
+///
+/// Returns `false` when the bridge is down or the skill is missing.
+pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
+    out.fill(0);
+    if name.is_empty() {
+        return false;
+    }
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+
+    if matches!(ping_bridge(&com2, &mut line), BridgeStatus::Offline) {
+        return false;
+    }
+
+    com2.write_str("CALL skills.get name=");
+    com2.write_str(name);
+    com2.write_str("\n");
+
+    let mut first = true;
+    let mut in_frontmatter = false;
+    let mut saw_fm_open = false;
+    for _ in 0..40 {
+        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
+        let Some(n) = com2.read_line(&mut line, timeout) else {
+            break;
+        };
+        first = false;
+        let resp = str_prefix(&line[..n]);
+        if resp == "END" || resp.starts_with("ERR ") {
+            break;
+        }
+        if resp.starts_with("OK skills.get") {
+            continue;
+        }
+        let Some(body) = resp.strip_prefix("LINE ") else {
+            continue;
+        };
+        // Skip YAML frontmatter so the blurb is real prose, not `---`.
+        if body.trim() == "---" {
+            if !saw_fm_open {
+                saw_fm_open = true;
+                in_frontmatter = true;
+            } else {
+                in_frontmatter = false;
+            }
+            continue;
+        }
+        if in_frontmatter {
+            continue;
+        }
+        let text = body.trim();
+        if text.is_empty() {
+            continue;
+        }
+        copy_field(out, text);
+        return true;
+    }
+    false
+}
+
 fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
     for _ in 0..64 {
         if com2.try_read_byte().is_none() {
@@ -445,8 +553,9 @@ mod tests {
     }
 
     #[test]
-    fn parse_search_title() {
-        let line = "ROW title=os identity|cat=docs|score=1.0|snip=hello|url=os://mock";
-        assert_eq!(parse_row_field(line, "title"), Some("os identity"));
+    fn parse_skills_list_row() {
+        let line = "ROW name=email-triage|src=default|desc=Inbox via MCP email";
+        assert_eq!(parse_row_field(line, "name"), Some("email-triage"));
+        assert_eq!(parse_row_field(line, "desc"), Some("Inbox via MCP email"));
     }
 }
