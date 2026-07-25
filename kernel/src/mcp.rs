@@ -186,10 +186,53 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
     peek
 }
 
+/// Why a document open was refused (or empty), for honest reader copy.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum DocDeny {
+    None,
+    NeedFiles,
+    NeedAudio,
+    NeedEmail,
+    NoBody,
+    OutsideRoots,
+    Other,
+}
+
+impl DocDeny {
+    pub fn from_err(resp: &str) -> Self {
+        if resp.contains("needs_workspace_cap") {
+            Self::NeedFiles
+        } else if resp.contains("needs_audio_cap") {
+            Self::NeedAudio
+        } else if resp.contains("needs_email_cap") {
+            Self::NeedEmail
+        } else if resp.contains("no readable body") || resp.contains("no such message") {
+            Self::NoBody
+        } else if resp.contains("outside the indexed roots") {
+            Self::OutsideRoots
+        } else {
+            Self::Other
+        }
+    }
+
+    pub const fn message(self) -> &'static str {
+        match self {
+            Self::None => "",
+            Self::NeedFiles => "Grant Your files to open this document.",
+            Self::NeedAudio => "Grant Recordings to open this transcript.",
+            Self::NeedEmail => "Grant Email to open this message.",
+            Self::NoBody => "Nothing readable here.",
+            Self::OutsideRoots => "Outside the indexed folders.",
+            Self::Other => "Could not open this document.",
+        }
+    }
+}
+
 /// Lines of a document, for the reader.
 pub struct DocPage {
     pub status: BridgeStatus,
     pub denied: bool,
+    pub deny: DocDeny,
     pub count: usize,
     pub lines: [[u8; 84]; Self::MAX],
 }
@@ -198,7 +241,13 @@ impl DocPage {
     pub const MAX: usize = 18;
 
     pub const fn empty(status: BridgeStatus, denied: bool) -> Self {
-        Self { status, denied, count: 0, lines: [[0; 84]; Self::MAX] }
+        Self {
+            status,
+            denied,
+            deny: DocDeny::None,
+            count: 0,
+            lines: [[0; 84]; Self::MAX],
+        }
     }
 
     pub fn line_at(&self, i: usize) -> &str {
@@ -230,6 +279,9 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
     if caps.allows(crate::caps::Cap::AudioTranscribe) {
         com2.write_str(" audio=1");
     }
+    if caps.allows(crate::caps::Cap::EmailSearch) {
+        com2.write_str(" email=1");
+    }
     // Portals are the only source that leaves this machine.
     if caps.allows(crate::caps::Cap::PortalSync) {
         com2.write_str(" portal=1");
@@ -250,6 +302,7 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
         }
         if resp.starts_with("ERR ") {
             page.denied = true;
+            page.deny = DocDeny::from_err(resp);
             break;
         }
         if resp.starts_with("OK doc.read") {
@@ -721,6 +774,36 @@ mod tests {
         let mut caps = Caps::none();
         caps.set(Cap::SearchQuery, true);
         assert!(!caps.allows(Cap::EmailSearch));
+    }
+
+    #[test]
+    fn doc_deny_messages_name_the_missing_grant() {
+        assert_eq!(
+            DocDeny::from_err("ERR doc.read needs_workspace_cap"),
+            DocDeny::NeedFiles
+        );
+        assert_eq!(
+            DocDeny::from_err("ERR doc.read needs_email_cap"),
+            DocDeny::NeedEmail
+        );
+        assert_eq!(
+            DocDeny::from_err("ERR doc.read needs_audio_cap"),
+            DocDeny::NeedAudio
+        );
+        assert!(DocDeny::NeedFiles.message().contains("Your files"));
+        assert!(DocDeny::NeedEmail.message().contains("Email"));
+        assert!(DocDeny::NeedAudio.message().contains("Recordings"));
+        for d in [
+            DocDeny::NeedFiles,
+            DocDeny::NeedAudio,
+            DocDeny::NeedEmail,
+            DocDeny::NoBody,
+            DocDeny::OutsideRoots,
+            DocDeny::Other,
+        ] {
+            let m = d.message();
+            assert!(m.bytes().all(|b| (0x20..=0x7E).contains(&b)), "{m}");
+        }
     }
 
     #[test]

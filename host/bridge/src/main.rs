@@ -587,6 +587,7 @@ fn parse_row_field<'a>(row: &'a str, key: &str) -> Option<&'a str> {
 fn read_doc(url: &str, max: usize, args: &[(String, String)]) -> Result<Vec<String>, String> {
     let with_files = matches!(arg_val(args, "files"), Some("1"));
     let with_audio = matches!(arg_val(args, "audio"), Some("1"));
+    let with_email = matches!(arg_val(args, "email"), Some("1"));
 
     let body = if let Some(rel) = url.strip_prefix("file://") {
         if !with_files {
@@ -618,6 +619,27 @@ fn read_doc(url: &str, max: usize, args: &[(String, String)]) -> Result<Vec<Stri
             .find(|t| t.source == src)
             .map(|t| t.text)
             .ok_or("no such transcript")?
+    } else if let Some(id) = url.strip_prefix("email://") {
+        // Mail graph stores sender/subject/snippet only — never the full body.
+        if !with_email {
+            return Err("needs_email_cap".into());
+        }
+        let g = graph::Graph::load_or_empty();
+        let m = g
+            .messages
+            .iter()
+            .find(|m| m.id == id)
+            .ok_or("no such message")?;
+        format!(
+            "From: {}\nSubject: {}\n\n{}",
+            m.from,
+            m.subject,
+            if m.snippet.is_empty() {
+                "(no snippet)"
+            } else {
+                m.snippet.as_str()
+            }
+        )
     } else {
         // Corpus and teddy documents carry their body in the index.
         return search::body_for(url, max).ok_or_else(|| "no readable body".into());
@@ -1051,6 +1073,49 @@ mod read_tests {
     fn reading_a_transcript_needs_the_audio_grant() {
         let e = read_doc("audio:///tmp/x.wav", 10, &args(&[("files", "1")])).unwrap_err();
         assert_eq!(e, "needs_audio_cap", "the files grant must not unlock recordings");
+    }
+
+    #[test]
+    fn reading_mail_needs_the_email_grant() {
+        let e = read_doc("email://deadbeef", 10, &args(&[("files", "1")])).unwrap_err();
+        assert_eq!(e, "needs_email_cap", "files must not unlock mail peeks");
+    }
+
+    #[test]
+    fn reading_mail_with_email_cap_shows_snippet() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("os-eread-{}", std::process::id()));
+        let path = dir.join("emails.json");
+        let _ = std::fs::create_dir_all(&dir);
+        unsafe {
+            std::env::set_var("OS_GRAPH_PATH", &path);
+        }
+        let mut g = graph::Graph::default();
+        g.ingest(&[(
+            "ada@x.com".into(),
+            "Open me".into(),
+            "snippet for the reader".into(),
+        )]);
+        g.save().expect("save");
+        let id = g.messages[0].id.clone();
+        let rows = read_doc(
+            &format!("email://{id}"),
+            10,
+            &args(&[("email", "1")]),
+        )
+        .expect("read");
+        let text: String = rows
+            .iter()
+            .filter_map(|r| r.strip_prefix("ROW line="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("ada@x.com"), "{text}");
+        assert!(text.contains("Open me"), "{text}");
+        assert!(text.contains("snippet for the reader"), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+        unsafe {
+            std::env::remove_var("OS_GRAPH_PATH");
+        }
     }
 
     #[test]

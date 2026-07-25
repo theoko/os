@@ -527,7 +527,13 @@ pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage) {
     fb.draw_text(fx, 108, title, &TITLE_FACE, font::tracking_pct(TITLE_FACE.px, -20), theme::INK);
 
     if page.denied {
-        fb.draw_text(fx, 160, Source::TEDDY, &BODY_FACE, 0, theme::MUTED);
+        let msg = page.deny.message();
+        let msg = if msg.is_empty() {
+            "Could not open this document."
+        } else {
+            msg
+        };
+        fb.draw_text(fx, 160, msg, &BODY_FACE, 0, theme::MUTED);
         return;
     }
     if page.count == 0 {
@@ -553,6 +559,17 @@ pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage) {
 #[cfg(test)]
 mod reader_tests {
     use super::*;
+
+    #[test]
+    fn denied_reader_names_the_missing_grant() {
+        let mut page = crate::mcp::DocPage::empty(crate::mcp::BridgeStatus::Online, true);
+        page.deny = crate::mcp::DocDeny::NeedFiles;
+        assert!(page.deny.message().contains("Your files"));
+        page.deny = crate::mcp::DocDeny::NeedEmail;
+        assert!(page.deny.message().contains("Email"));
+        // Not the search empty-state mascot — open failures are grant issues.
+        assert_ne!(page.deny.message(), Source::TEDDY);
+    }
 
     #[test]
     fn result_rows_are_clickable_at_their_centre() {

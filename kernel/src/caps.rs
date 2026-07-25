@@ -51,7 +51,7 @@ impl Cap {
         match self {
             Cap::EmailSearch => "Read your inbox",
             Cap::SearchQuery => "Search what ships with the OS",
-            Cap::WorkspaceIndex => "Search documents on this machine",
+            Cap::WorkspaceIndex => "Search project folders you choose",
             Cap::AudioTranscribe => "Transcribe audio you point it at",
             Cap::SkillsSave => "Write new playbooks to disk",
             Cap::PortalSync => "Teddy and market portals",
@@ -207,6 +207,14 @@ mod tests {
         assert_eq!(Cap::EmailSearch.name(), "email.search");
         assert_eq!(Cap::SearchQuery.name(), "search.query");
         assert_eq!(Cap::SkillsSave.name(), "skills.save");
+    }
+
+    #[test]
+    fn workspace_detail_does_not_claim_the_whole_machine() {
+        let d = Cap::WorkspaceIndex.detail();
+        assert!(!d.contains("this machine"), "{d}");
+        assert!(d.contains("project") || d.contains("folder"), "{d}");
+        assert!(d.bytes().all(|b| (0x20..=0x7E).contains(&b)));
     }
 }
 

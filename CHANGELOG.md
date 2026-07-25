@@ -1,8 +1,18 @@
 ---
-version: 0.9.11
+version: 0.9.12
 ---
 
 # Changelog
+
+## 0.9.12 — 2026-07-25
+
+Open what you find — files and mail, not just locate them:
+
+- Smoke: `workspace.index` / `search.query files=1` / `doc.read` / forget;
+  `doc.read email://` needs `email=1` and shows from/subject/snippet.
+- Guest `fetch_doc` sends `email=1`; reader denials name the missing grant
+  instead of blanket Teddy.
+- Caps: Your files detail is "project folders you choose", not the whole machine.
 
 ## 0.9.11 — 2026-07-25
 

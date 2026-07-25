@@ -40,19 +40,30 @@ cargo build -p os-mcp-bridge
 SERIAL_OUT="$(mktemp "${TMPDIR:-/tmp}/os-bridge-serial.XXXXXX")"
 BRIDGE_LOG="$(mktemp "${TMPDIR:-/tmp}/os-bridge-log.XXXXXX")"
 SKILLS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/os-bridge-skills.XXXXXX")"
-# Isolate transcript store so smoke can seed/search/forget without touching
-# the developer's real Application Support path.
+# Isolate personal-data stores so smoke never touches Application Support.
 TRANSCRIPT_STORE="$(mktemp "${TMPDIR:-/tmp}/os-smoke-transcripts.XXXXXX.json")"
+GRAPH_PATH="$(mktemp "${TMPDIR:-/tmp}/os-smoke-emails.XXXXXX.json")"
+WORK_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/os-smoke-workspace.XXXXXX")"
+WORK_INDEX="$(mktemp "${TMPDIR:-/tmp}/os-smoke-workspace-ix.XXXXXX.json")"
+printf '%s\n' '# Smoke Workspace Alpha' '' 'Prose about smoke workspace alpha for search.' \
+  >"$WORK_ROOT/smoke-workspace-alpha.md"
 export OS_TRANSCRIPT_STORE="$TRANSCRIPT_STORE"
+export OS_GRAPH_PATH="$GRAPH_PATH"
+export OS_WORKSPACE_ROOTS="$WORK_ROOT"
+export OS_WORKSPACE_INDEX="$WORK_INDEX"
 cleanup() {
   if [[ -n "${BRIDGE_PID:-}" ]]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi
-  rm -rf "$SKILLS_DIR"
-  rm -f "$SERIAL_OUT" "$BRIDGE_LOG" "$TRANSCRIPT_STORE"
+  rm -rf "$SKILLS_DIR" "$WORK_ROOT"
+  rm -f "$SERIAL_OUT" "$BRIDGE_LOG" "$TRANSCRIPT_STORE" "$GRAPH_PATH" "$WORK_INDEX"
 }
 trap cleanup EXIT
 
 OS_MCP_BRIDGE_ADDR="$ADDR" OS_MCP_EMAIL_BACKEND=mock \
-  OS_SKILLS_USER="$SKILLS_DIR" OS_TRANSCRIPT_STORE="$TRANSCRIPT_STORE" \
+  OS_SKILLS_USER="$SKILLS_DIR" \
+  OS_TRANSCRIPT_STORE="$TRANSCRIPT_STORE" \
+  OS_GRAPH_PATH="$GRAPH_PATH" \
+  OS_WORKSPACE_ROOTS="$WORK_ROOT" \
+  OS_WORKSPACE_INDEX="$WORK_INDEX" \
   "$BRIDGE_BIN" >"$BRIDGE_LOG" 2>&1 &
 BRIDGE_PID=$!
 
@@ -101,8 +112,9 @@ export OS_SMOKE_ISO="$ISO"
 export OS_SMOKE_ADDR="$ADDR"
 export OS_SMOKE_SERIAL="$SERIAL_OUT"
 export OS_SMOKE_TRANSCRIPT_STORE="$TRANSCRIPT_STORE"
+export OS_SMOKE_WORK_ROOT="$WORK_ROOT"
 
-# Host-side wire checks: teddy/market portals, email, skills, audio —
+# Host-side wire checks: portals, email, skills, audio, workspace, doc.read —
 # each behind its wire bit (no live whisper).
 python3 <<'PY'
 import os, socket, sys
@@ -174,6 +186,9 @@ require_listed(
     "email.forget",
     "audio.transcribe",
     "audio.forget",
+    "workspace.index",
+    "workspace.forget",
+    "doc.read",
     "skills.save",
 )
 
@@ -261,6 +276,90 @@ if "Smoke Recording Alpha" in miss:
     print(miss, file=sys.stderr)
     sys.exit(1)
 print("smoke-bridge: audio.forget ok")
+
+denied_ws = call("CALL workspace.index")
+if "needs_workspace_cap" not in denied_ws:
+    print("error: workspace.index must require files=1", file=sys.stderr)
+    print(denied_ws, file=sys.stderr)
+    sys.exit(1)
+indexed = call("CALL workspace.index files=1")
+if not indexed.startswith("OK workspace.index"):
+    print("error: workspace.index files=1 must succeed", file=sys.stderr)
+    print(indexed, file=sys.stderr)
+    sys.exit(1)
+ws_hit = call("CALL search.query q=Smoke-Workspace-Alpha k=3 files=1")
+if "Smoke Workspace Alpha" not in ws_hit:
+    print("error: search.query files=1 missed seeded workspace doc", file=sys.stderr)
+    print(ws_hit, file=sys.stderr)
+    sys.exit(1)
+# Open the file hit via doc.read.
+file_url = None
+for line in ws_hit.splitlines():
+    if line.startswith("ROW ") and "file://" in line:
+        # url=file://rel
+        for part in line.split("|"):
+            if part.startswith("url="):
+                file_url = part[4:]
+                break
+if not file_url:
+    print("error: workspace search row missing file:// url", file=sys.stderr)
+    print(ws_hit, file=sys.stderr)
+    sys.exit(1)
+denied_doc = call(f"CALL doc.read url={file_url} lines=8")
+if "needs_workspace_cap" not in denied_doc:
+    print("error: doc.read file:// must require files=1", file=sys.stderr)
+    print(denied_doc, file=sys.stderr)
+    sys.exit(1)
+opened = call(f"CALL doc.read url={file_url} lines=8 files=1")
+if not opened.startswith("OK doc.read") or "Smoke Workspace Alpha" not in opened:
+    print("error: doc.read files=1 must open workspace file", file=sys.stderr)
+    print(opened, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: workspace.index + doc.read files=1 ok")
+
+forgot_ws = call("CALL workspace.forget")
+if not forgot_ws.startswith("OK workspace.forget"):
+    print("error: workspace.forget failed", file=sys.stderr)
+    print(forgot_ws, file=sys.stderr)
+    sys.exit(1)
+ws_miss = call("CALL search.query q=Smoke-Workspace-Alpha k=3 files=1")
+if "Smoke Workspace Alpha" in ws_miss:
+    print("error: workspace.forget left files searchable", file=sys.stderr)
+    print(ws_miss, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: workspace.forget ok")
+
+# Mail open: re-seed the graph (email.forget ran earlier), then open a hit.
+reseed = call("CALL email.search q=in:inbox max=2 email=1")
+if not reseed.startswith("OK email.search"):
+    print("error: could not re-seed mail graph for doc.read", file=sys.stderr)
+    print(reseed, file=sys.stderr)
+    sys.exit(1)
+mail_hit = call("CALL search.query q=Q2-planning k=3 email=1")
+mail_url = None
+for line in mail_hit.splitlines():
+    if line.startswith("ROW ") and "email://" in line:
+        for part in line.split("|"):
+            if part.startswith("url="):
+                mail_url = part[4:]
+                break
+if mail_url:
+    denied_mail_doc = call(f"CALL doc.read url={mail_url} lines=8")
+    if "needs_email_cap" not in denied_mail_doc:
+        print("error: doc.read email:// must require email=1", file=sys.stderr)
+        print(denied_mail_doc, file=sys.stderr)
+        sys.exit(1)
+mail_doc = call(f"CALL doc.read url={mail_url} lines=8 email=1") if mail_url else ""
+if mail_url and (
+    not mail_doc.startswith("OK doc.read") or "Q2 planning" not in mail_doc
+):
+    print("error: doc.read email=1 must show mail snippet", file=sys.stderr)
+    print(mail_doc, file=sys.stderr)
+    sys.exit(1)
+if mail_url:
+    print("smoke-bridge: doc.read email=1 ok")
+else:
+    print("smoke-bridge: doc.read email=1 skipped (no email:// hit)")
 PY
 
 python3 <<'PY'
@@ -309,5 +408,5 @@ if b"mcp: email connected" not in serial:
     print("error: MCP bridge not connected", file=sys.stderr)
     sys.stderr.buffer.write(serial + b"\n")
     sys.exit(1)
-print("smoke-bridge ok: hello + mcp email + portals + audio")
+print("smoke-bridge ok: hello + mcp email + portals + audio + files")
 PY

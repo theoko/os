@@ -36,6 +36,9 @@ Guest → host:
 | `LIST` | Tool names |
 | `CALL email.search q=<gmail query> max=<n> email=1` | Search mail (needs `email=1`) |
 | `CALL email.forget` | Delete the host mail knowledge graph |
+| `CALL workspace.index files=1` | Build the project-folder index |
+| `CALL workspace.forget` | Delete the workspace index |
+| `CALL doc.read url=… [files=1] [audio=1] [email=1]` | Open a search hit (`file://`, `audio://`, `email://`, corpus) |
 | `CALL email.send to=<addr> subj=<s> body=<b>` | Send (cap-gated; bridge may require confirm) |
 | `CALL search.query q=<keywords> k=<n> cat=<opt>` | Knowledge search (curated corpus) |
 
