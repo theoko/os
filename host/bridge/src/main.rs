@@ -418,7 +418,8 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                 search::query_all(q, k, cat, with_email, with_files, with_audio)
             }
         }
-        _ => vec![format!("ERR {tool} not_found")],
+        // Distinct from tool-specific `… not_found` (e.g. skills.get).
+        _ => vec![format!("ERR unknown_tool {tool}")],
     }
 }
 
@@ -683,10 +684,8 @@ mod tests {
                 continue;
             }
             let r = dispatch(&format!("CALL {tool}"), &test_backends());
-            let unknown = format!("ERR {tool} not_found");
-            assert_ne!(
-                r.first().map(String::as_str),
-                Some(unknown.as_str()),
+            assert!(
+                !r.first().is_some_and(|s| s.starts_with("ERR unknown_tool ")),
                 "{tool} listed but missing from call_tool: {r:?}"
             );
         }
