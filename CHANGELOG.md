@@ -1,8 +1,15 @@
 ---
-version: 0.7.1
+version: 0.7.2
 ---
 
 # Changelog
+
+## 0.7.2 — 2026-07-25
+
+- UI: macOS-style first-boot **setup assistant** (region, bridge, capabilities,
+  skills) with click hit-zones and edge-triggered presses.
+- UI: home Ready / Skills pills are clickable — Ready re-runs setup; Skills
+  updates the footer. Shared CTA hit-test layout with draw.
 
 ## 0.7.1 — 2026-07-25
 
