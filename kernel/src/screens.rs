@@ -52,9 +52,9 @@ pub fn row_rect(w: i32, i: usize) -> (i32, i32, i32, i32) {
 
 /// Which row in `0..count` contains this point, if any.
 fn row_hit(w: i32, count: usize, x: i32, y: i32) -> Option<usize> {
-    (0..count).find(|&i| {
+    ui::hit_among(count, x, y, |i| {
         let (rx, ry, rw, rh) = row_rect(w, i);
-        x >= rx && x < rx + rw && y >= ry && y < ry + rh
+        ui::Rect::new(rx, ry, rw, rh)
     })
 }
 
@@ -87,8 +87,7 @@ pub fn chrome(fb: &Surface, w: i32, title: &str, heading: Option<&str>) {
 fn row(fb: &Surface, w: i32, i: usize, title: &str, sub: &str, accent: bool) -> (i32, i32, i32, i32) {
     let (x, y, cw, h) = row_rect(w, i);
     let border = if accent { theme::ACCENT } else { theme::CARD_BORDER };
-    fb.fill_round_rect(x, y, cw, h, 10, border);
-    fb.fill_round_rect(x + 1, y + 1, cw - 2, h - 2, 9, theme::BG);
+    ui::outlined_round_rect(fb, x, y, cw, h, 10, border, theme::BG);
     fb.draw_text(x + 18, y + 26, title, &BRAND_FACE, 0, theme::INK);
     fb.draw_text(x + 18, y + 46, sub, &SMALL_FACE, 0, theme::MUTED);
     (x, y, cw, h)

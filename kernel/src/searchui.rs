@@ -190,9 +190,9 @@ pub fn row_rect(w: i32, h: i32, i: usize) -> (i32, i32, i32, i32) {
 
 /// Which result was clicked, if any.
 pub fn result_hit(w: i32, h: i32, count: usize, x: i32, y: i32) -> Option<usize> {
-    (0..count.min(search::MAX_HITS)).find(|&i| {
+    crate::ui::hit_among(count.min(search::MAX_HITS), x, y, |i| {
         let (rx, ry, rw, rh) = row_rect(w, h, i);
-        x >= rx && x < rx + rw && y >= ry && y < ry + rh
+        crate::ui::Rect::new(rx, ry, rw, rh)
     })
 }
 
@@ -204,20 +204,16 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
 
     // Input field.
     let (fx, fy, fw, fh) = field_rect(w, h);
-    fb.fill_round_rect(fx, fy, fw, fh, 12, theme::RULE);
-    fb.fill_round_rect(fx + 1, fy + 1, fw - 2, fh - 2, 11, theme::BG);
-
-    let tx = fx + 18;
-    let base = fy + (fh - BODY_FACE.px) / 2 + BODY_FACE.baseline();
-    if query.is_empty() {
-        fb.draw_text(tx, base, "Type a query, then press Enter", &BODY_FACE, 0, theme::MUTED);
-    } else {
-        fb.draw_text(tx, base, query, &BODY_FACE, 0, theme::INK);
-    }
-    if caret {
-        let cx = tx + if query.is_empty() { 0 } else { BODY_FACE.width(query, 0) } + 2;
-        fb.fill_rect(cx, fy + 14, 2, fh - 28, theme::INK);
-    }
+    crate::ui::draw_query_field(
+        fb,
+        fx,
+        fy,
+        fw,
+        fh,
+        query,
+        "Type a query, then press Enter",
+        caret,
+    );
 
     // Results.
     let mut y = fy + fh + 26;
@@ -239,8 +235,7 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
 
     for i in 0..view.count {
         let r = &view.rows[i];
-        fb.fill_round_rect(fx, y, fw, ROW_H, 10, theme::CARD_BORDER);
-        fb.fill_round_rect(fx + 1, y + 1, fw - 2, ROW_H - 2, 9, theme::BG);
+        crate::ui::outlined_round_rect(fb, fx, y, fw, ROW_H, 10, theme::CARD_BORDER, theme::BG);
         fb.draw_text(fx + 18, y + 26, r.title(), &BRAND_FACE, 0, theme::INK);
         // Category chip, right-aligned.
         let cw = SMALL_FACE.width(r.cat(), 0);

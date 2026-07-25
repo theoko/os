@@ -35,7 +35,7 @@ struct Zone {
 
 impl Zone {
     fn contains(&self, px: i32, py: i32) -> bool {
-        px >= self.x && px < self.x + self.w && py >= self.y && py < self.y + self.h
+        ui::Rect::new(self.x, self.y, self.w, self.h).contains(px, py)
     }
 }
 
@@ -300,9 +300,8 @@ impl Setup {
 
         // Selected rows get an accent hairline; the rest a neutral one.
         let border = if on && !toggle { theme::ACCENT } else { theme::CARD_BORDER };
-        fb.fill_round_rect(x, y, cw, ROW_H, 10, border);
         let inner = if on && !toggle { theme::TINT_BG } else { theme::BG };
-        fb.fill_round_rect(x + 1, y + 1, cw - 2, ROW_H - 2, 9, inner);
+        ui::outlined_round_rect(fb, x, y, cw, ROW_H, 10, border, inner);
 
         let pad = 18;
         let has_blurb = blurb.is_some();
@@ -339,8 +338,7 @@ impl Setup {
     fn status_card(&mut self, fb: &Surface, w: i32, y: i32, label: &str, detail: &str, tint: u32) {
         let cw = CONTENT_W.min(w - 80);
         let x = (w - cw) / 2;
-        fb.fill_round_rect(x, y, cw, ROW_H + 8, 10, theme::CARD_BORDER);
-        fb.fill_round_rect(x + 1, y + 1, cw - 2, ROW_H + 6, 9, theme::BG);
+        ui::outlined_round_rect(fb, x, y, cw, ROW_H + 8, 10, theme::CARD_BORDER, theme::BG);
         let pad = 18;
         let d = 9;
         fb.fill_round_rect(x + pad, y + (ROW_H + 8 - d) / 2, d, d, d / 2, tint);

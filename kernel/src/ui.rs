@@ -69,8 +69,69 @@ pub struct Rect {
 }
 
 impl Rect {
+    pub const fn new(x: i32, y: i32, w: i32, h: i32) -> Self {
+        Self { x, y, w, h }
+    }
+
     pub fn contains(self, px: i32, py: i32) -> bool {
         px >= self.x && py >= self.y && px < self.x + self.w && py < self.y + self.h
+    }
+}
+
+/// First index in `0..count` whose rect contains `(px, py)`.
+pub fn hit_among(
+    count: usize,
+    px: i32,
+    py: i32,
+    mut rect_at: impl FnMut(usize) -> Rect,
+) -> Option<usize> {
+    (0..count).find(|&i| rect_at(i).contains(px, py))
+}
+
+/// Hairline border + fill rounded rect (search field, tiles, rows).
+pub fn outlined_round_rect(
+    fb: &Surface,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    radius: i32,
+    border: u32,
+    fill: u32,
+) {
+    fb.fill_round_rect(x, y, w, h, radius, border);
+    fb.fill_round_rect(
+        x + 1,
+        y + 1,
+        w - 2,
+        h - 2,
+        radius.saturating_sub(1),
+        fill,
+    );
+}
+
+/// Shared search-field chrome used on Home and Search.
+pub fn draw_query_field(
+    fb: &Surface,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    query: &str,
+    placeholder: &str,
+    caret: bool,
+) {
+    outlined_round_rect(fb, x, y, w, h, 12, theme::RULE, theme::BG);
+    let tx = x + 18;
+    let base = y + (h - BODY_FACE.px) / 2 + BODY_FACE.baseline();
+    if query.is_empty() {
+        fb.draw_text(tx, base, placeholder, &BODY_FACE, 0, theme::MUTED);
+    } else {
+        fb.draw_text(tx, base, query, &BODY_FACE, 0, theme::INK);
+    }
+    if caret {
+        let cx = tx + BODY_FACE.width(query, 0) + 2;
+        fb.fill_rect(cx, y + 14, 2, h - 28, theme::INK);
     }
 }
 
@@ -155,18 +216,7 @@ pub fn draw_home_full(
 
     // The one thing you can do without clicking anything first.
     let (fx, fy, fw, fh) = search_rect(w, h);
-    fb.fill_round_rect(fx, fy, fw, fh, 12, theme::RULE);
-    fb.fill_round_rect(fx + 1, fy + 1, fw - 2, fh - 2, 11, theme::BG);
-    let base = fy + (fh - BODY_FACE.px) / 2 + BODY_FACE.baseline();
-    if query.is_empty() {
-        fb.draw_text(fx + 18, base, "Search the knowledge base", &BODY_FACE, 0, theme::MUTED);
-    } else {
-        fb.draw_text(fx + 18, base, query, &BODY_FACE, 0, theme::INK);
-    }
-    if caret {
-        let cx = fx + 18 + BODY_FACE.width(query, 0) + 2;
-        fb.fill_rect(cx, fy + 14, 2, fh - 28, theme::INK);
-    }
+    draw_query_field(fb, fx, fy, fw, fh, query, "Search the knowledge base", caret);
     fb.draw_text(
         fx + 2,
         fy + fh + 22,
@@ -189,8 +239,7 @@ pub fn draw_home_full(
     ];
     for (i, (title, sub)) in tiles.iter().enumerate() {
         let r = tile_rect(w, h, i as i32);
-        fb.fill_round_rect(r.x, r.y, r.w, r.h, 12, theme::CARD_BORDER);
-        fb.fill_round_rect(r.x + 1, r.y + 1, r.w - 2, r.h - 2, 11, theme::BG);
+        outlined_round_rect(fb, r.x, r.y, r.w, r.h, 12, theme::CARD_BORDER, theme::BG);
         fb.draw_text(r.x + 18, r.y + 34, title, &H2_FACE, 0, theme::INK);
         fb.draw_text(r.x + 18, r.y + 58, sub, &SMALL_FACE, 0, theme::MUTED);
     }

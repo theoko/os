@@ -15,7 +15,9 @@ BRIDGE_ADDR ?= 127.0.0.1:7420
 EMAIL_BACKEND ?= mock
 
 QEMU ?= qemu-system-x86_64
-QEMUFLAGS ?= -m 512M -serial stdio -display none
+# Shared machine knobs for `run` / `run-bridged` (smokes build argv in Python).
+QEMU_MACHINE := -M q35 -m 512M -display none
+QEMUFLAGS ?= -serial stdio
 QEMU_DEBUG_EXIT := -device isa-debug-exit,iobase=0xf4,iosize=0x04
 
 CARGO ?= $(firstword $(wildcard \
@@ -71,13 +73,12 @@ iso: limine/limine kernel
 	rm -rf iso_root
 
 run: iso
-	$(QEMU) -M q35 -cdrom $(IMAGE_NAME).iso -boot d $(QEMUFLAGS) $(QEMU_DEBUG_EXIT) || true
+	$(QEMU) $(QEMU_MACHINE) -cdrom $(IMAGE_NAME).iso -boot d $(QEMUFLAGS) $(QEMU_DEBUG_EXIT) || true
 
 # COM1 = stdio, COM2 = TCP server; host bridge dials (same topology as UTM).
 run-bridged: iso bridge
 	OS_MCP_BRIDGE_CONNECT=tcp:$(BRIDGE_ADDR) ./scripts/ensure-bridge.sh
-	$(QEMU) -M q35 -cdrom $(IMAGE_NAME).iso -boot d \
-		-m 512M -display none \
+	$(QEMU) $(QEMU_MACHINE) -cdrom $(IMAGE_NAME).iso -boot d \
 		-serial stdio \
 		-serial tcp:$(BRIDGE_ADDR),server \
 		$(QEMU_DEBUG_EXIT) || true

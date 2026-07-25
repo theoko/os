@@ -55,7 +55,7 @@ unsafe extern "C" fn kmain() -> ! {
     let serial_port = serial::Serial::com1();
     serial_port.init();
     serial_port.write_str(HELLO_MESSAGE);
-    serial_port.write_str(serial::LINE_ENDING);
+    serial_port.write_str("\n");
 
     // Liveness only until the user consents. Reading the inbox here would
     // fetch — and persist — mail before anyone agreed to it.
@@ -71,49 +71,22 @@ unsafe extern "C" fn kmain() -> ! {
             // Always log geometry so UTM/QEMU serial shows why the window may be blank.
             {
                 let mut msg = [0u8; 96];
-                let s = b"fb: ";
                 let mut n = 0;
-                for &b in s {
+                for &b in b"fb: " {
                     msg[n] = b;
                     n += 1;
                 }
-                // tiny decimal helpers
-                fn push_u32(buf: &mut [u8], n: &mut usize, mut v: u32) {
-                    let mut tmp = [0u8; 10];
-                    let mut i = 0;
-                    if v == 0 {
-                        tmp[0] = b'0';
-                        i = 1;
-                    } else {
-                        while v > 0 {
-                            tmp[i] = b'0' + (v % 10) as u8;
-                            v /= 10;
-                            i += 1;
-                        }
-                    }
-                    while i > 0 {
-                        i -= 1;
-                        if *n < buf.len() {
-                            buf[*n] = tmp[i];
-                            *n += 1;
-                        }
-                    }
-                }
-                push_u32(&mut msg, &mut n, fb_info.width() as u32);
+                serial::Serial::append_u32(&mut msg, &mut n, fb_info.width() as u32);
                 msg[n] = b'x';
                 n += 1;
-                push_u32(&mut msg, &mut n, fb_info.height() as u32);
+                serial::Serial::append_u32(&mut msg, &mut n, fb_info.height() as u32);
                 msg[n] = b' ';
                 n += 1;
-                push_u32(&mut msg, &mut n, fb_info.bpp() as u32);
-                msg[n] = b'b';
-                n += 1;
-                msg[n] = b'p';
-                n += 1;
-                msg[n] = b'p';
-                n += 1;
-                msg[n] = b'\n';
-                n += 1;
+                serial::Serial::append_u32(&mut msg, &mut n, fb_info.bpp() as u32);
+                for &b in b"bpp\n" {
+                    msg[n] = b;
+                    n += 1;
+                }
                 serial_port.write_bytes(&msg[..n]);
             }
             if let Some(screen) = unsafe {
@@ -212,9 +185,9 @@ unsafe extern "C" fn kmain() -> ! {
                     screen.present();
                     let t2 = serial::rdtsc();
                     serial_port.write_str("perf: full=");
-                    write_u64(&serial_port, (t1 - t0) / 1000);
+                    serial_port.write_u64((t1 - t0) / 1000);
                     serial_port.write_str("kcyc dirty=");
-                    write_u64(&serial_port, (t2 - t1) / 1000);
+                    serial_port.write_u64((t2 - t1) / 1000);
                     serial_port.write_str("kcyc\n");
                 }
 
@@ -376,7 +349,7 @@ unsafe extern "C" fn kmain() -> ! {
                         let was_down = prev_buttons & 0x01 != 0;
                         if left_down && !was_down {
                             let (bx, by, bw, bh) = screens::back_rect(w);
-                            if x >= bx && x < bx + bw && y >= by && y < by + bh {
+                            if ui::Rect::new(bx, by, bw, bh).contains(x, y) {
                                 // Back from the reader returns to results.
                                 view = if view == screens::View::Reader {
                                     screens::View::Search
@@ -567,22 +540,6 @@ fn enter(screen: &fb::Screen) {
         screen.present_slide(dy, a, ui::theme::BG);
         mark = anim::pace(mark, anim::SLIDE_IN.frame_us);
     }
-}
-
-/// Decimal u64 to COM1, for the perf line.
-fn write_u64(port: &serial::Serial, mut v: u64) {
-    let mut buf = [0u8; 20];
-    let mut i = buf.len();
-    if v == 0 {
-        i -= 1;
-        buf[i] = b'0';
-    }
-    while v > 0 {
-        i -= 1;
-        buf[i] = b'0' + (v % 10) as u8;
-        v /= 10;
-    }
-    port.write_bytes(&buf[i..]);
 }
 
 #[panic_handler]

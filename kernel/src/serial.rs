@@ -2,10 +2,6 @@
 
 use crate::port;
 
-/// Line ending used after the hello banner.
-pub const LINE_ENDING: &str = "\n";
-
-
 /// Classic PC UART.
 pub struct Serial {
     #[allow(dead_code)] // read on x86_64 I/O paths
@@ -69,6 +65,45 @@ impl Serial {
 
     pub fn write_str(&self, s: &str) {
         self.write_bytes(s.as_bytes());
+    }
+
+    /// Decimal `u64` for COM1 perf / geometry lines.
+    pub fn write_u64(&self, mut v: u64) {
+        let mut buf = [0u8; 20];
+        let mut i = buf.len();
+        if v == 0 {
+            i -= 1;
+            buf[i] = b'0';
+        }
+        while v > 0 {
+            i -= 1;
+            buf[i] = b'0' + (v % 10) as u8;
+            v /= 10;
+        }
+        self.write_bytes(&buf[i..]);
+    }
+
+    /// Append decimal `u32` into a caller-owned buffer (for composed log lines).
+    pub fn append_u32(buf: &mut [u8], n: &mut usize, mut v: u32) {
+        let mut tmp = [0u8; 10];
+        let mut i = 0;
+        if v == 0 {
+            tmp[0] = b'0';
+            i = 1;
+        } else {
+            while v > 0 {
+                tmp[i] = b'0' + (v % 10) as u8;
+                v /= 10;
+                i += 1;
+            }
+        }
+        while i > 0 {
+            i -= 1;
+            if *n < buf.len() {
+                buf[*n] = tmp[i];
+                *n += 1;
+            }
+        }
     }
 
     /// Non-blocking read: `None` if no byte waiting.

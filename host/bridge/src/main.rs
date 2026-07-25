@@ -23,6 +23,23 @@ const MAX_LINE: u64 = 64 * 1024;
 /// Cap on an accumulated skills.save body.
 const MAX_BODY: usize = 1024 * 1024;
 
+/// Tools advertised by `LIST` — keep in sync with `call_tool` (+ `skills.save`
+/// which is handled on the socket for the LINE…END body).
+const TOOLS: &[&str] = &[
+    "email.search",
+    "email.send",
+    "skills.list",
+    "skills.get",
+    "skills.save",
+    "search.query",
+    "workspace.index",
+    "tsearch.sync",
+    "audio.transcribe",
+    "workspace.forget",
+    "audio.forget",
+    "doc.read",
+];
+
 /// `read_line` with a hard length cap so a peer that never sends `\n` cannot
 /// grow the buffer without bound. `Ok(None)` = EOF, `Err` on I/O or oversize.
 fn read_line_bounded<R: BufRead>(reader: &mut R, line: &mut String) -> std::io::Result<Option<()>> {
@@ -239,9 +256,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
     let (cmd, rest) = split_word(line);
     match cmd {
         "PING" => vec!["OK pong".into()],
-        "LIST" => {
-            vec!["OK tools=email.search,email.send,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,audio.transcribe,workspace.forget,audio.forget,doc.read".into()]
-        }
+        "LIST" => vec![format!("OK tools={}", TOOLS.join(","))],
         "CALL" => {
             let (tool, rest) = split_word(rest);
             let args = parse_args(rest);
@@ -652,6 +667,29 @@ mod tests {
     fn list_includes_search() {
         let r = dispatch("LIST", &test_backends());
         assert!(r[0].contains("search.query"));
+    }
+
+    #[test]
+    fn list_matches_tools_table() {
+        let r = dispatch("LIST", &test_backends());
+        assert_eq!(r[0], format!("OK tools={}", TOOLS.join(",")));
+    }
+
+    #[test]
+    fn every_listed_tool_is_dispatched() {
+        for tool in TOOLS {
+            if *tool == "skills.save" {
+                // Multi-line body protocol lives in handle_client, not call_tool.
+                continue;
+            }
+            let r = dispatch(&format!("CALL {tool}"), &test_backends());
+            let unknown = format!("ERR {tool} not_found");
+            assert_ne!(
+                r.first().map(String::as_str),
+                Some(unknown.as_str()),
+                "{tool} listed but missing from call_tool: {r:?}"
+            );
+        }
     }
 }
 
