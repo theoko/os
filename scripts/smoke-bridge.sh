@@ -229,7 +229,7 @@ if not starter_body.startswith("OK skills.get"):
     sys.exit(1)
 for tool in ("search.query", "email.search", "audio.transcribe"):
     if tool not in starter_body:
-        print(f"error: starter playbook must name {tool} for guest plan preview", file=sys.stderr)
+        print(f"error: starter playbook must name {tool} for guest playbook act", file=sys.stderr)
         print(starter_body, file=sys.stderr)
         sys.exit(1)
 print("smoke-bridge: skills.save skills=1 ok")

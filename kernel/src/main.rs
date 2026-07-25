@@ -588,7 +588,8 @@ unsafe extern "C" fn kmain() -> ! {
                                     screens::skills_hit(w, skill_peek.count, x, y)
                                 {
                                     // Every row opens Brief — builtins run a
-                                    // plan; saved/unknown show playbook body.
+                                    // plan; saved/unknown preview then CALL
+                                    // only tools already granted.
                                     let name = skill_peek.name_at(i);
                                     brief = agent::run(name, grants);
                                     if !agent::is_runnable(name) {
@@ -598,7 +599,10 @@ unsafe extern "C" fn kmain() -> ! {
                                             let body = core::str::from_utf8(&body_buf[..n])
                                                 .unwrap_or("");
                                             agent::enrich_playbook(&mut brief, grants, body);
-                                            serial_port.write_str("skills: brief ");
+                                            agent::run_playbook_allowed(
+                                                &mut brief, grants, body,
+                                            );
+                                            serial_port.write_str("skills: playbook ");
                                             serial_port.write_str(name);
                                             serial_port.write_str("\n");
                                         } else {

@@ -70,8 +70,13 @@ footer blurb.
 
 From **0.9.16** that peek is a **plan preview**: the guest scans the body for
 known tool spellings, lists them as `Tool` lines, and marks `Need` for grants
-still off. It does **not** auto-CALL anything from markdown. One-line
-`skills.save` starters ship with suggested `search.query` / `email.search` /
-`audio.transcribe` lines so the preview is non-empty.
+still off.
+
+From **0.9.20** the guest then **CALLs granted peek tools** named in the body
+(`email.search`, `search.query`, `teddy.health`, `market.health`). Cap denial
+never opens COM2. Path/URL/write tools (`audio.transcribe`, `doc.read`,
+`skills.save`, `workspace.index`, `tsearch.sync`) stay Info-only — markdown is
+still not a script, and `email.send` stays disabled. One-line `skills.save`
+starters ship with suggested tool names so the plan is non-empty.
 
 Also see [`docs/search-os-doc-v01.md`](search-os-doc-v01.md).

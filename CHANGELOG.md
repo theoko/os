@@ -1,8 +1,19 @@
 ---
-version: 0.9.19
+version: 0.9.20
 ---
 
 # Changelog
+
+## 0.9.20 — 2026-07-25
+
+Saved playbooks CALL granted tools:
+
+- After the plan preview, `run_playbook_allowed` issues MCP peeks for tools
+  named in the body that are already on (`email.search`, `search.query`,
+  portal health). Cap refusal never opens COM2.
+- Path/URL/write tools stay Info-only (`audio.transcribe`, `doc.read`,
+  `skills.save`, …). Markdown is still not executable; `email.send` stays off.
+- Skills chrome copy matches: saved rows run under current grants.
 
 ## 0.9.19 — 2026-07-25
 

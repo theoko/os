@@ -22,7 +22,7 @@ pub enum Kind {
     TeddyPortals,
     /// Live superintelmarkets.com portals (same grant as teddy).
     MarketPortals,
-    /// Listed, but not a runnable guest plan (show blurb only).
+    /// Saved / custom: plan preview, then CALL only tools already granted.
     Unknown,
 }
 
@@ -170,14 +170,16 @@ pub fn run(name: &str, caps: Caps) -> Brief {
         Kind::MarketPortals => run_markets(&mut brief, caps),
         Kind::Unknown => {
             // Saved / custom skills: Brief always. The click path fetches the
-            // body and [`enrich_playbook`] names tools + missing grants.
-            // Still no auto-CALL — markdown is not executable kernel code.
+            // body, [`enrich_playbook`] names tools + missing grants, then
+            // [`run_playbook_allowed`] CALLs only tools already granted.
+            // Markdown is still not a script — no invented LINE…END, no
+            // email.send, no path/URL tools without a picker.
             brief.set_heading("Playbook plan");
             brief.push_plan("Read playbook from the host");
             brief.push_plan("Name tools the playbook mentions");
             brief.push_plan("Report missing grants");
-            brief.push_plan("Do not auto-CALL from markdown");
-            brief.push_line("Info", "Preview only - saved skills do not auto-run MCP.");
+            brief.push_plan("CALL tools already granted");
+            brief.push_line("Info", "Granted tools run; others stay Need.");
         }
     }
     brief
@@ -212,7 +214,8 @@ pub fn playbook_tool_bits(body: &str) -> u32 {
 
 /// Fill Body / Tool / Need lines from playbook text after [`run`] for Unknown.
 ///
-/// Does not issue MCP calls — only previews what the playbook asks for.
+/// Pure grant bookkeeping — never opens COM2. Follow with
+/// [`run_playbook_allowed`] to CALL granted peek tools.
 pub fn enrich_playbook(brief: &mut Brief, caps: Caps, body: &str) {
     // First non-empty prose line as Body (skip markdown headings if possible).
     let mut body_line = "";
@@ -262,6 +265,82 @@ pub fn enrich_playbook(brief: &mut Brief, caps: Caps, body: &str) {
             }
         }
     }
+}
+
+/// CALL peek tools named in the playbook when the matching grant is on.
+///
+/// Cap refusal never opens COM2. Write / path / URL tools only get an Info
+/// pointer (Search picker, Skills Save starter) — markdown is not executable.
+pub fn run_playbook_allowed(brief: &mut Brief, caps: Caps, body: &str) {
+    let bits = playbook_tool_bits(body);
+    if bits == 0 {
+        return;
+    }
+
+    // --- safe peeks (grant checked before any MCP) ------------------------
+    if bit_set(bits, 0) && caps.allows(Cap::EmailSearch) && brief.count < brief.lines.len() {
+        let mail = mcp::fetch_mail_peek(caps);
+        brief.status = mail.status;
+        if mail.status == BridgeStatus::Online && mail.count > 0 {
+            fill_mail_lines(brief, &mail, false);
+        } else if mail.status == BridgeStatus::Online {
+            brief.push_line("FYI", "Inbox empty.");
+        } else {
+            brief.push_line("Info", "Bridge offline for mail.");
+        }
+    }
+
+    if bit_set(bits, 1) && caps.allows(Cap::SearchQuery) && brief.count < brief.lines.len() {
+        let peek = mcp::fetch_search_peek(caps, "capability-agent");
+        if brief.status != BridgeStatus::Online {
+            brief.status = peek.status;
+        }
+        if peek.denied {
+            brief.need(Cap::SearchQuery);
+        } else if peek.count > 0 {
+            let room = brief.lines.len().saturating_sub(brief.count).min(3);
+            for i in 0..peek.count.min(room) {
+                brief.push_line("Hit", peek.title_at(i));
+            }
+        } else {
+            brief.push_line(
+                "Info",
+                if peek.status == BridgeStatus::Offline {
+                    "No offline hits for that query."
+                } else {
+                    "No corpus hits."
+                },
+            );
+        }
+    }
+
+    if bit_set(bits, 6) && caps.allows(Cap::PortalSync) {
+        fill_portal_lines(brief, caps, "teddy.health", 1);
+    }
+    if bit_set(bits, 7) && caps.allows(Cap::PortalSync) {
+        fill_portal_lines(brief, caps, "market.health", 1);
+    }
+
+    // --- named but not silent-CALL'd --------------------------------------
+    if bit_set(bits, 2) && caps.allows(Cap::WorkspaceIndex) {
+        brief.push_line("Info", "Your files on - open file hits from Search.");
+    }
+    if bit_set(bits, 3) && caps.allows(Cap::AudioTranscribe) {
+        brief.push_line("Info", "Recordings on - type /path.wav in Search.");
+    }
+    if bit_set(bits, 4) && caps.allows(Cap::SkillsSave) {
+        brief.push_line("Info", "Save skills: use Save starter on Skills.");
+    }
+    if bit_set(bits, 5) && caps.allows(Cap::PortalSync) {
+        brief.push_line("Info", "tsearch.sync: warm Online services on Caps.");
+    }
+    if bit_set(bits, 8) && caps.allows(Cap::SearchQuery) {
+        brief.push_line("Info", "doc.read: open a hit from Search.");
+    }
+}
+
+fn bit_set(bits: u32, i: usize) -> bool {
+    bits & (1u32 << i) != 0
 }
 
 /// Morning brief used on home after setup: plan/act over whatever is granted.
@@ -721,6 +800,11 @@ mod tests {
         assert!(b.plan_n >= 2);
         assert!(!b.denied);
         assert!(b.lines.iter().any(|l| l.tag() == "Info"));
+        assert!(
+            b.plan_at(3).contains("granted") || b.plan_at(3).contains("CALL"),
+            "plan should promise granted CALLs: {}",
+            b.plan_at(3)
+        );
     }
 
     #[test]
@@ -732,12 +816,18 @@ mod tests {
 
         let mut brief = run("custom-saved", Caps::none());
         enrich_playbook(&mut brief, Caps::none(), body);
+        // Denied tools must never open COM2 — run_playbook_allowed is a no-op.
+        run_playbook_allowed(&mut brief, Caps::none(), body);
         assert!(brief.lines.iter().any(|l| l.tag() == "Tool" && l.text() == "email.search"));
         assert!(brief.lines.iter().any(|l| l.tag() == "Tool" && l.text() == "search.query"));
         assert!(brief.denied);
         assert_eq!(brief.deny_name(), "email.search");
         assert!(brief.lines.iter().any(|l| l.tag() == "Need" && l.text() == "Email"));
         assert!(brief.lines.iter().any(|l| l.tag() == "Need" && l.text() == "Built-in docs"));
+        assert!(
+            !brief.lines.iter().any(|l| l.tag() == "Hit"),
+            "no Hits without grants"
+        );
     }
 
     #[test]
@@ -750,9 +840,27 @@ mod tests {
             caps,
             "Only search.query is named here.",
         );
+        // Do not call run_playbook_allowed here: SearchQuery would open COM2.
         assert!(brief.lines.iter().any(|l| l.tag() == "Tool"));
         assert!(!brief.denied, "granted tool must not mark Need");
         assert!(!brief.lines.iter().any(|l| l.tag() == "Need"));
+    }
+
+    #[test]
+    fn playbook_act_info_only_tools_skip_com2() {
+        // Path/write tools named + granted → Info pointer, never COM2.
+        let mut caps = Caps::none();
+        caps.set(Cap::WorkspaceIndex, true);
+        caps.set(Cap::AudioTranscribe, true);
+        caps.set(Cap::SkillsSave, true);
+        let body = "Uses workspace.index, audio.transcribe, and skills.save.";
+        let mut brief = run("custom-saved", caps);
+        enrich_playbook(&mut brief, caps, body);
+        run_playbook_allowed(&mut brief, caps, body);
+        assert!(brief.lines.iter().any(|l| l.text().contains("Your files")));
+        assert!(brief.lines.iter().any(|l| l.text().contains("Recordings")));
+        assert!(brief.lines.iter().any(|l| l.text().contains("Save skills")));
+        assert!(!brief.lines.iter().any(|l| l.tag() == "Hit"));
     }
 
     #[test]
@@ -915,12 +1023,16 @@ mod tests {
             "Save skills off - no write.",
             "skills.save failed on the host.",
             "Playbook plan",
-            "Preview only - saved skills do not auto-run MCP.",
+            "Granted tools run; others stay Need.",
             "No known MCP tools named in this playbook.",
             "Playbook body unavailable.",
             "Your files on - open file hits from Search.",
             "Recordings on - type /path.wav in Search.",
+            "Save skills: use Save starter on Skills.",
+            "doc.read: open a hit from Search.",
+            "tsearch.sync: warm Online services on Caps.",
             "Acting only with switches that are on.",
+            "CALL tools already granted",
         ] {
             assert!(
                 s.bytes().all(|b| (0x20..=0x7E).contains(&b)),

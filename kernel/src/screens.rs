@@ -109,7 +109,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek, caps: Caps) {
         let sub = if !desc.is_empty() {
             desc
         } else if peek.is_saved_at(i) {
-            "Saved on the host"
+            "Saved - CALL granted tools"
         } else if crate::agent::is_runnable(name) {
             "Tap to run under current grants"
         } else if peek.from_bridge {
@@ -136,11 +136,11 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek, caps: Caps) {
 
     let (x, cw) = column(w);
     let note = if caps.allows(Cap::SkillsSave) {
-        "Save starter needs the bridge. Every playbook opens a Brief."
+        "Saved playbooks CALL granted tools. Save starter needs the bridge."
     } else if peek.from_bridge {
-        "Runnable skills call MCP under your grants. Others open a Brief with body text."
+        "Builtins run under grants. Saved CALL only tools you already turned on."
     } else if peek.count > 0 {
-        "Compiled into the ISO. Tap a playbook to open its Brief."
+        "Tap a playbook: builtins run; saved CALL only granted tools."
     } else {
         "No skills loaded."
     };
@@ -389,9 +389,9 @@ mod tests {
         let mut all = vec![
             "Tap a playbook to run it",
             "Run a playbook, or save a starter",
-            "Compiled into the ISO. Tap a playbook to open its Brief.",
-            "Runnable skills call MCP under your grants. Others open a Brief with body text.",
-            "Save starter needs the bridge. Every playbook opens a Brief.",
+            "Tap a playbook: builtins run; saved CALL only granted tools.",
+            "Builtins run under grants. Saved CALL only tools you already turned on.",
+            "Saved playbooks CALL granted tools. Save starter needs the bridge.",
             "Playbook body unavailable.",
             "No skills loaded.",
             "Skills",
@@ -400,7 +400,7 @@ mod tests {
             "Back",
             "From host bridge",
             "Shipped with the ISO",
-            "Saved on the host",
+            "Saved - CALL granted tools",
             "Save starter",
             "Write guest-starter to the host",
             "Tap to run under current grants",
