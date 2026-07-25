@@ -60,6 +60,36 @@ fn home() -> PathBuf {
     env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
 }
 
+/// Keychain service the portal credential is stored under.
+pub const KEYCHAIN_SERVICE: &str = "os-portal";
+
+/// Basic-auth credential for the portal, if one is configured.
+///
+/// Keychain first, environment second. The repo is public and AGENTS.md is
+/// explicit that secrets stay out of the tree, so nothing is read from disk
+/// here. An env var works but leaks into process listings and shell history,
+/// which is why it is the fallback rather than the default.
+///
+/// Store one with:
+///   security add-generic-password -s os-portal -a <user> -w <password>
+fn credential() -> Option<(String, String)> {
+    if let (Ok(u), Ok(p)) = (env::var("OS_PORTAL_USER"), env::var("OS_PORTAL_PASS")) {
+        if !u.is_empty() {
+            return Some((u, p));
+        }
+    }
+    let user = env::var("OS_PORTAL_USER").ok().filter(|u| !u.is_empty())?;
+    let out = Command::new("security")
+        .args(["find-generic-password", "-s", KEYCHAIN_SERVICE, "-a", &user, "-w"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let pass = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    (!pass.is_empty()).then_some((user, pass))
+}
+
 /// Fetch the live corpus into the cache. Returns (documents, crawl stamp).
 ///
 /// Downloads to a temporary file and renames on success, so an interrupted
@@ -72,20 +102,41 @@ pub fn sync() -> Result<(usize, String), String> {
     }
     let tmp = path.with_extension("part");
 
-    let out = Command::new("curl")
-        .arg("-sS")
-        .arg("--fail")
-        .arg("--max-time")
-        .arg("300")
-        .arg("-o")
+    // Credentials go in via a config on stdin, never argv: `curl --user u:p`
+    // puts the password in `ps` output for every process on the machine.
+    let mut child = Command::new("curl")
+        .args(["-sS", "--fail", "--max-time", "300", "-o"])
         .arg(&tmp)
-        .arg(url())
-        .output()
+        .args(["-K", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
         .map_err(|e| format!("curl: {e}"))?;
+
+    {
+        use std::io::Write as _;
+        let mut cfg = String::new();
+        cfg.push_str(&format!("url = \"{}\"\n", url()));
+        if let Some((u, pw)) = credential() {
+            cfg.push_str(&format!("user = \"{u}:{pw}\"\n"));
+        }
+        let stdin = child.stdin.as_mut().ok_or("curl stdin")?;
+        stdin.write_all(cfg.as_bytes()).map_err(|e| format!("curl stdin: {e}"))?;
+    }
+
+    let out = child.wait_with_output().map_err(|e| format!("curl: {e}"))?;
     if !out.status.success() {
         let _ = fs::remove_file(&tmp);
         let err = String::from_utf8_lossy(&out.stderr);
-        return Err(err.lines().last().unwrap_or("fetch failed").chars().take(120).collect());
+        let brief: String = err.lines().last().unwrap_or("fetch failed").chars().take(120).collect();
+        // 401 is the one failure with an obvious remedy, so name it.
+        if brief.contains("401") {
+            return Err(format!(
+                "{brief} - store a credential: security add-generic-password -s {KEYCHAIN_SERVICE} -a <user> -w"
+            ));
+        }
+        return Err(brief);
     }
 
     // Validate before publishing: a truncated download parses as an error here
@@ -361,5 +412,46 @@ mod forget_tests {
 
         let _ = fs::remove_dir_all(&dir);
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
+    }
+}
+
+#[cfg(test)]
+mod auth_tests {
+    use super::*;
+
+    #[test]
+    fn no_credential_configured_is_not_an_error() {
+        // An unauthenticated portal must keep working; auth is opt-in.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { env::remove_var("OS_PORTAL_USER") };
+        unsafe { env::remove_var("OS_PORTAL_PASS") };
+        assert!(credential().is_none());
+    }
+
+    #[test]
+    fn env_credential_is_used_when_both_parts_are_present() {
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { env::set_var("OS_PORTAL_USER", "theo") };
+        unsafe { env::set_var("OS_PORTAL_PASS", "hunter2") };
+        assert_eq!(credential(), Some(("theo".into(), "hunter2".into())));
+        unsafe { env::remove_var("OS_PORTAL_USER") };
+        unsafe { env::remove_var("OS_PORTAL_PASS") };
+    }
+
+    #[test]
+    fn a_username_alone_does_not_produce_an_empty_password() {
+        // Without a keychain entry this must yield None rather than
+        // authenticating as user-with-blank-password.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        unsafe { env::set_var("OS_PORTAL_USER", "no-such-user-for-tests") };
+        unsafe { env::remove_var("OS_PORTAL_PASS") };
+        assert!(credential().is_none());
+        unsafe { env::remove_var("OS_PORTAL_USER") };
+    }
+
+    #[test]
+    fn the_keychain_service_name_is_stable() {
+        // Changing this orphans anyone's stored credential silently.
+        assert_eq!(KEYCHAIN_SERVICE, "os-portal");
     }
 }

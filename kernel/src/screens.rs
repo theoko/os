@@ -319,7 +319,7 @@ pub fn draw_status(
     let (x, cw) = column(w);
     let mut y = TOP;
 
-    let mut line = |fb: &Surface, y: i32, name: &str, state: &str, ok: bool| {
+    let line = |fb: &Surface, y: i32, name: &str, state: &str, ok: bool| {
         fb.fill_round_rect(x, y, cw, ROW_H, 10, theme::CARD_BORDER);
         fb.fill_round_rect(x + 1, y + 1, cw - 2, ROW_H - 2, 9, theme::BG);
         let d = 9;
