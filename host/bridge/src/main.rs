@@ -882,14 +882,15 @@ mod tests {
             denied[0].contains("needs_skills_cap"),
             "ungated skills.save: {denied:?}"
         );
-        // With the bit, the one-line form still works (writes under temp dirs
-        // in normal runs; here we only care it is not a cap error).
+        // With the bit, the request reaches validation rather than the cap
+        // gate. Use an invalid name so this test never writes to a user's
+        // saved-skill directory.
         let allowed = dispatch(
-            "CALL skills.save name=smoke-cap-test desc=demo skills=1",
+            "CALL skills.save name=not/valid desc=demo skills=1",
             &test_backends(),
         );
         assert!(
-            allowed[0].starts_with("OK skills.save") || allowed[0].starts_with("ERR skills.save"),
+            allowed[0].contains("invalid_name"),
             "{allowed:?}"
         );
         assert!(!allowed[0].contains("needs_skills_cap"), "{allowed:?}");
