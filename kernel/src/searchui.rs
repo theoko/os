@@ -200,10 +200,23 @@ impl SearchView {
             // the sentence, which is right - it describes where these came from.
             let said = self.say;
             self.run(q);
-            // Unless the bridge already explained itself, in which case its
-            // answer ("your files are switched off") is the useful one.
-            if online && !say_str(&said).is_empty() {
+            // Keep the bridge's explanation only when there is nothing else to
+            // explain. Preferring it unconditionally printed "Everything is
+            // switched off, so I have nothing to look at" directly above three
+            // built-in documents - the sentence described the bridge's empty
+            // answer while the rows came from the local index.
+            if self.count == 0 && online && !say_str(&said).is_empty() {
                 self.say = said;
+            } else if online {
+                // `run` always blames the bridge, because offline is the only
+                // reason it exists. Here the bridge answered and simply had
+                // nothing - saying it is offline is the same false report this
+                // screen has made before, and it sends people to fix a
+                // connection that is fine.
+                set_say(
+                    &mut self.say,
+                    "Answered from the built-in guide - nothing in your sources matched.",
+                );
             }
         }
         self.source = source;
@@ -695,5 +708,42 @@ mod agent_say_tests {
     #[test]
     fn an_idle_view_says_nothing() {
         assert!(SearchView::new().say().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod say_matches_rows_tests {
+    use super::*;
+
+    #[test]
+    fn a_reachable_bridge_is_never_reported_as_offline() {
+        // The fallback sentence blamed the bridge unconditionally, so a bridge
+        // that answered correctly and found nothing was reported as down.
+        let mut v = SearchView::new();
+        let mut caps = crate::caps::Caps::none();
+        caps.set(crate::caps::Cap::SearchQuery, true);
+        v.run_via("capability", caps);
+        if v.source.bridge_online {
+            assert!(
+                !v.say().contains("offline"),
+                "bridge was reachable: {}",
+                v.say()
+            );
+        }
+    }
+
+    #[test]
+    fn the_sentence_describes_the_rows_that_are_shown() {
+        // The bridge's "nothing is switched on" was printed above three
+        // built-in documents: the sentence explained one source and the rows
+        // came from another.
+        let mut v = SearchView::new();
+        v.run("capability");
+        assert!(v.count > 0, "the built-in corpus should answer this");
+        assert!(
+            v.say().contains("built-in"),
+            "rows are local, so the sentence must be too: {}",
+            v.say()
+        );
     }
 }

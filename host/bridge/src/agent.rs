@@ -368,8 +368,11 @@ fn from_audio(terms: &[String]) -> Vec<Cand> {
 /// off. A confident sentence over an empty list is how search UIs lie.
 fn narrate(intent: Intent, subject: &str, found: &[Cand], grants: Grants) -> String {
     if !grants.files && !grants.email && !grants.audio {
-        return "Everything is switched off, so I have nothing to look at. \
-                Turn on a source in Capabilities and ask me again."
+        // Specifically *your* sources. The built-in corpus needs no grant and
+        // is searched anyway, so "everything is switched off" was wrong as
+        // well as unhelpful whenever built-in results came back.
+        return "None of your own sources are switched on - I can only see the \
+                built-in guide. Turn one on in Capabilities."
             .into();
     }
     let subj = if subject.is_empty() { "that" } else { subject };
@@ -460,7 +463,11 @@ mod tests {
     fn nothing_is_read_from_a_source_that_was_not_granted() {
         let a = act("i wanna work on my paper", Grants::default(), 5);
         assert!(a.steps.is_empty(), "ungranted sources must produce no steps");
-        assert!(a.say.contains("switched off"), "say why it is empty: {}", a.say);
+        assert!(
+            a.say.contains("switched on"),
+            "the person should be told which switch to flip: {}",
+            a.say
+        );
     }
 
     #[test]

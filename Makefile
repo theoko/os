@@ -41,7 +41,7 @@ endif
 RUSTUP_BIN := $(patsubst %/,%,$(dir $(CARGO)))
 WITH_RUST := PATH="$(RUSTUP_BIN):$$PATH"
 
-.PHONY: all build kernel arm64-kernel iso arm64-iso bridge bridge-run run run-bridged run-best utm utm-run utm-bridged usb usb-list linux-vm refresh refresh-install refresh-uninstall test test-host smoke smoke-bridge clean distclean
+.PHONY: all build kernel arm64-kernel iso arm64-iso bridge bridge-run run run-bridged run-best utm utm-run utm-bridged usb usb-list drive linux-vm refresh refresh-install refresh-uninstall test test-host smoke smoke-bridge clean distclean
 
 all: build
 
@@ -64,21 +64,6 @@ bridge-run: bridge
 
 iso: limine/limine kernel
 	rm -rf iso_root
-
-# ARM64 UEFI-only ISO. Limine's FAT UEFI image contains BOOTAA64.EFI; ARM
-# firmware recognises this El Torito form, whereas a bare PE file is not a
-# mountable EFI system partition on all virtual CD-ROM implementations.
-arm64-iso: limine/limine arm64-kernel
-	rm -rf arm64_iso_root
-	mkdir -p arm64_iso_root/boot/limine arm64_iso_root/EFI/BOOT
-	cp -f $(ARM64_KERNEL_ELF) arm64_iso_root/boot/kernel
-	cp -f limine.conf arm64_iso_root/boot/limine/
-	cp -f limine/limine-uefi-cd.bin arm64_iso_root/boot/limine/
-	xorriso -as mkisofs -R -r -J \
-		--efi-boot boot/limine/limine-uefi-cd.bin \
-		-efi-boot-part --efi-boot-image --protective-msdos-label \
-		-o $(ARM64_IMAGE_NAME).iso arm64_iso_root
-	rm -rf arm64_iso_root
 	mkdir -p iso_root/boot/limine iso_root/EFI/BOOT
 	cp -f $(KERNEL_ELF) iso_root/boot/kernel
 	cp -f limine.conf iso_root/boot/limine/
@@ -94,6 +79,21 @@ arm64-iso: limine/limine arm64-kernel
 		iso_root -o $(IMAGE_NAME).iso
 	./limine/limine bios-install $(IMAGE_NAME).iso
 	rm -rf iso_root
+
+# ARM64 UEFI-only ISO. Limine's FAT UEFI image contains BOOTAA64.EFI; ARM
+# firmware recognises this El Torito form, whereas a bare PE file is not a
+# mountable EFI system partition on all virtual CD-ROM implementations.
+arm64-iso: limine/limine arm64-kernel
+	rm -rf arm64_iso_root
+	mkdir -p arm64_iso_root/boot/limine arm64_iso_root/EFI/BOOT
+	cp -f $(ARM64_KERNEL_ELF) arm64_iso_root/boot/kernel
+	cp -f limine.conf arm64_iso_root/boot/limine/
+	cp -f limine/limine-uefi-cd.bin arm64_iso_root/boot/limine/
+	xorriso -as mkisofs -R -r -J \
+		--efi-boot boot/limine/limine-uefi-cd.bin \
+		-efi-boot-part --efi-boot-image --protective-msdos-label \
+		-o $(ARM64_IMAGE_NAME).iso arm64_iso_root
+	rm -rf arm64_iso_root
 
 run: iso
 	$(QEMU) -M q35 -cdrom $(IMAGE_NAME).iso -boot d $(QEMUFLAGS) $(QEMU_DEBUG_EXIT) || true
@@ -119,6 +119,13 @@ run-best:
 		echo "Launching with QEMU."; \
 		$(MAKE) run-bridged; \
 	fi
+
+# Boot the ISO and drive it: setup journey, capability grants, a real query,
+# with a screenshot after every step. Catches what unit tests structurally
+# cannot - anything only visible from in front of the screen.
+drive: iso bridge
+	chmod +x scripts/drive-ui.py scripts/ensure-bridge.sh
+	./scripts/drive-ui.py
 
 # Write the ISO to a USB stick for real x86-64 hardware. Destructive, so it
 # refuses internal disks and makes you retype the device before writing.
