@@ -1,8 +1,14 @@
 ---
-version: 0.7.4
+version: 0.7.5
 ---
 
 # Changelog
+
+## 0.7.5 — 2026-07-25
+
+- Search: guest `search.query` peek gated by `search.query` cap. Home
+  **Connectors** card runs a corpus query and shows the top hit in the footer;
+  **Capabilities** / **Skills** cards are clickable too.
 
 ## 0.7.4 — 2026-07-25
 
