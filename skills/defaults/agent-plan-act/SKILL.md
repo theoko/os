@@ -16,7 +16,8 @@ description: >-
 
 ## Home field
 
-Natural language on Home (`i wanna work on my paper`) is not keyword search.
-The guest runner strips filler words, CALLs granted tools, and opens a Brief
-with openable Doc rows. Inference stays on the host if added later; the ISO
-only runs this deterministic loop.
+Natural language on Home (`i wanna work on my paper`) is not bare keyword
+search. The guest CALLs host `intent.resolve` for act classification, synonym
+expansion, and workspace ranking, then executes under caps and opens a Brief
+with Doc rows. Optional cloud LLM can back the same tool later; the ISO never
+runs a model.

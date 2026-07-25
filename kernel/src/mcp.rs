@@ -181,6 +181,55 @@ pub struct SearchHit {
     pub url: [u8; 72],
 }
 
+/// Structured plan from host `intent.resolve` (smart Home asks).
+pub struct IntentPlan {
+    pub status: BridgeStatus,
+    pub act: [u8; 12],
+    pub query: [u8; 48],
+    pub plan_n: usize,
+    pub plans: [[u8; 52]; 4],
+    pub hit_n: usize,
+    pub hits: [SearchHit; 3],
+}
+
+impl IntentPlan {
+    pub const fn empty(status: BridgeStatus) -> Self {
+        const EMPTY: SearchHit = SearchHit {
+            title: [0; 48],
+            url: [0; 72],
+        };
+        Self {
+            status,
+            act: [0; 12],
+            query: [0; 48],
+            plan_n: 0,
+            plans: [[0; 52]; 4],
+            hit_n: 0,
+            hits: [EMPTY; 3],
+        }
+    }
+
+    pub fn act_at(&self) -> &str {
+        str_prefix(trim_buf(&self.act))
+    }
+
+    pub fn query_at(&self) -> &str {
+        str_prefix(trim_buf(&self.query))
+    }
+
+    pub fn plan_at(&self, i: usize) -> &str {
+        str_prefix(trim_buf(&self.plans[i]))
+    }
+
+    pub fn hit_title_at(&self, i: usize) -> &str {
+        str_prefix(trim_buf(&self.hits[i].title))
+    }
+
+    pub fn hit_url_at(&self, i: usize) -> &str {
+        str_prefix(trim_buf(&self.hits[i].url))
+    }
+}
+
 /// Short corpus peek for the home Connectors card.
 pub struct SearchPeek {
     pub status: BridgeStatus,
@@ -939,6 +988,80 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
     } else {
         BridgeStatus::Offline
     }
+}
+
+/// Ask the host to plan a natural-language Home goal.
+///
+/// Always allowed to CALL (planning is not a personal-data read). File hits
+/// on the wire still require `files=1` so the bridge only ranks the index when
+/// Your files is granted.
+pub fn fetch_intent_plan(caps: crate::caps::Caps, goal: &str) -> IntentPlan {
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+
+    match ping_bridge(&com2, &mut line) {
+        BridgeStatus::Offline => return IntentPlan::empty(BridgeStatus::Offline),
+        BridgeStatus::Online => {}
+    }
+
+    com2.write_str("CALL intent.resolve q=");
+    com2.write_str(goal);
+    if caps.allows(crate::caps::Cap::WorkspaceIndex) {
+        com2.write_str(" files=1");
+    }
+    if caps.allows(crate::caps::Cap::EmailSearch) {
+        com2.write_str(" email=1");
+    }
+    com2.write_str("\n");
+
+    let mut plan = IntentPlan::empty(BridgeStatus::Online);
+    let mut first = true;
+    for _ in 0..20 {
+        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
+        let Some(n) = com2.read_line(&mut line, timeout) else {
+            break;
+        };
+        first = false;
+        let resp = str_prefix(&line[..n]);
+        if resp.starts_with("ERR ") || resp == "END" {
+            break;
+        }
+        if let Some(rest) = resp.strip_prefix("OK intent.resolve ") {
+            for field in rest.split_whitespace() {
+                if let Some(v) = field.strip_prefix("act=") {
+                    copy_field(&mut plan.act, v);
+                } else if let Some(v) = field.strip_prefix("query=") {
+                    // query may continue with spaces — take the remainder once.
+                    let q = rest
+                        .split_once("query=")
+                        .map(|(_, q)| q)
+                        .unwrap_or(v);
+                    copy_field(&mut plan.query, q);
+                    break;
+                }
+            }
+            continue;
+        }
+        if let Some(p) = resp.strip_prefix("ROW plan=") {
+            if plan.plan_n < plan.plans.len() {
+                copy_field(&mut plan.plans[plan.plan_n], p);
+                plan.plan_n += 1;
+            }
+            continue;
+        }
+        if resp.starts_with("ROW ") && plan.hit_n < plan.hits.len() {
+            let title = parse_row_field(resp, "title").unwrap_or("(doc)");
+            let url = parse_row_field(resp, "url").unwrap_or("");
+            if url.is_empty() {
+                continue;
+            }
+            copy_field(&mut plan.hits[plan.hit_n].title, title);
+            copy_field(&mut plan.hits[plan.hit_n].url, url);
+            plan.hit_n += 1;
+        }
+    }
+    plan
 }
 
 /// Run `search.query` when granted. `q` must be ASCII without spaces (use `-`).

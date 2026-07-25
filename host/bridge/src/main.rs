@@ -4,6 +4,7 @@
 //! Email backends: mock (default) or `gog`. Skills: defaults + saved on host.
 
 mod graph;
+mod intent;
 mod workspace;
 mod portals;
 mod search;
@@ -309,7 +310,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
     match cmd {
         "PING" => vec!["OK pong".into()],
         "LIST" => {
-            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,skills.forget,search.query,workspace.index,workspace.recent,tsearch.sync,teddy.health,teddy.fear_greed,teddy.gex,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,portal.forget,email.forget,doc.read".into()]
+            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,skills.forget,search.query,workspace.index,workspace.recent,intent.resolve,tsearch.sync,teddy.health,teddy.fear_greed,teddy.gex,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,portal.forget,email.forget,doc.read".into()]
         }
         "CALL" => {
             let (tool, rest) = split_word(rest);
@@ -587,6 +588,19 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                 vec!["ERR search.query missing_q".into()]
             } else {
                 search::query_scoped(q, k, cat, &backends.search, with_email, with_files, with_audio, with_portal)
+            }
+        }
+        // Natural-language planner. File hits require files=1; mail act notes
+        // when email=1 is missing. Planning itself is not a personal-data leak.
+        "intent.resolve" => {
+            let q = arg_val(args, "q").unwrap_or("").trim();
+            if q.is_empty() {
+                vec!["ERR intent.resolve missing_q".into()]
+            } else {
+                let with_files = matches!(arg_val(args, "files"), Some("1"));
+                let with_email = matches!(arg_val(args, "email"), Some("1"));
+                let plan = intent::resolve(q, with_files, with_email);
+                intent::wire_response(&plan)
             }
         }
         _ => vec![format!("ERR {tool} not_found")],
@@ -986,6 +1000,22 @@ mod tests {
     fn list_includes_search() {
         let r = dispatch("LIST", &test_backends());
         assert!(r[0].contains("search.query"));
+        assert!(r[0].contains("intent.resolve"), "{r:?}");
+    }
+
+    #[test]
+    fn intent_resolve_plans_a_paper_ask() {
+        let r = dispatch(
+            "CALL intent.resolve q=i wanna work on my paper",
+            &test_backends(),
+        );
+        assert!(
+            r[0].starts_with("OK intent.resolve act=open"),
+            "{r:?}"
+        );
+        assert!(r[0].contains("query="), "{r:?}");
+        assert!(r.iter().any(|l| l.starts_with("ROW plan=")), "{r:?}");
+        assert_eq!(r.last().map(String::as_str), Some("END"));
     }
 
     #[test]

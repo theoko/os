@@ -1,8 +1,19 @@
 ---
-version: 0.9.26
+version: 0.9.27
 ---
 
 # Changelog
+
+## 0.9.27 — 2026-07-25
+
+Home goals get a smart host planner:
+
+- Bridge `intent.resolve` classifies the act (open / search / mail), expands
+  synonyms (`paper` → thesis/draft/…), and ranks the workspace index when
+  `files=1`.
+- Guest `run_goal` prefers that plan + pre-ranked Doc hits, then falls through
+  to `search.query`. Offline still uses local keywords. No LLM in the kernel.
+- Smoke: paper-style ask ranks the seeded workspace file.
 
 ## 0.9.26 — 2026-07-25
 

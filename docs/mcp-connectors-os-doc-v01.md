@@ -40,6 +40,7 @@ Guest → host:
 | `CALL email.forget` | Delete the host mail knowledge graph |
 | `CALL workspace.index files=1` | Build the project-folder index |
 | `CALL workspace.recent k=<n> files=1` | Top-ranked workspace files for Home |
+| `CALL intent.resolve q=<ask> [files=1] [email=1]` | Smart Home planner (act + query + ranked hits) |
 | `CALL workspace.forget` | Delete the workspace index |
 | `CALL doc.read url=… [files=1] [audio=1] [email=1] [portal=1]` | Open a search hit (`file://`, `audio://`, `email://`, `os://`, teddy) |
 | `CALL email.send to=<addr> subj=<s> body=<b> email=1 confirm=1` | Mock send (needs both bits; no gog) |

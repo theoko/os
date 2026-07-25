@@ -49,13 +49,14 @@ not inferred from caps, bridge, or click history. RAM-only until reboot.
 
 Code: [`kernel/src/level.rs`](../kernel/src/level.rs), setup Experience step.
 
-## Home agent (v0.9.26)
+## Home agent (v0.9.26 / v0.9.27)
 
 Typing a natural ask on Home and pressing Enter runs the guest plan/act loop
-(`agent::run_goal`): restate → keyword query → CALL granted tools → Brief with
-openable **Doc** rows. Example: `i wanna work on my paper` searches under
-Your files / Built-in docs, then opens hits in the Reader. No model in the
-kernel — missing caps stay Need.
+(`agent::run_goal`). The host `intent.resolve` tool supplies the smart plan
+(act + expanded query + ranked `file://` hits when Your files is on). The
+guest arms **Doc** rows and may still CALL `search.query`. Example:
+`i wanna work on my paper` → open act → paper/thesis/draft query → workspace
+rank → Reader. No model in the kernel — missing caps stay Need.
 
 ## Recent mail (v0.9.22)
 

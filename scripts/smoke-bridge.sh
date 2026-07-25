@@ -193,6 +193,8 @@ require_listed(
     "audio.forget",
     "workspace.index",
     "workspace.forget",
+    "workspace.recent",
+    "intent.resolve",
     "doc.read",
     "skills.save",
     "skills.forget",
@@ -426,6 +428,16 @@ if not recent.startswith("OK workspace.recent") or "file://" not in recent:
     print(recent, file=sys.stderr)
     sys.exit(1)
 print("smoke-bridge: workspace.recent files=1 ok")
+intent = call("CALL intent.resolve q=i wanna work on smoke workspace alpha files=1")
+if not intent.startswith("OK intent.resolve act=open"):
+    print("error: intent.resolve must plan an open act", file=sys.stderr)
+    print(intent, file=sys.stderr)
+    sys.exit(1)
+if "file://" not in intent:
+    print("error: intent.resolve files=1 should rank the seeded workspace doc", file=sys.stderr)
+    print(intent, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: intent.resolve files=1 ok")
 ws_hit = call("CALL search.query q=Smoke-Workspace-Alpha k=3 files=1")
 if "Smoke Workspace Alpha" not in ws_hit:
     print("error: search.query files=1 missed seeded workspace doc", file=sys.stderr)

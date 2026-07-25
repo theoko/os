@@ -8,7 +8,7 @@
 
 use crate::caps::{Cap, Caps};
 use crate::level::Level;
-use crate::mcp::{self, BridgeStatus, CalendarPeek, FilePeek, MailPeek, SearchPeek};
+use crate::mcp::{self, BridgeStatus, CalendarPeek, FilePeek, IntentPlan, MailPeek, SearchPeek};
 
 /// Which builtin playbook the runner knows how to execute.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -255,17 +255,22 @@ pub fn is_runnable(name: &str) -> bool {
 
 /// Run a free-form home goal under `caps`: plan → act via MCP → Brief.
 ///
-/// The kernel does not run an LLM. It restates the ask, strips filler words
-/// into a search query, CALLs granted connectors, and arms Doc rows the UI
-/// can open. That is the agentic loop: capabilities + tools, not autocomplete.
+/// Smart planning happens on the host (`intent.resolve`): synonym expansion,
+/// act classification, workspace ranking. The kernel never runs an LLM — it
+/// asks the bridge, falls back to local keywords when offline, then CALLs
+/// only tools the user granted.
 pub fn run_goal(goal: &str, caps: Caps) -> Brief {
+    let intent = mcp::fetch_intent_plan(caps, goal);
+    run_goal_with_plan(goal, caps, &intent)
+}
+
+/// Pure act/report half of [`run_goal`]. Host unit tests pass a synthetic
+/// [`IntentPlan`] so COM2 stays closed.
+pub fn run_goal_with_plan(goal: &str, caps: Caps, intent: &IntentPlan) -> Brief {
     let mut brief = Brief::empty();
     brief.set_skill("agent-plan-act");
     brief.set_heading("Working on it");
-    brief.push_plan("Restate the goal");
-    brief.push_plan("Pick tools from grants");
-    brief.push_plan("Search under those grants");
-    brief.push_plan("Report openable hits");
+    brief.status = intent.status;
 
     let mut goal_buf = [0u8; 68];
     let restated = restate_goal(goal, &mut goal_buf);
@@ -274,21 +279,55 @@ pub fn run_goal(goal: &str, caps: Caps) -> Brief {
     }
 
     let mut qbuf = [0u8; 48];
-    let q = keywords_from_goal(goal, &mut qbuf);
+    let local_q = keywords_from_goal(goal, &mut qbuf);
+    let q = if !intent.query_at().is_empty() {
+        intent.query_at()
+    } else {
+        local_q
+    };
     if q.is_empty() {
         brief.push_line("Info", "Try naming the file, topic, or inbox.");
         return brief;
     }
     brief.push_line("Query", q);
 
-    let mailish = goal_looks_like_mail(goal);
+    if intent.plan_n > 0 {
+        for i in 0..intent.plan_n.min(4) {
+            brief.push_plan(intent.plan_at(i));
+        }
+    } else {
+        brief.push_plan("Restate the goal");
+        brief.push_plan("Pick tools from grants");
+        brief.push_plan("Search under those grants");
+        brief.push_plan("Report openable hits");
+        if intent.status == BridgeStatus::Offline {
+            brief.push_line("Info", "Bridge offline - local keywords only.");
+        }
+    }
+
+    let mailish = intent.act_at() == "mail" || goal_looks_like_mail(goal);
     let mut acted = false;
 
-    // Inbox lane when the ask is about mail and Email is on.
+    // Host already ranked Your files — arm those Doc rows first.
+    if intent.hit_n > 0 && caps.allows(Cap::WorkspaceIndex) {
+        for i in 0..intent.hit_n.min(3) {
+            let title = intent.hit_title_at(i);
+            let url = intent.hit_url_at(i);
+            let line_i = brief.count;
+            brief.push_line("Doc", title);
+            if !url.is_empty() {
+                brief.arm_doc(url, line_i);
+            }
+        }
+        acted = true;
+    }
+
     if mailish {
         if caps.allows(Cap::EmailSearch) {
             let mail = mcp::fetch_mail_peek(caps);
-            brief.status = mail.status;
+            if brief.status != BridgeStatus::Online {
+                brief.status = mail.status;
+            }
             if mail.status == BridgeStatus::Online && mail.count > 0 {
                 fill_mail_lines(&mut brief, &mail, false);
                 acted = true;
@@ -303,33 +342,34 @@ pub fn run_goal(goal: &str, caps: Caps) -> Brief {
         }
     }
 
-    // Knowledge + personal files share search.query on the wire; Your files
-    // alone can still surface recent workspace rows by title match.
-    if caps.allows(Cap::SearchQuery) {
-        let peek = mcp::fetch_search_peek(caps, q);
-        if brief.status != BridgeStatus::Online {
-            brief.status = peek.status;
-        }
-        if peek.denied {
+    // Fill remaining Doc slots from search.query when we still need hits.
+    // Skip COM2 in the pure offline path when SearchQuery is off.
+    if brief.doc_n < 3 && !mailish {
+        if caps.allows(Cap::SearchQuery) {
+            // Granted search: only CALL when the bridge was already online, or
+            // when we have no intent hits — offline search still works.
+            let peek = mcp::fetch_search_peek(caps, q);
+            if brief.status != BridgeStatus::Online {
+                brief.status = peek.status;
+            }
+            if peek.denied {
+                brief.need(Cap::SearchQuery);
+            } else {
+                fill_goal_hits_remaining(&mut brief, &peek);
+                acted = true;
+            }
+        } else if brief.doc_n == 0 && caps.allows(Cap::WorkspaceIndex) {
+            let files = mcp::fetch_files_peek(caps);
+            if files.denied {
+                brief.need(Cap::WorkspaceIndex);
+            } else {
+                fill_goal_files(&mut brief, &files, q);
+                acted = true;
+            }
+        } else if brief.doc_n == 0 {
             brief.need(Cap::SearchQuery);
-        } else {
-            fill_goal_hits(&mut brief, &peek);
-            acted = true;
+            brief.push_line("Info", "Grant Built-in docs or Your files.");
         }
-    } else if caps.allows(Cap::WorkspaceIndex) {
-        let files = mcp::fetch_files_peek(caps);
-        if brief.status != BridgeStatus::Online {
-            brief.status = files.status;
-        }
-        if files.denied {
-            brief.need(Cap::WorkspaceIndex);
-        } else {
-            fill_goal_files(&mut brief, &files, q);
-            acted = true;
-        }
-    } else if !mailish {
-        brief.need(Cap::SearchQuery);
-        brief.push_line("Info", "Grant Built-in docs or Your files.");
     }
 
     if acted && brief.doc_n == 0 && !mailish {
@@ -458,13 +498,30 @@ fn fill_goal_hits(brief: &mut Brief, peek: &SearchPeek) {
         );
         return;
     }
+    fill_goal_hits_remaining(brief, peek);
+}
+
+fn fill_goal_hits_remaining(brief: &mut Brief, peek: &SearchPeek) {
     for i in 0..peek.count.min(3) {
+        if brief.doc_n >= 3 {
+            break;
+        }
         let title = peek.title_at(i);
         let url = peek.url_at(i);
+        // Skip duplicates already armed from intent.resolve.
+        if (0..brief.doc_n).any(|d| brief.doc_url_at(d) == Some(url)) {
+            continue;
+        }
         let line_i = brief.count;
         brief.push_line("Doc", title);
         if !url.is_empty() {
             brief.arm_doc(url, line_i);
+        }
+    }
+    if brief.doc_n == 0 && peek.count > 0 {
+        // Titles without URLs (offline corpus) still show as Hits.
+        for i in 0..peek.count.min(3) {
+            brief.push_line("Hit", peek.title_at(i));
         }
     }
 }
@@ -1570,6 +1627,7 @@ mod tests {
             "No recent files indexed yet.",
             "No title match - showing recent files.",
             "No search hits.",
+            "Bridge offline - local keywords only.",
         ] {
             assert!(
                 s.bytes().all(|b| (0x20..=0x7E).contains(&b)),
@@ -1594,8 +1652,9 @@ mod tests {
 
     #[test]
     fn run_goal_without_grants_names_the_need() {
-        // Caps::none must not open COM2.
-        let b = run_goal("i wanna work on my paper", Caps::none());
+        // Synthetic offline plan — must not open COM2.
+        let intent = IntentPlan::empty(BridgeStatus::Offline);
+        let b = run_goal_with_plan("i wanna work on my paper", Caps::none(), &intent);
         assert_eq!(b.heading(), "Working on it");
         assert!(b.plan_n >= 3);
         assert!(b.lines.iter().any(|l| l.tag() == "Goal"));
@@ -1603,6 +1662,30 @@ mod tests {
         assert!(b.denied);
         assert_eq!(b.deny_name(), "search.query");
         assert_eq!(b.doc_n, 0);
+    }
+
+    #[test]
+    fn run_goal_uses_host_ranked_file_hits() {
+        let mut caps = Caps::none();
+        caps.set(Cap::WorkspaceIndex, true);
+        let mut intent = IntentPlan::empty(BridgeStatus::Online);
+        copy_field(&mut intent.act, "open");
+        copy_field(&mut intent.query, "paper thesis draft");
+        copy_field(&mut intent.plans[0], "Find the document that matches");
+        intent.plan_n = 1;
+        copy_field(&mut intent.hits[0].title, "Q2 Research Paper");
+        copy_field(&mut intent.hits[0].url, "file://writing/q2-research-paper.md");
+        intent.hit_n = 1;
+        // WorkspaceIndex alone must not CALL search/files here — hits are armed
+        // from the plan. SearchQuery stays off so COM2 stays closed.
+        let b = run_goal_with_plan("i wanna work on my paper", caps, &intent);
+        assert!(b.lines.iter().any(|l| l.tag() == "Query" && l.text().contains("paper")));
+        assert_eq!(b.doc_n, 1);
+        assert_eq!(
+            b.doc_url_at(0),
+            Some("file://writing/q2-research-paper.md")
+        );
+        assert!(b.plan_at(0).contains("document") || b.plan_at(0).contains("Find"));
     }
 
     #[test]
