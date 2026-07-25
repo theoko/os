@@ -1247,6 +1247,27 @@ mod read_tests {
     }
 
     #[test]
+    fn reading_calendar_needs_email_and_matches_list_id() {
+        // Same id calendar.list emits for the first mock event.
+        let id = graph::id_for("Demo event", "tomorrow");
+        let denied = read_doc(&format!("cal://{id}"), 10, &args(&[])).unwrap_err();
+        assert_eq!(denied, "needs_email_cap");
+        let rows = read_doc(
+            &format!("cal://{id}"),
+            10,
+            &args(&[("email", "1")]),
+        )
+        .expect("read");
+        let text: String = rows
+            .iter()
+            .filter_map(|r| r.strip_prefix("ROW line="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("Demo event"), "{text}");
+        assert!(text.contains("tomorrow"), "{text}");
+    }
+
+    #[test]
     fn reading_a_file_needs_the_workspace_grant() {
         // Guessing a URL must not bypass the grant that would have found it.
         let e = read_doc("file://a/b.md", 10, &args(&[])).unwrap_err();
