@@ -486,8 +486,8 @@ fn contains_ascii(hay: &[u8], needle: &[u8]) -> bool {
     false
 }
 
-fn fill_goal_hits(brief: &mut Brief, peek: &SearchPeek) {
-    if peek.count == 0 {
+fn fill_goal_hits_remaining(brief: &mut Brief, peek: &SearchPeek) {
+    if peek.count == 0 && brief.doc_n == 0 {
         brief.push_line(
             "Info",
             if peek.status == BridgeStatus::Offline {
@@ -498,10 +498,6 @@ fn fill_goal_hits(brief: &mut Brief, peek: &SearchPeek) {
         );
         return;
     }
-    fill_goal_hits_remaining(brief, peek);
-}
-
-fn fill_goal_hits_remaining(brief: &mut Brief, peek: &SearchPeek) {
     for i in 0..peek.count.min(3) {
         if brief.doc_n >= 3 {
             break;
@@ -1695,7 +1691,7 @@ mod tests {
         copy_field(&mut peek.hits[0].title, "thesis draft");
         copy_field(&mut peek.hits[0].url, "file://docs/thesis.md");
         peek.count = 1;
-        fill_goal_hits(&mut brief, &peek);
+        fill_goal_hits_remaining(&mut brief, &peek);
         assert_eq!(brief.lines[0].tag(), "Doc");
         assert_eq!(brief.doc_n, 1);
         assert_eq!(brief.doc_url_at(0), Some("file://docs/thesis.md"));
