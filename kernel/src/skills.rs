@@ -107,8 +107,12 @@ mod tests {
     #[test]
     fn builtins_present() {
         let p = SkillPeek::from_builtin();
-        assert!(p.count >= 5);
+        assert!(p.count >= 6);
         assert_eq!(p.name_at(0), "agent-plan-act");
+        assert!(
+            BUILTIN.iter().any(|s| s.name == "teddy-portals"),
+            "teddy API + portals skill must ship in the ISO"
+        );
         assert!(!p.from_bridge);
     }
 

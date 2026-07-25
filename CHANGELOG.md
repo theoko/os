@@ -1,8 +1,18 @@
 ---
-version: 0.9.3
+version: 0.9.4
 ---
 
 # Changelog
+
+## 0.9.4 — 2026-07-25
+
+Online services means both teddy paths are ready, not merely permitted:
+
+- Setup finish and live Caps grant run `tsearch.sync` then warm `teddy.health`.
+- Guest portal allowlist matches the bridge (`teddy.*` + `market.*`); no loose
+  `market.` prefix.
+- Cap copy names teddy; smoke-bridge asserts LIST + `needs_portal_cap`, and
+  best-effort live `teddy.health portal=1`.
 
 ## 0.9.3 — 2026-07-25
 

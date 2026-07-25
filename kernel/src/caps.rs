@@ -54,7 +54,7 @@ impl Cap {
             Cap::WorkspaceIndex => "Search documents on this machine",
             Cap::AudioTranscribe => "Transcribe audio you point it at",
             Cap::SkillsSave => "Write new playbooks to disk",
-            Cap::PortalSync => "Sends queries off this machine",
+            Cap::PortalSync => "Teddy corpus and live portals",
         }
     }
 

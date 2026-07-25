@@ -582,8 +582,11 @@ impl PortalPeek {
     }
 }
 
-/// Live portal tools the guest may call (must match bridge `portals::ENDPOINTS`).
+/// Live teddysearch.com portal tools (must match bridge `portals::ENDPOINTS`).
 pub const TEDDY_PORTALS: &[&str] = &["teddy.health", "teddy.fear_greed", "teddy.gex"];
+
+/// Live superintelmarkets.com portal tools (same shapes, different origin).
+pub const MARKET_PORTALS: &[&str] = &["market.health", "market.fear_greed"];
 
 /// Call a portal tool when `portal.sync` is granted.
 ///
@@ -598,7 +601,7 @@ pub fn fetch_portal(caps: crate::caps::Caps, tool: &str) -> PortalPeek {
         let status = ping_bridge(&com2, &mut line);
         return PortalPeek::empty(status, true);
     }
-    let known = TEDDY_PORTALS.contains(&tool) || tool.starts_with("market.");
+    let known = TEDDY_PORTALS.contains(&tool) || MARKET_PORTALS.contains(&tool);
     if tool.is_empty() || !known {
         return PortalPeek::empty(BridgeStatus::Online, true);
     }
@@ -706,9 +709,13 @@ mod tests {
     }
 
     #[test]
-    fn teddy_portal_names_are_listed() {
+    fn teddy_and_market_portal_names_are_listed() {
         assert!(TEDDY_PORTALS.contains(&"teddy.health"));
         assert!(TEDDY_PORTALS.contains(&"teddy.fear_greed"));
         assert!(TEDDY_PORTALS.contains(&"teddy.gex"));
+        assert!(MARKET_PORTALS.contains(&"market.health"));
+        assert!(MARKET_PORTALS.contains(&"market.fear_greed"));
+        // No loose prefix: unknown market.* must not sneak through.
+        assert!(!MARKET_PORTALS.contains(&"market.nope"));
     }
 }

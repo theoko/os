@@ -285,6 +285,13 @@ unsafe extern "C" fn kmain() -> ! {
                                     mcp::build_index("workspace.index");
                                     serial_port.write_str("caps: indexing workspace\n");
                                 }
+                                if grants.allows(caps::Cap::PortalSync) {
+                                    // Teddy API (corpus) + a live portal warm so
+                                    // Online services is not an empty promise.
+                                    mcp::build_index("tsearch.sync");
+                                    mcp::build_index("teddy.health");
+                                    serial_port.write_str("caps: warming teddy api + portals\n");
+                                }
                                 mail = mcp::fetch_mail_peek(grants);
                                 // First act: run the plan/act skill under the
                                 // grants just chosen so home is never empty
@@ -419,17 +426,21 @@ unsafe extern "C" fn kmain() -> ! {
                                     grants = screens::toggle(grants, i);
                                     // Revoked? Have the host delete what that
                                     // grant produced.
-                                    for (cap, forget_tool, build_tool) in [
+                                    for (cap, forget_tool, build_tools) in [
                                         (
                                             caps::Cap::WorkspaceIndex,
                                             "workspace.forget",
-                                            Some("workspace.index"),
+                                            &["workspace.index"][..],
                                         ),
-                                        (caps::Cap::AudioTranscribe, "audio.forget", None),
-                                        // Granting the portal grant also pulls
-                                        // the corpus, or the switch is on with
-                                        // nothing behind it.
-                                        (caps::Cap::PortalSync, "", Some("tsearch.sync")),
+                                        (caps::Cap::AudioTranscribe, "audio.forget", &[][..]),
+                                        // Corpus sync + warm a live teddy portal
+                                        // so the switch is never on with nothing
+                                        // behind it.
+                                        (
+                                            caps::Cap::PortalSync,
+                                            "",
+                                            &["tsearch.sync", "teddy.health"][..],
+                                        ),
                                     ] {
                                         let was = before.allows(cap);
                                         let now = grants.allows(cap);
@@ -439,12 +450,13 @@ unsafe extern "C" fn kmain() -> ! {
                                             serial_port.write_str(cap.name());
                                             serial_port.write_str(" - purged\n");
                                         } else if !was && now {
-                                            // Granting must also make it useful.
-                                            if let Some(t) = build_tool {
+                                            for t in build_tools {
                                                 mcp::build_index(t);
+                                            }
+                                            if !build_tools.is_empty() {
                                                 serial_port.write_str("caps: granted ");
                                                 serial_port.write_str(cap.name());
-                                                serial_port.write_str(" - indexed\n");
+                                                serial_port.write_str(" - ready\n");
                                             }
                                         }
                                     }

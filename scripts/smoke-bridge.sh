@@ -75,6 +75,70 @@ export OS_SMOKE_ISO="$ISO"
 export OS_SMOKE_ADDR="$ADDR"
 export OS_SMOKE_SERIAL="$SERIAL_OUT"
 
+# Host-side wire checks against the live bridge: teddy API + portals must both
+# appear in LIST, and portal tools must refuse calls without portal=1.
+python3 <<'PY'
+import os, socket, sys
+
+addr = os.environ["OS_SMOKE_ADDR"]
+host, port_s = addr.rsplit(":", 1)
+port = int(port_s)
+
+def call(line: str, timeout: float = 8.0) -> str:
+    s = socket.create_connection((host, port), timeout)
+    s.settimeout(timeout)
+    try:
+        s.sendall((line + "\n").encode())
+        chunks = []
+        while True:
+            try:
+                b = s.recv(4096)
+            except socket.timeout:
+                break
+            if not b:
+                break
+            chunks.append(b)
+            text = b"".join(chunks).decode("utf-8", "replace")
+            if "\nEND\n" in text or text.startswith("ERR ") or text.startswith("OK tools="):
+                # LIST has no END; OK tools= is enough. Portal ERR is one line.
+                if text.startswith("OK tools=") or text.startswith("ERR "):
+                    break
+                if "\nEND\n" in text or text.rstrip().endswith("END"):
+                    break
+        return b"".join(chunks).decode("utf-8", "replace")
+    finally:
+        s.close()
+
+listing = call("LIST")
+if "tsearch.sync" not in listing:
+    print("error: LIST missing teddy API (tsearch.sync)", file=sys.stderr)
+    print(listing, file=sys.stderr)
+    sys.exit(1)
+for tool in ("teddy.health", "teddy.fear_greed", "teddy.gex"):
+    if tool not in listing:
+        print(f"error: LIST missing teddy portal {tool}", file=sys.stderr)
+        print(listing, file=sys.stderr)
+        sys.exit(1)
+
+denied = call("CALL teddy.health")
+if "needs_portal_cap" not in denied:
+    print("error: teddy.health must require portal=1", file=sys.stderr)
+    print(denied, file=sys.stderr)
+    sys.exit(1)
+
+# Live allow-path: best-effort. Network blips must not fail the smoke; a
+# successful OK proves both teddy portals and the consent bit work together.
+allowed = call("CALL teddy.health portal=1", timeout=25.0)
+if allowed.startswith("OK teddy.health"):
+    print("smoke-bridge: teddy.health portal=1 ok")
+elif "needs_portal_cap" in allowed:
+    print("error: portal=1 still denied", file=sys.stderr)
+    print(allowed, file=sys.stderr)
+    sys.exit(1)
+else:
+    print(f"smoke-bridge: teddy.health live call skipped ({allowed.splitlines()[:1]})")
+PY
+
 python3 <<'PY'
 import os, subprocess, sys
 from pathlib import Path
@@ -121,5 +185,5 @@ if b"mcp: email connected" not in serial:
     print("error: MCP bridge not connected", file=sys.stderr)
     sys.stderr.buffer.write(serial + b"\n")
     sys.exit(1)
-print("smoke-bridge ok: hello + mcp email connected")
+print("smoke-bridge ok: hello + mcp email + teddy portals")
 PY
