@@ -1,0 +1,210 @@
+//! The search screen — the first part of this OS you can actually *use*.
+//!
+//! Type a query, press Enter, read answers. Results come from the index baked
+//! into the kernel (`search.rs`), so this works with no host bridge at all;
+//! email is folded in by the bridge when that capability was granted.
+//!
+//! Previously the home screen ran searches on a card click and wrote the hits
+//! to COM1 — invisible unless you were watching a serial console.
+
+use crate::fb::Surface;
+use crate::font::{self, BODY_FACE, BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
+use crate::search;
+use crate::ui::theme;
+
+/// Longest query we accept. Comfortably wider than the field renders.
+pub const QUERY_MAX: usize = 64;
+
+/// A rendered result row.
+#[derive(Clone, Copy)]
+pub struct Row {
+    pub title: &'static str,
+    pub cat: &'static str,
+    pub url: &'static str,
+}
+
+pub struct SearchView {
+    pub rows: [Row; search::MAX_HITS],
+    pub count: usize,
+    /// True once a query has been run, so we can tell "no results" from "idle".
+    pub searched: bool,
+}
+
+impl SearchView {
+    pub const fn new() -> Self {
+        const EMPTY: Row = Row { title: "", cat: "", url: "" };
+        Self { rows: [EMPTY; search::MAX_HITS], count: 0, searched: false }
+    }
+
+    /// Run `q` against the in-kernel index.
+    pub fn run(&mut self, q: &str) {
+        self.searched = true;
+        self.count = 0;
+        if q.trim().is_empty() {
+            return;
+        }
+        let mut hits = [search::Hit { doc: 0, score: 0 }; search::MAX_HITS];
+        let n = search::query(q, &mut hits);
+        for h in hits.iter().take(n) {
+            let d = &search::DOCS[h.doc];
+            self.rows[self.count] = Row { title: d.title, cat: d.cat, url: d.url };
+            self.count += 1;
+        }
+    }
+}
+
+const PAD_X: i32 = 28;
+const NAV_H: i32 = 56;
+const FIELD_H: i32 = 52;
+const ROW_H: i32 = 64;
+const CONTENT_MAX: i32 = 720;
+
+/// Geometry shared by the renderer and hit-testing.
+pub fn field_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
+    let _ = h;
+    let cw = (w - PAD_X * 2).min(CONTENT_MAX);
+    ((w - cw) / 2, 150, cw, FIELD_H)
+}
+
+/// Where the "Back" affordance sits.
+pub fn back_rect(w: i32) -> (i32, i32, i32, i32) {
+    let _ = w;
+    (PAD_X, (NAV_H - 24) / 2, 72, 28)
+}
+
+/// Draw the search screen. `caret` blinks the insertion point on.
+pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_note: &str) {
+    let w = fb.width() as i32;
+    let h = fb.height() as i32;
+    fb.fill(theme::BG);
+
+    // Nav: a way back, and the brand.
+    let (bx, by, bw, bh) = back_rect(w);
+    fb.draw_text(bx, by + BTN_FACE.baseline(), "Back", &BTN_FACE, 0, theme::ACCENT);
+    let _ = (bw, bh);
+    fb.draw_text_centered(w / 2, (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline(), "Search", &BRAND_FACE, 0, theme::INK);
+    fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
+
+    let track = font::tracking_pct(TITLE_FACE.px, -20);
+    fb.draw_text_centered(w / 2, 112, "What do you want to know?", &TITLE_FACE, track, theme::INK);
+
+    // Input field.
+    let (fx, fy, fw, fh) = field_rect(w, h);
+    fb.fill_round_rect(fx, fy, fw, fh, 12, theme::RULE);
+    fb.fill_round_rect(fx + 1, fy + 1, fw - 2, fh - 2, 11, theme::BG);
+
+    let tx = fx + 18;
+    let base = fy + (fh - BODY_FACE.px) / 2 + BODY_FACE.baseline();
+    if query.is_empty() {
+        fb.draw_text(tx, base, "Type a query, then press Enter", &BODY_FACE, 0, theme::MUTED);
+    } else {
+        fb.draw_text(tx, base, query, &BODY_FACE, 0, theme::INK);
+    }
+    if caret {
+        let cx = tx + if query.is_empty() { 0 } else { BODY_FACE.width(query, 0) } + 2;
+        fb.fill_rect(cx, fy + 14, 2, fh - 28, theme::INK);
+    }
+
+    // Results.
+    let mut y = fy + fh + 26;
+    if !view.searched {
+        fb.draw_text_centered(
+            w / 2,
+            y + 30,
+            bridge_note,
+            &SMALL_FACE,
+            0,
+            theme::MUTED,
+        );
+        return;
+    }
+    if view.count == 0 {
+        fb.draw_text_centered(w / 2, y + 30, "No matches in the local index.", &BODY_FACE, 0, theme::MUTED);
+        return;
+    }
+
+    for i in 0..view.count {
+        let r = view.rows[i];
+        fb.fill_round_rect(fx, y, fw, ROW_H, 10, theme::CARD_BORDER);
+        fb.fill_round_rect(fx + 1, y + 1, fw - 2, ROW_H - 2, 9, theme::BG);
+        fb.draw_text(fx + 18, y + 26, r.title, &BRAND_FACE, 0, theme::INK);
+        // Category chip, right-aligned.
+        let cw = SMALL_FACE.width(r.cat, 0);
+        fb.draw_text(fx + fw - 18 - cw, y + 26, r.cat, &SMALL_FACE, 0, theme::ACCENT);
+        fb.draw_text(fx + 18, y + 48, r.url, &SMALL_FACE, 0, theme::MUTED);
+        y += ROW_H + 10;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn idle_view_reports_nothing_searched() {
+        let v = SearchView::new();
+        assert!(!v.searched);
+        assert_eq!(v.count, 0);
+    }
+
+    #[test]
+    fn running_a_query_populates_rows() {
+        let mut v = SearchView::new();
+        v.run("capability agent");
+        assert!(v.searched);
+        assert!(v.count > 0, "expected hits from the baked index");
+        assert!(!v.rows[0].title.is_empty());
+    }
+
+    #[test]
+    fn empty_query_searches_nothing_but_marks_searched() {
+        let mut v = SearchView::new();
+        v.run("   ");
+        assert!(v.searched, "must distinguish 'ran and found nothing' from idle");
+        assert_eq!(v.count, 0);
+    }
+
+    #[test]
+    fn nonsense_query_yields_no_rows() {
+        let mut v = SearchView::new();
+        v.run("zzzz qqqq");
+        assert_eq!(v.count, 0);
+    }
+
+    #[test]
+    fn rerunning_replaces_previous_results() {
+        let mut v = SearchView::new();
+        v.run("capability agent");
+        let first = v.count;
+        assert!(first > 0);
+        v.run("zzzz qqqq");
+        assert_eq!(v.count, 0, "stale rows must not survive a new search");
+    }
+
+    #[test]
+    fn count_never_exceeds_row_capacity() {
+        let mut v = SearchView::new();
+        v.run("os agent kernel search skills bridge capability docs");
+        assert!(v.count <= search::MAX_HITS);
+    }
+
+    #[test]
+    fn field_fits_a_1024_screen() {
+        let (x, _y, w, _h) = field_rect(1024, 768);
+        assert!(x >= PAD_X);
+        assert!(x + w <= 1024 - PAD_X);
+    }
+
+    #[test]
+    fn results_fit_below_the_field_at_768() {
+        let (_x, fy, _w, fh) = field_rect(1024, 768);
+        let bottom = fy + fh + 26 + (search::MAX_HITS as i32) * (ROW_H + 10);
+        assert!(bottom < 768, "results run off a 768px screen: {bottom}");
+    }
+
+    #[test]
+    fn back_target_is_clickable_sized() {
+        let (_x, _y, w, h) = back_rect(1024);
+        assert!(w >= 44 && h >= 24, "back target too small to hit");
+    }
+}

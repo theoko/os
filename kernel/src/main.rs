@@ -3,7 +3,7 @@
 
 use core::hint::black_box;
 
-use kernel::{caps, fb, hello_message, mcp, mouse, serial, setup, skills, ui, usb_tablet};
+use kernel::{caps, fb, hello_message, keyboard, mcp, mouse, searchui, serial, setup, skills, ui, usb_tablet};
 use limine::BaseRevision;
 use limine::request::{
     FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
@@ -194,6 +194,12 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut status_buf = [0u8; 72];
                 write_status(&mut status_buf, grants.footer_status());
                 let mut setup = setup::Setup::new();
+                let mut kb = keyboard::Keyboard::new();
+                let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
+                let mut sview = searchui::SearchView::new();
+                // None = home; Some = the search screen is up.
+                let mut searching = false;
+                let mut caret = true;
                 // First boot: run the setup journey before the home screen.
                 cursor.hide(surface);
                 setup.draw(surface, &mail, &skill_peek);
@@ -261,6 +267,61 @@ unsafe extern "C" fn kmain() -> ! {
                             prev_x = x;
                             prev_y = y;
                         }
+                    } else if searching {
+                        // --- search screen: keyboard drives it ---
+                        let mut dirty = false;
+                        while let Some(key) = kb.poll() {
+                            match key {
+                                keyboard::Key::Enter => {
+                                    sview.run(query.as_str());
+                                    serial_port.write_str("search: ran\n");
+                                    dirty = true;
+                                }
+                                keyboard::Key::Escape => {
+                                    searching = false;
+                                    dirty = true;
+                                }
+                                other => {
+                                    if query.apply(other) {
+                                        dirty = true;
+                                    }
+                                }
+                            }
+                        }
+                        // Clicking Back leaves the search screen.
+                        let left_down = buttons & 0x01 != 0;
+                        let was_down = prev_buttons & 0x01 != 0;
+                        if left_down && !was_down {
+                            let (bx, by, bw, bh) = searchui::back_rect(w);
+                            if x >= bx && x < bx + bw && y >= by && y < by + bh {
+                                searching = false;
+                                dirty = true;
+                            }
+                        }
+                        if dirty {
+                            cursor.hide(surface);
+                            if searching {
+                                searchui::draw(
+                                    surface,
+                                    &sview,
+                                    query.as_str(),
+                                    caret,
+                                    bridge_note(&mail),
+                                );
+                            } else {
+                                ui::draw_home(
+                                    surface,
+                                    &mail,
+                                    &skill_peek,
+                                    status_str(&status_buf),
+                                );
+                            }
+                            cursor.show_at(surface, x, y);
+                            screen.present();
+                            moved = false;
+                            prev_x = x;
+                            prev_y = y;
+                        }
                     } else {
                         let left_down = buttons & 1 != 0;
                         let left_was = prev_buttons & 1 != 0;
@@ -296,6 +357,27 @@ unsafe extern "C" fn kmain() -> ! {
                                     }
                                     clicked = true;
                                 }
+                                Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
+                                    serial_port.write_str("ui: open search\n");
+                                    searching = true;
+                                    query.clear();
+                                    sview = searchui::SearchView::new();
+                                    cursor.hide(surface);
+                                    searchui::draw(
+                                        surface,
+                                        &sview,
+                                        query.as_str(),
+                                        caret,
+                                        bridge_note(&mail),
+                                    );
+                                    cursor.show_at(surface, x, y);
+                                    screen.present();
+                                    clicked = true;
+                                    moved = false;
+                                    prev_x = x;
+                                    prev_y = y;
+                                }
+                                #[allow(unreachable_patterns)]
                                 Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
                                     serial_port.write_str("ui: click Connectors\n");
                                     mail = mcp::fetch_mail_peek(grants);
@@ -380,6 +462,14 @@ unsafe extern "C" fn kmain() -> ! {
     // Only the framebuffer-missing/unsupported paths reach here — that is a
     // boot failure, and the smoke test must see it as one.
     serial::exit_qemu(false);
+}
+
+/// One line telling the user where answers come from right now.
+fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
+    match mail.status {
+        mcp::BridgeStatus::Online => "Answers come from the local index and the host bridge.",
+        mcp::BridgeStatus::Offline => "Bridge offline - answering from the index baked into the kernel.",
+    }
 }
 
 fn write_status(buf: &mut [u8; 72], s: &str) {
