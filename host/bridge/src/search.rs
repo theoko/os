@@ -10,9 +10,13 @@ use std::env;
 use std::fs;
 use std::path::PathBuf;
 
+/// On-disk / HTTP corpus shell around `{t,u,c,b,pr}` documents.
 #[derive(Debug, Deserialize)]
-struct CorpusFile {
-    docs: Vec<Doc>,
+pub struct CorpusFile {
+    #[serde(default)]
+    pub docs: Vec<Doc>,
+    #[serde(default)]
+    pub crawled_at: String,
 }
 
 /// Curated / teddy / projected corpus document (`{t,u,c,b,pr}`).

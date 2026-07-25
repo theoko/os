@@ -162,6 +162,17 @@ fn open_com2(line: &mut [u8]) -> (Serial, BridgeStatus) {
     (com2, status)
 }
 
+/// Ping COM2; if Online, run `f`. Otherwise return `offline`.
+fn when_online<T>(offline: T, f: impl FnOnce(&Serial, &mut [u8]) -> T) -> T {
+    let mut line = [0u8; LINE_BUF];
+    let (com2, status) = open_com2(&mut line);
+    if status != BridgeStatus::Online {
+        offline
+    } else {
+        f(&com2, &mut line)
+    }
+}
+
 /// Opt-in scope flags shared by `doc.read` / `search.query`.
 fn write_scope_flags(com2: &Serial, caps: crate::caps::Caps) {
     if caps.allows(crate::caps::Cap::WorkspaceIndex) {
@@ -176,32 +187,28 @@ fn write_scope_flags(com2: &Serial, caps: crate::caps::Caps) {
 ///
 /// `email.search` is refused when `caps` does not grant [`crate::caps::Cap::EmailSearch`].
 pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
-    let mut line = [0u8; LINE_BUF];
-    let (com2, status) = open_com2(&mut line);
-    if status != BridgeStatus::Online {
-        return MailPeek::empty(BridgeStatus::Offline);
-    }
-
-    if !caps.allows(crate::caps::Cap::EmailSearch) {
-        // Bridge is up, but this guest was not granted inbox read.
-        return MailPeek::empty(BridgeStatus::Online);
-    }
-
-    com2.write_str("CALL email.search q=in:inbox max=3\n");
-
-    let mut peek = MailPeek::empty(BridgeStatus::Online);
-    let _ = for_each_ok_rows(&com2, &mut line, 16, "OK email.search", |resp| {
-        if peek.count >= peek.rows.len() {
-            return false;
+    when_online(MailPeek::empty(BridgeStatus::Offline), |com2, line| {
+        if !caps.allows(crate::caps::Cap::EmailSearch) {
+            // Bridge is up, but this guest was not granted inbox read.
+            return MailPeek::empty(BridgeStatus::Online);
         }
-        let from = parse_row_field(resp, "from").unwrap_or("?");
-        let subj = parse_row_field(resp, "subj").unwrap_or("(no subject)");
-        copy_field(&mut peek.rows[peek.count].from, from);
-        copy_field(&mut peek.rows[peek.count].subj, subj);
-        peek.count += 1;
-        true
-    });
-    peek
+
+        com2.write_str("CALL email.search q=in:inbox max=3\n");
+
+        let mut peek = MailPeek::empty(BridgeStatus::Online);
+        let _ = for_each_ok_rows(com2, line, 16, "OK email.search", |resp| {
+            if peek.count >= peek.rows.len() {
+                return false;
+            }
+            let from = parse_row_field(resp, "from").unwrap_or("?");
+            let subj = parse_row_field(resp, "subj").unwrap_or("(no subject)");
+            copy_field(&mut peek.rows[peek.count].from, from);
+            copy_field(&mut peek.rows[peek.count].subj, subj);
+            peek.count += 1;
+            true
+        });
+        peek
+    })
 }
 
 /// Lines of a document, for the reader.
@@ -230,29 +237,25 @@ impl DocPage {
 /// per source: a caller that could not have found a document must not be able
 /// to read it by knowing its URL.
 pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
-    let mut line = [0u8; LINE_BUF];
-    let (com2, status) = open_com2(&mut line);
-    if status != BridgeStatus::Online {
-        return DocPage::empty(BridgeStatus::Offline, false);
-    }
+    when_online(DocPage::empty(BridgeStatus::Offline, false), |com2, line| {
+        com2.write_str("CALL doc.read url=");
+        com2.write_str(url);
+        com2.write_str(" lines=18");
+        write_scope_flags(com2, caps);
+        com2.write_str("\n");
 
-    com2.write_str("CALL doc.read url=");
-    com2.write_str(url);
-    com2.write_str(" lines=18");
-    write_scope_flags(&com2, caps);
-    com2.write_str("\n");
-
-    let mut page = DocPage::empty(BridgeStatus::Online, false);
-    page.denied = for_each_ok_rows(&com2, &mut line, 40, "OK doc.read", |resp| {
-        if page.count >= DocPage::MAX {
-            return false;
-        }
-        let text = parse_row_field(resp, "line").unwrap_or("");
-        copy_field(&mut page.lines[page.count], text);
-        page.count += 1;
-        true
-    });
-    page
+        let mut page = DocPage::empty(BridgeStatus::Online, false);
+        page.denied = for_each_ok_rows(com2, line, 40, "OK doc.read", |resp| {
+            if page.count >= DocPage::MAX {
+                return false;
+            }
+            let text = parse_row_field(resp, "line").unwrap_or("");
+            copy_field(&mut page.lines[page.count], text);
+            page.count += 1;
+            true
+        });
+        page
+    })
 }
 
 /// Ask the bridge to delete what a revoked capability produced.
@@ -261,17 +264,14 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
 /// answering from it — otherwise "off" means "hidden", which is not what the
 /// switch says.
 pub fn forget(tool: &str) -> BridgeStatus {
-    let mut line = [0u8; LINE_BUF];
-    let (com2, status) = open_com2(&mut line);
-    if status != BridgeStatus::Online {
-        return BridgeStatus::Offline;
-    }
-    com2.write_str("CALL ");
-    com2.write_str(tool);
-    com2.write_str("\n");
-    // Drain the reply so the next call starts on a clean line.
-    for_each_reply(&com2, &mut line, 8, |resp| resp != "END");
-    BridgeStatus::Online
+    when_online(BridgeStatus::Offline, |com2, line| {
+        com2.write_str("CALL ");
+        com2.write_str(tool);
+        com2.write_str("\n");
+        // Drain the reply so the next call starts on a clean line.
+        for_each_reply(com2, line, 8, |resp| resp != "END");
+        BridgeStatus::Online
+    })
 }
 
 /// Liveness only: PING the bridge without reading any mailbox.
@@ -286,28 +286,24 @@ pub fn probe_bridge() -> BridgeStatus {
 
 /// List playbooks via `CALL skills.list`. Offline → builtins baked into the ISO.
 pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
-    let mut line = [0u8; LINE_BUF];
-    let (com2, status) = open_com2(&mut line);
-    if status != BridgeStatus::Online {
-        return crate::skills::SkillPeek::from_builtin();
-    }
+    when_online(crate::skills::SkillPeek::from_builtin(), |com2, line| {
+        com2.write_str("CALL skills.list\n");
 
-    com2.write_str("CALL skills.list\n");
+        let mut peek = crate::skills::SkillPeek::empty();
+        peek.from_bridge = true;
+        let _ = for_each_ok_rows(com2, line, 24, "OK skills.list", |resp| {
+            let name = parse_row_field(resp, "name").unwrap_or("?");
+            let desc = parse_row_field(resp, "desc").unwrap_or("");
+            peek.push(name, desc)
+        });
 
-    let mut peek = crate::skills::SkillPeek::empty();
-    peek.from_bridge = true;
-    let _ = for_each_ok_rows(&com2, &mut line, 24, "OK skills.list", |resp| {
-        let name = parse_row_field(resp, "name").unwrap_or("?");
-        let desc = parse_row_field(resp, "desc").unwrap_or("");
-        peek.push(name, desc)
-    });
-
-    if peek.count == 0 {
-        // Bridge answered but listed nothing — still show ISO defaults.
-        crate::skills::SkillPeek::from_builtin()
-    } else {
-        peek
-    }
+        if peek.count == 0 {
+            // Bridge answered but listed nothing — still show ISO defaults.
+            crate::skills::SkillPeek::from_builtin()
+        } else {
+            peek
+        }
+    })
 }
 
 /// First useful body line from `CALL skills.get name=…` (for a clicked row).
@@ -318,51 +314,47 @@ pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
     if name.is_empty() {
         return false;
     }
-    let mut line = [0u8; LINE_BUF];
-    let (com2, status) = open_com2(&mut line);
-    if status != BridgeStatus::Online {
-        return false;
-    }
+    when_online(false, |com2, line| {
+        com2.write_str("CALL skills.get name=");
+        com2.write_str(name);
+        com2.write_str("\n");
 
-    com2.write_str("CALL skills.get name=");
-    com2.write_str(name);
-    com2.write_str("\n");
-
-    let mut in_frontmatter = false;
-    let mut saw_fm_open = false;
-    let mut found = false;
-    for_each_reply(&com2, &mut line, 40, |resp| {
-        if resp == "END" || resp.starts_with("ERR ") {
-            return false;
-        }
-        if resp.starts_with("OK skills.get") {
-            return true;
-        }
-        let Some(body) = resp.strip_prefix("LINE ") else {
-            return true;
-        };
-        // Skip YAML frontmatter so the blurb is real prose, not `---`.
-        if body.trim() == "---" {
-            if !saw_fm_open {
-                saw_fm_open = true;
-                in_frontmatter = true;
-            } else {
-                in_frontmatter = false;
+        let mut in_frontmatter = false;
+        let mut saw_fm_open = false;
+        let mut found = false;
+        for_each_reply(com2, line, 40, |resp| {
+            if resp == "END" || resp.starts_with("ERR ") {
+                return false;
             }
-            return true;
-        }
-        if in_frontmatter {
-            return true;
-        }
-        let text = body.trim();
-        if text.is_empty() {
-            return true;
-        }
-        copy_field(out, text);
-        found = true;
-        false
-    });
-    found
+            if resp.starts_with("OK skills.get") {
+                return true;
+            }
+            let Some(body) = resp.strip_prefix("LINE ") else {
+                return true;
+            };
+            // Skip YAML frontmatter so the blurb is real prose, not `---`.
+            if body.trim() == "---" {
+                if !saw_fm_open {
+                    saw_fm_open = true;
+                    in_frontmatter = true;
+                } else {
+                    in_frontmatter = false;
+                }
+                return true;
+            }
+            if in_frontmatter {
+                return true;
+            }
+            let text = body.trim();
+            if text.is_empty() {
+                return true;
+            }
+            copy_field(out, text);
+            found = true;
+            false
+        });
+        found
+    })
 }
 
 fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
@@ -385,50 +377,45 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
 
 /// Run `search.query` when granted. `q` must be ASCII without spaces (use `-`).
 pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
-    let mut line = [0u8; LINE_BUF];
-    let (com2, status) = open_com2(&mut line);
-
+    // Denied before CALL: still PING so the UI can show Online vs Offline.
     if !caps.allows(crate::caps::Cap::SearchQuery) {
-        // No CALL: a denied cap is denied whether or not a bridge is listening.
-        // PING still ran so the UI can show Online vs Offline alongside denied.
+        let mut line = [0u8; LINE_BUF];
+        let status = open_com2(&mut line).1;
         return SearchPeek::empty(status, true);
     }
 
     // Offline: UI falls back to the baked index via SearchView::run(q).
-    // Do not run a fixed offline query here — it was ignored and wrong.
-    if status != BridgeStatus::Online {
-        return SearchPeek::empty(BridgeStatus::Offline, false);
-    }
-
-    // CALL search.query q=… k=3 [email=1]
-    //
-    // The email graph is opt-in per call on the bridge. Ask for it only when
-    // the user granted email.search at setup: holding search.query alone must
-    // not reach mail content.
-    com2.write_str("CALL search.query q=");
-    com2.write_str(q);
-    com2.write_str(" k=3");
-    if caps.allows(crate::caps::Cap::EmailSearch) {
-        com2.write_str(" email=1");
-    }
-    write_scope_flags(&com2, caps);
-    com2.write_str("\n");
-
-    let mut peek = SearchPeek::empty(BridgeStatus::Online, false);
-    let _ = for_each_ok_rows(&com2, &mut line, 16, "OK search.query", |resp| {
-        if peek.count >= peek.hits.len() {
-            return false;
+    when_online(SearchPeek::empty(BridgeStatus::Offline, false), |com2, line| {
+        // CALL search.query q=… k=3 [email=1]
+        //
+        // The email graph is opt-in per call on the bridge. Ask for it only when
+        // the user granted email.search at setup: holding search.query alone must
+        // not reach mail content.
+        com2.write_str("CALL search.query q=");
+        com2.write_str(q);
+        com2.write_str(" k=3");
+        if caps.allows(crate::caps::Cap::EmailSearch) {
+            com2.write_str(" email=1");
         }
-        let title = parse_row_field(resp, "title").unwrap_or("?");
-        copy_field(&mut peek.hits[peek.count].title, title);
-        copy_field(
-            &mut peek.hits[peek.count].url,
-            parse_row_field(resp, "url").unwrap_or(""),
-        );
-        peek.count += 1;
-        true
-    });
-    peek
+        write_scope_flags(com2, caps);
+        com2.write_str("\n");
+
+        let mut peek = SearchPeek::empty(BridgeStatus::Online, false);
+        let _ = for_each_ok_rows(com2, line, 16, "OK search.query", |resp| {
+            if peek.count >= peek.hits.len() {
+                return false;
+            }
+            let title = parse_row_field(resp, "title").unwrap_or("?");
+            copy_field(&mut peek.hits[peek.count].title, title);
+            copy_field(
+                &mut peek.hits[peek.count].url,
+                parse_row_field(resp, "url").unwrap_or(""),
+            );
+            peek.count += 1;
+            true
+        });
+        peek
+    })
 }
 
 #[cfg(test)]

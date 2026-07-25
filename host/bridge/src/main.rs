@@ -367,10 +367,7 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             let Some(url) = arg_val(args, "url") else {
                 return vec!["ERR doc.read missing_url".into()];
             };
-            let max: usize = arg_val(args, "lines")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(24)
-                .clamp(1, 200);
+            let max = arg_usize(args, "lines", 24, 200);
             match read_doc(url, max, args) {
                 Ok(lines) => {
                     text::framed_ok(format!("OK doc.read n={}", lines.len()), lines)
@@ -399,10 +396,7 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
         }
         "search.query" => {
             let q = arg_val(args, "q").unwrap_or("");
-            let k: usize = arg_val(args, "k")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(5)
-                .clamp(1, 20);
+            let k = arg_usize(args, "k", 5, 20);
             let cat = arg_val(args, "cat");
             // Email content is opt-in per call. The guest only sets this when
             // the user granted email.search at setup, so holding search.query
@@ -511,12 +505,16 @@ fn arg_flag(args: &[(String, String)], key: &str) -> bool {
     matches!(arg_val(args, key), Some("1"))
 }
 
+fn arg_usize(args: &[(String, String)], key: &str, default: usize, max: usize) -> usize {
+    arg_val(args, key)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(default)
+        .clamp(1, max)
+}
+
 fn email_search(args: &[(String, String)], backend: &str) -> Vec<String> {
     let query = arg_val(args, "q").unwrap_or("in:inbox");
-    let max: usize = arg_val(args, "max")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(5)
-        .clamp(1, 20);
+    let max = arg_usize(args, "max", 5, 20);
 
     let out = match backend {
         "gog" => email_search_gog(query, max),
@@ -561,14 +559,7 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
     let output = match output {
         Ok(o) if o.status.success() => o,
         Ok(o) => {
-            let err = String::from_utf8_lossy(&o.stderr);
-            let brief = err
-                .lines()
-                .next()
-                .unwrap_or("gog_failed")
-                .chars()
-                .take(80)
-                .collect::<String>();
+            let brief = text::stderr_brief(&o.stderr, "gog_failed", 80);
             return vec![format!("ERR email.search {brief}")];
         }
         Err(_) => return vec!["ERR email.search gog_missing".into()],

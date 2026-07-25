@@ -105,10 +105,9 @@ pub fn transcribe(path: &Path) -> Result<Transcript, String> {
         .map_err(|e| format!("ffmpeg: {e}"))?;
     if !conv.status.success() {
         let _ = fs::remove_dir_all(&work);
-        let err = String::from_utf8_lossy(&conv.stderr);
         return Err(format!(
             "ffmpeg failed: {}",
-            err.lines().last().unwrap_or("unknown").chars().take(100).collect::<String>()
+            crate::text::stderr_brief(&conv.stderr, "unknown", 100)
         ));
     }
 
@@ -124,10 +123,9 @@ pub fn transcribe(path: &Path) -> Result<Transcript, String> {
     let _ = fs::remove_dir_all(&work);
 
     if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
         return Err(format!(
             "whisper failed: {}",
-            err.lines().last().unwrap_or("unknown").chars().take(100).collect::<String>()
+            crate::text::stderr_brief(&out.stderr, "unknown", 100)
         ));
     }
     if text.is_empty() {

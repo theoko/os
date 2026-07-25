@@ -81,6 +81,16 @@ fn blend(dst: u32, src: u32, a: u32) -> u32 {
 }
 
 impl Surface {
+    fn from_parts(addr: *mut u8, width: usize, height: usize, pitch: usize) -> Self {
+        Self {
+            addr,
+            width,
+            height,
+            pitch,
+            dirty: Cell::new(None),
+        }
+    }
+
     /// # Safety
     /// `addr` must be a valid writable framebuffer for the given geometry.
     ///
@@ -99,13 +109,12 @@ impl Surface {
         if !mode_ok(width, height, pitch, bpp, mask_shifts) {
             return None;
         }
-        Some(Self {
+        Some(Self::from_parts(
             addr,
-            width: width as usize,
-            height: height as usize,
-            pitch: pitch as usize,
-            dirty: Cell::new(None),
-        })
+            width as usize,
+            height as usize,
+            pitch as usize,
+        ))
     }
 
     /// A surface over caller-owned RAM, for off-screen rasterisation.
@@ -113,7 +122,7 @@ impl Surface {
     /// # Safety
     /// `addr` must point to at least `width * height` u32s.
     pub unsafe fn in_memory(addr: *mut u32, width: usize, height: usize) -> Self {
-        Self { addr: addr.cast::<u8>(), width, height, pitch: width * 4, dirty: Cell::new(None) }
+        Self::from_parts(addr.cast::<u8>(), width, height, width * 4)
     }
 
     pub fn width(&self) -> usize {
@@ -620,15 +629,9 @@ impl Screen {
         // than refusing the mode, which would leave the machine with no UI.
         let buffered = w <= MAX_W && h <= MAX_H;
         let back = if buffered {
-            Surface {
-                addr: (&raw mut BACK).cast::<u8>(),
-                width: w,
-                height: h,
-                pitch: w * 4,
-                dirty: Cell::new(None),
-            }
+            Surface::from_parts((&raw mut BACK).cast::<u8>(), w, h, w * 4)
         } else {
-            Surface { addr, width: w, height: h, pitch: pitch as usize, dirty: Cell::new(None) }
+            Surface::from_parts(addr, w, h, pitch as usize)
         };
         Some(Self { back, fb: addr, fb_pitch: pitch as usize, w, h, buffered })
     }

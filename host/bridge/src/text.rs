@@ -8,6 +8,17 @@ pub fn framed_ok(header: String, rows: impl IntoIterator<Item = String>) -> Vec<
     out
 }
 
+/// Last non-empty-ish stderr line from a subprocess, capped for guest/ERR text.
+pub fn stderr_brief(stderr: &[u8], fallback: &str, max: usize) -> String {
+    String::from_utf8_lossy(stderr)
+        .lines()
+        .last()
+        .unwrap_or(fallback)
+        .chars()
+        .take(max)
+        .collect()
+}
+
 /// Map line breaks / pipes / controls to spaces, optionally drop non-ASCII,
 /// then take at most `max` chars (and optionally trim).
 pub fn sanitize(s: &str, max: usize, ascii_only: bool, trim: bool) -> String {

@@ -39,8 +39,7 @@ pub fn back_rect() -> ui::Rect {
 }
 
 pub(crate) fn column(w: i32) -> (i32, i32) {
-    let cw = (w - PAD_X * 2).min(CONTENT_MAX);
-    ((w - cw) / 2, cw)
+    ui::content_column(w, CONTENT_MAX)
 }
 
 /// Bounding box of row `i`, for both drawing and hit-testing.
@@ -83,9 +82,7 @@ pub fn chrome(fb: &Surface, w: i32, title: &str, heading: Option<&str>) {
 fn row(fb: &Surface, w: i32, i: usize, title: &str, sub: &str, accent: bool) -> ui::Rect {
     let r = row_rect(w, i);
     let border = if accent { theme::ACCENT } else { theme::CARD_BORDER };
-    ui::outlined_round_rect(fb, r.x, r.y, r.w, r.h, 10, border, theme::BG);
-    fb.draw_text(r.x + 18, r.y + 26, title, &BRAND_FACE, 0, theme::INK);
-    fb.draw_text(r.x + 18, r.y + 46, sub, &SMALL_FACE, 0, theme::MUTED);
+    ui::draw_titled_row(fb, r, title, sub, border);
     r
 }
 

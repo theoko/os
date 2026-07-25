@@ -12,7 +12,6 @@
 //! * It is ~64 MB and ~12k documents, far too large to re-read per query, so
 //!   it is parsed once per process and held behind a `OnceLock`.
 
-use serde::Deserialize;
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -20,18 +19,10 @@ use std::process::Command;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
-use crate::search::Doc;
+use crate::search::{CorpusFile, Doc};
 
 /// Live corpus published by the tsearch front-end.
 pub const DEFAULT_URL: &str = "https://teddysearch.com/tsearch/corpus.json";
-
-#[derive(Debug, Deserialize)]
-struct CorpusFile {
-    #[serde(default)]
-    docs: Vec<Doc>,
-    #[serde(default)]
-    crawled_at: String,
-}
 
 pub fn url() -> String {
     env::var("OS_TSEARCH_URL").unwrap_or_else(|_| DEFAULT_URL.to_string())
@@ -65,8 +56,7 @@ pub fn sync() -> Result<(usize, String), String> {
         .map_err(|e| format!("curl: {e}"))?;
     if !out.status.success() {
         let _ = fs::remove_file(&tmp);
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(err.lines().last().unwrap_or("fetch failed").chars().take(120).collect());
+        return Err(crate::text::stderr_brief(&out.stderr, "fetch failed", 120));
     }
 
     // Validate before publishing: a truncated download parses as an error here

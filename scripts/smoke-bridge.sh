@@ -29,24 +29,4 @@ export OS_SMOKE_ROOT="$ROOT"
 export OS_SMOKE_ISO="$ISO"
 export OS_SMOKE_ADDR="$ADDR"
 export OS_SMOKE_SERIAL="$SERIAL_OUT"
-
-python3 <<'PY'
-import os
-import sys
-from pathlib import Path
-
-sys.path.insert(0, str(Path(os.environ["OS_SMOKE_ROOT"]) / "scripts"))
-import smoke_common as sc
-
-root = Path(os.environ["OS_SMOKE_ROOT"])
-iso = root / os.environ["OS_SMOKE_ISO"]
-addr = os.environ["OS_SMOKE_ADDR"]
-serial_path = Path(os.environ["OS_SMOKE_SERIAL"])
-serial_path.write_bytes(b"")
-
-# Guest listens; wait for the dialing bridge before the guest runs (early PING).
-argv = sc.qemu_argv(iso, serial_path, com2=addr)
-status, serial = sc.run_qemu(argv, cwd=root, serial_path=serial_path, timeout=120)
-sc.check_smoke(status, serial, need_mcp=True)
-print("smoke-bridge ok: hello + mcp email connected")
-PY
+python3 "$ROOT/scripts/smoke_common.py" bridge

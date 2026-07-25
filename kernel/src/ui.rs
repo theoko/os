@@ -110,6 +110,13 @@ pub fn outlined_round_rect(
     );
 }
 
+/// Bordered list row: title + muted subtitle (Skills / Caps chrome).
+pub fn draw_titled_row(fb: &Surface, r: Rect, title: &str, sub: &str, border: u32) {
+    outlined_round_rect(fb, r.x, r.y, r.w, r.h, 10, border, theme::BG);
+    fb.draw_text(r.x + 18, r.y + 26, title, &BRAND_FACE, 0, theme::INK);
+    fb.draw_text(r.x + 18, r.y + 46, sub, &SMALL_FACE, 0, theme::MUTED);
+}
+
 /// Shared search-field chrome used on Home and Search.
 pub fn draw_query_field(
     fb: &Surface,
@@ -298,9 +305,14 @@ fn fmt_count<'a>(buf: &'a mut [u8; 16], n: usize, one: &'static str, many: &'sta
     core::str::from_utf8(&buf[..i]).unwrap_or("")
 }
 
-pub(crate) fn home_column(w: i32) -> (i32, i32) {
-    let cw = (w - PAD_X * 2).min(CONTENT_MAX);
+/// Centered content column capped at `max` (home uses 920; list screens 720).
+pub(crate) fn content_column(w: i32, max: i32) -> (i32, i32) {
+    let cw = (w - PAD_X * 2).min(max);
     ((w - cw) / 2, cw)
+}
+
+pub(crate) fn home_column(w: i32) -> (i32, i32) {
+    content_column(w, CONTENT_MAX)
 }
 
 /// The home search field, shared by drawing and hit-testing.
@@ -320,7 +332,7 @@ pub fn tile_rect(w: i32, i: i32) -> Rect {
     Rect::new(x0 + (tw + gap) * i, TILE_TOP, tw, TILE_H)
 }
 
-pub fn card_targets(w: i32) -> CardTargets {
+fn card_targets(w: i32) -> CardTargets {
     CardTargets {
         search: tile_rect(w, 0),
         capabilities: tile_rect(w, 1),
