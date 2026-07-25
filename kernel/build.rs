@@ -30,8 +30,17 @@ const STYLES: &[Style] = &[
     Style { name: "SMALL", px: 13.0, weight: 400.0 },
 ];
 
-/// Font search order. `OS_UI_FONT` overrides. SF Pro is a variable font, so a
-/// single file yields every weight; the static fallbacks lose weight fidelity.
+/// Vendored default: Inter, SIL OFL 1.1 (see `assets/fonts/OFL.txt`).
+///
+/// Keeping this in-tree makes the build reproducible on any host and the ISO
+/// redistributable. The system fallbacks below are convenience only — SF Pro
+/// is not licensed for redistribution, so an ISO built against it must not be
+/// published.
+const VENDORED_FONT: &str = "../assets/fonts/InterVariable.ttf";
+
+/// Fallbacks if the vendored font is missing. `OS_UI_FONT` overrides both.
+/// Inter and SF Pro are variable, so one file yields every weight; the static
+/// fallbacks collapse to a single weight.
 const FONT_CANDIDATES: &[&str] = &[
     "/System/Library/Fonts/SFNS.ttf",
     "/System/Library/Fonts/HelveticaNeue.ttc",
@@ -65,14 +74,24 @@ fn find_font() -> (PathBuf, Vec<u8>) {
         let data = fs::read(&path).unwrap_or_else(|e| panic!("OS_UI_FONT {p}: {e}"));
         return (path, data);
     }
+    // Vendored font first, so a clean clone builds identically anywhere.
+    let vendored = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join(VENDORED_FONT);
+    if let Ok(data) = fs::read(&vendored) {
+        return (vendored, data);
+    }
     for cand in FONT_CANDIDATES {
         let path = Path::new(cand);
         if let Ok(data) = fs::read(path) {
+            println!(
+                "cargo:warning=vendored {VENDORED_FONT} missing; fell back to {cand}. \
+                 The resulting ISO may embed a font you cannot redistribute."
+            );
             return (path.to_path_buf(), data);
         }
     }
     panic!(
-        "no UI font found; set OS_UI_FONT to a .ttf/.ttc (tried {})",
+        "no UI font found; expected {} or set OS_UI_FONT to a .ttf/.ttc (also tried {})",
+        vendored.display(),
         FONT_CANDIDATES.join(", ")
     );
 }

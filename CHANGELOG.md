@@ -6,8 +6,11 @@ version: 0.7.0
 
 ## 0.7.0 — 2026-07-25
 
+- UI: vendored **Inter** (SIL OFL 1.1, `assets/fonts/`) as the default UI font, so
+  the build is reproducible off macOS and the ISO is redistributable. System
+  fonts remain fallbacks and warn at build time; `OS_UI_FONT` overrides.
 - UI: anti-aliased proportional type. `build.rs` rasterizes a real outline font
-  (SF Pro when present, `OS_UI_FONT` to override) into an 8-bit coverage atlas
+  into an 8-bit coverage atlas
   at six size/weight cuts; the kernel only blends. Replaces the 8x8 bitmap face
   that made display type blocky and spaced letters on a fixed 8px cell.
 - UI: home screen rebuilt against superintelmarkets.com — white page, 44px/600
