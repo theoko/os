@@ -1,8 +1,14 @@
 ---
-version: 0.7.3
+version: 0.7.4
 ---
 
 # Changelog
+
+## 0.7.4 — 2026-07-25
+
+- Caps: guest-side grant bitset (`caps.rs`). Setup's Capabilities step feeds it;
+  `email.search` over COM2 is refused without the grant. Home footer shows the
+  active set; Skills CTA reports whether `skills.save` is writable.
 
 ## 0.7.3 — 2026-07-25
 

@@ -8,6 +8,7 @@
 //! Drawing records its own hit zones, so `click()` needs no separate layout
 //! table to drift out of sync.
 
+use crate::caps::Caps;
 use crate::fb::Surface;
 use crate::font::{self, BODY_FACE, BRAND_FACE, BTN_FACE, HERO_FACE, SMALL_FACE, TITLE_FACE};
 use crate::mcp::{BridgeStatus, MailPeek};
@@ -53,7 +54,7 @@ pub enum Step {
 
 pub const REGIONS: [&str; 4] = ["United States", "United Kingdom", "Greece", "Japan"];
 
-/// Capabilities the agent may be granted up front. Mirrors the bridge tools.
+/// Capabilities the agent may be granted up front. Mirrors [`Cap`] / bridge tools.
 pub const CAPS: [(&str, &str); 3] = [
     ("email.search", "Read the inbox through the host bridge"),
     ("search.query", "Query the local knowledge corpus"),
@@ -80,10 +81,21 @@ impl Setup {
             // email.search on by default; writing skills is opt-in, matching
             // the "no ambient root" rule.
             caps: [true, true, false],
-            zones: [Zone { x: 0, y: 0, w: 0, h: 0, action: Action::Continue }; MAX_ZONES],
+            zones: [Zone {
+                x: 0,
+                y: 0,
+                w: 0,
+                h: 0,
+                action: Action::Continue,
+            }; MAX_ZONES],
             n_zones: 0,
             was_down: false,
         }
+    }
+
+    /// Grant set chosen on the Capabilities step.
+    pub fn grants(&self) -> Caps {
+        Caps::from_bools(&self.caps)
     }
 
     pub fn is_finished(&self) -> bool {
@@ -483,6 +495,17 @@ mod tests {
         let s = setup();
         let idx = CAPS.iter().position(|(n, _)| *n == "skills.save").unwrap();
         assert!(!s.caps[idx]);
+    }
+
+    #[test]
+    fn grants_match_cap_module() {
+        use crate::caps::Cap;
+        let s = setup();
+        let g = s.grants();
+        for (i, cap) in Cap::ALL.iter().enumerate() {
+            assert_eq!(CAPS[i].0, cap.name());
+            assert_eq!(s.caps[i], g.allows(*cap));
+        }
     }
 
     #[test]

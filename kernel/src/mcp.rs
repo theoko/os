@@ -69,7 +69,9 @@ fn parse_row_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
 }
 
 /// Probe the host bridge and optionally fetch a short inbox peek.
-pub fn fetch_mail_peek() -> MailPeek {
+///
+/// `email.search` is refused when `caps` does not grant [`crate::caps::Cap::EmailSearch`].
+pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
     let com2 = Serial::com2();
     com2.init();
 
@@ -87,6 +89,11 @@ pub fn fetch_mail_peek() -> MailPeek {
     let resp = core::str::from_utf8(&line[..n]).unwrap_or("");
     if !resp.starts_with("OK pong") {
         return MailPeek::empty(BridgeStatus::Offline);
+    }
+
+    if !caps.allows(crate::caps::Cap::EmailSearch) {
+        // Bridge is up, but this guest was not granted inbox read.
+        return MailPeek::empty(BridgeStatus::Online);
     }
 
     com2.write_str("CALL email.search q=in:inbox max=3\n");
