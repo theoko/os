@@ -79,6 +79,7 @@ impl MailPeek {
 
 /// One row from `calendar.list` (same `email=1` consent as mail).
 pub struct CalRow {
+    pub id: [u8; 20],
     pub title: [u8; 48],
     pub when: [u8; 32],
 }
@@ -94,6 +95,7 @@ pub struct CalendarPeek {
 impl CalendarPeek {
     pub const fn empty(status: BridgeStatus, denied: bool) -> Self {
         const EMPTY: CalRow = CalRow {
+            id: [0; 20],
             title: [0; 48],
             when: [0; 32],
         };
@@ -105,12 +107,33 @@ impl CalendarPeek {
         }
     }
 
+    pub fn id_at(&self, i: usize) -> &str {
+        str_prefix(trim_buf(&self.rows[i].id))
+    }
+
     pub fn title_at(&self, i: usize) -> &str {
         str_prefix(trim_buf(&self.rows[i].title))
     }
 
     pub fn when_at(&self, i: usize) -> &str {
         str_prefix(trim_buf(&self.rows[i].when))
+    }
+
+    /// Build `cal://{id}` into `buf`. Empty when the row has no id.
+    pub fn url_at<'a>(&self, i: usize, buf: &'a mut [u8; 40]) -> Option<&'a str> {
+        let id = self.id_at(i);
+        if id.is_empty() || id.len() > 24 {
+            return None;
+        }
+        buf.fill(0);
+        let prefix = b"cal://";
+        let n = prefix.len() + id.len();
+        if n > buf.len() {
+            return None;
+        }
+        buf[..prefix.len()].copy_from_slice(prefix);
+        buf[prefix.len()..n].copy_from_slice(id.as_bytes());
+        Some(str_prefix(&buf[..n]))
     }
 }
 
@@ -288,8 +311,10 @@ pub fn fetch_calendar_peek(caps: crate::caps::Caps) -> CalendarPeek {
             continue;
         }
         if resp.starts_with("ROW ") && peek.count < peek.rows.len() {
+            let id = parse_row_field(resp, "id").unwrap_or("");
             let title = parse_row_field(resp, "title").unwrap_or("(event)");
             let when = parse_row_field(resp, "when").unwrap_or("");
+            copy_field(&mut peek.rows[peek.count].id, id);
             copy_field(&mut peek.rows[peek.count].title, title);
             copy_field(&mut peek.rows[peek.count].when, when);
             peek.count += 1;
@@ -324,6 +349,7 @@ impl DocDeny {
         } else if resp.contains("no readable body")
             || resp.contains("no such message")
             || resp.contains("no such transcript")
+            || resp.contains("no such event")
         {
             Self::NoBody
         } else if resp.contains("outside the indexed roots") {
@@ -338,7 +364,7 @@ impl DocDeny {
             Self::None => "",
             Self::NeedFiles => "Grant Your files to open this document.",
             Self::NeedAudio => "Grant Recordings to open this transcript.",
-            Self::NeedEmail => "Grant Email to open this message.",
+            Self::NeedEmail => "Grant Email to open mail or calendar.",
             Self::NeedPortal => "Grant Online services to open this page.",
             Self::NoBody => "Nothing readable here.",
             Self::OutsideRoots => "Outside the indexed folders.",

@@ -55,6 +55,12 @@ Home lists recent inbox rows when Email is granted. Each row is clickable and
 opens `email://{id}` in the Reader — same `doc.read` path as Search. The id
 comes from the bridge `email.search` ROW (graph-stable hash of from+subject).
 
+## Calendar events (v0.9.24)
+
+Morning / inbox Briefs list upcoming events when Email is on. An Event row is
+clickable and opens `cal://{id}` in the Reader (`doc.read` + `email=1`). Ids
+come from `calendar.list` ROWs (hash of title+when).
+
 ## Chill 60 Hz loop (v0.9.19)
 
 After the framebuffer is up, the guest runs a paced **60 fps** game loop

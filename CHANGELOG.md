@@ -1,8 +1,18 @@
 ---
-version: 0.9.23
+version: 0.9.24
 ---
 
 # Changelog
+
+## 0.9.24 — 2026-07-25
+
+Open calendar events from Brief:
+
+- `calendar.list` ROWs carry stable `id=` (same hash as mail); `doc.read
+  cal://{id}` needs `email=1` and returns mock event body.
+- Guest arms Event report lines on Brief; click opens the Reader (same path
+  as home mail). Cap refuse never opens COM2.
+- Smoke: list id → deny/allow `doc.read cal://`.
 
 ## 0.9.23 — 2026-07-25
 

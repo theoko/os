@@ -226,7 +226,7 @@ pub fn draw_brief(fb: &Surface, brief: &Brief) {
             fb.fill_round_rect(rx, ry, rw, rh, 10, theme::CARD_BORDER);
             fb.fill_round_rect(rx + 1, ry + 1, rw - 2, rh - 2, 9, theme::BG);
             let tag = brief.lines[i].tag();
-            let accent = matches!(tag, "Urgent" | "Reply" | "Need");
+            let accent = matches!(tag, "Urgent" | "Reply" | "Need" | "Event");
             fb.draw_text(
                 rx + 16,
                 ry + 22,
@@ -282,6 +282,44 @@ pub fn brief_send_hit(w: i32, h: i32, ready: bool, x: i32, y: i32) -> bool {
     }
     let (rx, ry, rw, rh) = brief_send_rect(w, h);
     x >= rx && x < rx + rw && y >= ry && y < ry + rh
+}
+
+/// Y of the first Report row card — must match [`draw_brief`].
+fn brief_report_top(brief: &Brief) -> i32 {
+    let mut y = TOP - 24;
+    if brief.denied {
+        y += 22;
+    }
+    if brief.plan_n > 0 {
+        y += 22 + brief.plan_n as i32 * 18 + 10;
+    }
+    if brief.count > 0 {
+        y += 8; // "Report" heading
+    }
+    y
+}
+
+/// Hit an armed Event report row → index into [`Brief::event_url_at`].
+pub fn brief_event_hit(w: i32, brief: &Brief, x: i32, y: i32) -> Option<usize> {
+    if brief.event_n == 0 || brief.count == 0 {
+        return None;
+    }
+    let (col_x, cw) = column(w);
+    let top = brief_report_top(brief);
+    for ev in 0..brief.event_n {
+        let Some(line_i) = brief.event_line_at(ev) else {
+            continue;
+        };
+        if line_i >= brief.count {
+            continue;
+        }
+        let ry = top + 8 + line_i as i32 * (ROW_H - 10);
+        let rh = ROW_H - 14;
+        if x >= col_x && x < col_x + cw && y >= ry && y < ry + rh {
+            return Some(ev);
+        }
+    }
+    None
 }
 
 /// Which skill row contains this point, if any.
@@ -427,6 +465,21 @@ mod tests {
         assert!(brief_send_hit(1024, 768, true, x + w / 2, y + h / 2));
         assert!(!brief_send_hit(1024, 768, false, x + w / 2, y + h / 2));
         assert!(!brief_send_hit(1024, 768, true, x + w / 2, y - 4));
+    }
+
+    #[test]
+    fn brief_event_rows_are_hittable() {
+        let mut brief = Brief::empty();
+        brief.push_report("Event", "Demo event - tomorrow");
+        brief.arm_event("0123456789abcdef", 0);
+        let top = brief_report_top(&brief);
+        let (x, cw) = column(1024);
+        let ry = top + 8;
+        assert_eq!(
+            brief_event_hit(1024, &brief, x + cw / 2, ry + 10),
+            Some(0)
+        );
+        assert_eq!(brief_event_hit(1024, &Brief::empty(), x + cw / 2, ry + 10), None);
     }
 
     #[test]

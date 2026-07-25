@@ -559,7 +559,22 @@ unsafe extern "C" fn kmain() -> ! {
                                     dirty = true;
                                 }
                             } else if view == screens::View::Brief {
-                                if screens::brief_send_hit(
+                                if let Some(ev) = screens::brief_event_hit(w, &brief, x, y) {
+                                    let mut url_buf = [0u8; 40];
+                                    if let Some(url) = brief.event_url_at(ev, &mut url_buf) {
+                                        open_title.clear();
+                                        // Title is the Event report text.
+                                        if let Some(line_i) = brief.event_line_at(ev) {
+                                            for b in brief.lines[line_i].text().bytes() {
+                                                open_title.apply(keyboard::Key::Char(b));
+                                            }
+                                        }
+                                        page = mcp::fetch_doc(grants, url);
+                                        view = screens::View::Reader;
+                                        serial_port.write_str("ui: open event\n");
+                                        dirty = true;
+                                    }
+                                } else if screens::brief_send_hit(
                                     w,
                                     h,
                                     brief.send_ready,

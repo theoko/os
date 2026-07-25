@@ -294,9 +294,29 @@ if not allowed_cal.startswith("OK calendar.list"):
     print("error: calendar.list email=1 must succeed", file=sys.stderr)
     print(allowed_cal, file=sys.stderr)
     sys.exit(1)
-if "ROW " not in allowed_cal or "title=" not in allowed_cal:
-    print("error: calendar.list email=1 must return a ROW", file=sys.stderr)
+cal_id = None
+for line in allowed_cal.splitlines():
+    if not line.startswith("ROW "):
+        continue
+    for part in line[4:].split("|"):
+        if part.startswith("id="):
+            cal_id = part[3:]
+            break
+    if cal_id:
+        break
+if not cal_id or len(cal_id) != 16:
+    print("error: calendar.list ROW must carry a 16-char id=", file=sys.stderr)
     print(allowed_cal, file=sys.stderr)
+    sys.exit(1)
+denied_cal_doc = call(f"CALL doc.read url=cal://{cal_id} lines=8")
+if "needs_email_cap" not in denied_cal_doc:
+    print("error: doc.read cal:// must require email=1", file=sys.stderr)
+    print(denied_cal_doc, file=sys.stderr)
+    sys.exit(1)
+cal_doc = call(f"CALL doc.read url=cal://{cal_id} lines=8 email=1")
+if not cal_doc.startswith("OK doc.read") or "Demo event" not in cal_doc:
+    print("error: doc.read cal:// email=1 must show event body", file=sys.stderr)
+    print(cal_doc, file=sys.stderr)
     sys.exit(1)
 print("smoke-bridge: calendar.list email=1 ok")
 

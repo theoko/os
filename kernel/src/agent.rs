@@ -67,6 +67,10 @@ pub struct Brief {
     pub send_ready: bool,
     draft_to: [u8; 40],
     draft_subj: [u8; 48],
+    /// Openable calendar events (report line index + graph id).
+    pub event_n: usize,
+    event_id: [[u8; 20]; 2],
+    event_line: [u8; 2],
 }
 
 impl Brief {
@@ -84,6 +88,9 @@ impl Brief {
             send_ready: false,
             draft_to: [0; 40],
             draft_subj: [0; 48],
+            event_n: 0,
+            event_id: [[0; 20]; 2],
+            event_line: [0; 2],
         }
     }
 
@@ -122,6 +129,40 @@ impl Brief {
         self.send_ready = false;
         self.draft_to = [0; 40];
         self.draft_subj = [0; 48];
+    }
+
+    /// Remember an Event report line so Brief can open `cal://{id}`.
+    pub fn arm_event(&mut self, id: &str, line_idx: usize) {
+        if self.event_n >= self.event_id.len() || id.is_empty() {
+            return;
+        }
+        copy_field(&mut self.event_id[self.event_n], id);
+        self.event_line[self.event_n] = line_idx.min(255) as u8;
+        self.event_n += 1;
+    }
+
+    pub fn event_line_at(&self, i: usize) -> Option<usize> {
+        (i < self.event_n).then_some(self.event_line[i] as usize)
+    }
+
+    /// Build `cal://{id}` for armed event `i`.
+    pub fn event_url_at<'a>(&self, i: usize, buf: &'a mut [u8; 40]) -> Option<&'a str> {
+        if i >= self.event_n {
+            return None;
+        }
+        let id = str_at(&self.event_id[i]);
+        if id.is_empty() || id.len() > 24 {
+            return None;
+        }
+        buf.fill(0);
+        let prefix = b"cal://";
+        let n = prefix.len() + id.len();
+        if n > buf.len() {
+            return None;
+        }
+        buf[..prefix.len()].copy_from_slice(prefix);
+        buf[prefix.len()..n].copy_from_slice(id.as_bytes());
+        Some(str_at(&buf[..n]))
     }
 
     /// True when there is something worth keeping on the home screen.
@@ -521,6 +562,7 @@ fn fill_calendar_lines(brief: &mut Brief, cal: &CalendarPeek) {
         }
         let title = cal.title_at(i);
         let when = cal.when_at(i);
+        let line_idx = brief.count;
         if when.is_empty() {
             brief.push_line("Event", title);
         } else {
@@ -546,6 +588,7 @@ fn fill_calendar_lines(brief: &mut Brief, cal: &CalendarPeek) {
             let line = core::str::from_utf8(&text[..n]).unwrap_or(title);
             brief.push_line("Event", line);
         }
+        brief.arm_event(cal.id_at(i), line_idx);
     }
 }
 
@@ -1030,6 +1073,7 @@ mod tests {
     fn calendar_lines_format_title_and_when() {
         let mut brief = Brief::empty();
         let mut cal = CalendarPeek::empty(BridgeStatus::Online, false);
+        copy_field(&mut cal.rows[0].id, "0123456789abcdef");
         copy_field(&mut cal.rows[0].title, "Demo event");
         copy_field(&mut cal.rows[0].when, "tomorrow");
         cal.count = 1;
@@ -1037,6 +1081,12 @@ mod tests {
         assert_eq!(brief.lines[0].tag(), "Event");
         assert!(brief.lines[0].text().contains("Demo event"));
         assert!(brief.lines[0].text().contains("tomorrow"));
+        assert_eq!(brief.event_n, 1);
+        let mut buf = [0u8; 40];
+        assert_eq!(
+            brief.event_url_at(0, &mut buf),
+            Some("cal://0123456789abcdef")
+        );
     }
 
     #[test]

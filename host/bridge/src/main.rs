@@ -391,11 +391,7 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
         "calendar.list" if !matches!(arg_val(args, "email"), Some("1")) => {
             vec!["ERR calendar.list needs_email_cap".into()]
         }
-        "calendar.list" => vec![
-            "OK calendar.list n=1".into(),
-            "ROW title=Demo event|when=tomorrow".into(),
-            "END".into(),
-        ],
+        "calendar.list" => calendar_list_mock(),
         "skills.list" => skills::list_response(),
         "skills.get" => {
             let name = arg_val(args, "name").unwrap_or("");
@@ -587,6 +583,46 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
     }
 }
 
+/// Mock calendar rows — deterministic ids via [`graph::id_for`].
+fn calendar_mock_events() -> &'static [(&'static str, &'static str, &'static str)] {
+    &[
+        (
+            "Demo event",
+            "tomorrow",
+            "Planning sync. Bring the Q2 notes.",
+        ),
+        (
+            "Focus block",
+            "Friday 14:00",
+            "No meetings. Deep work on the guest skill runner.",
+        ),
+    ]
+}
+
+fn calendar_list_mock() -> Vec<String> {
+    let events = calendar_mock_events();
+    let mut out = vec![format!("OK calendar.list n={}", events.len())];
+    for (title, when, _) in events {
+        let id = graph::id_for(title, when);
+        out.push(format!(
+            "ROW id={id}|title={}|when={}",
+            sanitize_field(title),
+            sanitize_field(when)
+        ));
+    }
+    out.push("END".into());
+    out
+}
+
+fn calendar_body(id: &str) -> Option<String> {
+    for (title, when, notes) in calendar_mock_events() {
+        if graph::id_for(title, when) == id {
+            return Some(format!("Event: {title}\nWhen: {when}\n\n{notes}"));
+        }
+    }
+    None
+}
+
 /// Parse `ROW from=…|subj=…` lines back into graph messages.
 ///
 /// Only sender and subject are kept — never the body.
@@ -679,6 +715,12 @@ fn read_doc(url: &str, max: usize, args: &[(String, String)]) -> Result<Vec<Stri
                 m.snippet.as_str()
             }
         )
+    } else if let Some(id) = url.strip_prefix("cal://") {
+        // Same Google identity / email=1 consent as calendar.list.
+        if !with_email {
+            return Err("needs_email_cap".into());
+        }
+        calendar_body(id).ok_or("no such event")?
     } else if let Some(rows) = search::body_for_builtin(url, max) {
         // Built-in os:// corpus — no portal bit.
         return Ok(rows);
@@ -1036,10 +1078,36 @@ mod tests {
             allowed[0].starts_with("OK calendar.list"),
             "email=1 should list: {allowed:?}"
         );
-        assert!(
-            allowed.iter().any(|l| l.starts_with("ROW ") && l.contains("title=")),
-            "expected a demo ROW: {allowed:?}"
-        );
+        let row = allowed
+            .iter()
+            .find(|l| l.starts_with("ROW "))
+            .expect("ROW");
+        let id = parse_row_field(row, "id").expect("id=");
+        let title = parse_row_field(row, "title").expect("title=");
+        let when = parse_row_field(row, "when").expect("when=");
+        assert_eq!(id, graph::id_for(title, when));
+    }
+
+    #[test]
+    fn reading_calendar_needs_email_and_matches_list_id() {
+        let listed = dispatch("CALL calendar.list email=1", &test_backends());
+        let row = listed.iter().find(|l| l.starts_with("ROW ")).unwrap();
+        let id = parse_row_field(row, "id").unwrap();
+        let denied = read_doc(&format!("cal://{id}"), 10, &args(&[])).unwrap_err();
+        assert_eq!(denied, "needs_email_cap");
+        let rows = read_doc(
+            &format!("cal://{id}"),
+            10,
+            &args(&[("email", "1")]),
+        )
+        .expect("read");
+        let text: String = rows
+            .iter()
+            .filter_map(|r| r.strip_prefix("ROW line="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("Demo event"), "{text}");
+        assert!(text.contains("tomorrow"), "{text}");
     }
 
     #[test]

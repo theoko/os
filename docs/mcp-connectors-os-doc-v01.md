@@ -35,7 +35,8 @@ Guest → host:
 | `PING` | Liveness |
 | `LIST` | Tool names |
 | `CALL email.search q=<gmail query> max=<n> email=1` | Search mail (needs `email=1`) |
-| `CALL calendar.list email=1` | List upcoming events (same `email=1` bit) |
+| `CALL calendar.list email=1` | List upcoming events (`id=` + same `email=1` bit) |
+| `CALL doc.read url=cal://… email=1` | Open a calendar event body |
 | `CALL email.forget` | Delete the host mail knowledge graph |
 | `CALL workspace.index files=1` | Build the project-folder index |
 | `CALL workspace.forget` | Delete the workspace index |
