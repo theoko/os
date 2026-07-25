@@ -333,7 +333,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     if !query.is_empty() {
                                         if try_transcribe_path(
                                             &mut sview,
-                                            &mut serial_port,
+                                            &serial_port,
                                             &mut status_buf,
                                             grants,
                                             query.as_str(),
@@ -397,7 +397,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     if view == screens::View::Search {
                                         if !try_transcribe_path(
                                             &mut sview,
-                                            &mut serial_port,
+                                            &serial_port,
                                             &mut status_buf,
                                             grants,
                                             query.as_str(),
