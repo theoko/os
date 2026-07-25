@@ -29,6 +29,24 @@ struct Doc {
     pr: f64,
 }
 
+/// Workspace files, projected into corpus documents.
+///
+/// Not gated behind a capability: these are the user's own local documents,
+/// indexed from roots they chose. Email is different and stays opt-in.
+fn workspace_docs() -> Vec<Doc> {
+    crate::workspace::Index::load()
+        .entries
+        .into_iter()
+        .map(|e| Doc {
+            t: e.title,
+            u: format!("file://{}", e.path),
+            c: "file".to_string(),
+            b: e.snippet,
+            pr: e.pr,
+        })
+        .collect()
+}
+
 /// Email graph entries, projected into corpus documents.
 fn email_docs() -> Vec<Doc> {
     crate::graph::Graph::load_or_empty()
@@ -185,6 +203,7 @@ pub fn query_builtin_with(
     include_email: bool,
 ) -> Result<Vec<String>, String> {
     let mut docs = load_docs()?;
+    docs.extend(workspace_docs());
     if include_email {
         docs.extend(email_docs());
     }

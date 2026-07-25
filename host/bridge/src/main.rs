@@ -4,6 +4,7 @@
 //! Email backends: mock (default) or `gog`. Skills: defaults + saved on host.
 
 mod graph;
+mod workspace;
 mod search;
 mod skills;
 
@@ -273,7 +274,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
     match cmd {
         "PING" => vec!["OK pong".into()],
         "LIST" => {
-            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query".into()]
+            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index".into()]
         }
         "CALL" => {
             let (tool, rest) = split_word(rest);
@@ -345,6 +346,18 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             match skills::save_skill(name, &body) {
                 Ok(path) => vec![format!("OK skills.save path={}", path.display())],
                 Err(e) => vec![format!("ERR skills.save {e}")],
+            }
+        }
+        "workspace.index" => {
+            let roots = workspace::roots();
+            let ix = workspace::build(&roots);
+            let n = ix.entries.len();
+            match ix.save() {
+                Ok(p) => vec![
+                    format!("OK workspace.index n={n} path={}", p.display()),
+                    "END".into(),
+                ],
+                Err(e) => vec![format!("ERR workspace.index {e}")],
             }
         }
         "search.query" => {
