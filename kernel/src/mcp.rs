@@ -178,6 +178,33 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
     peek
 }
 
+/// Ask the bridge to delete what a revoked capability produced.
+///
+/// Turning a switch off should remove the index it built, not just stop
+/// answering from it — otherwise "off" means "hidden", which is not what the
+/// switch says.
+pub fn forget(tool: &str) -> BridgeStatus {
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+    if matches!(ping_bridge(&com2, &mut line), BridgeStatus::Offline) {
+        return BridgeStatus::Offline;
+    }
+    com2.write_str("CALL ");
+    com2.write_str(tool);
+    com2.write_str("\n");
+    // Drain the reply so the next call starts on a clean line.
+    for _ in 0..8 {
+        let Some(n) = com2.read_line(&mut line, TIMEOUT_REPLY) else {
+            break;
+        };
+        if str_prefix(&line[..n]) == "END" {
+            break;
+        }
+    }
+    BridgeStatus::Online
+}
+
 /// Liveness only: PING the bridge without reading any mailbox.
 ///
 /// Used before the user has consented on the Capabilities step. Calling

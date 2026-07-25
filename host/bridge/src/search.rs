@@ -410,3 +410,40 @@ mod tests {
         assert!(r[0].starts_with("OK search.query"));
     }
 }
+
+/// Body text for a document URL, from the built-in corpus or teddysearch.
+///
+/// These sources carry their text in the index, so reading needs no file
+/// access — and no capability beyond the one that found them.
+pub fn body_for(url: &str, max_lines: usize) -> Option<Vec<String>> {
+    let body = load_docs()
+        .ok()?
+        .into_iter()
+        .find(|d| d.u == url)
+        .map(|d| d.b)
+        .or_else(|| {
+            crate::tsearch::docs()
+                .iter()
+                .find(|d| d.u == url)
+                .map(|d| d.b.clone())
+        })?;
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for word in body.split_whitespace() {
+        if !cur.is_empty() && cur.chars().count() + 1 + word.chars().count() > 78 {
+            out.push(format!("ROW line={}", sanitize(&cur)));
+            cur.clear();
+            if out.len() >= max_lines {
+                return Some(out);
+            }
+        }
+        if !cur.is_empty() {
+            cur.push(' ');
+        }
+        cur.push_str(word);
+    }
+    if !cur.is_empty() {
+        out.push(format!("ROW line={}", sanitize(&cur)));
+    }
+    Some(out)
+}

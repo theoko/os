@@ -277,7 +277,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
     match cmd {
         "PING" => vec!["OK pong".into()],
         "LIST" => {
-            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,market.health,market.fear_greed,audio.transcribe".into()]
+            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,doc.read".into()]
         }
         "CALL" => {
             let (tool, rest) = split_word(rest);
@@ -402,6 +402,41 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             ],
             Err(e) => vec![format!("ERR tsearch.sync {e}")],
         },
+        // Revoking a grant should remove what it produced, not merely hide it.
+        // Read one indexed document back, so a result can be opened rather
+        // than merely located.
+        "doc.read" => {
+            let Some(url) = arg_val(args, "url") else {
+                return vec!["ERR doc.read missing_url".into()];
+            };
+            let max: usize = arg_val(args, "lines")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(24)
+                .clamp(1, 200);
+            match read_doc(url, max, args) {
+                Ok(lines) => {
+                    let mut out = vec![format!("OK doc.read n={}", lines.len())];
+                    out.extend(lines);
+                    out.push("END".into());
+                    out
+                }
+                Err(e) => vec![format!("ERR doc.read {e}")],
+            }
+        }
+        "workspace.forget" => match std::fs::remove_file(workspace::index_path()) {
+            Ok(()) => vec!["OK workspace.forget removed".into(), "END".into()],
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                vec!["OK workspace.forget nothing_to_remove".into(), "END".into()]
+            }
+            Err(e) => vec![format!("ERR workspace.forget {e}")],
+        },
+        "audio.forget" => match std::fs::remove_file(transcribe::store_path()) {
+            Ok(()) => vec!["OK audio.forget removed".into(), "END".into()],
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                vec!["OK audio.forget nothing_to_remove".into(), "END".into()]
+            }
+            Err(e) => vec![format!("ERR audio.forget {e}")],
+        },
         "workspace.index" => {
             // Building the index reads the user's files, so it needs the same
             // grant as searching them.
@@ -472,6 +507,87 @@ fn parse_row_field<'a>(row: &'a str, key: &str) -> Option<&'a str> {
     let body = row.strip_prefix("ROW ")?;
     body.split('|')
         .find_map(|f| f.strip_prefix(key).and_then(|r| r.strip_prefix('=')))
+}
+
+/// Resolve a result URL back to readable text.
+///
+/// Scope is checked per source, using the same flags as `search.query`: a
+/// caller that could not have found the document must not be able to read it
+/// by guessing its URL.
+fn read_doc(url: &str, max: usize, args: &[(String, String)]) -> Result<Vec<String>, String> {
+    let with_files = matches!(arg_val(args, "files"), Some("1"));
+    let with_audio = matches!(arg_val(args, "audio"), Some("1"));
+
+    let body = if let Some(rel) = url.strip_prefix("file://") {
+        if !with_files {
+            return Err("needs_workspace_cap".into());
+        }
+        // Resolve against the configured roots rather than trusting the path,
+        // so "../.." cannot escape into the rest of the filesystem.
+        let mut found = None;
+        for root in workspace::roots() {
+            let candidate = root.join(rel);
+            if let Ok(real) = candidate.canonicalize() {
+                if let Ok(root_real) = root.canonicalize() {
+                    if real.starts_with(&root_real) && real.is_file() {
+                        found = Some(real);
+                        break;
+                    }
+                }
+            }
+        }
+        let path = found.ok_or("outside the indexed roots")?;
+        std::fs::read_to_string(&path).map_err(|e| format!("read: {e}"))?
+    } else if let Some(src) = url.strip_prefix("audio://") {
+        if !with_audio {
+            return Err("needs_audio_cap".into());
+        }
+        transcribe::Store::load()
+            .items
+            .into_iter()
+            .find(|t| t.source == src)
+            .map(|t| t.text)
+            .ok_or("no such transcript")?
+    } else {
+        // Corpus and teddysearch documents carry their body in the index.
+        return search::body_for(url, max).ok_or_else(|| "no readable body".into());
+    };
+
+    Ok(wrap_lines(&body, 78, max))
+}
+
+/// Hard-wrap text into `ROW line=...` entries the guest can render directly.
+fn wrap_lines(text: &str, width: usize, max: usize) -> Vec<String> {
+    let mut out = Vec::new();
+    for para in text.lines() {
+        if out.len() >= max {
+            break;
+        }
+        let t = para.trim_end();
+        if t.is_empty() {
+            out.push("ROW line=".to_string());
+            continue;
+        }
+        let mut cur = String::new();
+        for word in t.split_whitespace() {
+            if !cur.is_empty() && cur.chars().count() + 1 + word.chars().count() > width {
+                out.push(format!("ROW line={}", sanitize_field(&cur)));
+                cur.clear();
+                if out.len() >= max {
+                    return out;
+                }
+            }
+            if !cur.is_empty() {
+                cur.push(' ');
+            }
+            cur.push_str(word);
+        }
+        if !cur.is_empty() {
+            out.push(format!("ROW line={}", sanitize_field(&cur)));
+        }
+    }
+    out.truncate(max);
+    out
 }
 
 fn arg_val<'a>(args: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -656,5 +772,58 @@ mod tests {
     fn list_includes_search() {
         let r = dispatch("LIST", &test_backends());
         assert!(r[0].contains("search.query"));
+    }
+}
+
+#[cfg(test)]
+mod read_tests {
+    use super::*;
+
+    fn args(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn reading_a_file_needs_the_workspace_grant() {
+        // Guessing a URL must not bypass the grant that would have found it.
+        let e = read_doc("file://a/b.md", 10, &args(&[])).unwrap_err();
+        assert_eq!(e, "needs_workspace_cap");
+    }
+
+    #[test]
+    fn reading_a_transcript_needs_the_audio_grant() {
+        let e = read_doc("audio:///tmp/x.wav", 10, &args(&[("files", "1")])).unwrap_err();
+        assert_eq!(e, "needs_audio_cap", "the files grant must not unlock recordings");
+    }
+
+    #[test]
+    fn traversal_outside_the_indexed_roots_is_refused() {
+        let e = read_doc("file://../../../../etc/passwd", 10, &args(&[("files", "1")]))
+            .unwrap_err();
+        assert!(e.contains("outside the indexed roots"), "{e}");
+    }
+
+    #[test]
+    fn wrapping_respects_the_width_and_line_cap() {
+        let text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi";
+        let rows = wrap_lines(text, 20, 3);
+        assert!(rows.len() <= 3);
+        for r in &rows {
+            let line = r.strip_prefix("ROW line=").unwrap();
+            assert!(line.chars().count() <= 20, "line too wide: {line:?}");
+        }
+    }
+
+    #[test]
+    fn blank_lines_survive_as_paragraph_breaks() {
+        let rows = wrap_lines("one\n\ntwo", 40, 10);
+        assert!(rows.iter().any(|r| r == "ROW line="), "paragraph break lost");
+    }
+
+    #[test]
+    fn a_word_longer_than_the_width_does_not_loop_forever() {
+        let rows = wrap_lines(&"x".repeat(300), 20, 5);
+        assert!(!rows.is_empty());
+        assert!(rows.len() <= 5);
     }
 }

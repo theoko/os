@@ -3,7 +3,7 @@
 
 use core::hint::black_box;
 
-use kernel::{beep, caps, fb, hello_message, keyboard, mcp, mouse, screens, searchui, serial, setup, skills, ui, usb_tablet};
+use kernel::{anim, beep, caps, fb, hello_message, keyboard, mcp, mouse, screens, searchui, serial, setup, skills, ui, usb_tablet};
 use limine::BaseRevision;
 use limine::request::{
     FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
@@ -202,7 +202,7 @@ unsafe extern "C" fn kmain() -> ! {
                 cursor.hide(surface);
                 setup.draw(surface, &mail, &skill_peek);
                 cursor.show_at(surface, x, y);
-                screen.present();
+                enter(&screen);
                 serial_port.write_str("ui: setup welcome\n");
                 // Chime after the first frame is up, so the screen is never
                 // waiting on the speaker.
@@ -278,7 +278,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 setup.draw(surface, &mail, &skill_peek);
                             }
                             cursor.show_at(surface, x, y);
-                            screen.present();
+                            enter(&screen);
                             moved = false;
                         }
                     } else if view == screens::View::Home {
@@ -328,7 +328,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 );
                             }
                             cursor.show_at(surface, x, y);
-                            screen.present();
+                            enter(&screen);
                             moved = false;
                         }
                     }
@@ -364,7 +364,21 @@ unsafe extern "C" fn kmain() -> ! {
                             } else if view == screens::View::Caps {
                                 // Live switches: revoke or grant after setup.
                                 if let Some(i) = screens::caps_hit(w, x, y) {
+                                    let before = grants;
                                     grants = screens::toggle(grants, i);
+                                    // Revoked? Have the host delete what that
+                                    // grant produced.
+                                    for (cap, tool) in [
+                                        (caps::Cap::WorkspaceIndex, "workspace.forget"),
+                                        (caps::Cap::AudioTranscribe, "audio.forget"),
+                                    ] {
+                                        if before.allows(cap) && !grants.allows(cap) {
+                                            mcp::forget(tool);
+                                            serial_port.write_str("caps: revoked ");
+                                            serial_port.write_str(cap.name());
+                                            serial_port.write_str(" - purged\n");
+                                        }
+                                    }
                                     write_status(&mut status_buf, grants.footer_status());
                                     dirty = true;
                                 }
@@ -392,7 +406,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 }
                             }
                             cursor.show_at(surface, x, y);
-                            screen.present();
+                            enter(&screen);
                             moved = false;
                         }
                     } else {
@@ -408,7 +422,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     cursor.hide(surface);
                                     setup.draw(surface, &mail, &skill_peek);
                                     cursor.show_at(surface, x, y);
-                                    screen.present();
+                                    enter(&screen);
                                     clicked = true;
                                     moved = false;
                                 }
@@ -442,7 +456,7 @@ unsafe extern "C" fn kmain() -> ! {
                                         bridge_note(&mail),
                                     );
                                     cursor.show_at(surface, x, y);
-                                    screen.present();
+                                    enter(&screen);
                                     clicked = true;
                                     moved = false;
                                 }
@@ -499,7 +513,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     status_str(&status_buf),
                                 );
                                 cursor.show_at(surface, x, y);
-                                screen.present();
+                                enter(&screen);
                                 moved = false;
                             }
                         }
@@ -533,6 +547,19 @@ fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
     match mail.status {
         mcp::BridgeStatus::Online => "Answers come from the local index and the host bridge.",
         mcp::BridgeStatus::Offline => "Bridge offline - answering from the index baked into the kernel.",
+    }
+}
+
+/// Play a screen entrance: the frame is already composed in the back buffer.
+///
+/// Snapping between screens is what made this feel unlike a desktop; an
+/// eased slide-and-fade costs a handful of blits and reads as intentional.
+fn enter(screen: &fb::Screen) {
+    let mut mark = serial::rdtsc();
+    for i in 0..=anim::SLIDE_IN.frames {
+        let (dy, a) = anim::SLIDE_IN.at(i);
+        screen.present_slide(dy, a, ui::theme::BG);
+        mark = anim::pace(mark, anim::SLIDE_IN.frame_us);
     }
 }
 

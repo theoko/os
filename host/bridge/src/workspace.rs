@@ -486,3 +486,30 @@ mod consent_tests {
         unsafe { env::remove_var("OS_WORKSPACE_INDEX") };
     }
 }
+
+#[cfg(test)]
+mod revocation_tests {
+    use super::*;
+
+    #[test]
+    fn forgetting_removes_the_index_from_disk() {
+        // "Off" must mean gone, not hidden — the switch does not say "pause".
+        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = env::temp_dir().join(format!("os-forget-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let ix = dir.join("index.json");
+        unsafe { env::set_var("OS_WORKSPACE_INDEX", &ix) };
+
+        fs::write(dir.join("a.md"), "# Doc\n\nbody\n").unwrap();
+        build(&[dir.clone()]).save().unwrap();
+        assert!(ix.is_file(), "index should exist before revocation");
+
+        fs::remove_file(&ix).unwrap();
+        assert!(!ix.is_file());
+        assert!(Index::load().entries.is_empty(), "purged index still returns entries");
+
+        let _ = fs::remove_dir_all(&dir);
+        unsafe { env::remove_var("OS_WORKSPACE_INDEX") };
+    }
+}

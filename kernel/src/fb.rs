@@ -675,6 +675,36 @@ impl Screen {
         self.blit(x0, y0, x1, y1);
     }
 
+    /// Blit the back buffer shifted down by `dy` and faded toward `bg`.
+    ///
+    /// Used for screen entrances. The frame is composed once and only the blit
+    /// is animated, so a transition costs blits rather than full redraws.
+    pub fn present_slide(&self, dy: i32, alpha_q16: i32, bg: u32) {
+        if !self.buffered {
+            return;
+        }
+        self.back.clear_dirty();
+        let a = alpha_q16.clamp(0, 1 << 16) as u32;
+        for y in 0..self.h {
+            let dst = unsafe { self.fb.add(y * self.fb_pitch).cast::<u32>() };
+            // Source row, shifted: rows above the offset show the backdrop.
+            let sy = y as i32 - dy;
+            for x in 0..self.w {
+                let px = if sy < 0 {
+                    bg
+                } else {
+                    let src = unsafe {
+                        self.back.addr.add(sy as usize * self.back.pitch).cast::<u32>()
+                    };
+                    let c = unsafe { src.add(x).read() };
+                    // Fade toward the page colour rather than to black.
+                    blend(bg, c, a >> 8)
+                };
+                unsafe { dst.add(x).write_volatile(px) };
+            }
+        }
+    }
+
     /// Blit the whole back buffer regardless of the dirty rectangle.
     pub fn present_all(&self) {
         if !self.buffered {
