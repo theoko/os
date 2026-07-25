@@ -344,7 +344,6 @@ unsafe extern "C" fn kmain() -> ! {
                             }
                             cursor.show_at(surface, x, y);
                             enter(&screen, &mut motion, x, y);
-                            moved = false;
                         }
                     } else if view == screens::View::Home {
                         // Type straight into the home field - no click first.
@@ -409,7 +408,6 @@ unsafe extern "C" fn kmain() -> ! {
                             }
                             cursor.show_at(surface, x, y);
                             enter(&screen, &mut motion, x, y);
-                            moved = false;
                         }
                     }
                     if view != screens::View::Home {
@@ -657,7 +655,6 @@ unsafe extern "C" fn kmain() -> ! {
                             }
                             cursor.show_at(surface, x, y);
                             enter(&screen, &mut motion, x, y);
-                            moved = false;
                         }
                     } else {
                         let left_down = buttons & 1 != 0;
@@ -674,7 +671,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     cursor.show_at(surface, x, y);
                                     enter(&screen, &mut motion, x, y);
                                     clicked = true;
-                                    moved = false;
                                 }
                                 Some(ui::HomeHit::Cta(ui::CtaId::Skills))
                                 | Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
@@ -692,7 +688,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     enter(&screen, &mut motion, x, y);
                                     // Don't fall through to the home redraw below.
                                     clicked = false;
-                                    moved = false;
                                 }
                                 Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
                                     serial_port.write_str("ui: open search\n");
@@ -711,7 +706,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     cursor.show_at(surface, x, y);
                                     enter(&screen, &mut motion, x, y);
                                     clicked = true;
-                                    moved = false;
                                 }
                                 Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
                                     serial_port.write_str("ui: click Capabilities\n");
@@ -722,7 +716,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     cursor.show_at(surface, x, y);
                                     enter(&screen, &mut motion, x, y);
                                     clicked = false;
-                                    moved = false;
                                 }
                                 Some(ui::HomeHit::Brief) => {
                                     serial_port.write_str("ui: reopen brief\n");
@@ -732,7 +725,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     cursor.show_at(surface, x, y);
                                     enter(&screen, &mut motion, x, y);
                                     clicked = false;
-                                    moved = false;
                                 }
                                 None => {}
                             }
@@ -749,7 +741,6 @@ unsafe extern "C" fn kmain() -> ! {
                                 );
                                 cursor.show_at(surface, x, y);
                                 enter(&screen, &mut motion, x, y);
-                                moved = false;
                             }
                         }
                     }
