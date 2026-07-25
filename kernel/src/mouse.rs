@@ -302,10 +302,56 @@ fn save(fb: &Surface, x: i32, y: i32, out: &mut [u32; SAVE_LEN]) {
 }
 
 fn restore(fb: &Surface, x: i32, y: i32, saved: &[u32; SAVE_LEN]) {
+    fb.mark_dirty(x, y, SAVE_W as i32, SAVE_H as i32);
     for row in 0..SAVE_H {
         for col in 0..SAVE_W {
             fb.put_pixel(x - 1 + col as i32, y - 1 + row as i32, saved[row * SAVE_W + col]);
         }
+    }
+}
+
+/// Pre-rendered cursor coverage, built once.
+///
+/// Rasterising the arrow per mouse move meant five supersampled polygon fills
+/// — four keyline stamps plus the body — or roughly 185k edge tests per event,
+/// which is what made pointer motion lag. Bake the coverage once and the move
+/// path becomes a few hundred alpha blends.
+static mut MASK_INK: [u8; SAVE_LEN] = [0; SAVE_LEN];
+static mut MASK_KEY: [u8; SAVE_LEN] = [0; SAVE_LEN];
+static mut MASK_READY: bool = false;
+
+/// Rasterise `ARROW` into the two coverage masks. Idempotent.
+fn ensure_mask() {
+    // SAFETY: single-threaded kernel; this runs before any cursor is drawn and
+    // is a no-op thereafter.
+    unsafe {
+        if MASK_READY {
+            return;
+        }
+        let mut scratch = [0u32; SAVE_LEN];
+
+        // White-on-black gives us coverage directly in the low byte.
+        let mut rasterise = |offsets: &[(i32, i32)], out: &mut [u8; SAVE_LEN]| {
+            for px in scratch.iter_mut() {
+                *px = 0;
+            }
+            let surf = Surface::in_memory(scratch.as_mut_ptr(), SAVE_W, SAVE_H);
+            let mut pts = [(0i32, 0i32); ARROW.len()];
+            for (dx, dy) in offsets {
+                for (i, (ax, ay)) in ARROW.iter().enumerate() {
+                    // +1px so the keyline's left/top stamps stay in the box.
+                    pts[i] = (ax + dx + 8, ay + dy + 8);
+                }
+                surf.fill_polygon(&pts, 0x00FF_FFFF);
+            }
+            for (i, px) in scratch.iter().enumerate() {
+                out[i] = (*px & 0xFF) as u8;
+            }
+        };
+
+        rasterise(&[(-8, 0), (8, 0), (0, -8), (0, 8)], &mut *(&raw mut MASK_KEY));
+        rasterise(&[(0, 0)], &mut *(&raw mut MASK_INK));
+        MASK_READY = true;
     }
 }
 
@@ -315,21 +361,28 @@ fn draw_arrow(fb: &Surface, x: i32, y: i32) {
     const INK: u32 = 0x001D_1D1F;
     const KEYLINE: u32 = 0x00FF_FFFF;
 
-    let mut pts = [(0i32, 0i32); ARROW.len()];
-    let ox = x * 8;
-    let oy = y * 8;
+    ensure_mask();
+    // SAFETY: masks are fully initialised by ensure_mask and never mutated after.
+    let (key, ink) = unsafe { (&*(&raw const MASK_KEY), &*(&raw const MASK_INK)) };
 
-    // Cheap 1px outline: stamp the silhouette at four offsets in white first.
-    for (dx, dy) in [(-8, 0), (8, 0), (0, -8), (0, 8)] {
-        for (i, (px, py)) in ARROW.iter().enumerate() {
-            pts[i] = (ox + px + dx, oy + py + dy);
+    // Origin is shifted back by the 1px keyline margin baked into the mask.
+    let ox = x - 1;
+    let oy = y - 1;
+    fb.mark_dirty(ox, oy, SAVE_W as i32, SAVE_H as i32);
+    for row in 0..SAVE_H {
+        for col in 0..SAVE_W {
+            let i = row * SAVE_W + col;
+            let (px, py) = (ox + col as i32, oy + row as i32);
+            let k = key[i] as u32;
+            if k != 0 {
+                fb.blend_pixel(px, py, KEYLINE, k);
+            }
+            let a = ink[i] as u32;
+            if a != 0 {
+                fb.blend_pixel(px, py, INK, a);
+            }
         }
-        fb.fill_polygon(&pts, KEYLINE);
     }
-    for (i, (px, py)) in ARROW.iter().enumerate() {
-        pts[i] = (ox + px, oy + py);
-    }
-    fb.fill_polygon(&pts, INK);
 }
 
 /// Paint a one-shot pointer (no save buffer) — safe during first UI frame.

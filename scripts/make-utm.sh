@@ -202,12 +202,18 @@ if os.environ.get("UTM_BRIDGE", "0") == "1":
         "TcpPort": int(port or "7420"),
     })
 cfg["Serial"] = serial
+# The PC speaker needs an emulated sound card to reach the host. UTM creates
+# VMs with Sound: [] and the chime is silent without this.
+cfg["Sound"] = [{"Hardware": "intel-hda"}]
 cfg.setdefault("System", {})["MemorySize"] = 1024
 cfg["Display"] = [{
     "Hardware": "virtio-vga",
     "DynamicResolution": False,
     "NativeResolution": False,
-    "UpscalingFilter": "Nearest",
+    # Linear, not Nearest: the guest framebuffer is upscaled several times over
+    # on a Retina display, and nearest-neighbour turns every anti-aliased glyph
+    # back into blocks — undoing the whole point of the font atlas.
+    "UpscalingFilter": "Linear",
     "DownscalingFilter": "Linear",
 }]
 p.write_bytes(plistlib.dumps(cfg, fmt=plistlib.FMT_XML))

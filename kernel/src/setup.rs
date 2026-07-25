@@ -55,10 +55,12 @@ pub enum Step {
 pub const REGIONS: [&str; 4] = ["United States", "United Kingdom", "Greece", "Japan"];
 
 /// Capabilities the agent may be granted up front. Mirrors [`Cap`] / bridge tools.
-pub const CAPS: [(&str, &str); 3] = [
+pub const CAPS: [(&str, &str); 5] = [
     ("email.search", "Read the inbox through the host bridge"),
-    ("search.query", "Query the local knowledge corpus"),
+    ("search.query", "Query the built-in knowledge corpus"),
     ("skills.save", "Write new skill playbooks to disk"),
+    ("workspace.index", "Search your own files on this machine"),
+    ("audio.transcribe", "Transcribe recordings and index what was said"),
 ];
 
 const MAX_ZONES: usize = 12;
@@ -78,9 +80,9 @@ impl Setup {
         Self {
             step: Step::Welcome,
             region: 0,
-            // email.search on by default; writing skills is opt-in, matching
-            // the "no ambient root" rule.
-            caps: [true, true, false],
+            // Read-only tools on; anything that writes to disk or reaches
+            // personal files is opt-in, matching the "no ambient root" rule.
+            caps: [true, true, false, false, false],
             zones: [Zone {
                 x: 0,
                 y: 0,
@@ -592,6 +594,70 @@ mod tests {
         }
         for r in REGIONS {
             assert!(BRAND_FACE.width(r, 0) < CONTENT_W - 60, "region too wide: {r}");
+        }
+    }
+}
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    /// Mirrors the constants in `draw_caps` / `row`.
+    fn rows_bottom(n: usize) -> i32 {
+        // header() returns 132 + 76; rows are ROW_H apart with an 8px gap.
+        (132 + 76) + (n as i32) * (ROW_H + 8) - 8
+    }
+
+    /// Mirrors `footer`.
+    fn footer_top(h: i32) -> i32 {
+        h - 150
+    }
+
+    #[test]
+    fn capability_rows_clear_the_footer_at_768() {
+        // Overlapping rows and the Continue pill would misroute clicks — the
+        // exact failure a previous review caught on a short framebuffer.
+        let bottom = rows_bottom(CAPS.len());
+        assert!(
+            bottom < footer_top(768),
+            "{} capability rows reach {bottom}px, footer starts at {}",
+            CAPS.len(),
+            footer_top(768)
+        );
+    }
+
+    #[test]
+    fn skills_rows_also_clear_the_footer() {
+        let bottom = rows_bottom(4); // draw_skills caps the list at 4
+        assert!(bottom < footer_top(768));
+    }
+
+    #[test]
+    fn there_is_headroom_for_one_more_capability() {
+        // Capabilities have grown 3 -> 5 in this session; make the next
+        // addition fail loudly here rather than silently on screen.
+        assert!(
+            rows_bottom(CAPS.len() + 1) < footer_top(768),
+            "adding another capability would collide with the footer"
+        );
+    }
+
+    #[test]
+    fn every_capability_row_is_reachable_by_click() {
+        let mut s = Setup::new();
+        s.step = Step::Capabilities;
+        for i in 0..CAPS.len() {
+            let before = s.caps[i];
+            assert!(s.apply(Action::Row(i)), "row {i} did nothing");
+            assert_ne!(s.caps[i], before, "row {i} did not toggle");
+        }
+    }
+
+    #[test]
+    fn capability_names_and_blurbs_fit_the_column() {
+        for (name, blurb) in CAPS {
+            assert!(BRAND_FACE.width(name, 0) < CONTENT_W - 76, "name hits the switch: {name}");
+            assert!(SMALL_FACE.width(blurb, 0) < CONTENT_W - 76, "blurb hits the switch: {blurb}");
         }
     }
 }

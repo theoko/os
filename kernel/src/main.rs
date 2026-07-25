@@ -3,7 +3,7 @@
 
 use core::hint::black_box;
 
-use kernel::{caps, fb, hello_message, mcp, mouse, serial, setup, skills, ui, usb_tablet};
+use kernel::{anim, beep, caps, fb, hello_message, keyboard, mcp, mouse, screens, searchui, serial, setup, skills, ui, usb_tablet};
 use limine::BaseRevision;
 use limine::request::{
     FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
@@ -110,8 +110,8 @@ unsafe extern "C" fn kmain() -> ! {
                 n += 1;
                 serial_port.write_bytes(&msg[..n]);
             }
-            if let Some(surface) = unsafe {
-                fb::Surface::new(
+            if let Some(screen) = unsafe {
+                fb::Screen::new(
                     fb_info.addr(),
                     fb_info.width(),
                     fb_info.height(),
@@ -124,22 +124,28 @@ unsafe extern "C" fn kmain() -> ! {
                     ),
                 )
             } {
-                ui::draw_home(&surface, &mail, &skill_peek, "");
+                // Everything composes in cached RAM; `present()` is the only
+                // thing that touches video memory.
+                let surface = screen.surface();
+                ui::draw_home(surface, &mail, &skill_peek, "");
+                screen.present();
 
-                // Early peek uses default grants so smoke still exercises COM2
-                // before the setup journey runs (smoke exits before setup).
-                let mut grants = caps::Caps::default_grants();
-                mail = mcp::fetch_mail_peek(grants);
+                // Liveness only until the user consents. Reading the inbox
+                // here would fetch — and, because the bridge indexes results,
+                // persist to disk — mail before anyone agreed to it.
+                let mut grants = caps::Caps::none();
+                mail = mcp::MailPeek::empty(mcp::probe_bridge());
                 match mail.status {
                     mcp::BridgeStatus::Online => serial_port.write_str("mcp: email connected\n"),
                     mcp::BridgeStatus::Offline => serial_port.write_str("mcp: email offline\n"),
                 }
                 serial_port.write_str("skills: builtins ready\n");
-                ui::draw_home(&surface, &mail, &skill_peek, "");
+                ui::draw_home(surface, &mail, &skill_peek, "");
 
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
-                mouse::paint_pointer(&surface, cx, cy);
+                mouse::paint_pointer(surface, cx, cy);
+                screen.present();
                 serial_port.write_str("mouse: pointer painted\n");
 
                 serial::request_qemu_exit(true);
@@ -179,7 +185,7 @@ unsafe extern "C" fn kmain() -> ! {
                     mice.present = true;
                 }
 
-                ui::draw_home(&surface, &mail, &skill_peek, "");
+                ui::draw_home(surface, &mail, &skill_peek, "");
                 let mut cursor = mouse::Cursor::new();
                 let mut x = cx;
                 let mut y = cy;
@@ -187,11 +193,37 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut status_buf = [0u8; 72];
                 write_status(&mut status_buf, grants.footer_status());
                 let mut setup = setup::Setup::new();
+                let mut kb = keyboard::Keyboard::new();
+                let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
+                let mut sview = searchui::SearchView::new();
+                let mut page = mcp::DocPage::empty(mcp::BridgeStatus::Offline, false);
+                let mut open_title = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
+                let mut view = screens::View::Home;
+                let caret = true;
                 // First boot: run the setup journey before the home screen.
-                cursor.hide(&surface);
-                setup.draw(&surface, &mail, &skill_peek);
-                cursor.show_at(&surface, x, y);
+                cursor.hide(surface);
+                setup.draw(surface, &mail, &skill_peek);
+                cursor.show_at(surface, x, y);
+                enter(&screen);
                 serial_port.write_str("ui: setup welcome\n");
+                // Chime after the first frame is up, so the screen is never
+                // waiting on the speaker.
+                beep::startup();
+
+                // Measure what a frame actually costs, rather than guessing.
+                {
+                    let t0 = serial::rdtsc();
+                    screen.present_all();
+                    let t1 = serial::rdtsc();
+                    surface.mark_dirty(0, 0, 24, 32);
+                    screen.present();
+                    let t2 = serial::rdtsc();
+                    serial_port.write_str("perf: full=");
+                    write_u64(&serial_port, (t1 - t0) / 1000);
+                    serial_port.write_str("kcyc dirty=");
+                    write_u64(&serial_port, (t2 - t1) / 1000);
+                    serial_port.write_str("kcyc\n");
+                }
 
                 loop {
                     let w = surface.width() as i32;
@@ -221,13 +253,15 @@ unsafe extern "C" fn kmain() -> ! {
                             // Entering the Bridge step: re-probe COM2 so the
                             // status card reflects a bridge that came up after boot.
                             if setup.step == setup::Step::Bridge && before != setup::Step::Bridge {
-                                mail = mcp::fetch_mail_peek(setup.grants());
+                                // Still pre-consent: the Capabilities step
+                                // comes after this one, so probe, don't read.
+                                mail = mcp::MailPeek::empty(mcp::probe_bridge());
                                 serial_port.write_str(match mail.status {
                                     mcp::BridgeStatus::Online => "mcp: bridge live\n",
                                     mcp::BridgeStatus::Offline => "mcp: bridge still offline\n",
                                 });
                             }
-                            cursor.hide(&surface);
+                            cursor.hide(surface);
                             if setup.is_finished() {
                                 grants = setup.grants();
                                 write_status(&mut status_buf, grants.footer_status());
@@ -237,15 +271,173 @@ unsafe extern "C" fn kmain() -> ! {
                                 serial_port.write_str("\n");
                                 mail = mcp::fetch_mail_peek(grants);
                                 ui::draw_home(
-                                    &surface,
+                                    surface,
                                     &mail,
                                     &skill_peek,
                                     status_str(&status_buf),
                                 );
                             } else {
-                                setup.draw(&surface, &mail, &skill_peek);
+                                setup.draw(surface, &mail, &skill_peek);
                             }
-                            cursor.show_at(&surface, x, y);
+                            cursor.show_at(surface, x, y);
+                            enter(&screen);
+                            moved = false;
+                        }
+                    } else if view == screens::View::Home {
+                        // Type straight into the home field - no click first.
+                        let mut dirty = false;
+                        while let Some(key) = kb.poll() {
+                            match key {
+                                keyboard::Key::Enter => {
+                                    if !query.is_empty() {
+                                        sview.run_via(query.as_str(), grants);
+                                        view = screens::View::Search;
+                                        serial_port.write_str("search: ran from home\n");
+                                        dirty = true;
+                                    }
+                                }
+                                keyboard::Key::Escape => {
+                                    if !query.is_empty() {
+                                        query.clear();
+                                        dirty = true;
+                                    }
+                                }
+                                other => {
+                                    if query.apply(other) {
+                                        dirty = true;
+                                    }
+                                }
+                            }
+                        }
+                        if dirty {
+                            cursor.hide(surface);
+                            if view == screens::View::Search {
+                                searchui::draw(
+                                    surface,
+                                    &sview,
+                                    query.as_str(),
+                                    caret,
+                                    bridge_note(&mail),
+                                );
+                            } else {
+                                ui::draw_home_full(
+                                    surface,
+                                    &mail,
+                                    &skill_peek,
+                                    status_str(&status_buf),
+                                    query.as_str(),
+                                    caret,
+                                );
+                            }
+                            cursor.show_at(surface, x, y);
+                            enter(&screen);
+                            moved = false;
+                        }
+                    }
+                    if view != screens::View::Home {
+                        // --- search screen: keyboard drives it ---
+                        let mut dirty = false;
+                        while let Some(key) = kb.poll() {
+                            match key {
+                                keyboard::Key::Enter => {
+                                    if view == screens::View::Search {
+                                        sview.run_via(query.as_str(), grants);
+                                        serial_port.write_str("search: ran\n");
+                                        dirty = true;
+                                    }
+                                }
+                                keyboard::Key::Escape => {
+                                    view = screens::View::Home;
+                                    dirty = true;
+                                }
+                                other => {
+                                    // Only the search screen has a field.
+                                    // Without this, typing on Skills or
+                                    // Capabilities silently built a query you
+                                    // could not see.
+                                    if view == screens::View::Search && query.apply(other) {
+                                        dirty = true;
+                                    }
+                                }
+                            }
+                        }
+                        // Clicking Back leaves the search screen.
+                        let left_down = buttons & 0x01 != 0;
+                        let was_down = prev_buttons & 0x01 != 0;
+                        if left_down && !was_down {
+                            let (bx, by, bw, bh) = searchui::back_rect(w);
+                            if x >= bx && x < bx + bw && y >= by && y < by + bh {
+                                // Back from the reader returns to results.
+                                view = if view == screens::View::Reader {
+                                    screens::View::Search
+                                } else {
+                                    screens::View::Home
+                                };
+                                dirty = true;
+                            } else if view == screens::View::Search {
+                                // Open a result.
+                                if let Some(i) =
+                                    searchui::result_hit(w, h, sview.count, x, y)
+                                {
+                                    let row = &sview.rows[i];
+                                    open_title.clear();
+                                    for b in row.title().bytes() {
+                                        open_title.apply(keyboard::Key::Char(b));
+                                    }
+                                    page = mcp::fetch_doc(grants, row.url());
+                                    view = screens::View::Reader;
+                                    serial_port.write_str("ui: open doc\n");
+                                    dirty = true;
+                                }
+                            } else if view == screens::View::Caps {
+                                // Live switches: revoke or grant after setup.
+                                if let Some(i) = screens::caps_hit(w, x, y) {
+                                    let before = grants;
+                                    grants = screens::toggle(grants, i);
+                                    // Revoked? Have the host delete what that
+                                    // grant produced.
+                                    for (cap, tool) in [
+                                        (caps::Cap::WorkspaceIndex, "workspace.forget"),
+                                        (caps::Cap::AudioTranscribe, "audio.forget"),
+                                    ] {
+                                        if before.allows(cap) && !grants.allows(cap) {
+                                            mcp::forget(tool);
+                                            serial_port.write_str("caps: revoked ");
+                                            serial_port.write_str(cap.name());
+                                            serial_port.write_str(" - purged\n");
+                                        }
+                                    }
+                                    write_status(&mut status_buf, grants.footer_status());
+                                    dirty = true;
+                                }
+                            }
+                        }
+                        if dirty {
+                            cursor.hide(surface);
+                            match view {
+                                screens::View::Search => searchui::draw(
+                                    surface,
+                                    &sview,
+                                    query.as_str(),
+                                    caret,
+                                    bridge_note(&mail),
+                                ),
+                                screens::View::Skills => screens::draw_skills(surface, &skill_peek),
+                                screens::View::Caps => screens::draw_caps(surface, grants),
+                                screens::View::Reader => {
+                                    searchui::draw_reader(surface, open_title.as_str(), &page)
+                                }
+                                screens::View::Home => {
+                                    ui::draw_home(
+                                        surface,
+                                        &mail,
+                                        &skill_peek,
+                                        status_str(&status_buf),
+                                    )
+                                }
+                            }
+                            cursor.show_at(surface, x, y);
+                            enter(&screen);
                             moved = false;
                         }
                     } else {
@@ -258,9 +450,10 @@ unsafe extern "C" fn kmain() -> ! {
                                 Some(ui::HomeHit::Cta(ui::CtaId::Ready)) => {
                                     serial_port.write_str("ui: click Ready\n");
                                     setup = setup::Setup::new();
-                                    cursor.hide(&surface);
-                                    setup.draw(&surface, &mail, &skill_peek);
-                                    cursor.show_at(&surface, x, y);
+                                    cursor.hide(surface);
+                                    setup.draw(surface, &mail, &skill_peek);
+                                    cursor.show_at(surface, x, y);
+                                    enter(&screen);
                                     clicked = true;
                                     moved = false;
                                 }
@@ -280,6 +473,25 @@ unsafe extern "C" fn kmain() -> ! {
                                     }
                                     clicked = true;
                                 }
+                                Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
+                                    serial_port.write_str("ui: open search\n");
+                                    view = screens::View::Search;
+                                    query.clear();
+                                    sview = searchui::SearchView::new();
+                                    cursor.hide(surface);
+                                    searchui::draw(
+                                        surface,
+                                        &sview,
+                                        query.as_str(),
+                                        caret,
+                                        bridge_note(&mail),
+                                    );
+                                    cursor.show_at(surface, x, y);
+                                    enter(&screen);
+                                    clicked = true;
+                                    moved = false;
+                                }
+                                #[allow(unreachable_patterns)]
                                 Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
                                     serial_port.write_str("ui: click Connectors\n");
                                     mail = mcp::fetch_mail_peek(grants);
@@ -324,21 +536,25 @@ unsafe extern "C" fn kmain() -> ! {
                                 None => {}
                             }
                             if clicked && setup.is_finished() {
-                                cursor.hide(&surface);
+                                cursor.hide(surface);
                                 ui::draw_home(
-                                    &surface,
+                                    surface,
                                     &mail,
                                     &skill_peek,
                                     status_str(&status_buf),
                                 );
-                                cursor.show_at(&surface, x, y);
+                                cursor.show_at(surface, x, y);
+                                enter(&screen);
                                 moved = false;
                             }
                         }
                     }
                     prev_buttons = buttons;
                     if moved {
-                        cursor.show_at(&surface, x, y);
+                        cursor.show_at(surface, x, y);
+                        // hide()/show_at() marked both footprints; present()
+                        // blits exactly that union and nothing else.
+                        screen.present();
                     }
                     core::hint::spin_loop();
                 }
@@ -355,6 +571,43 @@ unsafe extern "C" fn kmain() -> ! {
     // Only the framebuffer-missing/unsupported paths reach here — that is a
     // boot failure, and the smoke test must see it as one.
     serial::exit_qemu(false);
+}
+
+/// One line telling the user where answers come from right now.
+fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
+    match mail.status {
+        mcp::BridgeStatus::Online => "Answers come from the local index and the host bridge.",
+        mcp::BridgeStatus::Offline => "Bridge offline - answering from the index baked into the kernel.",
+    }
+}
+
+/// Play a screen entrance: the frame is already composed in the back buffer.
+///
+/// Snapping between screens is what made this feel unlike a desktop; an
+/// eased slide-and-fade costs a handful of blits and reads as intentional.
+fn enter(screen: &fb::Screen) {
+    let mut mark = serial::rdtsc();
+    for i in 0..=anim::SLIDE_IN.frames {
+        let (dy, a) = anim::SLIDE_IN.at(i);
+        screen.present_slide(dy, a, ui::theme::BG);
+        mark = anim::pace(mark, anim::SLIDE_IN.frame_us);
+    }
+}
+
+/// Decimal u64 to COM1, for the perf line.
+fn write_u64(port: &serial::Serial, mut v: u64) {
+    let mut buf = [0u8; 20];
+    let mut i = buf.len();
+    if v == 0 {
+        i -= 1;
+        buf[i] = b'0';
+    }
+    while v > 0 {
+        i -= 1;
+        buf[i] = b'0' + (v % 10) as u8;
+        v /= 10;
+    }
+    port.write_bytes(&buf[i..]);
 }
 
 fn write_status(buf: &mut [u8; 72], s: &str) {

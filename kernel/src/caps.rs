@@ -10,16 +10,30 @@ pub enum Cap {
     EmailSearch = 0,
     SearchQuery = 1,
     SkillsSave = 2,
+    /// Index and search the user's own documents. Off by default: a personal
+    /// file tree is not something to opt someone into silently.
+    WorkspaceIndex = 3,
+    /// Transcribe local audio/video and index the text. Off by default: a
+    /// recording can contain anyone, not just the user.
+    AudioTranscribe = 4,
 }
 
 impl Cap {
-    pub const ALL: [Cap; 3] = [Cap::EmailSearch, Cap::SearchQuery, Cap::SkillsSave];
+    pub const ALL: [Cap; 5] = [
+        Cap::EmailSearch,
+        Cap::SearchQuery,
+        Cap::SkillsSave,
+        Cap::WorkspaceIndex,
+        Cap::AudioTranscribe,
+    ];
 
     pub const fn name(self) -> &'static str {
         match self {
             Cap::EmailSearch => "email.search",
             Cap::SearchQuery => "search.query",
             Cap::SkillsSave => "skills.save",
+            Cap::WorkspaceIndex => "workspace.index",
+            Cap::AudioTranscribe => "audio.transcribe",
         }
     }
 

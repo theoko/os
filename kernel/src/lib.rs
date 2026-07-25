@@ -3,12 +3,18 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod anim;
+pub mod beep;
 pub mod caps;
 pub mod fb;
 pub mod font;
+pub mod keyboard;
 pub mod mcp;
 pub mod mouse;
 pub mod pci;
+pub mod screens;
+pub mod search;
+pub mod searchui;
 pub mod serial;
 pub mod setup;
 pub mod skills;

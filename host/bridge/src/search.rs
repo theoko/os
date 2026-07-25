@@ -29,6 +29,56 @@ struct Doc {
     pr: f64,
 }
 
+/// Transcripts, projected into corpus documents so speech is searchable
+/// next to files and mail.
+fn transcript_docs() -> Vec<Doc> {
+    crate::transcribe::Store::load()
+        .items
+        .into_iter()
+        .map(|t| Doc {
+            t: t.title,
+            u: format!("audio://{}", t.source),
+            c: "audio".to_string(),
+            b: t.text,
+            pr: 0.6,
+        })
+        .collect()
+}
+
+/// Workspace files, projected into corpus documents.
+///
+/// Reached only when the caller passed `files=1`, i.e. the user granted
+/// workspace.index during setup.
+fn workspace_docs() -> Vec<Doc> {
+    crate::workspace::Index::load()
+        .entries
+        .into_iter()
+        .map(|e| Doc {
+            t: e.title,
+            u: format!("file://{}", e.path),
+            c: "file".to_string(),
+            b: e.snippet,
+            pr: e.pr,
+        })
+        .collect()
+}
+
+/// Email graph entries, projected into corpus documents.
+fn email_docs() -> Vec<Doc> {
+    crate::graph::Graph::load_or_empty()
+        .messages
+        .into_iter()
+        .map(|m| Doc {
+            t: m.subject,
+            u: format!("email://{}", m.id),
+            c: "email".to_string(),
+            // Sender is indexed so "from alice" style queries hit.
+            b: format!("{} {}", m.from, m.snippet),
+            pr: m.pr,
+        })
+        .collect()
+}
+
 fn corpus_path() -> PathBuf {
     env::var("OS_SEARCH_CORPUS")
         .map(PathBuf::from)
@@ -150,6 +200,10 @@ fn floor_char_boundary(s: &str, mut i: usize) -> usize {
 
 fn sanitize(s: &str) -> String {
     s.chars()
+        // The guest font atlas covers ASCII 0x20..=0x7E only; anything else
+        // renders as '?'. Emoji in document titles are common, so drop
+        // non-ASCII rather than shipping rows of question marks.
+        .filter(|c| c.is_ascii())
         .map(|c| match c {
             '\n' | '\r' | '|' => ' ',
             c if c.is_control() => ' ',
@@ -159,9 +213,51 @@ fn sanitize(s: &str) -> String {
         .collect()
 }
 
-pub fn query_builtin(q: &str, k: usize, cat: Option<&str>) -> Result<Vec<String>, String> {
-    let docs = load_docs()?;
-    let hits = search_tfidf(&docs, q, k, cat);
+/// `include_email` folds the runtime email graph in alongside the static
+/// corpus. It defaults to *off* everywhere: email content must stay behind the
+/// email capability, or a caller holding only `search.query` could read mail.
+/// `include_files` folds in the user's own indexed documents. Off by default
+/// for the same reason as email: holding `search.query` grants the built-in
+/// corpus, not a personal file tree.
+#[allow(clippy::too_many_arguments)]
+pub fn query_all(
+    q: &str,
+    k: usize,
+    cat: Option<&str>,
+    include_email: bool,
+    include_files: bool,
+    include_audio: bool,
+) -> Result<Vec<String>, String> {
+    let mut docs = load_docs()?;
+    if include_files {
+        docs.extend(workspace_docs());
+    }
+    if include_audio {
+        docs.extend(transcript_docs());
+    }
+    if include_email {
+        docs.extend(email_docs());
+    }
+    let mut hits = search_tfidf(&docs, q, k, cat);
+    // The big corpus is scored from its prebuilt index, then merged. Scoring it
+    // inline would re-tokenise 12k documents on every keystroke.
+    let teddy = crate::tsearch::index();
+    if !teddy.is_empty() && cat.is_none() {
+        let tdocs = crate::tsearch::docs();
+        for (score, i) in teddy.search(q, k) {
+            docs.push(Doc {
+                t: tdocs[i].t.clone(),
+                u: tdocs[i].u.clone(),
+                c: if tdocs[i].c.is_empty() { "teddy".into() } else { tdocs[i].c.clone() },
+                b: tdocs[i].b.clone(),
+                pr: tdocs[i].pr,
+            });
+            // `docs` just grew by one; that entry is what this score refers to.
+            hits.push((score, docs.len() - 1));
+        }
+        hits.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+        hits.truncate(k);
+    }
     let n = hits.len();
     let mut out = vec![format!("OK search.query n={n} backend=tfidf-pr")];
     for (score, i) in hits {
@@ -264,11 +360,30 @@ print(json.dumps(hits))
     Ok(out)
 }
 
-pub fn query(q: &str, k: usize, cat: Option<&str>, backend: &str) -> Vec<String> {
+pub fn query_with(
+    q: &str,
+    k: usize,
+    cat: Option<&str>,
+    backend: &str,
+    include_email: bool,
+) -> Vec<String> {
+    query_scoped(q, k, cat, backend, include_email, false, false)
+}
+
+pub fn query_scoped(
+    q: &str,
+    k: usize,
+    cat: Option<&str>,
+    backend: &str,
+    include_email: bool,
+    include_files: bool,
+    include_audio: bool,
+) -> Vec<String> {
     match backend {
         "mock" => query_mock(q, k),
         "tsearch" => query_tsearch(q, k).unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
-        _ => query_builtin(q, k, cat).unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
+        _ => query_all(q, k, cat, include_email, include_files, include_audio)
+            .unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
     }
 }
 
@@ -294,4 +409,41 @@ mod tests {
         let r = query_mock("test", 2);
         assert!(r[0].starts_with("OK search.query"));
     }
+}
+
+/// Body text for a document URL, from the built-in corpus or teddysearch.
+///
+/// These sources carry their text in the index, so reading needs no file
+/// access — and no capability beyond the one that found them.
+pub fn body_for(url: &str, max_lines: usize) -> Option<Vec<String>> {
+    let body = load_docs()
+        .ok()?
+        .into_iter()
+        .find(|d| d.u == url)
+        .map(|d| d.b)
+        .or_else(|| {
+            crate::tsearch::docs()
+                .iter()
+                .find(|d| d.u == url)
+                .map(|d| d.b.clone())
+        })?;
+    let mut out = Vec::new();
+    let mut cur = String::new();
+    for word in body.split_whitespace() {
+        if !cur.is_empty() && cur.chars().count() + 1 + word.chars().count() > 78 {
+            out.push(format!("ROW line={}", sanitize(&cur)));
+            cur.clear();
+            if out.len() >= max_lines {
+                return Some(out);
+            }
+        }
+        if !cur.is_empty() {
+            cur.push(' ');
+        }
+        cur.push_str(word);
+    }
+    if !cur.is_empty() {
+        out.push(format!("ROW line={}", sanitize(&cur)));
+    }
+    Some(out)
 }

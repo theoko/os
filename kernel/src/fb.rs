@@ -5,14 +5,54 @@
 //! is computed with integer math only — the kernel never enables the FPU, so
 //! float/SSE paths would be a #UD waiting to happen.
 
+use core::cell::Cell;
+
 use crate::font::Face;
 
 /// Live framebuffer surface.
+///
+/// Tracks a dirty rectangle so `Screen::present` can blit only what changed.
+/// A full-screen blit is ~786k uncached MMIO writes; most frames touch a few
+/// hundred pixels, so this is the difference between a redraw costing tens of
+/// milliseconds and costing almost nothing.
 pub struct Surface {
     addr: *mut u8,
     width: usize,
     height: usize,
     pitch: usize,
+    dirty: Cell<Option<(i32, i32, i32, i32)>>,
+}
+
+impl Surface {
+    /// Expand the dirty rectangle to include `(x, y, w, h)`.
+    ///
+    /// Called by the shape and text entry points with their bounding box, not
+    /// per pixel — a Cell update inside `blend_pixel` would cost more than the
+    /// blend it guards.
+    pub fn mark_dirty(&self, x: i32, y: i32, w: i32, h: i32) {
+        if w <= 0 || h <= 0 {
+            return;
+        }
+        let (nx0, ny0) = (x.max(0), y.max(0));
+        let nx1 = (x + w).min(self.width as i32);
+        let ny1 = (y + h).min(self.height as i32);
+        if nx0 >= nx1 || ny0 >= ny1 {
+            return;
+        }
+        self.dirty.set(Some(match self.dirty.get() {
+            None => (nx0, ny0, nx1, ny1),
+            Some((x0, y0, x1, y1)) => (x0.min(nx0), y0.min(ny0), x1.max(nx1), y1.max(ny1)),
+        }));
+    }
+
+    /// Current dirty rectangle as `(x0, y0, x1, y1)`, if anything changed.
+    pub fn dirty_rect(&self) -> Option<(i32, i32, i32, i32)> {
+        self.dirty.get()
+    }
+
+    pub fn clear_dirty(&self) {
+        self.dirty.set(None);
+    }
 }
 
 /// Blend `src` over `dst` by `a` (0..=255).
@@ -58,7 +98,16 @@ impl Surface {
             width: width as usize,
             height: height as usize,
             pitch: pitch as usize,
+            dirty: Cell::new(None),
         })
+    }
+
+    /// A surface over caller-owned RAM, for off-screen rasterisation.
+    ///
+    /// # Safety
+    /// `addr` must point to at least `width * height` u32s.
+    pub unsafe fn in_memory(addr: *mut u32, width: usize, height: usize) -> Self {
+        Self { addr: addr.cast::<u8>(), width, height, pitch: width * 4, dirty: Cell::new(None) }
     }
 
     pub fn width(&self) -> usize {
@@ -100,6 +149,7 @@ impl Surface {
     }
 
     pub fn fill(&self, color: u32) {
+        self.mark_dirty(0, 0, self.width as i32, self.height as i32);
         for y in 0..self.height {
             for x in 0..self.width {
                 unsafe { self.pixel(x, y).write_volatile(color) };
@@ -111,6 +161,7 @@ impl Surface {
         if w <= 0 || h <= 0 {
             return;
         }
+        self.mark_dirty(x, y, w, h);
         let x0 = x.max(0) as usize;
         let y0 = y.max(0) as usize;
         let x1 = ((x + w).max(0) as usize).min(self.width);
@@ -130,6 +181,7 @@ impl Surface {
         if w <= 0 || h <= 0 {
             return;
         }
+        self.mark_dirty(x, y, w, h);
         let r = radius.max(0).min(w / 2).min(h / 2);
         if r == 0 {
             self.fill_rect(x, y, w, h, color);
@@ -211,6 +263,7 @@ impl Surface {
         let y0 = (min_y >> 3).max(0);
         let x1 = ((max_x >> 3) + 1).min(self.width as i32);
         let y1 = ((max_y >> 3) + 1).min(self.height as i32);
+        self.mark_dirty(x0, y0, x1 - x0, y1 - y0);
 
         for py in y0..y1 {
             for px in x0..x1 {
@@ -262,6 +315,14 @@ impl Surface {
         tracking64: i32,
         color: u32,
     ) {
+        // Bounding box: the run's width, from one line above the baseline's
+        // ascent to below its descent.
+        self.mark_dirty(
+            x - 2,
+            baseline_y - face.ascent - 2,
+            face.width(text, tracking64) + 6,
+            face.ascent - face.descent + 6,
+        );
         // Pen runs in 1/64 px so fractional advances don't accumulate error.
         let mut pen64 = x * 64;
         let mut first = true;
@@ -326,6 +387,7 @@ mod tests {
                 width: self.w,
                 height: self.h,
                 pitch: self.w * 4,
+                dirty: Cell::new(None),
             }
         }
         fn get(&self, x: usize, y: usize) -> u32 {
@@ -333,6 +395,65 @@ mod tests {
         }
         fn ink_count(&self) -> usize {
             self.buf.iter().filter(|&&p| p != 0x00FF_FFFF).count()
+        }
+    }
+
+    #[test]
+    fn drawing_marks_only_what_it_touched() {
+        let mut c = Canvas::new(200, 100);
+        {
+            let s = c.surface();
+            assert!(s.dirty_rect().is_none(), "clean surface reports dirt");
+            s.fill_rect(10, 20, 30, 40, 0);
+            let (x0, y0, x1, y1) = s.dirty_rect().expect("fill_rect marked nothing");
+            assert_eq!((x0, y0, x1, y1), (10, 20, 40, 60));
+        }
+    }
+
+    #[test]
+    fn dirty_region_unions_and_clips() {
+        let mut c = Canvas::new(100, 100);
+        {
+            let s = c.surface();
+            s.fill_rect(10, 10, 10, 10, 0);
+            s.fill_rect(80, 80, 40, 40, 0); // runs off the right/bottom edge
+            let (x0, y0, x1, y1) = s.dirty_rect().unwrap();
+            assert_eq!((x0, y0), (10, 10));
+            assert_eq!((x1, y1), (100, 100), "dirty rect escaped the surface");
+        }
+    }
+
+    #[test]
+    fn clear_dirty_resets() {
+        let mut c = Canvas::new(50, 50);
+        {
+            let s = c.surface();
+            s.fill_rect(0, 0, 5, 5, 0);
+            assert!(s.dirty_rect().is_some());
+            s.clear_dirty();
+            assert!(s.dirty_rect().is_none(), "idle frame would still blit");
+        }
+    }
+
+    #[test]
+    fn offscreen_draws_mark_nothing() {
+        let mut c = Canvas::new(50, 50);
+        {
+            let s = c.surface();
+            s.fill_rect(-100, -100, 10, 10, 0);
+            assert!(s.dirty_rect().is_none(), "fully clipped draw marked a region");
+        }
+    }
+
+    #[test]
+    fn text_marks_a_box_around_the_run() {
+        let mut c = Canvas::new(400, 100);
+        {
+            let s = c.surface();
+            s.draw_text(20, 60, "Hello", &BODY_FACE, 0, 0);
+            let (x0, y0, x1, y1) = s.dirty_rect().expect("text marked nothing");
+            assert!(x0 <= 20 && x1 >= 20 + BODY_FACE.width("Hello", 0));
+            assert!(y0 < 60 && y1 > 60, "box must straddle the baseline");
         }
     }
 
@@ -449,8 +570,8 @@ mod tests {
 
 /// Largest framebuffer we can double-buffer. Lives in `.bss`, so it costs
 /// nothing in the ISO — Limine zeroes it at load.
-pub const MAX_W: usize = 1280;
-pub const MAX_H: usize = 1024;
+pub const MAX_W: usize = 1920;
+pub const MAX_H: usize = 1200;
 
 static mut BACK: [u32; MAX_W * MAX_H] = [0; MAX_W * MAX_H];
 
@@ -466,6 +587,9 @@ pub struct Screen {
     fb_pitch: usize,
     w: usize,
     h: usize,
+    /// False when the mode is bigger than the back buffer and we draw straight
+    /// into video memory instead. Flickers, but a large display must still boot.
+    buffered: bool,
 }
 
 impl Screen {
@@ -489,16 +613,21 @@ impl Screen {
             return None;
         }
         let (w, h) = (width as usize, height as usize);
-        if w > MAX_W || h > MAX_H {
-            return None;
-        }
-        let back = Surface {
-            addr: (&raw mut BACK).cast::<u8>(),
-            width: w,
-            height: h,
-            pitch: w * 4,
+        // Too large to double-buffer: fall back to drawing directly rather
+        // than refusing the mode, which would leave the machine with no UI.
+        let buffered = w <= MAX_W && h <= MAX_H;
+        let back = if buffered {
+            Surface {
+                addr: (&raw mut BACK).cast::<u8>(),
+                width: w,
+                height: h,
+                pitch: w * 4,
+                dirty: Cell::new(None),
+            }
+        } else {
+            Surface { addr, width: w, height: h, pitch: pitch as usize, dirty: Cell::new(None) }
         };
-        Some(Self { back, fb: addr, fb_pitch: pitch as usize, w, h })
+        Some(Self { back, fb: addr, fb_pitch: pitch as usize, w, h, buffered })
     }
 
     /// The surface to draw on. Nothing is visible until [`Self::present`].
@@ -506,14 +635,97 @@ impl Screen {
         &self.back
     }
 
-    /// Blit the back buffer to the framebuffer.
+    /// Whether composition is off-screen. False means direct-to-video fallback.
+    pub fn is_buffered(&self) -> bool {
+        self.buffered
+    }
+
+    /// Blit one region. Used for cursor motion — blitting the whole screen
+    /// per mouse event would make tracking crawl over uncached MMIO.
+    pub fn present_rect(&self, x: i32, y: i32, w: i32, h: i32) {
+        if !self.buffered {
+            return;
+        }
+        let x0 = x.max(0) as usize;
+        let y0 = y.max(0) as usize;
+        let x1 = ((x + w).max(0) as usize).min(self.w);
+        let y1 = ((y + h).max(0) as usize).min(self.h);
+        for py in y0..y1 {
+            let src = unsafe { self.back.addr.add(py * self.back.pitch).cast::<u32>() };
+            let dst = unsafe { self.fb.add(py * self.fb_pitch).cast::<u32>() };
+            for px in x0..x1 {
+                unsafe { dst.add(px).write_volatile(src.add(px).read()) };
+            }
+        }
+    }
+
+    /// Blit whatever changed since the last present.
+    ///
+    /// Falls back to nothing at all when no draw call marked a region, so an
+    /// idle frame costs zero MMIO writes.
     pub fn present(&self) {
+        if !self.buffered {
+            self.back.clear_dirty();
+            return;
+        }
+        let Some((x0, y0, x1, y1)) = self.back.dirty_rect() else {
+            return;
+        };
+        self.back.clear_dirty();
+        self.blit(x0, y0, x1, y1);
+    }
+
+    /// Blit the back buffer shifted down by `dy` and faded toward `bg`.
+    ///
+    /// Used for screen entrances. The frame is composed once and only the blit
+    /// is animated, so a transition costs blits rather than full redraws.
+    pub fn present_slide(&self, dy: i32, alpha_q16: i32, bg: u32) {
+        if !self.buffered {
+            return;
+        }
+        self.back.clear_dirty();
+        let a = alpha_q16.clamp(0, 1 << 16) as u32;
         for y in 0..self.h {
+            let dst = unsafe { self.fb.add(y * self.fb_pitch).cast::<u32>() };
+            // Source row, shifted: rows above the offset show the backdrop.
+            let sy = y as i32 - dy;
+            for x in 0..self.w {
+                let px = if sy < 0 {
+                    bg
+                } else {
+                    let src = unsafe {
+                        self.back.addr.add(sy as usize * self.back.pitch).cast::<u32>()
+                    };
+                    let c = unsafe { src.add(x).read() };
+                    // Fade toward the page colour rather than to black.
+                    blend(bg, c, a >> 8)
+                };
+                unsafe { dst.add(x).write_volatile(px) };
+            }
+        }
+    }
+
+    /// Blit the whole back buffer regardless of the dirty rectangle.
+    pub fn present_all(&self) {
+        if !self.buffered {
+            return;
+        }
+        self.back.clear_dirty();
+        self.blit(0, 0, self.w as i32, self.h as i32);
+    }
+
+    fn blit(&self, x0: i32, y0: i32, x1: i32, y1: i32) {
+        let x0 = x0.max(0) as usize;
+        let y0 = y0.max(0) as usize;
+        let x1 = (x1.max(0) as usize).min(self.w);
+        let y1 = (y1.max(0) as usize).min(self.h);
+        for y in y0..y1 {
             let src = unsafe { self.back.addr.add(y * self.back.pitch).cast::<u32>() };
             let dst = unsafe { self.fb.add(y * self.fb_pitch).cast::<u32>() };
-            for x in 0..self.w {
+            for x in x0..x1 {
                 unsafe { dst.add(x).write_volatile(src.add(x).read()) };
             }
         }
     }
+
 }

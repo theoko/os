@@ -56,6 +56,8 @@ impl MailPeek {
 /// One hit from `search.query`.
 pub struct SearchHit {
     pub title: [u8; 48],
+    /// Source URL, needed to open the document rather than only name it.
+    pub url: [u8; 72],
 }
 
 /// Short corpus peek for the home Connectors card.
@@ -68,7 +70,7 @@ pub struct SearchPeek {
 
 impl SearchPeek {
     pub const fn empty(status: BridgeStatus, denied: bool) -> Self {
-        const EMPTY: SearchHit = SearchHit { title: [0; 48] };
+        const EMPTY: SearchHit = SearchHit { title: [0; 48], url: [0; 72] };
         Self {
             status,
             denied,
@@ -79,6 +81,10 @@ impl SearchPeek {
 
     pub fn title_at(&self, i: usize) -> &str {
         str_prefix(trim_buf(&self.hits[i].title))
+    }
+
+    pub fn url_at(&self, i: usize) -> &str {
+        str_prefix(trim_buf(&self.hits[i].url))
     }
 }
 
@@ -178,6 +184,119 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
     peek
 }
 
+/// Lines of a document, for the reader.
+pub struct DocPage {
+    pub status: BridgeStatus,
+    pub denied: bool,
+    pub count: usize,
+    pub lines: [[u8; 84]; Self::MAX],
+}
+
+impl DocPage {
+    pub const MAX: usize = 18;
+
+    pub const fn empty(status: BridgeStatus, denied: bool) -> Self {
+        Self { status, denied, count: 0, lines: [[0; 84]; Self::MAX] }
+    }
+
+    pub fn line_at(&self, i: usize) -> &str {
+        str_prefix(trim_buf(&self.lines[i]))
+    }
+}
+
+/// Read a document the search results pointed at.
+///
+/// The same grants are sent as for the query, because the bridge checks scope
+/// per source: a caller that could not have found a document must not be able
+/// to read it by knowing its URL.
+pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+
+    match ping_bridge(&com2, &mut line) {
+        BridgeStatus::Offline => return DocPage::empty(BridgeStatus::Offline, false),
+        BridgeStatus::Online => {}
+    }
+
+    com2.write_str("CALL doc.read url=");
+    com2.write_str(url);
+    com2.write_str(" lines=18");
+    if caps.allows(crate::caps::Cap::WorkspaceIndex) {
+        com2.write_str(" files=1");
+    }
+    if caps.allows(crate::caps::Cap::AudioTranscribe) {
+        com2.write_str(" audio=1");
+    }
+    com2.write_str("\n");
+
+    let mut page = DocPage::empty(BridgeStatus::Online, false);
+    let mut first = true;
+    for _ in 0..40 {
+        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
+        let Some(n) = com2.read_line(&mut line, timeout) else {
+            break;
+        };
+        first = false;
+        let resp = str_prefix(&line[..n]);
+        if resp == "END" {
+            break;
+        }
+        if resp.starts_with("ERR ") {
+            page.denied = true;
+            break;
+        }
+        if resp.starts_with("OK doc.read") {
+            continue;
+        }
+        if resp.starts_with("ROW ") && page.count < DocPage::MAX {
+            let text = parse_row_field(resp, "line").unwrap_or("");
+            copy_field(&mut page.lines[page.count], text);
+            page.count += 1;
+        }
+    }
+    page
+}
+
+/// Ask the bridge to delete what a revoked capability produced.
+///
+/// Turning a switch off should remove the index it built, not just stop
+/// answering from it — otherwise "off" means "hidden", which is not what the
+/// switch says.
+pub fn forget(tool: &str) -> BridgeStatus {
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+    if matches!(ping_bridge(&com2, &mut line), BridgeStatus::Offline) {
+        return BridgeStatus::Offline;
+    }
+    com2.write_str("CALL ");
+    com2.write_str(tool);
+    com2.write_str("\n");
+    // Drain the reply so the next call starts on a clean line.
+    for _ in 0..8 {
+        let Some(n) = com2.read_line(&mut line, TIMEOUT_REPLY) else {
+            break;
+        };
+        if str_prefix(&line[..n]) == "END" {
+            break;
+        }
+    }
+    BridgeStatus::Online
+}
+
+/// Liveness only: PING the bridge without reading any mailbox.
+///
+/// Used before the user has consented on the Capabilities step. Calling
+/// `fetch_mail_peek` there would read — and, since the bridge indexes results,
+/// *persist* — the inbox before anyone agreed to it.
+pub fn probe_bridge() -> BridgeStatus {
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+    ping_bridge(&com2, &mut line)
+}
+
 fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
     for _ in 0..64 {
         if com2.try_read_byte().is_none() {
@@ -202,19 +321,40 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     com2.init();
     let mut line = [0u8; LINE_BUF];
 
+    if !caps.allows(crate::caps::Cap::SearchQuery) {
+        // Refuse before probing: a denied cap is denied whether or not a
+        // bridge happens to be listening.
+        let status = ping_bridge(&com2, &mut line);
+        return SearchPeek::empty(status, true);
+    }
+
     match ping_bridge(&com2, &mut line) {
-        BridgeStatus::Offline => return SearchPeek::empty(BridgeStatus::Offline, false),
+        // No bridge: answer from the index baked into the kernel. Search is the
+        // one connector that needs no host — see `search.rs`.
+        BridgeStatus::Offline => return search_offline(),
         BridgeStatus::Online => {}
     }
 
-    if !caps.allows(crate::caps::Cap::SearchQuery) {
-        return SearchPeek::empty(BridgeStatus::Online, true);
-    }
-
-    // CALL search.query q=… k=3
+    // CALL search.query q=… k=3 [email=1]
+    //
+    // The email graph is opt-in per call on the bridge. Ask for it only when
+    // the user granted email.search at setup: holding search.query alone must
+    // not reach mail content.
     com2.write_str("CALL search.query q=");
     com2.write_str(q);
-    com2.write_str(" k=3\n");
+    com2.write_str(" k=3");
+    if caps.allows(crate::caps::Cap::EmailSearch) {
+        com2.write_str(" email=1");
+    }
+    // Personal documents are a separate grant from the built-in corpus:
+    // search.query alone must not reach the user's own file tree.
+    if caps.allows(crate::caps::Cap::WorkspaceIndex) {
+        com2.write_str(" files=1");
+    }
+    if caps.allows(crate::caps::Cap::AudioTranscribe) {
+        com2.write_str(" audio=1");
+    }
+    com2.write_str("\n");
 
     let mut peek = SearchPeek::empty(BridgeStatus::Online, false);
     let mut first = true;
@@ -234,15 +374,68 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
         if resp.starts_with("ROW ") && peek.count < peek.hits.len() {
             let title = parse_row_field(resp, "title").unwrap_or("?");
             copy_field(&mut peek.hits[peek.count].title, title);
+            copy_field(&mut peek.hits[peek.count].url, parse_row_field(resp, "url").unwrap_or(""));
             peek.count += 1;
         }
     }
     peek
 }
 
+/// Top hits from the in-kernel index, used when COM2 does not answer.
+///
+/// Reported as `Offline` so the UI can still say the bridge is down while
+/// showing real results.
+fn search_offline() -> SearchPeek {
+    let mut peek = SearchPeek::empty(BridgeStatus::Offline, false);
+    let mut hits = [crate::search::Hit { doc: 0, score: 0 }; crate::search::MAX_HITS];
+    let n = crate::search::query(OFFLINE_QUERY, &mut hits);
+    for h in hits.iter().take(n.min(peek.hits.len())) {
+        copy_field(&mut peek.hits[peek.count].title, crate::search::DOCS[h.doc].title);
+        peek.count += 1;
+    }
+    peek
+}
+
+/// What the home screen asks for when nothing else was requested.
+const OFFLINE_QUERY: &str = "capability agent bridge";
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn email_graph_requested_only_with_the_email_cap() {
+        use crate::caps::{Cap, Caps};
+        // Search-only grants must not ask the bridge for mail.
+        let mut search_only = Caps::none();
+        search_only.set(Cap::SearchQuery, true);
+        assert!(search_only.allows(Cap::SearchQuery));
+        assert!(
+            !search_only.allows(Cap::EmailSearch),
+            "search.query alone must not reach the email graph"
+        );
+
+        let mut both = search_only;
+        both.set(Cap::EmailSearch, true);
+        assert!(both.allows(Cap::EmailSearch));
+    }
+
+    #[test]
+    fn probe_does_not_imply_a_mailbox_read() {
+        // Guard the consent rule: the pre-consent path must expose liveness
+        // only. MailPeek::empty carries no rows.
+        let p = MailPeek::empty(BridgeStatus::Offline);
+        assert_eq!(p.count, 0);
+    }
+
+    #[test]
+    fn offline_search_still_returns_hits() {
+        // The whole point of the offline tier: useful results with no host.
+        let peek = search_offline();
+        assert!(matches!(peek.status, BridgeStatus::Offline));
+        assert!(!peek.denied);
+        assert!(peek.count > 0, "baked index returned nothing");
+    }
 
     #[test]
     fn parse_row() {
