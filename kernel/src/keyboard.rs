@@ -28,6 +28,12 @@ pub enum Key {
     Backspace,
     Enter,
     Escape,
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    Home,
+    End,
 }
 
 /// Scancode set 1, unshifted. Index = make code. 0 means "no character".
@@ -70,7 +76,9 @@ fn shift_char(c: u8) -> u8 {
 
 pub struct Keyboard {
     shift: bool,
-    /// Set by the 0xE0 prefix; those keys are ignored for now.
+    /// Set by the 0xE0 prefix. Navigation keys arrive this way, and the same
+    /// make codes mean digits on the keypad without it — so the prefix has to
+    /// be tracked, not just swallowed.
     extended: bool,
 }
 
@@ -104,6 +112,13 @@ impl Keyboard {
             0x0E => Some(Key::Backspace),
             0x1C => Some(Key::Enter),
             0x01 => Some(Key::Escape),
+            // Navigation, only in their extended form.
+            0x48 if extended => Some(Key::Up),
+            0x50 if extended => Some(Key::Down),
+            0x49 if extended => Some(Key::PageUp),
+            0x51 if extended => Some(Key::PageDown),
+            0x47 if extended => Some(Key::Home),
+            0x4F if extended => Some(Key::End),
             _ if extended => None,
             _ => {
                 let c = *MAP.get(code as usize)?;
@@ -286,6 +301,53 @@ mod tests {
         let mut f = TextField::<8>::new();
         assert!(!f.apply(Key::Char(0x07)));
         assert!(!f.apply(Key::Char(0xC3)));
+        assert!(f.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod nav_tests {
+    use super::*;
+
+    #[test]
+    fn navigation_keys_need_the_extended_prefix() {
+        let mut k = Keyboard::new();
+        // Without E0, 0x48 is keypad 8 — not Up.
+        assert_ne!(k.feed(0x48), Some(Key::Up));
+        assert_eq!(k.feed(0xE0), None);
+        assert_eq!(k.feed(0x48), Some(Key::Up));
+    }
+
+    #[test]
+    fn all_navigation_keys_decode() {
+        let mut k = Keyboard::new();
+        for (code, want) in [
+            (0x48, Key::Up),
+            (0x50, Key::Down),
+            (0x49, Key::PageUp),
+            (0x51, Key::PageDown),
+            (0x47, Key::Home),
+            (0x4F, Key::End),
+        ] {
+            assert_eq!(k.feed(0xE0), None);
+            assert_eq!(k.feed(code), Some(want), "code {code:#x}");
+        }
+    }
+
+    #[test]
+    fn navigation_release_types_nothing() {
+        let mut k = Keyboard::new();
+        k.feed(0xE0);
+        assert_eq!(k.feed(0x48 | 0x80), None, "key release must not scroll");
+    }
+
+    #[test]
+    fn navigation_keys_are_not_text() {
+        // TextField must ignore them rather than inserting a stray character.
+        let mut f = TextField::<8>::new();
+        for key in [Key::Up, Key::Down, Key::PageUp, Key::PageDown, Key::Home, Key::End] {
+            assert!(!f.apply(key), "{key:?} was treated as text");
+        }
         assert!(f.is_empty());
     }
 }

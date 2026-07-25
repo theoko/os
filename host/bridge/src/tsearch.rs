@@ -18,6 +18,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::OnceLock;
 
 /// Live corpus published by the tsearch front-end.
@@ -372,13 +373,15 @@ mod index_tests {
     use super::*;
 
     #[test]
-    fn an_absent_corpus_indexes_to_empty() {
-        // Serialised: these tests mutate process env, which cargo's
-        // parallel runner would otherwise leak between them.
+    fn an_absent_corpus_is_reported_as_unavailable() {
+        // Was asserting on docs(), which is a OnceLock: once any test — or a
+        // real sync — populates it, it stays populated for the process, so the
+        // env change had no effect. It passed only while no corpus existed on
+        // disk, and started failing the moment one did. A test that passed for
+        // the wrong reason. is_available() consults the filesystem every call.
         let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_TSEARCH_CACHE", "/nonexistent/os-teddy/none.json") };
-        // Must not panic when there is nothing to index.
-        assert!(docs().is_empty());
+        assert!(!is_available());
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
     }
 
@@ -454,4 +457,31 @@ mod auth_tests {
         // Changing this orphans anyone's stored credential silently.
         assert_eq!(KEYCHAIN_SERVICE, "os-portal");
     }
+}
+
+/// True while a background sync is running.
+static SYNCING: AtomicBool = AtomicBool::new(false);
+
+pub fn is_syncing() -> bool {
+    SYNCING.load(Ordering::Relaxed)
+}
+
+/// Start a sync in the background and return immediately.
+///
+/// The fetch takes ~51s for 64MB. Doing it inline froze the guest for that
+/// long during setup, which looks like a hang — and if the machine was shut
+/// down meanwhile, nothing landed and the switch stayed on with no corpus
+/// behind it. `portal.status` reports progress instead.
+pub fn sync_background() -> &'static str {
+    if SYNCING.swap(true, Ordering::SeqCst) {
+        return "already running";
+    }
+    std::thread::spawn(|| {
+        match sync() {
+            Ok((n, at)) => eprintln!("tsearch: synced {n} docs (crawled {at})"),
+            Err(e) => eprintln!("tsearch: sync failed: {e}"),
+        }
+        SYNCING.store(false, Ordering::SeqCst);
+    });
+    "started"
 }

@@ -203,7 +203,8 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut sview = searchui::SearchView::new();
                 let mut page = mcp::DocPage::empty(mcp::BridgeStatus::Offline, false);
-                let mut portal = mcp::PortalStatus { reachable: false, cached: false, docs: 0 };
+                let mut portal =
+                    mcp::PortalStatus { reachable: false, cached: false, syncing: false, docs: 0 };
                 let mut open_title = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut view = screens::View::Home;
                 let caret = true;
@@ -284,12 +285,27 @@ unsafe extern "C" fn kmain() -> ! {
                                 serial_port.write_str("caps: ");
                                 serial_port.write_str(status_str(&status_buf, status_len));
                                 serial_port.write_str("\n");
-                                if grants.allows(caps::Cap::WorkspaceIndex) {
-                                    // Chosen during setup: build it now rather
-                                    // than leaving an empty index behind a
-                                    // switch that reads as on.
-                                    mcp::build_index("workspace.index");
-                                    serial_port.write_str("caps: indexing workspace\n");
+                                // Anything granted during setup has to be built
+                                // now. Only workspace was handled here, so
+                                // enabling Online services at setup left the
+                                // switch on with nothing behind it — the
+                                // sync only fired if you toggled it later.
+                                for (cap, tool, note) in [
+                                    (
+                                        caps::Cap::WorkspaceIndex,
+                                        "workspace.index",
+                                        "caps: indexing workspace\n",
+                                    ),
+                                    (
+                                        caps::Cap::PortalSync,
+                                        "tsearch.sync",
+                                        "caps: syncing teddy\n",
+                                    ),
+                                ] {
+                                    if grants.allows(cap) {
+                                        serial_port.write_str(note);
+                                        mcp::build_index(tool);
+                                    }
                                 }
                                 mail = mcp::fetch_mail_peek(grants);
                                 ui::draw_home(

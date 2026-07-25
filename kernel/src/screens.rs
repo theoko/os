@@ -335,12 +335,14 @@ pub fn draw_status(
         fb.draw_text(x + 18 + d + 12, y + 46, state, &SMALL_FACE, 0, theme::MUTED);
     };
 
+    // Plain words: someone checking whether their machine works should not
+    // need to know what COM2 is.
     let bridge_up = matches!(mail.status, crate::mcp::BridgeStatus::Online);
     line(
         fb,
         y,
-        "Host bridge",
-        if bridge_up { "Connected on COM2" } else { "Offline - run: make bridge-run" },
+        "This computer",
+        if bridge_up { "Connected" } else { "Not connected" },
         bridge_up,
     );
     y += ROW_H + ROW_GAP;
@@ -348,13 +350,15 @@ pub fn draw_status(
     // Teddy has three distinct states and the dot cannot express them.
     let granted = grants.allows(Cap::PortalSync);
     let (teddy_state, teddy_ok) = if !granted {
-        ("Not enabled - turn on Online services", false)
+        ("Off - turn on Online services", false)
+    } else if portal.syncing {
+        ("Downloading now", false)
     } else if !portal.cached {
-        ("Enabled, not synced yet", false)
+        ("Not downloaded yet", false)
     } else if portal.docs == 0 {
-        ("Synced but empty", false)
+        ("Downloaded, but empty", false)
     } else {
-        ("Synced", true)
+        ("Ready", true)
     };
     line(fb, y, "Teddy", teddy_state, teddy_ok);
     y += ROW_H + ROW_GAP;
@@ -364,7 +368,7 @@ pub fn draw_status(
         fb,
         y,
         "Your files",
-        if files { "Indexed and searchable" } else { "Not enabled" },
+        if files { "Ready" } else { "Off" },
         files,
     );
 

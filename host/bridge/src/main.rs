@@ -411,13 +411,12 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
         "tsearch.sync" if !matches!(arg_val(args, "portal"), Some("1")) => {
             vec!["ERR tsearch.sync needs_portal_cap".into()]
         }
-        "tsearch.sync" => match tsearch::sync() {
-            Ok((n, at)) => vec![
-                format!("OK tsearch.sync n={n} crawled={at}"),
-                "END".into(),
-            ],
-            Err(e) => vec![format!("ERR tsearch.sync {e}")],
-        },
+        "tsearch.sync" => {
+            // Returns at once; the guest polls portal.status rather than
+            // holding COM2 open for a minute.
+            let state = tsearch::sync_background();
+            vec![format!("OK tsearch.sync {state}"), "END".into()]
+        }
         // Revoking a grant should remove what it produced, not merely hide it.
         // Read one indexed document back, so a result can be opened rather
         // than merely located.
@@ -456,7 +455,11 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             let n = tsearch::docs().len();
             let cached = tsearch::is_available();
             vec![
-                format!("OK portal.status n={n} cached={}", if cached { 1 } else { 0 }),
+                format!(
+                    "OK portal.status n={n} cached={} syncing={}",
+                    if cached { 1 } else { 0 },
+                    if tsearch::is_syncing() { 1 } else { 0 }
+                ),
                 "END".into(),
             ]
         }
