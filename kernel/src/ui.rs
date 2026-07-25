@@ -67,6 +67,21 @@ pub enum CtaId {
     Skills,
 }
 
+/// Which home card was under the pointer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CardId {
+    Connectors,
+    Capabilities,
+    Skills,
+}
+
+/// Any clickable region on the finished home screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HomeHit {
+    Cta(CtaId),
+    Card(CardId),
+}
+
 /// Hit targets for the CTA pair, computed with the same layout as `draw_home`.
 #[derive(Clone, Copy, Debug)]
 pub struct CtaTargets {
@@ -83,6 +98,44 @@ impl CtaTargets {
         } else {
             None
         }
+    }
+}
+
+/// Hit targets for the three "What's wired" cards.
+#[derive(Clone, Copy, Debug)]
+pub struct CardTargets {
+    pub connectors: Rect,
+    pub capabilities: Rect,
+    pub skills: Rect,
+}
+
+impl CardTargets {
+    pub fn hit(self, px: i32, py: i32) -> Option<CardId> {
+        if self.connectors.contains(px, py) {
+            Some(CardId::Connectors)
+        } else if self.capabilities.contains(px, py) {
+            Some(CardId::Capabilities)
+        } else if self.skills.contains(px, py) {
+            Some(CardId::Skills)
+        } else {
+            None
+        }
+    }
+}
+
+/// Combined home hit-test (CTAs preferred over cards when overlapping — they don't).
+#[derive(Clone, Copy, Debug)]
+pub struct HomeTargets {
+    pub ctas: CtaTargets,
+    pub cards: CardTargets,
+}
+
+impl HomeTargets {
+    pub fn hit(self, px: i32, py: i32) -> Option<HomeHit> {
+        if let Some(c) = self.ctas.hit(px, py) {
+            return Some(HomeHit::Cta(c));
+        }
+        self.cards.hit(px, py).map(HomeHit::Card)
     }
 }
 
@@ -178,7 +231,7 @@ pub fn draw_home(fb: &Surface, mail: &MailPeek, skills: &SkillPeek, status: &str
 
     // --- footer ---
     let foot = if status.is_empty() {
-        "os 0.7.4  |  limine  |  x86_64"
+        "os 0.7.5  |  limine  |  x86_64"
     } else {
         status
     };
@@ -207,6 +260,11 @@ fn cta_top(h: i32) -> i32 {
         + BODY_FACE.baseline()
         + SUB_GAP
         + SUB_TO_CTA
+}
+
+/// Top edge of the card row — same arithmetic as `draw_home`.
+fn cards_top(h: i32) -> i32 {
+    cta_top(h) + CTA_H + CTA_TO_H2 + H2_FACE.baseline() + H2_TO_CARDS
 }
 
 fn skills_label(skills: &SkillPeek) -> &'static str {
@@ -241,6 +299,42 @@ pub fn cta_targets(w: i32, h: i32, skills: &SkillPeek) -> CtaTargets {
             w: sw,
             h: CTA_H,
         },
+    }
+}
+
+/// Hit regions for the three feature cards.
+pub fn card_targets(w: i32, h: i32) -> CardTargets {
+    let content_w = (w - PAD_X * 2).min(CONTENT_MAX);
+    let x0 = (w - content_w) / 2;
+    let card_w = (content_w - CARD_GUTTER * 2) / 3;
+    let y = cards_top(h);
+    CardTargets {
+        connectors: Rect {
+            x: x0,
+            y,
+            w: card_w,
+            h: CARD_H,
+        },
+        capabilities: Rect {
+            x: x0 + card_w + CARD_GUTTER,
+            y,
+            w: card_w,
+            h: CARD_H,
+        },
+        skills: Rect {
+            x: x0 + (card_w + CARD_GUTTER) * 2,
+            y,
+            w: card_w,
+            h: CARD_H,
+        },
+    }
+}
+
+/// CTA + card hit regions for the finished home screen.
+pub fn home_targets(w: i32, h: i32, skills: &SkillPeek) -> HomeTargets {
+    HomeTargets {
+        ctas: cta_targets(w, h, skills),
+        cards: card_targets(w, h),
     }
 }
 
@@ -320,7 +414,7 @@ mod tests {
             "Capability-scoped agents, host connectors on one port,",
             "and skills that stay out of the kernel.",
             "What's wired",
-            "os 0.7.4  |  limine  |  x86_64",
+            "os 0.7.5  |  limine  |  x86_64",
             "bridge connected",
             "bridge offline",
             "Ready",
@@ -416,5 +510,39 @@ mod tests {
             Some(CtaId::Skills)
         );
         assert_eq!(t.hit(0, 0), None);
+    }
+
+    #[test]
+    fn card_hit_regions_are_three_columns() {
+        let skills = SkillPeek {
+            count: 3,
+            names: [[0; 28]; 8],
+        };
+        let home = home_targets(1024, 768, &skills);
+        let c = home.cards;
+        assert_eq!(c.connectors.y, c.capabilities.y);
+        assert_eq!(c.capabilities.y, c.skills.y);
+        assert!(c.connectors.x + c.connectors.w <= c.capabilities.x);
+        assert!(c.capabilities.x + c.capabilities.w <= c.skills.x);
+        assert_eq!(
+            home.hit(
+                c.connectors.x + c.connectors.w / 2,
+                c.connectors.y + CARD_H / 2
+            ),
+            Some(HomeHit::Card(CardId::Connectors))
+        );
+        assert_eq!(
+            home.hit(
+                c.skills.x + c.skills.w / 2,
+                c.skills.y + CARD_H / 2
+            ),
+            Some(HomeHit::Card(CardId::Skills))
+        );
+        // CTA still wins when aimed at Ready.
+        let ready = home.ctas.ready;
+        assert_eq!(
+            home.hit(ready.x + ready.w / 2, ready.y + CTA_H / 2),
+            Some(HomeHit::Cta(CtaId::Ready))
+        );
     }
 }

@@ -44,6 +44,35 @@ impl MailPeek {
     }
 }
 
+/// One hit from `search.query`.
+pub struct SearchHit {
+    pub title: [u8; 48],
+}
+
+/// Short corpus peek for the home Connectors card.
+pub struct SearchPeek {
+    pub status: BridgeStatus,
+    pub denied: bool,
+    pub count: usize,
+    pub hits: [SearchHit; 3],
+}
+
+impl SearchPeek {
+    pub const fn empty(status: BridgeStatus, denied: bool) -> Self {
+        const EMPTY: SearchHit = SearchHit { title: [0; 48] };
+        Self {
+            status,
+            denied,
+            count: 0,
+            hits: [EMPTY; 3],
+        }
+    }
+
+    pub fn title_at(&self, i: usize) -> &str {
+        core::str::from_utf8(trim_buf(&self.hits[i].title)).unwrap_or("")
+    }
+}
+
 fn trim_buf(buf: &[u8]) -> &[u8] {
     let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     &buf[..n]
@@ -123,6 +152,65 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
     peek
 }
 
+fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
+    for _ in 0..64 {
+        if com2.try_read_byte().is_none() {
+            break;
+        }
+    }
+    com2.write_str("PING\n");
+    let Some(n) = com2.read_line(line, TIMEOUT_PING) else {
+        return BridgeStatus::Offline;
+    };
+    let resp = core::str::from_utf8(&line[..n]).unwrap_or("");
+    if resp.starts_with("OK pong") {
+        BridgeStatus::Online
+    } else {
+        BridgeStatus::Offline
+    }
+}
+
+/// Run `search.query` when granted. `q` must be ASCII without spaces (use `-`).
+pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; 200];
+
+    match ping_bridge(&com2, &mut line) {
+        BridgeStatus::Offline => return SearchPeek::empty(BridgeStatus::Offline, false),
+        BridgeStatus::Online => {}
+    }
+
+    if !caps.allows(crate::caps::Cap::SearchQuery) {
+        return SearchPeek::empty(BridgeStatus::Online, true);
+    }
+
+    // CALL search.query q=… k=3
+    com2.write_str("CALL search.query q=");
+    com2.write_str(q);
+    com2.write_str(" k=3\n");
+
+    let mut peek = SearchPeek::empty(BridgeStatus::Online, false);
+    for _ in 0..16 {
+        let Some(n) = com2.read_line(&mut line, TIMEOUT_LINE) else {
+            break;
+        };
+        let resp = core::str::from_utf8(&line[..n]).unwrap_or("");
+        if resp.starts_with("ERR ") || resp == "END" {
+            break;
+        }
+        if resp.starts_with("OK search.query") {
+            continue;
+        }
+        if resp.starts_with("ROW ") && peek.count < peek.hits.len() {
+            let title = parse_row_field(resp, "title").unwrap_or("?");
+            copy_field(&mut peek.hits[peek.count].title, title);
+            peek.count += 1;
+        }
+    }
+    peek
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -132,5 +220,11 @@ mod tests {
         let line = "ROW from=Alice Chen|subj=Q2 planning";
         assert_eq!(parse_row_field(line, "from"), Some("Alice Chen"));
         assert_eq!(parse_row_field(line, "subj"), Some("Q2 planning"));
+    }
+
+    #[test]
+    fn parse_search_title() {
+        let line = "ROW title=os identity|cat=docs|score=1.0|snip=hello|url=os://mock";
+        assert_eq!(parse_row_field(line, "title"), Some("os identity"));
     }
 }

@@ -179,7 +179,8 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut x = cx;
                 let mut y = cy;
                 let mut prev_buttons = 0u8;
-                let mut status = grants.footer_status();
+                let mut status_buf = [0u8; 72];
+                write_status(&mut status_buf, grants.footer_status());
                 let mut setup = setup::Setup::new();
                 // First boot: run the setup journey before the home screen.
                 cursor.hide(&surface);
@@ -203,8 +204,6 @@ unsafe extern "C" fn kmain() -> ! {
                             moved = true;
                         }
                     } else if mice.poll(w, h) {
-                        // PS/2 only when no tablet — otherwise aux noise
-                        // clears tablet button edges and kills clicks.
                         x = mice.x;
                         y = mice.y;
                         buttons = mice.buttons;
@@ -212,19 +211,22 @@ unsafe extern "C" fn kmain() -> ! {
                     }
 
                     if !setup.is_finished() {
-                        // Setup owns click handling (with its own edge detect).
                         if setup.pointer(x, y, buttons) {
                             cursor.hide(&surface);
                             if setup.is_finished() {
                                 grants = setup.grants();
-                                status = grants.footer_status();
+                                write_status(&mut status_buf, grants.footer_status());
                                 serial_port.write_str("ui: setup done\n");
                                 serial_port.write_str("caps: ");
-                                serial_port.write_str(status);
+                                serial_port.write_str(status_str(&status_buf));
                                 serial_port.write_str("\n");
-                                // Re-probe bridge under the chosen grant set.
                                 mail = mcp::fetch_mail_peek(grants);
-                                ui::draw_home(&surface, &mail, &skill_peek, status);
+                                ui::draw_home(
+                                    &surface,
+                                    &mail,
+                                    &skill_peek,
+                                    status_str(&status_buf),
+                                );
                             } else {
                                 setup.draw(&surface, &mail, &skill_peek);
                             }
@@ -232,14 +234,13 @@ unsafe extern "C" fn kmain() -> ! {
                             moved = false;
                         }
                     } else {
-                        // Home: left-button rising edge → CTA click.
                         let left_down = buttons & 1 != 0;
                         let left_was = prev_buttons & 1 != 0;
                         if left_down && !left_was {
-                            let targets = ui::cta_targets(w, h, &skill_peek);
+                            let targets = ui::home_targets(w, h, &skill_peek);
                             let mut clicked = false;
                             match targets.hit(x, y) {
-                                Some(ui::CtaId::Ready) => {
+                                Some(ui::HomeHit::Cta(ui::CtaId::Ready)) => {
                                     serial_port.write_str("ui: click Ready\n");
                                     setup = setup::Setup::new();
                                     cursor.hide(&surface);
@@ -248,20 +249,73 @@ unsafe extern "C" fn kmain() -> ! {
                                     clicked = true;
                                     moved = false;
                                 }
-                                Some(ui::CtaId::Skills) => {
+                                Some(ui::HomeHit::Cta(ui::CtaId::Skills))
+                                | Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
                                     serial_port.write_str("ui: click Skills\n");
-                                    status = if grants.allows(caps::Cap::SkillsSave) {
-                                        "skills.save granted - playbooks writable"
+                                    if grants.allows(caps::Cap::SkillsSave) {
+                                        write_status(
+                                            &mut status_buf,
+                                            "skills.save granted - playbooks writable",
+                                        );
                                     } else {
-                                        "skills.save denied - playbooks read-only"
-                                    };
+                                        write_status(
+                                            &mut status_buf,
+                                            "skills.save denied - playbooks read-only",
+                                        );
+                                    }
+                                    clicked = true;
+                                }
+                                Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
+                                    serial_port.write_str("ui: click Connectors\n");
+                                    mail = mcp::fetch_mail_peek(grants);
+                                    let search = mcp::fetch_search_peek(grants, "capability");
+                                    if search.denied {
+                                        write_status(
+                                            &mut status_buf,
+                                            "search.query denied by caps",
+                                        );
+                                        serial_port.write_str("search: denied\n");
+                                    } else if search.status == mcp::BridgeStatus::Offline {
+                                        write_status(&mut status_buf, "bridge offline - no search");
+                                        serial_port.write_str("search: offline\n");
+                                    } else if search.count == 0 {
+                                        write_status(&mut status_buf, "search: no hits");
+                                        serial_port.write_str("search: n=0\n");
+                                    } else {
+                                        // "search: <title>" into the footer buffer.
+                                        let title = search.title_at(0);
+                                        let mut msg = [0u8; 72];
+                                        let prefix = b"search: ";
+                                        msg[..prefix.len()].copy_from_slice(prefix);
+                                        let tn = title.len().min(72 - prefix.len() - 1);
+                                        msg[prefix.len()..prefix.len() + tn]
+                                            .copy_from_slice(&title.as_bytes()[..tn]);
+                                        let n = prefix.len() + tn;
+                                        write_status(
+                                            &mut status_buf,
+                                            core::str::from_utf8(&msg[..n]).unwrap_or("search: ok"),
+                                        );
+                                        serial_port.write_str("search: n=");
+                                        let d = b'0' + (search.count.min(9) as u8);
+                                        serial_port.write_bytes(&[d, b'\n']);
+                                    }
+                                    clicked = true;
+                                }
+                                Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
+                                    serial_port.write_str("ui: click Capabilities\n");
+                                    write_status(&mut status_buf, grants.footer_status());
                                     clicked = true;
                                 }
                                 None => {}
                             }
                             if clicked && setup.is_finished() {
                                 cursor.hide(&surface);
-                                ui::draw_home(&surface, &mail, &skill_peek, status);
+                                ui::draw_home(
+                                    &surface,
+                                    &mail,
+                                    &skill_peek,
+                                    status_str(&status_buf),
+                                );
                                 cursor.show_at(&surface, x, y);
                                 moved = false;
                             }
@@ -284,6 +338,18 @@ unsafe extern "C" fn kmain() -> ! {
     }
 
     serial::exit_qemu(true);
+}
+
+fn write_status(buf: &mut [u8; 72], s: &str) {
+    buf.fill(0);
+    let bytes = s.as_bytes();
+    let n = bytes.len().min(buf.len().saturating_sub(1));
+    buf[..n].copy_from_slice(&bytes[..n]);
+}
+
+fn status_str(buf: &[u8; 72]) -> &str {
+    let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    core::str::from_utf8(&buf[..n]).unwrap_or("")
 }
 
 #[panic_handler]
