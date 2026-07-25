@@ -86,10 +86,13 @@ fn str_at(buf: &[u8]) -> &str {
     }
 }
 
-fn copy_field(dst: &mut [u8], src: &str) {
+/// Copy `src` into a fixed field, never splitting a UTF-8 char.
+pub(crate) fn copy_field(dst: &mut [u8], src: &str) {
     dst.fill(0);
     let bytes = src.as_bytes();
     let mut n = bytes.len().min(dst.len());
+    // Never cut mid-character: a torn tail would make the whole field
+    // undecodable when read back.
     while n > 0 && !src.is_char_boundary(n) {
         n -= 1;
     }

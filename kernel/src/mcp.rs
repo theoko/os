@@ -1,6 +1,7 @@
 //! Guest MCP client over COM2 (host bridge).
 
 use crate::serial::Serial;
+use crate::skills::copy_field;
 
 const TIMEOUT_PING: u32 = 80_000;
 const TIMEOUT_LINE: u32 = 200_000;
@@ -103,18 +104,6 @@ fn str_prefix(bytes: &[u8]) -> &str {
         Ok(s) => s,
         Err(e) => core::str::from_utf8(&bytes[..e.valid_up_to()]).unwrap_or(""),
     }
-}
-
-fn copy_field(dst: &mut [u8], src: &str) {
-    dst.fill(0);
-    let bytes = src.as_bytes();
-    let mut n = bytes.len().min(dst.len());
-    // Never cut mid-character: a torn tail would make the whole field
-    // undecodable when read back.
-    while n > 0 && !src.is_char_boundary(n) {
-        n -= 1;
-    }
-    dst[..n].copy_from_slice(&bytes[..n]);
 }
 
 fn parse_row_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {

@@ -27,7 +27,7 @@
       "t": "Architecture capability IPC",
       "u": "os://docs/architecture-os-doc-v01.md",
       "c": "docs",
-      "b": "Kernel owns scheduling memory capability tables message bus. Userspace owns agentd sandboxed tools. No ambient root. Syscalls send recv grant mint_cap.",
+      "b": "Capability based agents. Connectors on host bridge not in kernel. No ambient root. Guest holds caps and calls tools over COM2.",
       "pr": 0.95
     },
     {

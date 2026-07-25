@@ -309,23 +309,39 @@ pub fn body_for(url: &str, max_lines: usize) -> Option<Vec<String>> {
                 .find(|d| d.u == url)
                 .map(|d| d.b.clone())
         })?;
+    Some(wrap_lines(&body, 78, max_lines))
+}
+
+/// Hard-wrap text into `ROW line=...` entries the guest can render directly.
+pub(crate) fn wrap_lines(text: &str, width: usize, max: usize) -> Vec<String> {
     let mut out = Vec::new();
-    let mut cur = String::new();
-    for word in body.split_whitespace() {
-        if !cur.is_empty() && cur.chars().count() + 1 + word.chars().count() > 78 {
-            out.push(format!("ROW line={}", sanitize(&cur)));
-            cur.clear();
-            if out.len() >= max_lines {
-                return Some(out);
+    for para in text.lines() {
+        if out.len() >= max {
+            break;
+        }
+        let t = para.trim_end();
+        if t.is_empty() {
+            out.push("ROW line=".to_string());
+            continue;
+        }
+        let mut cur = String::new();
+        for word in t.split_whitespace() {
+            if !cur.is_empty() && cur.chars().count() + 1 + word.chars().count() > width {
+                out.push(format!("ROW line={}", sanitize(&cur)));
+                cur.clear();
+                if out.len() >= max {
+                    return out;
+                }
             }
+            if !cur.is_empty() {
+                cur.push(' ');
+            }
+            cur.push_str(word);
         }
         if !cur.is_empty() {
-            cur.push(' ');
+            out.push(format!("ROW line={}", sanitize(&cur)));
         }
-        cur.push_str(word);
     }
-    if !cur.is_empty() {
-        out.push(format!("ROW line={}", sanitize(&cur)));
-    }
-    Some(out)
+    out.truncate(max);
+    out
 }

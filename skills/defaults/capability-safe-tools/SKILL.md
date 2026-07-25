@@ -2,7 +2,7 @@
 name: capability-safe-tools
 description: >-
   Always invoke tools through explicit capabilities. Use whenever planning
-  actions that touch email, files, calendar, or the host bridge.
+  actions that touch email, files, search, or the host bridge.
 ---
 
 # Capability-safe tools

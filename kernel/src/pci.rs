@@ -35,22 +35,6 @@ mod port {
         }
         val
     }
-
-    #[inline]
-    pub unsafe fn outb(port: u16, val: u8) {
-        unsafe {
-            asm!("out dx, al", in("dx") port, in("al") val, options(nostack, preserves_flags));
-        }
-    }
-
-    #[inline]
-    pub unsafe fn inb(port: u16) -> u8 {
-        let val: u8;
-        unsafe {
-            asm!("in al, dx", out("al") val, in("dx") port, options(nostack, preserves_flags));
-        }
-        val
-    }
 }
 
 const CONFIG_ADDR: u16 = 0xCF8;
@@ -143,8 +127,7 @@ pub fn find_all_uhci() -> heapless_vec::UhciList {
     out
 }
 
-/// EHCI = class 0x0C, subclass 0x03, prog-if 0x20. Returns MMIO BAR phys.
-/// Every EHCI controller on the bus.
+/// EHCI = class 0x0C, subclass 0x03, prog-if 0x20.
 ///
 /// q35 with `-usb` builds an ICH9 set at 00:1d.x, and UTM adds a *second*
 /// explicit `ich9-usb-ehci1`. Disabling only the first leaves the other still
@@ -205,4 +188,4 @@ pub mod heapless_vec {
 }
 
 #[cfg(target_arch = "x86_64")]
-pub use port::{inb, inw, outb, outw};
+pub use port::{inw, outw};

@@ -485,41 +485,7 @@ fn read_doc(url: &str, max: usize, args: &[(String, String)]) -> Result<Vec<Stri
         return search::body_for(url, max).ok_or_else(|| "no readable body".into());
     };
 
-    Ok(wrap_lines(&body, 78, max))
-}
-
-/// Hard-wrap text into `ROW line=...` entries the guest can render directly.
-fn wrap_lines(text: &str, width: usize, max: usize) -> Vec<String> {
-    let mut out = Vec::new();
-    for para in text.lines() {
-        if out.len() >= max {
-            break;
-        }
-        let t = para.trim_end();
-        if t.is_empty() {
-            out.push("ROW line=".to_string());
-            continue;
-        }
-        let mut cur = String::new();
-        for word in t.split_whitespace() {
-            if !cur.is_empty() && cur.chars().count() + 1 + word.chars().count() > width {
-                out.push(format!("ROW line={}", sanitize_field(&cur)));
-                cur.clear();
-                if out.len() >= max {
-                    return out;
-                }
-            }
-            if !cur.is_empty() {
-                cur.push(' ');
-            }
-            cur.push_str(word);
-        }
-        if !cur.is_empty() {
-            out.push(format!("ROW line={}", sanitize_field(&cur)));
-        }
-    }
-    out.truncate(max);
-    out
+    Ok(search::wrap_lines(&body, 78, max))
 }
 
 fn arg_val<'a>(args: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -737,7 +703,7 @@ mod read_tests {
     #[test]
     fn wrapping_respects_the_width_and_line_cap() {
         let text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi";
-        let rows = wrap_lines(text, 20, 3);
+        let rows = search::wrap_lines(text, 20, 3);
         assert!(rows.len() <= 3);
         for r in &rows {
             let line = r.strip_prefix("ROW line=").unwrap();
@@ -747,13 +713,13 @@ mod read_tests {
 
     #[test]
     fn blank_lines_survive_as_paragraph_breaks() {
-        let rows = wrap_lines("one\n\ntwo", 40, 10);
+        let rows = search::wrap_lines("one\n\ntwo", 40, 10);
         assert!(rows.iter().any(|r| r == "ROW line="), "paragraph break lost");
     }
 
     #[test]
     fn a_word_longer_than_the_width_does_not_loop_forever() {
-        let rows = wrap_lines(&"x".repeat(300), 20, 5);
+        let rows = search::wrap_lines(&"x".repeat(300), 20, 5);
         assert!(!rows.is_empty());
         assert!(rows.len() <= 5);
     }

@@ -161,7 +161,7 @@ pub fn draw_home_full(
 
     let gap = 16;
     let tw = (cw - gap * 2) / 3;
-    let ty = tile_top(h);
+    let ty = TILE_TOP;
     let tiles: [(&str, &str); 3] = [
         ("Search", "knowledge + email"),
         ("Capabilities", status),
@@ -240,18 +240,16 @@ pub fn search_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
     (x, 132, cw, 52)
 }
 
-pub(crate) fn tile_top(_h: i32) -> i32 {
-    242
-}
-
+pub(crate) const TILE_TOP: i32 = 242;
 pub(crate) const TILE_H: i32 = 78;
 
 /// Bounding box of home tile `i` (0 = Search, 1 = Capabilities, 2 = Skills).
 pub fn tile_rect(w: i32, h: i32, i: i32) -> Rect {
+    let _ = h;
     let (x0, cw) = home_column(w);
     let gap = 16;
     let tw = (cw - gap * 2) / 3;
-    Rect { x: x0 + (tw + gap) * i, y: tile_top(h), w: tw, h: TILE_H }
+    Rect { x: x0 + (tw + gap) * i, y: TILE_TOP, w: tw, h: TILE_H }
 }
 
 pub fn card_targets(w: i32, h: i32) -> CardTargets {
@@ -331,7 +329,7 @@ mod tests {
     #[test]
     fn tiles_do_not_overlap_the_search_field() {
         let (_, fy, _, fh) = search_rect(1024, 768);
-        assert!(tile_top(768) >= fy + fh, "tiles collide with the field");
+        assert!(TILE_TOP >= fy + fh, "tiles collide with the field");
     }
 
     #[test]
