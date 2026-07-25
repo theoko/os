@@ -202,13 +202,18 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     com2.init();
     let mut line = [0u8; LINE_BUF];
 
-    match ping_bridge(&com2, &mut line) {
-        BridgeStatus::Offline => return SearchPeek::empty(BridgeStatus::Offline, false),
-        BridgeStatus::Online => {}
+    if !caps.allows(crate::caps::Cap::SearchQuery) {
+        // Refuse before probing: a denied cap is denied whether or not a
+        // bridge happens to be listening.
+        let status = ping_bridge(&com2, &mut line);
+        return SearchPeek::empty(status, true);
     }
 
-    if !caps.allows(crate::caps::Cap::SearchQuery) {
-        return SearchPeek::empty(BridgeStatus::Online, true);
+    match ping_bridge(&com2, &mut line) {
+        // No bridge: answer from the index baked into the kernel. Search is the
+        // one connector that needs no host — see `search.rs`.
+        BridgeStatus::Offline => return search_offline(),
+        BridgeStatus::Online => {}
     }
 
     // CALL search.query q=… k=3
@@ -240,9 +245,36 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     peek
 }
 
+/// Top hits from the in-kernel index, used when COM2 does not answer.
+///
+/// Reported as `Offline` so the UI can still say the bridge is down while
+/// showing real results.
+fn search_offline() -> SearchPeek {
+    let mut peek = SearchPeek::empty(BridgeStatus::Offline, false);
+    let mut hits = [crate::search::Hit { doc: 0, score: 0 }; crate::search::MAX_HITS];
+    let n = crate::search::query(OFFLINE_QUERY, &mut hits);
+    for h in hits.iter().take(n.min(peek.hits.len())) {
+        copy_field(&mut peek.hits[peek.count].title, crate::search::DOCS[h.doc].title);
+        peek.count += 1;
+    }
+    peek
+}
+
+/// What the home screen asks for when nothing else was requested.
+const OFFLINE_QUERY: &str = "capability agent bridge";
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn offline_search_still_returns_hits() {
+        // The whole point of the offline tier: useful results with no host.
+        let peek = search_offline();
+        assert!(matches!(peek.status, BridgeStatus::Offline));
+        assert!(!peek.denied);
+        assert!(peek.count > 0, "baked index returned nothing");
+    }
 
     #[test]
     fn parse_row() {

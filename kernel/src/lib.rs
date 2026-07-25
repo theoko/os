@@ -9,6 +9,7 @@ pub mod font;
 pub mod mcp;
 pub mod mouse;
 pub mod pci;
+pub mod search;
 pub mod serial;
 pub mod setup;
 pub mod skills;

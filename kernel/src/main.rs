@@ -110,8 +110,8 @@ unsafe extern "C" fn kmain() -> ! {
                 n += 1;
                 serial_port.write_bytes(&msg[..n]);
             }
-            if let Some(surface) = unsafe {
-                fb::Surface::new(
+            if let Some(screen) = unsafe {
+                fb::Screen::new(
                     fb_info.addr(),
                     fb_info.width(),
                     fb_info.height(),
@@ -124,7 +124,11 @@ unsafe extern "C" fn kmain() -> ! {
                     ),
                 )
             } {
-                ui::draw_home(&surface, &mail, &skill_peek, "");
+                // Everything composes in cached RAM; `present()` is the only
+                // thing that touches video memory.
+                let surface = screen.surface();
+                ui::draw_home(surface, &mail, &skill_peek, "");
+                screen.present();
 
                 // Early peek uses default grants so smoke still exercises COM2
                 // before the setup journey runs (smoke exits before setup).
@@ -135,11 +139,12 @@ unsafe extern "C" fn kmain() -> ! {
                     mcp::BridgeStatus::Offline => serial_port.write_str("mcp: email offline\n"),
                 }
                 serial_port.write_str("skills: builtins ready\n");
-                ui::draw_home(&surface, &mail, &skill_peek, "");
+                ui::draw_home(surface, &mail, &skill_peek, "");
 
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
-                mouse::paint_pointer(&surface, cx, cy);
+                mouse::paint_pointer(surface, cx, cy);
+                screen.present();
                 serial_port.write_str("mouse: pointer painted\n");
 
                 serial::request_qemu_exit(true);
@@ -179,18 +184,19 @@ unsafe extern "C" fn kmain() -> ! {
                     mice.present = true;
                 }
 
-                ui::draw_home(&surface, &mail, &skill_peek, "");
+                ui::draw_home(surface, &mail, &skill_peek, "");
                 let mut cursor = mouse::Cursor::new();
                 let mut x = cx;
                 let mut y = cy;
                 let mut prev_buttons = 0u8;
+                let (mut prev_x, mut prev_y) = (cx, cy);
                 let mut status_buf = [0u8; 72];
                 write_status(&mut status_buf, grants.footer_status());
                 let mut setup = setup::Setup::new();
                 // First boot: run the setup journey before the home screen.
-                cursor.hide(&surface);
-                setup.draw(&surface, &mail, &skill_peek);
-                cursor.show_at(&surface, x, y);
+                cursor.hide(surface);
+                setup.draw(surface, &mail, &skill_peek);
+                cursor.show_at(surface, x, y);
                 serial_port.write_str("ui: setup welcome\n");
 
                 loop {
@@ -227,7 +233,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     mcp::BridgeStatus::Offline => "mcp: bridge still offline\n",
                                 });
                             }
-                            cursor.hide(&surface);
+                            cursor.hide(surface);
                             if setup.is_finished() {
                                 grants = setup.grants();
                                 write_status(&mut status_buf, grants.footer_status());
@@ -237,15 +243,16 @@ unsafe extern "C" fn kmain() -> ! {
                                 serial_port.write_str("\n");
                                 mail = mcp::fetch_mail_peek(grants);
                                 ui::draw_home(
-                                    &surface,
+                                    surface,
                                     &mail,
                                     &skill_peek,
                                     status_str(&status_buf),
                                 );
                             } else {
-                                setup.draw(&surface, &mail, &skill_peek);
+                                setup.draw(surface, &mail, &skill_peek);
                             }
-                            cursor.show_at(&surface, x, y);
+                            cursor.show_at(surface, x, y);
+                            screen.present();
                             moved = false;
                         }
                     } else {
@@ -258,9 +265,9 @@ unsafe extern "C" fn kmain() -> ! {
                                 Some(ui::HomeHit::Cta(ui::CtaId::Ready)) => {
                                     serial_port.write_str("ui: click Ready\n");
                                     setup = setup::Setup::new();
-                                    cursor.hide(&surface);
-                                    setup.draw(&surface, &mail, &skill_peek);
-                                    cursor.show_at(&surface, x, y);
+                                    cursor.hide(surface);
+                                    setup.draw(surface, &mail, &skill_peek);
+                                    cursor.show_at(surface, x, y);
                                     clicked = true;
                                     moved = false;
                                 }
@@ -324,21 +331,27 @@ unsafe extern "C" fn kmain() -> ! {
                                 None => {}
                             }
                             if clicked && setup.is_finished() {
-                                cursor.hide(&surface);
+                                cursor.hide(surface);
                                 ui::draw_home(
-                                    &surface,
+                                    surface,
                                     &mail,
                                     &skill_peek,
                                     status_str(&status_buf),
                                 );
-                                cursor.show_at(&surface, x, y);
+                                cursor.show_at(surface, x, y);
                                 moved = false;
                             }
                         }
                     }
                     prev_buttons = buttons;
                     if moved {
-                        cursor.show_at(&surface, x, y);
+                        cursor.show_at(surface, x, y);
+                        // Blit only the two cursor footprints, not the screen.
+                        const PAD: i32 = 40;
+                        screen.present_rect(prev_x - 2, prev_y - 2, PAD, PAD);
+                        screen.present_rect(x - 2, y - 2, PAD, PAD);
+                        prev_x = x;
+                        prev_y = y;
                     }
                     core::hint::spin_loop();
                 }
