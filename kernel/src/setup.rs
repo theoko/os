@@ -597,3 +597,67 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod layout_tests {
+    use super::*;
+
+    /// Mirrors the constants in `draw_caps` / `row`.
+    fn rows_bottom(n: usize) -> i32 {
+        // header() returns 132 + 76; rows are ROW_H apart with an 8px gap.
+        (132 + 76) + (n as i32) * (ROW_H + 8) - 8
+    }
+
+    /// Mirrors `footer`.
+    fn footer_top(h: i32) -> i32 {
+        h - 150
+    }
+
+    #[test]
+    fn capability_rows_clear_the_footer_at_768() {
+        // Overlapping rows and the Continue pill would misroute clicks — the
+        // exact failure a previous review caught on a short framebuffer.
+        let bottom = rows_bottom(CAPS.len());
+        assert!(
+            bottom < footer_top(768),
+            "{} capability rows reach {bottom}px, footer starts at {}",
+            CAPS.len(),
+            footer_top(768)
+        );
+    }
+
+    #[test]
+    fn skills_rows_also_clear_the_footer() {
+        let bottom = rows_bottom(4); // draw_skills caps the list at 4
+        assert!(bottom < footer_top(768));
+    }
+
+    #[test]
+    fn there_is_headroom_for_one_more_capability() {
+        // Capabilities have grown 3 -> 5 in this session; make the next
+        // addition fail loudly here rather than silently on screen.
+        assert!(
+            rows_bottom(CAPS.len() + 1) < footer_top(768),
+            "adding another capability would collide with the footer"
+        );
+    }
+
+    #[test]
+    fn every_capability_row_is_reachable_by_click() {
+        let mut s = Setup::new();
+        s.step = Step::Capabilities;
+        for i in 0..CAPS.len() {
+            let before = s.caps[i];
+            assert!(s.apply(Action::Row(i)), "row {i} did nothing");
+            assert_ne!(s.caps[i], before, "row {i} did not toggle");
+        }
+    }
+
+    #[test]
+    fn capability_names_and_blurbs_fit_the_column() {
+        for (name, blurb) in CAPS {
+            assert!(BRAND_FACE.width(name, 0) < CONTENT_W - 76, "name hits the switch: {name}");
+            assert!(SMALL_FACE.width(blurb, 0) < CONTENT_W - 76, "blurb hits the switch: {blurb}");
+        }
+    }
+}

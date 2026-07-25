@@ -298,3 +298,43 @@ mod tests {
         assert!(model_path().to_string_lossy().contains("whisper-models"));
     }
 }
+
+#[cfg(test)]
+mod scope_tests {
+    use super::*;
+
+    #[test]
+    fn transcripts_need_their_own_grant_not_the_file_one() {
+        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = env::temp_dir().join(format!("os-audio-scope-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        unsafe { env::set_var("OS_TRANSCRIPT_STORE", dir.join("t.json")) };
+
+        let mut st = Store::default();
+        st.upsert(Transcript {
+            source: "/tmp/call.wav".into(),
+            title: "Xenon Ledger Briefing".into(),
+            text: "the xenon ledger briefing covered settlement".into(),
+            seconds: 10.0,
+            words: 6,
+        });
+        st.save().unwrap();
+
+        // workspace.index granted, audio.transcribe not: must stay hidden.
+        let files_only = crate::search::query_scoped("xenon ledger", 5, None, "tfidf", false, true, false);
+        assert!(
+            !files_only.iter().any(|r| r.contains("Xenon Ledger")),
+            "a recording surfaced under the files grant: {files_only:?}"
+        );
+
+        let with_audio = crate::search::query_scoped("xenon ledger", 5, None, "tfidf", false, false, true);
+        assert!(
+            with_audio.iter().any(|r| r.contains("Xenon Ledger")),
+            "granted search should find the transcript: {with_audio:?}"
+        );
+
+        let _ = fs::remove_dir_all(&dir);
+        unsafe { env::remove_var("OS_TRANSCRIPT_STORE") };
+    }
+}

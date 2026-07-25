@@ -219,18 +219,20 @@ fn sanitize(s: &str) -> String {
 /// `include_files` folds in the user's own indexed documents. Off by default
 /// for the same reason as email: holding `search.query` grants the built-in
 /// corpus, not a personal file tree.
+#[allow(clippy::too_many_arguments)]
 pub fn query_all(
     q: &str,
     k: usize,
     cat: Option<&str>,
     include_email: bool,
     include_files: bool,
+    include_audio: bool,
 ) -> Result<Vec<String>, String> {
     let mut docs = load_docs()?;
     if include_files {
         docs.extend(workspace_docs());
-        // Transcripts ride the same grant as local files: both are the user's
-        // own recorded material.
+    }
+    if include_audio {
         docs.extend(transcript_docs());
     }
     if include_email {
@@ -365,7 +367,7 @@ pub fn query_with(
     backend: &str,
     include_email: bool,
 ) -> Vec<String> {
-    query_scoped(q, k, cat, backend, include_email, false)
+    query_scoped(q, k, cat, backend, include_email, false, false)
 }
 
 pub fn query_scoped(
@@ -375,11 +377,12 @@ pub fn query_scoped(
     backend: &str,
     include_email: bool,
     include_files: bool,
+    include_audio: bool,
 ) -> Vec<String> {
     match backend {
         "mock" => query_mock(q, k),
         "tsearch" => query_tsearch(q, k).unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
-        _ => query_all(q, k, cat, include_email, include_files)
+        _ => query_all(q, k, cat, include_email, include_files, include_audio)
             .unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
     }
 }

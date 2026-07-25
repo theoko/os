@@ -244,6 +244,9 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     if caps.allows(crate::caps::Cap::WorkspaceIndex) {
         com2.write_str(" files=1");
     }
+    if caps.allows(crate::caps::Cap::AudioTranscribe) {
+        com2.write_str(" audio=1");
+    }
     com2.write_str("\n");
 
     let mut peek = SearchPeek::empty(BridgeStatus::Online, false);

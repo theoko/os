@@ -431,10 +431,13 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             // alone cannot reach mail.
             let with_email = matches!(arg_val(args, "email"), Some("1"));
             let with_files = matches!(arg_val(args, "files"), Some("1"));
+            // Recordings have their own grant, so they get their own scope:
+            // enabling workspace.index must not surface transcripts.
+            let with_audio = matches!(arg_val(args, "audio"), Some("1"));
             if q.is_empty() {
                 vec!["ERR search.query missing_q".into()]
             } else {
-                search::query_scoped(q, k, cat, &backends.search, with_email, with_files)
+                search::query_scoped(q, k, cat, &backends.search, with_email, with_files, with_audio)
             }
         }
         _ => vec![format!("ERR {tool} not_found")],

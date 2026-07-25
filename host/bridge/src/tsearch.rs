@@ -249,6 +249,7 @@ impl Index {
         self.terms.is_empty()
     }
 
+    #[allow(dead_code)] // used by the bridge's startup prewarm log
     pub fn term_count(&self) -> usize {
         self.terms.len()
     }

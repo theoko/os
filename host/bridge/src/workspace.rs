@@ -470,8 +470,8 @@ mod consent_tests {
         unsafe { env::set_var("OS_WORKSPACE_INDEX", &ix_path) };
         build(&[dir.clone()]).save().expect("save index");
 
-        let without = crate::search::query_scoped("zygote notary", 5, None, "tfidf", false, false);
-        let with = crate::search::query_scoped("zygote notary", 5, None, "tfidf", false, true);
+        let without = crate::search::query_scoped("zygote notary", 5, None, "tfidf", false, false, false);
+        let with = crate::search::query_scoped("zygote notary", 5, None, "tfidf", false, true, false);
 
         assert!(
             !without.iter().any(|r| r.contains("Zygote Notary")),
