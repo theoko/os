@@ -59,6 +59,7 @@ cleanup() {
 trap cleanup EXIT
 
 OS_MCP_BRIDGE_ADDR="$ADDR" OS_MCP_EMAIL_BACKEND=mock \
+  OS_TRANSCRIBE_BACKEND=mock \
   OS_SKILLS_USER="$SKILLS_DIR" \
   OS_TRANSCRIPT_STORE="$TRANSCRIPT_STORE" \
   OS_GRAPH_PATH="$GRAPH_PATH" \
@@ -121,6 +122,7 @@ export OS_SMOKE_WORK_ROOT="$WORK_ROOT"
 # each behind its wire bit (no live whisper).
 python3 <<'PY'
 import os, socket, sys
+from pathlib import Path
 
 addr = os.environ["OS_SMOKE_ADDR"]
 host, port_s = addr.rsplit(":", 1)
@@ -254,16 +256,19 @@ if "needs_audio_cap" not in denied_audio:
     sys.exit(1)
 print("smoke-bridge: audio.transcribe needs_audio_cap ok")
 
-store = os.environ["OS_SMOKE_TRANSCRIPT_STORE"]
-with open(store, "w", encoding="utf-8") as f:
-    f.write(
-        '{"items":[{"source":"/tmp/os-smoke-rec.wav","title":"Smoke Recording Alpha",'
-        '"text":"smoke recording alpha transcript words for search",'
-        '"seconds":1.0,"words":6}]}'
-    )
-hit = call("CALL search.query q=Smoke-Recording-Alpha k=3 audio=1")
-if "Smoke Recording Alpha" not in hit:
-    print("error: search.query audio=1 missed seeded transcript", file=sys.stderr)
+# Allow path via OS_TRANSCRIBE_BACKEND=mock (no whisper in CI).
+rec_path = "/tmp/os-smoke-rec.wav"
+Path(rec_path).write_bytes(b"RIFF")
+transcribed = call(f"CALL audio.transcribe path={rec_path} audio=1")
+if not transcribed.startswith("OK audio.transcribe"):
+    print("error: audio.transcribe audio=1 must succeed under mock backend", file=sys.stderr)
+    print(transcribed, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: audio.transcribe audio=1 ok")
+
+hit = call("CALL search.query q=os-smoke-rec k=3 audio=1")
+if "os-smoke-rec" not in hit and "smoke recording alpha" not in hit.lower():
+    print("error: search.query audio=1 missed mock transcript", file=sys.stderr)
     print(hit, file=sys.stderr)
     sys.exit(1)
 print("smoke-bridge: search.query audio=1 ok")
@@ -285,7 +290,7 @@ if "needs_audio_cap" not in denied_audio_doc:
     print(denied_audio_doc, file=sys.stderr)
     sys.exit(1)
 opened_audio = call(f"CALL doc.read url={audio_url} lines=8 audio=1")
-if not opened_audio.startswith("OK doc.read") or "smoke recording alpha" not in opened_audio:
+if not opened_audio.startswith("OK doc.read") or "mock transcript" not in opened_audio:
     print("error: doc.read audio=1 must open transcript", file=sys.stderr)
     print(opened_audio, file=sys.stderr)
     sys.exit(1)
@@ -296,8 +301,8 @@ if not forgot_audio.startswith("OK audio.forget"):
     print("error: audio.forget failed", file=sys.stderr)
     print(forgot_audio, file=sys.stderr)
     sys.exit(1)
-miss = call("CALL search.query q=Smoke-Recording-Alpha k=3 audio=1")
-if "Smoke Recording Alpha" in miss:
+miss = call("CALL search.query q=os-smoke-rec k=3 audio=1")
+if "os-smoke-rec" in miss and "audio://" in miss:
     print("error: audio.forget left transcript searchable", file=sys.stderr)
     print(miss, file=sys.stderr)
     sys.exit(1)

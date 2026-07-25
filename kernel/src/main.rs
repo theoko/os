@@ -294,6 +294,13 @@ unsafe extern "C" fn kmain() -> ! {
                                     mcp::build_index("workspace.index");
                                     serial_port.write_str("caps: indexing workspace\n");
                                 }
+                                if grants.allows(caps::Cap::AudioTranscribe) {
+                                    // No host path at setup — Search is the
+                                    // picker (type /path/to.wav, Enter).
+                                    serial_port.write_str(
+                                        "caps: recordings ready - type a media path in Search\n",
+                                    );
+                                }
                                 if grants.allows(caps::Cap::PortalSync) {
                                     // Teddy API (corpus) + a live portal warm so
                                     // Online services is not an empty promise.
@@ -324,10 +331,21 @@ unsafe extern "C" fn kmain() -> ! {
                             match key {
                                 keyboard::Key::Enter => {
                                     if !query.is_empty() {
-                                        sview.run_via(query.as_str(), grants);
-                                        view = screens::View::Search;
-                                        serial_port.write_str("search: ran from home\n");
-                                        dirty = true;
+                                        if try_transcribe_path(
+                                            &mut sview,
+                                            &mut serial_port,
+                                            &mut status_buf,
+                                            grants,
+                                            query.as_str(),
+                                        ) {
+                                            view = screens::View::Search;
+                                            dirty = true;
+                                        } else {
+                                            sview.run_via(query.as_str(), grants);
+                                            view = screens::View::Search;
+                                            serial_port.write_str("search: ran from home\n");
+                                            dirty = true;
+                                        }
                                     }
                                 }
                                 keyboard::Key::Escape => {
@@ -377,8 +395,16 @@ unsafe extern "C" fn kmain() -> ! {
                             match key {
                                 keyboard::Key::Enter => {
                                     if view == screens::View::Search {
-                                        sview.run_via(query.as_str(), grants);
-                                        serial_port.write_str("search: ran\n");
+                                        if !try_transcribe_path(
+                                            &mut sview,
+                                            &mut serial_port,
+                                            &mut status_buf,
+                                            grants,
+                                            query.as_str(),
+                                        ) {
+                                            sview.run_via(query.as_str(), grants);
+                                            serial_port.write_str("search: ran\n");
+                                        }
                                         dirty = true;
                                     }
                                 }
@@ -474,6 +500,10 @@ unsafe extern "C" fn kmain() -> ! {
                                                 serial_port.write_str("caps: granted ");
                                                 serial_port.write_str(cap.name());
                                                 serial_port.write_str(" - ready\n");
+                                            } else if cap == caps::Cap::AudioTranscribe {
+                                                serial_port.write_str(
+                                                    "caps: granted audio.transcribe - type a media path in Search\n",
+                                                );
                                             }
                                         }
                                     }
@@ -728,6 +758,42 @@ fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
         mcp::BridgeStatus::Online => "Answers come from the local index and the host bridge.",
         mcp::BridgeStatus::Offline => "Bridge offline - answering from the index baked into the kernel.",
     }
+}
+
+/// If `q` is a media path and Recordings is on, transcribe then search the stem.
+///
+/// Returns true when the path branch handled Enter (caller must not also
+/// `run_via` the raw path as a keyword query).
+fn try_transcribe_path(
+    sview: &mut searchui::SearchView,
+    serial_port: &serial::Serial,
+    status_buf: &mut [u8; 72],
+    grants: caps::Caps,
+    q: &str,
+) -> bool {
+    if !grants.allows(caps::Cap::AudioTranscribe) || !searchui::is_media_path(q) {
+        return false;
+    }
+    match mcp::transcribe(grants, q) {
+        mcp::TranscribeStatus::Ok => {
+            write_status(status_buf, "Transcribed - searching");
+            serial_port.write_str("audio: transcribed\n");
+            sview.run_via(searchui::media_stem(q), grants);
+        }
+        mcp::TranscribeStatus::Denied => {
+            write_status(status_buf, "Grant Recordings first");
+            serial_port.write_str("audio: need audio.transcribe\n");
+        }
+        mcp::TranscribeStatus::Offline => {
+            write_status(status_buf, "Bridge offline");
+            serial_port.write_str("audio: offline\n");
+        }
+        mcp::TranscribeStatus::Failed => {
+            write_status(status_buf, "Transcribe failed");
+            serial_port.write_str("audio: failed\n");
+        }
+    }
+    true
 }
 
 /// Play a screen entrance: the frame is already composed in the back buffer.

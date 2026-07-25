@@ -68,7 +68,7 @@ wire flags so a forged CALL cannot bypass consent:
 | `email.search` | `email=1` | `email.search`; revoke → `email.forget` |
 | `search.query` | guest refuse | `search.query` (`email=1`/`files=1`/… opt-in) |
 | `workspace.index` | `files=1` | workspace index / file docs; `workspace.forget` |
-| `audio.transcribe` | `audio=1` | transcripts; `audio.forget` |
+| `audio.transcribe` | `audio=1` | `audio.transcribe path=…`; Search path picker; `audio.forget` |
 | `skills.save` | `skills=1` | `skills.save` |
 | `portal.sync` | `portal=1` | `tsearch.sync`, `teddy.*`, `market.*`; `portal.forget` |
 
@@ -82,6 +82,10 @@ Ambient root is forbidden: a missing grant is a hard deny.
 | `OS_MCP_EMAIL_BACKEND=gog` | `gog gmail search -j --results-only …` via keyring |
 | `OS_MCP_SEARCH_BACKEND=tfidf` (default) | Curated `search/corpus.json` (tSearch-style) |
 | `OS_MCP_SEARCH_BACKEND=mock` / `tsearch` | Demo rows / live tsearch-revival |
+| `OS_TRANSCRIBE_BACKEND=mock` | Deterministic transcript text (CI; no whisper) |
+
+Guest Search: with Recordings on, Enter on an absolute media path
+(`/…/*.wav` and friends) calls `audio.transcribe` then searches the stem.
 
 ## Bridge API
 

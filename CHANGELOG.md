@@ -1,8 +1,20 @@
 ---
-version: 0.9.14
+version: 0.9.15
 ---
 
 # Changelog
+
+## 0.9.15 — 2026-07-25
+
+Recordings path picker on Search + mock transcribe for CI:
+
+- Guest `mcp::transcribe` sends `CALL audio.transcribe … audio=1`; cap denial
+  never opens COM2. Search/home Enter on an absolute media path runs it, then
+  searches the file stem.
+- Grant/setup serial notes that Search is the path picker (no warm without a
+  path). Field placeholder mentions `/path.wav`.
+- Bridge `OS_TRANSCRIBE_BACKEND=mock` returns deterministic text without
+  whisper; smoke exercises the allow path end-to-end.
 
 ## 0.9.14 — 2026-07-25
 

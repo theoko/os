@@ -440,6 +440,65 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
     }
 }
 
+/// Outcome of a guest `audio.transcribe` attempt.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TranscribeStatus {
+    /// `Cap::AudioTranscribe` was off — never opened COM2.
+    Denied,
+    Offline,
+    Ok,
+    /// Bridge answered with ERR (missing file, not media, whisper, …).
+    Failed,
+}
+
+/// Ask the bridge to transcribe a host media path when Recordings is on.
+///
+/// Cap refusal happens before any serial I/O so host unit tests stay safe.
+/// The path must already look like media (`searchui::is_media_path`); the
+/// bridge still re-checks extension and existence.
+pub fn transcribe(caps: crate::caps::Caps, path: &str) -> TranscribeStatus {
+    if !caps.allows(crate::caps::Cap::AudioTranscribe) {
+        return TranscribeStatus::Denied;
+    }
+    if path.is_empty() || path.contains(' ') || path.contains('|') || path.contains('\n') {
+        return TranscribeStatus::Failed;
+    }
+
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+
+    match ping_bridge(&com2, &mut line) {
+        BridgeStatus::Offline => return TranscribeStatus::Offline,
+        BridgeStatus::Online => {}
+    }
+
+    com2.write_str("CALL audio.transcribe path=");
+    com2.write_str(path);
+    com2.write_str(" audio=1\n");
+
+    let mut status = TranscribeStatus::Offline;
+    for _ in 0..16 {
+        let Some(n) = com2.read_line(&mut line, TIMEOUT_REPLY) else {
+            break;
+        };
+        let resp = str_prefix(&line[..n]);
+        if resp.starts_with("OK audio.transcribe") {
+            status = TranscribeStatus::Ok;
+        } else if resp.contains("needs_audio_cap") {
+            status = TranscribeStatus::Denied;
+            break;
+        } else if resp.starts_with("ERR ") {
+            status = TranscribeStatus::Failed;
+            break;
+        }
+        if resp == "END" {
+            break;
+        }
+    }
+    status
+}
+
 /// Outcome of a guest `skills.save` attempt.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SaveSkillStatus {
@@ -893,6 +952,18 @@ mod tests {
             SaveSkillStatus::Denied
         );
         assert!(!caps.allows(Cap::SkillsSave));
+    }
+
+    #[test]
+    fn transcribe_refuses_without_opening_com2() {
+        use crate::caps::{Cap, Caps};
+        let mut caps = Caps::none();
+        caps.set(Cap::WorkspaceIndex, true);
+        assert_eq!(
+            transcribe(caps, "/tmp/demo.wav"),
+            TranscribeStatus::Denied
+        );
+        assert!(!caps.allows(Cap::AudioTranscribe));
     }
 
     #[test]

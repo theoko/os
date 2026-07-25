@@ -80,12 +80,19 @@ fn duration_secs(path: &Path) -> f64 {
 }
 
 /// Transcribe `path`. Returns the transcript without storing it.
+///
+/// `OS_TRANSCRIBE_BACKEND=mock` skips ffmpeg/whisper and returns deterministic
+/// text so CI can exercise the allow path without a model cache. Live runs
+/// leave the env unset (or set anything other than `mock`).
 pub fn transcribe(path: &Path) -> Result<Transcript, String> {
     if !path.is_file() {
         return Err(format!("no such file: {}", path.display()));
     }
     if !is_media(path) {
         return Err("not an audio or video file".into());
+    }
+    if env::var("OS_TRANSCRIBE_BACKEND").as_deref() == Ok("mock") {
+        return Ok(mock_transcript(path));
     }
     let model = model_path();
     if !model.is_file() {
@@ -147,6 +154,24 @@ pub fn transcribe(path: &Path) -> Result<Transcript, String> {
         seconds: duration_secs(path),
         text,
     })
+}
+
+/// Deterministic transcript for CI (`OS_TRANSCRIBE_BACKEND=mock`).
+fn mock_transcript(path: &Path) -> Transcript {
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("recording");
+    let text = format!(
+        "mock transcript words for {stem} smoke recording alpha searchable"
+    );
+    Transcript {
+        source: path.to_string_lossy().to_string(),
+        title: title_for(path, &text),
+        words: text.split_whitespace().count(),
+        seconds: 1.0,
+        text,
+    }
 }
 
 /// A readable title: the first clause of speech, falling back to the filename.
@@ -237,6 +262,23 @@ mod tests {
         fs::write(&p, "not audio").unwrap();
         let e = transcribe(&p).unwrap_err();
         assert!(e.contains("not an audio"), "{e}");
+        let _ = fs::remove_file(&p);
+    }
+
+    #[test]
+    fn mock_backend_transcribes_without_whisper() {
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let p = env::temp_dir().join(format!("os-tr-mock-{}.wav", std::process::id()));
+        fs::write(&p, b"RIFF").unwrap();
+        unsafe {
+            env::set_var("OS_TRANSCRIBE_BACKEND", "mock");
+        }
+        let t = transcribe(&p).expect("mock");
+        assert!(t.text.contains("mock transcript"), "{}", t.text);
+        assert!(t.source.ends_with(".wav"), "{}", t.source);
+        unsafe {
+            env::remove_var("OS_TRANSCRIBE_BACKEND");
+        }
         let _ = fs::remove_file(&p);
     }
 

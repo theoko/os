@@ -15,6 +15,56 @@ use crate::ui::theme;
 /// Longest query we accept. Comfortably wider than the field renders.
 pub const QUERY_MAX: usize = 64;
 
+/// Host media extensions the Search field may send to `audio.transcribe`.
+/// Keep in sync with `host/bridge` `MEDIA_EXTS` (ASCII, lowercase).
+const MEDIA_EXTS: &[&str] = &[
+    "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aiff", "mp4", "mov", "mkv",
+    "webm", "avi",
+];
+
+/// True when `q` looks like an absolute host media path (no spaces).
+///
+/// Search Enter uses this to call `audio.transcribe` instead of `search.query`
+/// when Recordings is granted — the field is the path picker.
+pub fn is_media_path(q: &str) -> bool {
+    let q = q.trim();
+    if q.len() < 3 || q.len() > QUERY_MAX {
+        return false;
+    }
+    if !q.starts_with('/') || q.contains(' ') || q.contains('|') {
+        return false;
+    }
+    let Some(dot) = q.rfind('.') else {
+        return false;
+    };
+    if dot == 0 || dot + 1 >= q.len() {
+        return false;
+    }
+    let ext = &q[dot + 1..];
+    let mut buf = [0u8; 8];
+    if ext.is_empty() || ext.len() > buf.len() {
+        return false;
+    }
+    for (i, b) in ext.bytes().enumerate() {
+        if !b.is_ascii_alphabetic() {
+            return false;
+        }
+        buf[i] = b.to_ascii_lowercase();
+    }
+    let lower = core::str::from_utf8(&buf[..ext.len()]).unwrap_or("");
+    MEDIA_EXTS.contains(&lower)
+}
+
+/// File stem of a media path, for a follow-up search after transcribe.
+pub fn media_stem(q: &str) -> &str {
+    let q = q.trim();
+    let name = q.rsplit('/').next().unwrap_or(q);
+    match name.rfind('.') {
+        Some(i) if i > 0 => &name[..i],
+        _ => name,
+    }
+}
+
 /// A rendered result row.
 ///
 /// Owns its text: bridge results are parsed out of a COM2 line buffer that is
@@ -256,7 +306,7 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
     let tx = fx + 18;
     let base = fy + (fh - BODY_FACE.px) / 2 + BODY_FACE.baseline();
     if query.is_empty() {
-        fb.draw_text(tx, base, "Type a query, then press Enter", &BODY_FACE, 0, theme::MUTED);
+        fb.draw_text(tx, base, "Type a query or /path.wav", &BODY_FACE, 0, theme::MUTED);
     } else {
         fb.draw_text(tx, base, query, &BODY_FACE, 0, theme::INK);
     }
@@ -299,6 +349,16 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_paths_are_recognised() {
+        assert!(is_media_path("/tmp/rec.wav"));
+        assert!(is_media_path("/Users/a/Desktop/note.MP3"));
+        assert!(!is_media_path("rec.wav"), "must be absolute");
+        assert!(!is_media_path("/tmp/notes.md"));
+        assert!(!is_media_path("/tmp/has space.wav"));
+        assert_eq!(media_stem("/tmp/os-smoke-rec.wav"), "os-smoke-rec");
+    }
 
     #[test]
     fn idle_view_reports_nothing_searched() {

@@ -41,7 +41,9 @@ Guest Search empty-state names the next missing grant in order: workspace →
 email → audio. The home Search tile subtitle lists `docs` / `mail` / `files` /
 `online` / `audio` from current caps. Opening a hit uses `doc.read` with the
 matching wire bit; curated `os://` bodies need none. Morning `plan_act` notes
-Your files / Recordings when those grants are on (open via Search).
+Your files / Recordings when those grants are on (open via Search). With
+Recordings on, typing an absolute media path and pressing Enter runs
+`audio.transcribe` (host path picker) before the usual query.
 
 ## Host backends
 
