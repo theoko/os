@@ -278,7 +278,7 @@ pub fn build_index(tool: &str) -> BridgeStatus {
     com2.write_str("CALL ");
     com2.write_str(tool);
     // The tool checks the same flag search.query does.
-    com2.write_str(" files=1 audio=1\n");
+    com2.write_str(" files=1 audio=1 portal=1\n");
     // Indexing walks the disk, so allow a generous first read.
     for _ in 0..12 {
         let Some(n) = com2.read_line(&mut line, TIMEOUT_REPLY) else {

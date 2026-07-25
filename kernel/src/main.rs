@@ -418,10 +418,14 @@ unsafe extern "C" fn kmain() -> ! {
                                             Some("workspace.index"),
                                         ),
                                         (caps::Cap::AudioTranscribe, "audio.forget", None),
+                                        // Granting the portal grant also pulls
+                                        // the corpus, or the switch is on with
+                                        // nothing behind it.
+                                        (caps::Cap::PortalSync, "", Some("tsearch.sync")),
                                     ] {
                                         let was = before.allows(cap);
                                         let now = grants.allows(cap);
-                                        if was && !now {
+                                        if was && !now && !forget_tool.is_empty() {
                                             mcp::forget(forget_tool);
                                             serial_port.write_str("caps: revoked ");
                                             serial_port.write_str(cap.name());

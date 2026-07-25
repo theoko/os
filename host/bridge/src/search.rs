@@ -220,6 +220,7 @@ fn sanitize(s: &str) -> String {
 /// for the same reason as email: holding `search.query` grants the built-in
 /// corpus, not a personal file tree.
 #[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
 pub fn query_all(
     q: &str,
     k: usize,
@@ -227,6 +228,7 @@ pub fn query_all(
     include_email: bool,
     include_files: bool,
     include_audio: bool,
+    include_portal: bool,
 ) -> Result<Vec<String>, String> {
     let mut docs = load_docs()?;
     if include_files {
@@ -241,8 +243,10 @@ pub fn query_all(
     let mut hits = search_tfidf(&docs, q, k, cat);
     // The big corpus is scored from its prebuilt index, then merged. Scoring it
     // inline would re-tokenise 12k documents on every keystroke.
+    // Portals are the only source that leaves this machine, so they need the
+    // grant that says so.
     let teddy = crate::tsearch::index();
-    if !teddy.is_empty() && cat.is_none() {
+    if include_portal && !teddy.is_empty() && cat.is_none() {
         let tdocs = crate::tsearch::docs();
         for (score, i) in teddy.search(q, k) {
             docs.push(Doc {
@@ -361,6 +365,7 @@ print(json.dumps(hits))
 }
 
 
+#[allow(clippy::too_many_arguments)]
 pub fn query_scoped(
     q: &str,
     k: usize,
@@ -369,11 +374,12 @@ pub fn query_scoped(
     include_email: bool,
     include_files: bool,
     include_audio: bool,
+    include_portal: bool,
 ) -> Vec<String> {
     match backend {
         "mock" => query_mock(q, k),
         "tsearch" => query_tsearch(q, k).unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
-        _ => query_all(q, k, cat, include_email, include_files, include_audio)
+        _ => query_all(q, k, cat, include_email, include_files, include_audio, include_portal)
             .unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
     }
 }
