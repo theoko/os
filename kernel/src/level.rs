@@ -37,16 +37,16 @@ impl Level {
     /// Home search-field placeholder.
     pub const fn home_search_placeholder(self) -> &'static str {
         match self {
-            Self::Guided => "Search the knowledge base",
-            Self::Advanced => "query or /path.wav",
+            Self::Guided => "What do you want to work on?",
+            Self::Advanced => "goal, query, or /path.wav",
         }
     }
 
     /// Hint under the home search field.
     pub const fn home_search_hint(self) -> &'static str {
         match self {
-            Self::Guided => "Type a query and press Enter. Works with the bridge offline.",
-            Self::Advanced => "Enter to search. Media path + Recordings to transcribe.",
+            Self::Guided => "Enter runs an agent Brief under your grants.",
+            Self::Advanced => "Enter: plan/act Brief. /path.wav with Recordings.",
         }
     }
 
