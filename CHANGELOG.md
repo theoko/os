@@ -1,8 +1,33 @@
 ---
-version: 0.7.7
+version: 0.8.0
 ---
 
 # Changelog
+
+## 0.8.0 — 2026-07-25
+
+- Offline search tier: `build.rs` bakes `search/corpus.json` into a static
+  inverted index (sorted vocabulary + postings) with every weight precomputed
+  as fixed point — idf and length-normalised tf in Q16, PageRank in Q10 —
+  because the kernel never enables the FPU. `mcp.rs` falls back to it when COM2
+  doesn't answer, still reporting the bridge as offline rather than pretending.
+  Email stays on the bridge: in-kernel Gmail would need TCP/TLS/X.509 in
+  `no_std` plus OAuth tokens in the ISO.
+- Email knowledge graph: messages from `email.search` fold into a
+  `sender -> message` graph, PageRanked, searchable via `search.query`. Stored
+  under Application Support beside saved skills — never the repo, since the
+  corpus is compiled into the ISO. Bodies are not stored, only sender/subject/
+  snippet.
+- Capability gate on email content: caps are enforced guest-side, so merging
+  mail into `search.query` would have let a guest holding only `search.query`
+  read mail the user declined at setup. Email is opt-in per call (`email=1`),
+  off by default; the guest asks only when `EmailSearch` was granted. Verified
+  over the wire, not just in unit tests.
+- Repaint: `fb::Screen` composes into a `.bss` back buffer and blits once.
+  Drawing straight into video memory meant ~786k *uncached* MMIO writes per
+  full-screen clear plus an MMIO read-modify-write per anti-aliased pixel —
+  the flash and the crawl on every click. Cursor motion blits only the two
+  cursor footprints.
 
 ## 0.7.7 — 2026-07-25
 
