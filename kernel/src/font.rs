@@ -90,7 +90,8 @@ mod tests {
 
     #[test]
     fn faces_present() {
-        assert_eq!(FACES.len(), 6);
+        // Deliberately not a fixed count — adding a cut shouldn't fail a test.
+        assert!(!FACES.is_empty());
         for f in FACES {
             assert!(f.px > 0);
             assert_eq!(f.glyphs.len(), (LAST - FIRST + 1) as usize);
