@@ -98,6 +98,12 @@ pub fn write16(bus: u8, slot: u8, func: u8, offset: u8, val: u16) {
     let mut v = read32(bus, slot, func, aligned);
     v &= !(0xFFFF << shift);
     v |= (val as u32) << shift;
+    // The status register (0x06) is RW1C: writing back the 1s we just read
+    // would clear them. When updating the command register, write 0s to the
+    // status half instead (0s are a no-op for RW1C bits).
+    if aligned == 0x04 && shift == 0 {
+        v &= 0x0000_FFFF;
+    }
     write32(bus, slot, func, aligned, v);
 }
 

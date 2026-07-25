@@ -115,16 +115,21 @@ fn search_tfidf(docs: &[Doc], query: &str, k: usize, cat: Option<&str>) -> Vec<(
 fn snip(body: &str, query: &str) -> String {
     let q = fold_tok(query);
     let lower = body.to_lowercase();
+    // `find` returns a byte offset into `lower`; that only maps back onto
+    // `body` when lowercasing didn't change byte lengths. Otherwise anchor at
+    // the start rather than slicing at a wrong (possibly non-boundary) offset.
     let mut best = 0usize;
-    for term in &q {
-        if let Some(i) = lower.find(term) {
-            best = i;
-            break;
+    if lower.len() == body.len() {
+        for term in &q {
+            if let Some(i) = lower.find(term) {
+                best = i;
+                break;
+            }
         }
     }
-    let start = best.saturating_sub(40);
-    let end = (best + 80).min(body.len());
-    let mut s: String = body.chars().skip(start).take(end.saturating_sub(start)).collect();
+    let start = floor_char_boundary(body, best.saturating_sub(40));
+    let end = floor_char_boundary(body, (best + 80).min(body.len()));
+    let mut s = body[start..end].to_string();
     if start > 0 {
         s = format!("…{s}");
     }
@@ -132,6 +137,15 @@ fn snip(body: &str, query: &str) -> String {
         s.push('…');
     }
     s.replace('|', " ").chars().take(90).collect()
+}
+
+/// Largest char boundary <= i (stable substitute for `str::floor_char_boundary`).
+fn floor_char_boundary(s: &str, mut i: usize) -> usize {
+    i = i.min(s.len());
+    while i > 0 && !s.is_char_boundary(i) {
+        i -= 1;
+    }
+    i
 }
 
 fn sanitize(s: &str) -> String {
@@ -187,20 +201,25 @@ pub fn query_tsearch(q: &str, k: usize) -> Result<Vec<String>, String> {
     if !script.is_file() {
         return Err("tsearch_mcp.py missing".into());
     }
-    // Tiny driver: import t_search via python -c
+    // Tiny driver: import t_search via python -c. The query and data path go
+    // through env vars — Rust's {:?} escaping is not valid Python for
+    // non-ASCII/control chars, and embedding untrusted text in code invites
+    // injection.
     let py = format!(
         r#"
 import json, os, sys
-sys.path.insert(0, {data:?})
-os.environ["TSEARCH_DATA"] = {data:?}
+data = os.environ["TSEARCH_DATA"]
+sys.path.insert(0, data)
 import tsearch_mcp as m
 g = m.Graph()
-hits = m.t_search(g, {q:?}, k={k})
+hits = m.t_search(g, os.environ["TSEARCH_QUERY"], k={k})
 print(json.dumps(hits))
 "#,
     );
     let output = Command::new("python3")
         .args(["-c", &py])
+        .env("TSEARCH_DATA", &data)
+        .env("TSEARCH_QUERY", q)
         .output()
         .map_err(|e| e.to_string())?;
     if !output.status.success() {

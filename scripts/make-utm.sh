@@ -14,9 +14,40 @@ cd "$ROOT"
 VM_NAME="${UTM_VM_NAME:-os}"
 ISO="${IMAGE_NAME:-os}.iso"
 START="${UTM_START:-0}"
+BRIDGE="${UTM_BRIDGE:-0}"
+BRIDGE_ADDR="${OS_MCP_BRIDGE_ADDR:-127.0.0.1:7420}"
 UTM_DOCS="$HOME/Library/Containers/com.utmapp.UTM/Data/Documents"
 UTM_DIR="$UTM_DOCS/${VM_NAME}.utm"
 STAGED="$UTM_DOCS/Public/os-boot.iso"
+
+# VM_NAME and paths are interpolated into AppleScript string literals below; a
+# quote or backslash would break (or inject into) the script, so constrain the
+# name and escape the path.
+if [[ ! "$VM_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
+  echo "error: UTM_VM_NAME must match [A-Za-z0-9._-]+ (got: $VM_NAME)" >&2
+  exit 1
+fi
+as_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
+STAGED_AS="$(as_escape "$STAGED")"
+
+# Quit/reopen UTM with real synchronization — fixed sleeps race a slow quit and
+# the AppleScript bridge coming back up.
+utm_quit() {
+  osascript -e 'tell application "UTM" to quit' >/dev/null 2>&1 || true
+  for _ in $(seq 1 40); do
+    pgrep -x UTM >/dev/null 2>&1 || return 0
+    sleep 0.25
+  done
+}
+utm_open() {
+  open -a UTM
+  for _ in $(seq 1 40); do
+    if osascript -e 'tell application "UTM" to count virtual machines' >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.25
+  done
+}
 
 if [[ ! -f "$ISO" ]]; then
   echo "error: $ISO missing — run 'make iso' first" >&2
@@ -58,8 +89,7 @@ end tell
 EOF
 elif [[ -n "$listed" ]]; then
   echo "scrubbing ghost UTM library entries named '$VM_NAME'"
-  osascript -e 'tell application "UTM" to quit' >/dev/null 2>&1 || true
-  sleep 2
+  utm_quit
   UTM_VM_NAME="$VM_NAME" python3 <<'PY'
 import os, plistlib
 from pathlib import Path
@@ -77,10 +107,9 @@ if changed:
     p.write_bytes(plistlib.dumps(cfg, fmt=plistlib.FMT_XML))
     print("purged ghost entries from", p)
 PY
-  open -a UTM
-  sleep 3
+  utm_open
   osascript <<EOF
-set isoPath to POSIX file "$STAGED"
+set isoPath to POSIX file "$STAGED_AS"
 tell application "UTM"
   activate
   make new virtual machine with properties {backend:qemu, configuration:{name:"$VM_NAME", architecture:"x86_64", memory:1024, hypervisor:false, uefi:true, displays:{{hardware:"virtio-vga"}}, drives:{{removable:true, source:isoPath}}}}
@@ -88,7 +117,7 @@ end tell
 EOF
 else
   osascript <<EOF
-set isoPath to POSIX file "$STAGED"
+set isoPath to POSIX file "$STAGED_AS"
 tell application "UTM"
   activate
   make new virtual machine with properties {backend:qemu, configuration:{name:"$VM_NAME", architecture:"x86_64", memory:1024, hypervisor:false, uefi:true, displays:{{hardware:"virtio-vga"}}, drives:{{removable:true, source:isoPath}}}}
@@ -117,7 +146,7 @@ EOF
 mkdir -p "$UTM_DIR/Data"
 cp -f "$STAGED" "$UTM_DIR/Data/os.iso"
 
-UTM_DIR="$UTM_DIR" python3 <<'PY'
+UTM_DIR="$UTM_DIR" UTM_BRIDGE="$BRIDGE" OS_MCP_BRIDGE_ADDR="$BRIDGE_ADDR" python3 <<'PY'
 import plistlib, uuid, os
 from pathlib import Path
 p = Path(os.environ["UTM_DIR"]) / "config.plist"
@@ -159,6 +188,20 @@ EXTRA_ARGS = [
 # Set outright rather than merging token-by-token: EXTRA_ARGS repeats "-device",
 # so a per-token dedup would collapse the two devices into one.
 cfg.setdefault("QEMU", {})["AdditionalArguments"] = list(EXTRA_ARGS)
+# COM1 = PTTY (utmctl attach). Optional COM2 = TCP client → host MCP bridge.
+# Use UTM's Serial device (not AdditionalArguments -unix): TcpClient is a
+# first-class mode and is allowed through the sandbox.
+serial = [{"Mode": "Ptty", "Target": "Auto"}]
+if os.environ.get("UTM_BRIDGE", "0") == "1":
+    addr = os.environ.get("OS_MCP_BRIDGE_ADDR", "127.0.0.1:7420")
+    host, _, port = addr.rpartition(":")
+    serial.append({
+        "Mode": "TcpClient",
+        "Target": "Auto",
+        "TcpHostAddress": host or "127.0.0.1",
+        "TcpPort": int(port or "7420"),
+    })
+cfg["Serial"] = serial
 cfg.setdefault("System", {})["MemorySize"] = 1024
 cfg["Display"] = [{
     "Hardware": "virtio-vga",
@@ -169,18 +212,21 @@ cfg["Display"] = [{
 }]
 p.write_bytes(plistlib.dumps(cfg, fmt=plistlib.FMT_XML))
 print("bundled", Path(os.environ["UTM_DIR"]) / "Data" / "os.iso")
+if os.environ.get("UTM_BRIDGE", "0") == "1":
+    print("com2 TcpClient ->", os.environ.get("OS_MCP_BRIDGE_ADDR", "127.0.0.1:7420"))
 PY
 
 # Reload so UTM picks up ImageName (in-memory config would ignore our plist edit).
-osascript -e 'tell application "UTM" to quit' >/dev/null 2>&1 || true
-sleep 2
-open -a UTM
-sleep 3
+utm_quit
+utm_open
 
 if [[ "$START" == "1" ]]; then
   osascript -e "tell application \"UTM\" to start virtual machine named \"$VM_NAME\""
 fi
 
 echo "utm ok: $(du -h "$UTM_DIR/Data/os.iso" | awk '{print $1}') ISO in VM bundle"
+if [[ "$BRIDGE" == "1" ]]; then
+  echo ">>> COM2 TcpClient → MCP bridge at $BRIDGE_ADDR"
+fi
 echo ">>> Double-click 'os' in the sidebar to open the guest display window."
 echo ">>> The black rectangle in the library list is only a thumbnail — not the GUI."

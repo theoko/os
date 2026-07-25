@@ -4,6 +4,15 @@ use crate::serial::Serial;
 
 const TIMEOUT_PING: u32 = 80_000;
 const TIMEOUT_LINE: u32 = 200_000;
+/// First reply line after a CALL. The gog backend shells out to an external
+/// process plus a Gmail HTTPS round-trip before writing anything, so this must
+/// absorb seconds of latency — TIMEOUT_LINE only covers intra-reply gaps.
+/// Only reached once PING has succeeded, so an offline bridge never waits.
+const TIMEOUT_REPLY: u32 = 40_000_000;
+
+/// Longest protocol line the bridge can legally send: two 90-char fields at up
+/// to 4 UTF-8 bytes each plus framing (~735 bytes) fits with headroom.
+const LINE_BUF: usize = 768;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum BridgeStatus {
@@ -36,11 +45,11 @@ impl MailPeek {
     }
 
     pub fn row_from(&self, i: usize) -> &str {
-        core::str::from_utf8(trim_buf(&self.rows[i].from)).unwrap_or("")
+        str_prefix(trim_buf(&self.rows[i].from))
     }
 
     pub fn row_subj(&self, i: usize) -> &str {
-        core::str::from_utf8(trim_buf(&self.rows[i].subj)).unwrap_or("")
+        str_prefix(trim_buf(&self.rows[i].subj))
     }
 }
 
@@ -69,7 +78,7 @@ impl SearchPeek {
     }
 
     pub fn title_at(&self, i: usize) -> &str {
-        core::str::from_utf8(trim_buf(&self.hits[i].title)).unwrap_or("")
+        str_prefix(trim_buf(&self.hits[i].title))
     }
 }
 
@@ -78,10 +87,24 @@ fn trim_buf(buf: &[u8]) -> &[u8] {
     &buf[..n]
 }
 
+/// Decode the longest valid UTF-8 prefix — a line cut mid-character (buffer
+/// truncation) must degrade to a shorter string, not vanish entirely.
+fn str_prefix(bytes: &[u8]) -> &str {
+    match core::str::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(e) => core::str::from_utf8(&bytes[..e.valid_up_to()]).unwrap_or(""),
+    }
+}
+
 fn copy_field(dst: &mut [u8], src: &str) {
     dst.fill(0);
     let bytes = src.as_bytes();
-    let n = bytes.len().min(dst.len());
+    let mut n = bytes.len().min(dst.len());
+    // Never cut mid-character: a torn tail would make the whole field
+    // undecodable when read back.
+    while n > 0 && !src.is_char_boundary(n) {
+        n -= 1;
+    }
     dst[..n].copy_from_slice(&bytes[..n]);
 }
 
@@ -111,11 +134,11 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
     }
 
     com2.write_str("PING\n");
-    let mut line = [0u8; 160];
+    let mut line = [0u8; LINE_BUF];
     let Some(n) = com2.read_line(&mut line, TIMEOUT_PING) else {
         return MailPeek::empty(BridgeStatus::Offline);
     };
-    let resp = core::str::from_utf8(&line[..n]).unwrap_or("");
+    let resp = str_prefix(&line[..n]);
     if !resp.starts_with("OK pong") {
         return MailPeek::empty(BridgeStatus::Offline);
     }
@@ -129,11 +152,14 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
 
     let mut peek = MailPeek::empty(BridgeStatus::Online);
 
+    let mut first = true;
     for _ in 0..16 {
-        let Some(n) = com2.read_line(&mut line, TIMEOUT_LINE) else {
+        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
+        let Some(n) = com2.read_line(&mut line, timeout) else {
             break;
         };
-        let resp = core::str::from_utf8(&line[..n]).unwrap_or("");
+        first = false;
+        let resp = str_prefix(&line[..n]);
         if resp.starts_with("ERR ") || resp == "END" {
             break;
         }
@@ -162,7 +188,7 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
     let Some(n) = com2.read_line(line, TIMEOUT_PING) else {
         return BridgeStatus::Offline;
     };
-    let resp = core::str::from_utf8(&line[..n]).unwrap_or("");
+    let resp = str_prefix(&line[..n]);
     if resp.starts_with("OK pong") {
         BridgeStatus::Online
     } else {
@@ -174,7 +200,7 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
 pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     let com2 = Serial::com2();
     com2.init();
-    let mut line = [0u8; 200];
+    let mut line = [0u8; LINE_BUF];
 
     match ping_bridge(&com2, &mut line) {
         BridgeStatus::Offline => return SearchPeek::empty(BridgeStatus::Offline, false),
@@ -191,11 +217,14 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     com2.write_str(" k=3\n");
 
     let mut peek = SearchPeek::empty(BridgeStatus::Online, false);
+    let mut first = true;
     for _ in 0..16 {
-        let Some(n) = com2.read_line(&mut line, TIMEOUT_LINE) else {
+        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
+        let Some(n) = com2.read_line(&mut line, timeout) else {
             break;
         };
-        let resp = core::str::from_utf8(&line[..n]).unwrap_or("");
+        first = false;
+        let resp = str_prefix(&line[..n]);
         if resp.starts_with("ERR ") || resp == "END" {
             break;
         }

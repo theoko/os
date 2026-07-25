@@ -36,7 +36,7 @@ endif
 RUSTUP_BIN := $(patsubst %/,%,$(dir $(CARGO)))
 WITH_RUST := PATH="$(RUSTUP_BIN):$$PATH"
 
-.PHONY: all build kernel iso bridge bridge-run run run-bridged utm utm-run test test-host smoke smoke-bridge clean distclean
+.PHONY: all build kernel iso bridge bridge-run run run-bridged utm utm-run utm-bridged test test-host smoke smoke-bridge clean distclean
 
 all: build
 
@@ -91,6 +91,13 @@ utm-run: iso
 	chmod +x scripts/make-utm.sh
 	UTM_START=1 ./scripts/make-utm.sh
 
+# Host bridge on TCP :7420; UTM COM2 = Serial TcpClient to that address.
+utm-bridged: iso bridge
+	chmod +x scripts/ensure-bridge.sh scripts/make-utm.sh
+	@kill `cat .bridge.pid 2>/dev/null` 2>/dev/null || true; rm -f .bridge.pid
+	OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) ./scripts/ensure-bridge.sh
+	UTM_BRIDGE=1 UTM_START=1 OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) ./scripts/make-utm.sh
+
 test: test-host smoke smoke-bridge
 
 test-host:
@@ -98,11 +105,21 @@ test-host:
 	$(WITH_RUST) $(CARGO) test -p os-mcp-bridge
 
 smoke: iso
+	chmod +x scripts/smoke-qemu.sh
 	./scripts/smoke-qemu.sh
 
 smoke-bridge: iso bridge
 	chmod +x scripts/smoke-bridge.sh
 	./scripts/smoke-bridge.sh
+
+# An existing checkout is never auto-refreshed, so at least surface a
+# LIMINE_BRANCH mismatch instead of silently building with the old bootloader.
+LIMINE_HAVE := $(shell git -C limine rev-parse --abbrev-ref HEAD 2>/dev/null)
+ifneq ($(LIMINE_HAVE),)
+ifneq ($(LIMINE_HAVE),$(LIMINE_BRANCH))
+$(warning limine checkout is on '$(LIMINE_HAVE)' but LIMINE_BRANCH is '$(LIMINE_BRANCH)' — run 'rm -rf limine' to re-clone)
+endif
+endif
 
 limine/limine:
 	rm -rf limine

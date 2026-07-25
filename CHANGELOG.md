@@ -1,8 +1,47 @@
 ---
-version: 0.7.5
+version: 0.7.7
 ---
 
 # Changelog
+
+## 0.7.7 — 2026-07-25
+
+Review hardening: 29 confirmed findings from a multi-agent code review
+(adversarially verified), all fixed.
+
+- Bridge: bounded line/body reads (64KB/1MB) so a hostile client can't OOM the
+  process; one-line `skills.save … desc=` no longer desyncs the LINE…END
+  protocol; `key=value` args may contain spaces per the wire doc; disconnect
+  mid-body no longer writes a truncated skill; skill names sanitized in ROW
+  output; `skills.get` preserves bodies verbatim (no 120-char cut / `|` swap);
+  gog query passed after `--`; tsearch query via env not code injection;
+  `snip()` byte/char offset fix.
+- Kernel MCP: first-reply timeout raised for the slow gog backend (empty-inbox
+  silent failure); 768-byte line buffer fits max legal ROW; UTF-8-safe field
+  truncation and valid-prefix decode.
+- Serial: `read_line` drains overlong lines through the terminator and drops
+  mid-line timeouts instead of replaying tails / partials as complete lines.
+- Drivers: cursor save box covers the keyline (no more white trails); PS/2
+  9-bit delta signs + overflow bits honored; i8042 drained before command-byte
+  read; keyboard bytes rejected once AUX flag proven; UHCI TD/QH stores
+  volatile + fenced before frame-list publish, frame-tick wait before scratch
+  reuse; PCI `write16` no longer clears RW1C status bits.
+- UI/boot: setup footer anchors below content on short framebuffers (clicks no
+  longer misroute to rows); framebuffer channel order verified (XRGB) instead
+  of assumed; fb-missing boot paths exit QEMU with failure so smoke catches
+  them.
+- Build/scripts: smoke-bridge waits for the bridge to actually listen; UTM
+  quit/reopen polls instead of fixed sleeps; VM name validated + AppleScript
+  paths escaped; `make smoke` chmods its script; LIMINE_BRANCH mismatch warns.
+
+## 0.7.6 — 2026-07-25
+
+- UTM: `make utm-bridged` starts the host bridge and adds a COM2 **Serial**
+  device in `TcpClient` mode to `127.0.0.1:7420`. Setup's Bridge step re-probes
+  on entry (`mcp: bridge live`). Bridge also supports `unix:` listen and
+  `OS_MCP_BRIDGE_CONNECT` dial modes for non-UTM use.
+- Bridge: scrub CSI/control noise on COM2 so `PING`/`CALL` survive UEFI
+  chatter; ignore non-protocol lines instead of `ERR unknown`.
 
 ## 0.7.5 — 2026-07-25
 

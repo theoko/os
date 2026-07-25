@@ -117,6 +117,11 @@ unsafe extern "C" fn kmain() -> ! {
                     fb_info.height(),
                     fb_info.pitch(),
                     fb_info.bpp(),
+                    (
+                        fb_info.red_mask_shift(),
+                        fb_info.green_mask_shift(),
+                        fb_info.blue_mask_shift(),
+                    ),
                 )
             } {
                 ui::draw_home(&surface, &mail, &skill_peek, "");
@@ -211,7 +216,17 @@ unsafe extern "C" fn kmain() -> ! {
                     }
 
                     if !setup.is_finished() {
+                        let before = setup.step;
                         if setup.pointer(x, y, buttons) {
+                            // Entering the Bridge step: re-probe COM2 so the
+                            // status card reflects a bridge that came up after boot.
+                            if setup.step == setup::Step::Bridge && before != setup::Step::Bridge {
+                                mail = mcp::fetch_mail_peek(setup.grants());
+                                serial_port.write_str(match mail.status {
+                                    mcp::BridgeStatus::Online => "mcp: bridge live\n",
+                                    mcp::BridgeStatus::Offline => "mcp: bridge still offline\n",
+                                });
+                            }
                             cursor.hide(&surface);
                             if setup.is_finished() {
                                 grants = setup.grants();
@@ -337,7 +352,9 @@ unsafe extern "C" fn kmain() -> ! {
         serial_port.write_str("fb: limine framebuffer missing\n");
     }
 
-    serial::exit_qemu(true);
+    // Only the framebuffer-missing/unsupported paths reach here — that is a
+    // boot failure, and the smoke test must see it as one.
+    serial::exit_qemu(false);
 }
 
 fn write_status(buf: &mut [u8; 72], s: &str) {

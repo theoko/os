@@ -23,8 +23,9 @@ make iso                  # produces os.iso
 ## Commands
 
 ```sh
-make utm        # build ISO + create/refresh UTM VM named "os"
-make utm-run    # same, then start the VM
+make utm           # build ISO + create/refresh UTM VM named "os"
+make utm-run       # same, then start the VM
+make utm-bridged   # ensure host MCP bridge is up, wire COM2, start VM
 ```
 
 The VM is created via UTM’s AppleScript API:
@@ -69,9 +70,16 @@ If a prior run left **ghost** library entries (name `os` registered but the
 `.utm` bundle was deleted), `make utm` scrubs them from UTM's preferences and
 recreates once. Subsequent runs only refresh the ISO + config in place.
 
+### Live connectors (COM2 → host bridge)
+
+`make utm-bridged` starts the host bridge on `127.0.0.1:7420` and adds a second
+UTM **Serial** device in `TcpClient` mode (COM2) pointing at that address —
+first-class UTM config, not a raw `-serial` flag. Finish setup, click
+**Connectors** for a live `search.query` hit in the footer.
+
 Serial should show `mouse: usb-tablet ready` then `mouse: ps2 ready`, then
-`ui: setup welcome`. If the cursor is visible but stuck, the interrupt-IN pipe
-is usually desynced — see `0.7.1` in `CHANGELOG.md`.
+`ui: setup welcome`. With the bridge up you should also see `mcp: email connected`
+early and `mcp: bridge live` when entering the Bridge setup step.
 
 ## Override
 

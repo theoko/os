@@ -114,10 +114,22 @@ impl Serial {
     }
 
     /// Read a line into `buf` (without trailing `\n`). Returns length or None on timeout.
+    ///
+    /// Framing rules for the COM2 protocol: a line longer than `buf` is
+    /// truncated but drained through its terminator, so the tail is never
+    /// replayed as the next "line"; a mid-line timeout returns None rather
+    /// than presenting a partial accumulation as a complete line.
+    ///
+    /// If the UART keeps delivering bytes with no terminator (open COM2 with
+    /// no peer, or firmware noise), give up after `MAX_OVERRUN` discarded
+    /// bytes so we never spin forever — the old buffer-full early return was
+    /// the previous escape hatch for that case.
     pub fn read_line(&self, buf: &mut [u8], timeout_spins: u32) -> Option<usize> {
+        const MAX_OVERRUN: usize = 4096;
         let mut n = 0usize;
         let mut spins = 0u32;
-        while n < buf.len() {
+        let mut overrun = 0usize;
+        loop {
             if let Some(b) = self.try_read_byte() {
                 spins = 0;
                 if b == b'\n' || b == b'\r' {
@@ -126,17 +138,23 @@ impl Serial {
                     }
                     continue;
                 }
-                buf[n] = b;
-                n += 1;
+                if n < buf.len() {
+                    buf[n] = b;
+                    n += 1;
+                } else {
+                    overrun += 1;
+                    if overrun > MAX_OVERRUN {
+                        return None;
+                    }
+                }
             } else {
                 spins += 1;
                 if spins > timeout_spins {
-                    return if n > 0 { Some(n) } else { None };
+                    return None;
                 }
                 core::hint::spin_loop();
             }
         }
-        Some(n)
     }
 }
 

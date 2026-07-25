@@ -128,6 +128,9 @@ pub struct Mouse {
     pub present: bool,
     packet: [u8; 3],
     packet_i: usize,
+    /// The controller has produced at least one byte with the AUX flag set —
+    /// from then on we can trust the flag and reject keyboard bytes.
+    aux_seen: bool,
 }
 
 impl Mouse {
@@ -139,6 +142,7 @@ impl Mouse {
             present: false,
             packet: [0; 3],
             packet_i: 0,
+            aux_seen: false,
         }
     }
 
@@ -146,6 +150,13 @@ impl Mouse {
     pub fn init(&mut self) -> bool {
         if !write_cmd(0xA8) {
             return false;
+        }
+        // Drain any stale output (boot-time keyboard/self-test bytes) so the
+        // 0x20 reply below is really the command byte and not leftovers.
+        for _ in 0..16 {
+            if read_data(1).is_none() {
+                break;
+            }
         }
         if !write_cmd(0x20) {
             return false;
@@ -181,9 +192,15 @@ impl Mouse {
                 }
                 let is_mouse = st & 0x20 != 0;
                 let b = unsafe { port::inb(DATA) };
+                if is_mouse {
+                    self.aux_seen = true;
+                }
                 // When we've enabled the aux device, accept bytes even if the
-                // controller forgets to set the AUX flag (common under TCG).
-                if !is_mouse && !self.present && self.packet_i == 0 {
+                // controller forgets to set the AUX flag (common under TCG) —
+                // but once the AUX flag has ever worked, trust it, so keyboard
+                // scancodes are not parsed as mouse packets.
+                if !is_mouse && (self.aux_seen || (!self.present && self.packet_i == 0)) {
+                    self.packet_i = 0;
                     continue;
                 }
                 if self.packet_i == 0 && (b & 0x08) == 0 {
@@ -196,8 +213,14 @@ impl Mouse {
                 }
                 self.packet_i = 0;
                 let flags = self.packet[0];
-                let dx = self.packet[1] as i8 as i32;
-                let dy = self.packet[2] as i8 as i32;
+                // Overflow bits: the deltas are invalid — drop the packet.
+                if flags & 0xC0 != 0 {
+                    continue;
+                }
+                // 9-bit deltas: bits 4/5 of flags are the sign (bit 8) of
+                // dx/dy. `as i8` alone misreads deltas outside -128..127.
+                let dx = self.packet[1] as i32 - (((flags as i32) << 4) & 0x100);
+                let dy = self.packet[2] as i32 - (((flags as i32) << 3) & 0x100);
                 self.x = (self.x + dx).clamp(0, w.saturating_sub(1));
                 self.y = (self.y - dy).clamp(0, h.saturating_sub(1));
                 self.buttons = flags & 0x07;
@@ -228,7 +251,12 @@ const ARROW: [(i32, i32); 7] = [
 /// Bounding box in whole px (from ARROW, plus 1px for the white keyline).
 const DRAW_W: usize = 14;
 const DRAW_H: usize = 21;
-const SAVE_LEN: usize = DRAW_W * DRAW_H;
+/// The keyline is also stamped one pixel LEFT and ABOVE the hotspot, so the
+/// save/restore box extends 1px past the silhouette box on those sides —
+/// otherwise moving the cursor leaves a white AA trail behind.
+const SAVE_W: usize = DRAW_W + 1;
+const SAVE_H: usize = DRAW_H + 1;
+const SAVE_LEN: usize = SAVE_W * SAVE_H;
 
 /// Saves under-cursor pixels so we can move without full redraws.
 pub struct Cursor {
@@ -266,17 +294,17 @@ impl Cursor {
 }
 
 fn save(fb: &Surface, x: i32, y: i32, out: &mut [u32; SAVE_LEN]) {
-    for row in 0..DRAW_H {
-        for col in 0..DRAW_W {
-            out[row * DRAW_W + col] = fb.get_pixel(x + col as i32, y + row as i32);
+    for row in 0..SAVE_H {
+        for col in 0..SAVE_W {
+            out[row * SAVE_W + col] = fb.get_pixel(x - 1 + col as i32, y - 1 + row as i32);
         }
     }
 }
 
 fn restore(fb: &Surface, x: i32, y: i32, saved: &[u32; SAVE_LEN]) {
-    for row in 0..DRAW_H {
-        for col in 0..DRAW_W {
-            fb.put_pixel(x + col as i32, y + row as i32, saved[row * DRAW_W + col]);
+    for row in 0..SAVE_H {
+        for col in 0..SAVE_W {
+            fb.put_pixel(x - 1 + col as i32, y - 1 + row as i32, saved[row * SAVE_W + col]);
         }
     }
 }
