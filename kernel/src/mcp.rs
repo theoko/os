@@ -193,7 +193,9 @@ pub struct DocPage {
 }
 
 impl DocPage {
-    pub const MAX: usize = 18;
+    /// Lines held for the reader. Enough that most documents fit entirely
+    /// and scrolling is local; the screen shows ~22 at a time.
+    pub const MAX: usize = 120;
 
     pub const fn empty(status: BridgeStatus, denied: bool) -> Self {
         Self { status, denied, count: 0, lines: [[0; 84]; Self::MAX] }
@@ -221,7 +223,7 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
 
     com2.write_str("CALL doc.read url=");
     com2.write_str(url);
-    com2.write_str(" lines=18");
+    com2.write_str(" lines=120");
     if caps.allows(crate::caps::Cap::WorkspaceIndex) {
         com2.write_str(" files=1");
     }
@@ -236,7 +238,7 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
 
     let mut page = DocPage::empty(BridgeStatus::Online, false);
     let mut first = true;
-    for _ in 0..40 {
+    for _ in 0..(DocPage::MAX + 8) {
         let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
         let Some(n) = com2.read_line(&mut line, timeout) else {
             break;
@@ -441,7 +443,7 @@ pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
     let mut first = true;
     let mut in_frontmatter = false;
     let mut saw_fm_open = false;
-    for _ in 0..40 {
+    for _ in 0..(DocPage::MAX + 8) {
         let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
         let Some(n) = com2.read_line(&mut line, timeout) else {
             break;

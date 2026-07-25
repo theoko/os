@@ -205,6 +205,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut page = mcp::DocPage::empty(mcp::BridgeStatus::Offline, false);
                 let mut portal =
                     mcp::PortalStatus { reachable: false, cached: false, syncing: false, docs: 0 };
+                let mut scroll = 0usize;
                 let mut open_title = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut view = screens::View::Home;
                 let caret = true;
@@ -403,6 +404,28 @@ unsafe extern "C" fn kmain() -> ! {
                                     view = screens::View::Home;
                                     dirty = true;
                                 }
+                                // Reader navigation. A document longer than a
+                                // screen was previously unreadable past line 20.
+                                k if view == screens::View::Reader => {
+                                    let before = scroll;
+                                    scroll = match k {
+                                        keyboard::Key::Down => scroll + 1,
+                                        keyboard::Key::Up => scroll.saturating_sub(1),
+                                        keyboard::Key::PageDown => {
+                                            scroll + searchui::READER_ROWS
+                                        }
+                                        keyboard::Key::PageUp => {
+                                            scroll.saturating_sub(searchui::READER_ROWS)
+                                        }
+                                        keyboard::Key::Home => 0,
+                                        keyboard::Key::End => page.count,
+                                        _ => scroll,
+                                    };
+                                    scroll = searchui::clamp_scroll(scroll, page.count);
+                                    if scroll != before {
+                                        dirty = true;
+                                    }
+                                }
                                 other => {
                                     // Only the search screen has a field.
                                     // Without this, typing on Skills or
@@ -438,6 +461,7 @@ unsafe extern "C" fn kmain() -> ! {
                                         open_title.apply(keyboard::Key::Char(b));
                                     }
                                     page = mcp::fetch_doc(grants, row.url());
+                                    scroll = 0;
                                     view = screens::View::Reader;
                                     serial_port.write_str("ui: open doc\n");
                                     dirty = true;
@@ -521,7 +545,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 screens::View::Skills => screens::draw_skills(surface, &skill_peek),
                                 screens::View::Caps => screens::draw_caps(surface, grants),
                                 screens::View::Reader => {
-                                    searchui::draw_reader(surface, open_title.as_str(), &page)
+                                    searchui::draw_reader(surface, open_title.as_str(), &page, scroll)
                                 }
                                 screens::View::Status => {
                                     screens::draw_status(surface, &mail, &portal, grants)

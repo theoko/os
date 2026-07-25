@@ -435,7 +435,16 @@ mod teddy_tests {
 }
 
 /// Draw a document the user opened from a result.
-pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage) {
+/// Lines visible at once.
+pub const READER_ROWS: usize = 20;
+
+/// Clamp a scroll offset to what the document actually has.
+pub fn clamp_scroll(offset: usize, count: usize) -> usize {
+    let max = count.saturating_sub(READER_ROWS);
+    offset.min(max)
+}
+
+pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage, scroll: usize) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
     fb.fill(theme::BG);
@@ -460,13 +469,25 @@ pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage) {
         return;
     }
 
+    let scroll = clamp_scroll(scroll, page.count);
     let mut y = 156;
-    for i in 0..page.count {
+    for i in scroll..page.count.min(scroll + READER_ROWS) {
         fb.draw_text(fx, y, page.line_at(i), &BODY_FACE, 0, theme::INK);
         y += 26;
-        if y > h - 40 {
+        if y > h - 60 {
             break;
         }
+    }
+
+    // Only say there is more when there is; a permanent hint is noise.
+    if page.count > READER_ROWS {
+        let more = page.count - clamp_scroll(scroll, page.count) - READER_ROWS.min(page.count);
+        let msg = if more > 0 {
+            "More below - arrow keys or Page Down"
+        } else {
+            "End of document - Page Up to go back"
+        };
+        fb.draw_text(fx, h - 30, msg, &SMALL_FACE, 0, theme::MUTED);
     }
     let _ = fw;
 }
@@ -541,5 +562,45 @@ mod honesty_tests {
             mail_in_scope: true,
         };
         assert!(no_files.empty_reason().contains("workspace.index"));
+    }
+}
+
+#[cfg(test)]
+mod scroll_tests {
+    use super::*;
+
+    #[test]
+    fn a_short_document_cannot_scroll() {
+        // Nothing to reveal, so any offset must stay at the top.
+        for off in [0, 1, 5, 999] {
+            assert_eq!(clamp_scroll(off, 3), 0);
+        }
+    }
+
+    #[test]
+    fn scrolling_stops_at_the_last_screenful() {
+        // The final position shows the last READER_ROWS lines, never past them.
+        let count = READER_ROWS + 10;
+        assert_eq!(clamp_scroll(9999, count), 10);
+        assert_eq!(clamp_scroll(4, count), 4);
+    }
+
+    #[test]
+    fn a_document_exactly_one_screen_long_does_not_scroll() {
+        assert_eq!(clamp_scroll(1, READER_ROWS), 0);
+    }
+
+    #[test]
+    fn an_empty_document_is_safe() {
+        assert_eq!(clamp_scroll(5, 0), 0);
+    }
+
+    #[test]
+    fn the_buffer_holds_more_than_one_screen() {
+        // Otherwise scrolling would have nothing to reveal.
+        assert!(
+            crate::mcp::DocPage::MAX > READER_ROWS,
+            "fetching fewer lines than the screen shows makes scrolling pointless"
+        );
     }
 }
