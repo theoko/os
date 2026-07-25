@@ -39,29 +39,20 @@ cargo build -p os-mcp-bridge
 
 SERIAL_OUT="$(mktemp "${TMPDIR:-/tmp}/os-bridge-serial.XXXXXX")"
 BRIDGE_LOG="$(mktemp "${TMPDIR:-/tmp}/os-bridge-log.XXXXXX")"
-<<<<<<< HEAD
 SKILLS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/os-bridge-skills.XXXXXX")"
-cleanup() {
-  if [[ -n "${BRIDGE_PID:-}" ]]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi
-  rm -rf "$SKILLS_DIR"
-  rm -f "$SERIAL_OUT" "$BRIDGE_LOG"
-}
-trap cleanup EXIT
-
-OS_MCP_BRIDGE_ADDR="$ADDR" OS_MCP_EMAIL_BACKEND=mock OS_SKILLS_USER="$SKILLS_DIR" \
-=======
 # Isolate transcript store so smoke can seed/search/forget without touching
 # the developer's real Application Support path.
 TRANSCRIPT_STORE="$(mktemp "${TMPDIR:-/tmp}/os-smoke-transcripts.XXXXXX.json")"
 export OS_TRANSCRIPT_STORE="$TRANSCRIPT_STORE"
 cleanup() {
   if [[ -n "${BRIDGE_PID:-}" ]]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi
+  rm -rf "$SKILLS_DIR"
   rm -f "$SERIAL_OUT" "$BRIDGE_LOG" "$TRANSCRIPT_STORE"
 }
 trap cleanup EXIT
 
-OS_MCP_BRIDGE_ADDR="$ADDR" OS_MCP_EMAIL_BACKEND=mock OS_TRANSCRIPT_STORE="$TRANSCRIPT_STORE" \
->>>>>>> af3cd1e (feat(ui): recordings honesty + saved-skill Brief (0.9.11))
+OS_MCP_BRIDGE_ADDR="$ADDR" OS_MCP_EMAIL_BACKEND=mock \
+  OS_SKILLS_USER="$SKILLS_DIR" OS_TRANSCRIPT_STORE="$TRANSCRIPT_STORE" \
   "$BRIDGE_BIN" >"$BRIDGE_LOG" 2>&1 &
 BRIDGE_PID=$!
 
