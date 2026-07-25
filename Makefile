@@ -124,4 +124,4 @@ clean:
 	rm -rf iso_root $(IMAGE_NAME).iso serial.out .smoke-*
 
 distclean: clean
-	rm -rf limine edk2-ovmf
+	rm -rf limine

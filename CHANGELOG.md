@@ -1,8 +1,14 @@
 ---
-version: 0.9.1
+version: 0.9.2
 ---
 
 # Changelog
+
+## 0.9.2 — 2026-07-25
+
+Dropped unused host portals (`market.health`, `market.fear_greed`) and the
+Python `tsearch_mcp.py` search shell-out. Guest never called either path;
+native teddy indexing covers live corpus search.
 
 ## 0.9.1 — 2026-07-25
 

@@ -16,7 +16,7 @@ ranking over `{t,u,c,b,pr}` docs, exact-first ladder, no crawler in v1.
 1. Call `search.query` with a short keyword query (`q=`). Optional `k=` (1–20) and `cat=` (docs|skills|code|web|learning).
 2. Cite `title` + `url` from each ROW; do not invent snippets.
 3. Prefer corpus hits over guessing architecture/caps policy.
-4. For the live tSearch GraphRAG corpus, the host may set `OS_MCP_SEARCH_BACKEND=tsearch` + `TSEARCH_DATA` — still read-only.
+4. Offline corpus is baked into the guest; the host bridge merges teddy + files + mail when those caps are granted.
 
 ## Flow
 
