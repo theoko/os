@@ -197,6 +197,7 @@ unsafe extern "C" fn kmain() -> ! {
                 cursor.hide(surface);
                 setup.draw(surface, &mail, &skill_peek);
                 cursor.show_at(surface, x, y);
+                screen.present();
                 serial_port.write_str("ui: setup welcome\n");
 
                 loop {
@@ -268,6 +269,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     cursor.hide(surface);
                                     setup.draw(surface, &mail, &skill_peek);
                                     cursor.show_at(surface, x, y);
+                                    screen.present();
                                     clicked = true;
                                     moved = false;
                                 }
@@ -339,6 +341,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     status_str(&status_buf),
                                 );
                                 cursor.show_at(surface, x, y);
+                                screen.present();
                                 moved = false;
                             }
                         }

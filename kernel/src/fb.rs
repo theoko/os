@@ -466,6 +466,9 @@ pub struct Screen {
     fb_pitch: usize,
     w: usize,
     h: usize,
+    /// False when the mode is bigger than the back buffer and we draw straight
+    /// into video memory instead. Flickers, but a large display must still boot.
+    buffered: bool,
 }
 
 impl Screen {
@@ -489,16 +492,20 @@ impl Screen {
             return None;
         }
         let (w, h) = (width as usize, height as usize);
-        if w > MAX_W || h > MAX_H {
-            return None;
-        }
-        let back = Surface {
-            addr: (&raw mut BACK).cast::<u8>(),
-            width: w,
-            height: h,
-            pitch: w * 4,
+        // Too large to double-buffer: fall back to drawing directly rather
+        // than refusing the mode, which would leave the machine with no UI.
+        let buffered = w <= MAX_W && h <= MAX_H;
+        let back = if buffered {
+            Surface {
+                addr: (&raw mut BACK).cast::<u8>(),
+                width: w,
+                height: h,
+                pitch: w * 4,
+            }
+        } else {
+            Surface { addr, width: w, height: h, pitch: pitch as usize }
         };
-        Some(Self { back, fb: addr, fb_pitch: pitch as usize, w, h })
+        Some(Self { back, fb: addr, fb_pitch: pitch as usize, w, h, buffered })
     }
 
     /// The surface to draw on. Nothing is visible until [`Self::present`].
@@ -506,9 +513,17 @@ impl Screen {
         &self.back
     }
 
+    /// Whether composition is off-screen. False means direct-to-video fallback.
+    pub fn is_buffered(&self) -> bool {
+        self.buffered
+    }
+
     /// Blit one region. Used for cursor motion — blitting the whole screen
     /// per mouse event would make tracking crawl over uncached MMIO.
     pub fn present_rect(&self, x: i32, y: i32, w: i32, h: i32) {
+        if !self.buffered {
+            return;
+        }
         let x0 = x.max(0) as usize;
         let y0 = y.max(0) as usize;
         let x1 = ((x + w).max(0) as usize).min(self.w);
@@ -524,6 +539,9 @@ impl Screen {
 
     /// Blit the whole back buffer to the framebuffer.
     pub fn present(&self) {
+        if !self.buffered {
+            return;
+        }
         for y in 0..self.h {
             let src = unsafe { self.back.addr.add(y * self.back.pitch).cast::<u32>() };
             let dst = unsafe { self.fb.add(y * self.fb_pitch).cast::<u32>() };

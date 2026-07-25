@@ -31,7 +31,7 @@ struct Doc {
 
 /// Email graph entries, projected into corpus documents.
 fn email_docs() -> Vec<Doc> {
-    crate::graph::Graph::load()
+    crate::graph::Graph::load_or_empty()
         .messages
         .into_iter()
         .map(|m| Doc {

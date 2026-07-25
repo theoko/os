@@ -67,11 +67,35 @@ fn id_for(from: &str, subject: &str) -> String {
 }
 
 impl Graph {
-    pub fn load() -> Self {
+    /// Load the index. A missing file is simply an empty graph.
+    ///
+    /// A *corrupt* file is not: silently returning empty would let the next
+    /// ingest overwrite a damaged-but-recoverable index with three messages.
+    /// The bad file is set aside first so it can be inspected.
+    pub fn load() -> Result<Self, String> {
         let path = graph_path();
-        match fs::read_to_string(&path) {
-            Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
-            Err(_) => Self::default(),
+        let raw = match fs::read_to_string(&path) {
+            Ok(r) => r,
+            Err(_) => return Ok(Self::default()),
+        };
+        match serde_json::from_str(&raw) {
+            Ok(g) => Ok(g),
+            Err(e) => {
+                let quarantine = path.with_extension("corrupt");
+                let _ = fs::rename(&path, &quarantine);
+                Err(format!("graph corrupt ({e}); moved to {}", quarantine.display()))
+            }
+        }
+    }
+
+    /// Convenience for callers that must not fail: logs and starts empty.
+    pub fn load_or_empty() -> Self {
+        match Self::load() {
+            Ok(g) => g,
+            Err(e) => {
+                eprintln!("graph: {e}");
+                Self::default()
+            }
         }
     }
 
@@ -85,7 +109,14 @@ impl Graph {
         Ok(path)
     }
 
+    /// Cap on retained messages. Without this the index grows forever: the
+    /// mock backend alone appends a fresh row for every distinct query.
+    pub const MAX_MESSAGES: usize = 2000;
+
     /// Fold messages in, deduping by identity. Returns how many were new.
+    ///
+    /// When the cap is exceeded the lowest-ranked messages are dropped, so what
+    /// survives is what the graph considers most connected.
     pub fn ingest(&mut self, incoming: &[(String, String, String)]) -> usize {
         let mut added = 0;
         for (from, subject, snippet) in incoming {
@@ -107,6 +138,12 @@ impl Graph {
             added += 1;
         }
         self.rank();
+        if self.messages.len() > Self::MAX_MESSAGES {
+            self.messages
+                .sort_by(|a, b| b.pr.partial_cmp(&a.pr).unwrap_or(core::cmp::Ordering::Equal));
+            self.messages.truncate(Self::MAX_MESSAGES);
+            self.rank();
+        }
         added
     }
 
@@ -271,7 +308,7 @@ mod tests {
         g.ingest(&[msg("a@x", "Q2")]);
         g.save().expect("save");
 
-        let back = Graph::load();
+        let back = Graph::load().expect("valid graph");
         assert_eq!(back.messages.len(), 1);
         assert_eq!(back.messages[0].subject, "Q2");
 
@@ -283,7 +320,7 @@ mod tests {
     fn missing_file_loads_empty_not_error() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_GRAPH_PATH", "/nonexistent/os-graph/none.json") };
-        assert!(Graph::load().messages.is_empty());
+        assert!(Graph::load().expect("missing is not corrupt").messages.is_empty());
         unsafe { env::remove_var("OS_GRAPH_PATH") };
     }
 }
@@ -322,5 +359,39 @@ mod gate_tests {
 
         let _ = std::fs::remove_dir_all(&dir);
         unsafe { std::env::remove_var("OS_GRAPH_PATH") };
+    }
+}
+
+#[cfg(test)]
+mod hardening_tests {
+    use super::*;
+
+    #[test]
+    fn corrupt_file_is_quarantined_not_silently_wiped() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("os-corrupt-{}", std::process::id()));
+        let path = dir.join("emails.json");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(&path, b"{ this is not json").unwrap();
+        unsafe { env::set_var("OS_GRAPH_PATH", &path) };
+
+        let err = Graph::load().expect_err("corrupt file must not load as empty");
+        assert!(err.contains("corrupt"), "{err}");
+        // Original is preserved for inspection rather than overwritten.
+        assert!(path.with_extension("corrupt").exists());
+
+        let _ = fs::remove_dir_all(&dir);
+        unsafe { env::remove_var("OS_GRAPH_PATH") };
+    }
+
+    #[test]
+    fn index_is_capped_and_keeps_the_best_ranked() {
+        let mut g = Graph::default();
+        let batch: Vec<(String, String, String)> = (0..Graph::MAX_MESSAGES + 50)
+            .map(|i| (format!("s{i}@x"), format!("subject {i}"), String::new()))
+            .collect();
+        g.ingest(&batch);
+        assert_eq!(g.messages.len(), Graph::MAX_MESSAGES, "index grew past the cap");
+        assert!(g.messages.iter().all(|m| m.pr >= 0.0 && m.pr <= 1.0));
     }
 }

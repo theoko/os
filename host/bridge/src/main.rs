@@ -383,7 +383,7 @@ fn ingest_rows(rows: &[String]) {
     if msgs.is_empty() {
         return;
     }
-    let mut g = graph::Graph::load();
+    let mut g = graph::Graph::load_or_empty();
     if g.ingest(&msgs) > 0 {
         if let Err(e) = g.save() {
             eprintln!("graph: save failed: {e}");
