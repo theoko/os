@@ -39,6 +39,7 @@ Guest always knows **builtin** defaults even if the bridge is offline.
 | `inbox-brief` | Short mail brief for UI/chat |
 | `knowledge-search` | Curated corpus via `search.query` (tSearch-style) |
 | `teddy-portals` | Teddy corpus API + live `teddy.*` portals |
+| `market-portals` | Live `market.health` / `market.fear_greed` |
 
 ## Guest runner (v0.9.2)
 

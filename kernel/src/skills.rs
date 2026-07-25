@@ -32,6 +32,10 @@ pub const BUILTIN: &[SkillRef] = &[
         name: "teddy-portals",
         blurb: "Teddy API + live portals",
     },
+    SkillRef {
+        name: "market-portals",
+        blurb: "Live market health + fear/greed",
+    },
 ];
 
 /// Names (+ short descs) from builtins or `CALL skills.list`.
@@ -107,11 +111,15 @@ mod tests {
     #[test]
     fn builtins_present() {
         let p = SkillPeek::from_builtin();
-        assert!(p.count >= 6);
+        assert!(p.count >= 7);
         assert_eq!(p.name_at(0), "agent-plan-act");
         assert!(
             BUILTIN.iter().any(|s| s.name == "teddy-portals"),
             "teddy API + portals skill must ship in the ISO"
+        );
+        assert!(
+            BUILTIN.iter().any(|s| s.name == "market-portals"),
+            "market portals skill must ship in the ISO"
         );
         assert!(!p.from_bridge);
     }

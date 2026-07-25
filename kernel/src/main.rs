@@ -291,7 +291,8 @@ unsafe extern "C" fn kmain() -> ! {
                                     // Online services is not an empty promise.
                                     mcp::build_index("tsearch.sync");
                                     mcp::build_index("teddy.health");
-                                    serial_port.write_str("caps: warming teddy api + portals\n");
+                                    mcp::build_index("market.health");
+                                    serial_port.write_str("caps: warming teddy + market portals\n");
                                 }
                                 mail = mcp::fetch_mail_peek(grants);
                                 // First act: run the plan/act skill under the
@@ -442,7 +443,7 @@ unsafe extern "C" fn kmain() -> ! {
                                         (
                                             caps::Cap::PortalSync,
                                             "portal.forget",
-                                            &["tsearch.sync", "teddy.health"][..],
+                                            &["tsearch.sync", "teddy.health", "market.health"][..],
                                         ),
                                     ] {
                                         let was = before.allows(cap);

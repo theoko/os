@@ -229,23 +229,27 @@ pub fn draw_home_full(
         fb.draw_text(tx + 18, ty + 58, sub, &SMALL_FACE, 0, theme::MUTED);
     }
 
-    // Prefer the last agent report over an empty mail placeholder — Back from
-    // Brief used to land on a launcher that pretended nothing had happened.
+    // Last brief stays after Back; mail still shows below when granted so a
+    // morning brief cannot starve the inbox forever.
     let ry = ty + TILE_H + 40;
+    let mut y = ry;
     if brief.has_report() {
-        draw_brief_residue(fb, x0, ry, cw, brief);
-    } else if mail.count > 0 {
-        fb.draw_text(x0, ry, "Recent mail", &BRAND_FACE, 0, theme::INK);
-        let mut y = ry + 30;
-        for i in 0..mail.count.min(3) {
+        y = draw_brief_residue(fb, x0, ry, cw, brief);
+        y += 16;
+    }
+    if mail.count > 0 {
+        fb.draw_text(x0, y, "Recent mail", &BRAND_FACE, 0, theme::INK);
+        y += 28;
+        let mail_n = if brief.has_report() { 2 } else { 3 };
+        for i in 0..mail.count.min(mail_n) {
             fb.draw_text(x0, y, mail.row_subj(i), &BODY_FACE, 0, theme::INK);
             let from = mail.row_from(i);
             fb.draw_text(x0 + cw - SMALL_FACE.width(from, 0), y, from, &SMALL_FACE, 0, theme::MUTED);
             y += 12;
             fb.fill_rect(x0, y, cw, 1, theme::CARD_BORDER);
-            y += 26;
+            y += 22;
         }
-    } else {
+    } else if !brief.has_report() {
         fb.draw_text(
             x0,
             ry,
@@ -293,7 +297,8 @@ pub fn search_tile_sub<'a>(caps: Caps, buf: &'a mut [u8; 40]) -> &'a str {
         if n > 0 {
             push(" + ", &mut n);
         }
-        push("teddy", &mut n);
+        // Covers teddy corpus/portals and market.* under the same grant.
+        push("online", &mut n);
     }
     if n == 0 {
         "grant search first"
@@ -302,7 +307,8 @@ pub fn search_tile_sub<'a>(caps: Caps, buf: &'a mut [u8; 40]) -> &'a str {
     }
 }
 
-fn draw_brief_residue(fb: &Surface, x0: i32, ry: i32, cw: i32, brief: &Brief) {
+/// Draw the last-brief strip; returns the y just below it.
+fn draw_brief_residue(fb: &Surface, x0: i32, ry: i32, cw: i32, brief: &Brief) -> i32 {
     fb.draw_text(x0, ry, "Last brief", &BRAND_FACE, 0, theme::INK);
     let hint = "Tap to reopen";
     fb.draw_text(
@@ -320,7 +326,8 @@ fn draw_brief_residue(fb: &Surface, x0: i32, ry: i32, cw: i32, brief: &Brief) {
     };
     fb.draw_text(x0, ry + 28, title, &BODY_FACE, 0, theme::INK);
     let mut y = ry + 52;
-    for i in 0..brief.count.min(3) {
+    // Two lines when mail may follow, so both fit a 768 screen.
+    for i in 0..brief.count.min(2) {
         let mut line = [0u8; 72];
         let mut n = 0;
         for &b in brief.lines[i].tag().as_bytes().iter().take(8) {
@@ -343,6 +350,7 @@ fn draw_brief_residue(fb: &Surface, x0: i32, ry: i32, cw: i32, brief: &Brief) {
         fb.draw_text(x0, y, s, &SMALL_FACE, 0, theme::MUTED);
         y += 20;
     }
+    y
 }
 
 /// Hit box for the last-brief strip on home (empty when none).
@@ -357,7 +365,7 @@ pub fn brief_rect(w: i32, h: i32, brief: &Brief) -> Rect {
     }
     let (x0, cw) = home_column(w);
     let ry = tile_top(h) + TILE_H + 40;
-    let lines = brief.count.min(3) as i32;
+    let lines = brief.count.min(2) as i32;
     Rect {
         x: x0,
         y: ry,
@@ -590,7 +598,7 @@ mod tests {
             "Last brief",
             "Tap to reopen",
             "grant search first",
-            "docs + mail + files + teddy",
+            "docs + mail + files + online",
             "Inbox empty, or email.search not granted.",
             "Bridge offline - run: make utm-bridged",
             "bridge connected",
@@ -633,7 +641,7 @@ mod tests {
         caps.set(Cap::SearchQuery, true);
         assert_eq!(search_tile_sub(caps, &mut buf), "docs");
         caps.set(Cap::PortalSync, true);
-        assert_eq!(search_tile_sub(caps, &mut buf), "docs + teddy");
+        assert_eq!(search_tile_sub(caps, &mut buf), "docs + online");
     }
 
     #[test]

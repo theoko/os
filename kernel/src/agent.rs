@@ -19,6 +19,8 @@ pub enum Kind {
     CapSafe,
     /// Teddy corpus search + live teddysearch.com portals.
     TeddyPortals,
+    /// Live superintelmarkets.com portals (same grant as teddy).
+    MarketPortals,
     /// Listed, but not a runnable guest plan (show blurb only).
     Unknown,
 }
@@ -137,6 +139,7 @@ pub fn classify(name: &str) -> Kind {
         "agent-plan-act" => Kind::PlanAct,
         "capability-safe-tools" => Kind::CapSafe,
         "teddy-portals" => Kind::TeddyPortals,
+        "market-portals" => Kind::MarketPortals,
         _ => Kind::Unknown,
     }
 }
@@ -158,6 +161,7 @@ pub fn run(name: &str, caps: Caps) -> Brief {
         Kind::PlanAct => run_plan_act(&mut brief, caps),
         Kind::CapSafe => run_cap_safe(&mut brief, caps),
         Kind::TeddyPortals => run_teddy(&mut brief, caps),
+        Kind::MarketPortals => run_markets(&mut brief, caps),
         Kind::Unknown => {
             brief.set_heading("No guest plan for this skill");
             brief.push_plan("Load playbook text from the host");
@@ -412,9 +416,10 @@ fn run_plan_act(brief: &mut Brief, caps: Caps) {
         brief.push_line("Need", Cap::SearchQuery.label());
     }
 
-    // Live teddy portals when Online services is on.
+    // Live portals when Online services is on — teddy first, then markets.
     if caps.allows(Cap::PortalSync) {
-        fill_portal_lines(brief, caps, "teddy.health", 2);
+        fill_portal_lines(brief, caps, "teddy.health", 1);
+        fill_portal_lines(brief, caps, "market.health", 1);
     }
 }
 
@@ -453,6 +458,24 @@ fn run_teddy(brief: &mut Brief, caps: Caps) {
     fill_portal_lines(brief, caps, "teddy.health", 2);
     fill_portal_lines(brief, caps, "teddy.fear_greed", 2);
     fill_portal_lines(brief, caps, "teddy.gex", 2);
+}
+
+/// Live market intelligence on superintelmarkets.com (same `portal.sync` bit).
+fn run_markets(brief: &mut Brief, caps: Caps) {
+    brief.set_heading("Market portals");
+    brief.push_plan("Check portal.sync grant");
+    brief.push_plan("CALL market.health portal=1");
+    brief.push_plan("CALL market.fear_greed portal=1");
+    brief.push_plan("Report live fields only");
+
+    if !caps.allows(Cap::PortalSync) {
+        brief.need(Cap::PortalSync);
+        brief.push_line("Info", "Grant Online services, then re-run.");
+        return;
+    }
+
+    fill_portal_lines(brief, caps, "market.health", 3);
+    fill_portal_lines(brief, caps, "market.fear_greed", 3);
 }
 
 fn fill_portal_lines(brief: &mut Brief, caps: Caps, tool: &str, max: usize) {
@@ -558,9 +581,11 @@ mod tests {
         assert_eq!(classify("knowledge-search"), Kind::KnowledgeSearch);
         assert_eq!(classify("agent-plan-act"), Kind::PlanAct);
         assert_eq!(classify("teddy-portals"), Kind::TeddyPortals);
+        assert_eq!(classify("market-portals"), Kind::MarketPortals);
         assert_eq!(classify("mystery"), Kind::Unknown);
         assert!(is_runnable("email-triage"));
         assert!(is_runnable("teddy-portals"));
+        assert!(is_runnable("market-portals"));
         assert!(!is_runnable("custom-saved"));
     }
 
@@ -570,6 +595,14 @@ mod tests {
         assert!(b.denied);
         assert_eq!(b.deny_name(), "portal.sync");
         assert!(b.plan_n >= 3);
+    }
+
+    #[test]
+    fn market_skill_names_the_portal_cap_when_missing() {
+        let b = run("market-portals", Caps::none());
+        assert!(b.denied);
+        assert_eq!(b.deny_name(), "portal.sync");
+        assert_eq!(b.heading(), "Market portals");
     }
 
     #[test]
@@ -665,6 +698,7 @@ mod tests {
             "Plan, act, report",
             "Capability check",
             "Teddy API + portals",
+            "Market portals",
             "Grant Email on Capabilities, then re-run.",
             "Grant Online services, then re-run.",
             "Bridge offline - cannot read mail.",

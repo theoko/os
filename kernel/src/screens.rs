@@ -93,7 +93,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
     let w = fb.width() as i32;
     chrome(fb, w, "Skills", "Tap a playbook to run it");
 
-    let n = peek.count.min(6);
+    let n = peek.count.min(7);
     for i in 0..n {
         let name = peek.name_at(i);
         let desc = peek.desc_at(i);
@@ -115,7 +115,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
     let note = if peek.from_bridge {
         "Runnable skills call MCP under your grants. Others show their body."
     } else if peek.count > 0 {
-        "Compiled into the ISO. Tap inbox-brief or knowledge-search to act."
+        "Compiled into the ISO. Tap a runnable skill to act under grants."
     } else {
         "No skills loaded."
     };
@@ -224,7 +224,7 @@ pub fn draw_brief(fb: &Surface, brief: &Brief) {
 
 /// Which skill row contains this point, if any.
 pub fn skills_hit(w: i32, count: usize, x: i32, y: i32) -> Option<usize> {
-    (0..count.min(6)).find(|&i| {
+    (0..count.min(7)).find(|&i| {
         let (rx, ry, rw, rh) = row_rect(w, i);
         x >= rx && x < rx + rw && y >= ry && y < ry + rh
     })
@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn all_rows_fit_a_768_screen() {
-        let n = BUILTIN.len().min(6).max(N_CAPS);
+        let n = BUILTIN.len().min(7).max(N_CAPS);
         let (_, y, _, h) = row_rect(1024, n - 1);
         assert!(y + h + 40 < 768, "rows run off the screen: {}", y + h);
     }
@@ -344,7 +344,7 @@ mod tests {
         let mut all = vec![
             "Tap a playbook to run it",
             "What the agent may do",
-            "Compiled into the ISO. Tap inbox-brief or knowledge-search to act.",
+            "Compiled into the ISO. Tap a runnable skill to act under grants.",
             "Runnable skills call MCP under your grants. Others show their body.",
             "Tap a row to grant or revoke. Takes effect immediately.",
             "No skills loaded.",
@@ -374,7 +374,7 @@ mod tests {
     fn skill_text_fits_its_row() {
         let (_, _, cw, _) = row_rect(1024, 0);
         let peek = SkillPeek::from_builtin();
-        for i in 0..peek.count.min(6) {
+        for i in 0..peek.count.min(7) {
             assert!(
                 BRAND_FACE.width(peek.name_at(i), 0) < cw - 36,
                 "name overflows: {}",

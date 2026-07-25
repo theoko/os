@@ -1,8 +1,19 @@
 ---
-version: 0.9.6
+version: 0.9.7
 ---
 
 # Changelog
+
+## 0.9.7 — 2026-07-25
+
+Market portals reach the guest:
+
+- Skill `market-portals` calls `market.health` / `market.fear_greed` under
+  `portal.sync`; morning brief peeks both teddy and market health.
+- Grant warm includes `market.health`; Search tile says `online` for the
+  portal grant; Caps copy names teddy and markets.
+- Home stacks Last brief above Recent mail (brief no longer hides the inbox).
+- Setup/Skills list seven builtins.
 
 ## 0.9.6 — 2026-07-25
 
