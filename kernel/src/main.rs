@@ -199,8 +199,9 @@ unsafe extern "C" fn kmain() -> ! {
                             mice.buttons = buttons;
                             moved = true;
                         }
-                    }
-                    if mice.poll(w, h) {
+                    } else if mice.poll(w, h) {
+                        // PS/2 only when no tablet — otherwise aux noise
+                        // clears tablet button edges and kills clicks.
                         x = mice.x;
                         y = mice.y;
                         buttons = mice.buttons;
