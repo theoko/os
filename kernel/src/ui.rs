@@ -215,7 +215,8 @@ pub fn draw_home_full(
     let (x0, cw) = home_column(w);
 
     // The one thing you can do without clicking anything first.
-    let (fx, fy, fw, fh) = search_rect(w, h);
+    let r = search_rect(w);
+    let (fx, fy, fw, fh) = (r.x, r.y, r.w, r.h);
     draw_query_field(fb, fx, fy, fw, fh, query, "Search the knowledge base", caret);
     fb.draw_text(
         fx + 2,
@@ -238,7 +239,7 @@ pub fn draw_home_full(
         ("Skills", skill_label),
     ];
     for (i, (title, sub)) in tiles.iter().enumerate() {
-        let r = tile_rect(w, h, i as i32);
+        let r = tile_rect(w, i as i32);
         outlined_round_rect(fb, r.x, r.y, r.w, r.h, 12, theme::CARD_BORDER, theme::BG);
         fb.draw_text(r.x + 18, r.y + 34, title, &H2_FACE, 0, theme::INK);
         fb.draw_text(r.x + 18, r.y + 58, sub, &SMALL_FACE, 0, theme::MUTED);
@@ -303,42 +304,34 @@ pub(crate) fn home_column(w: i32) -> (i32, i32) {
 }
 
 /// The home search field, shared by drawing and hit-testing.
-pub fn search_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
-    let _ = h;
+pub fn search_rect(w: i32) -> Rect {
     let (x, cw) = home_column(w);
-    (x, 132, cw, 52)
+    Rect::new(x, 132, cw, 52)
 }
 
 pub(crate) const TILE_TOP: i32 = 242;
 pub(crate) const TILE_H: i32 = 78;
 
 /// Bounding box of home tile `i` (0 = Search, 1 = Capabilities, 2 = Skills).
-pub fn tile_rect(w: i32, h: i32, i: i32) -> Rect {
-    let _ = h;
+pub fn tile_rect(w: i32, i: i32) -> Rect {
     let (x0, cw) = home_column(w);
     let gap = 16;
     let tw = (cw - gap * 2) / 3;
-    Rect { x: x0 + (tw + gap) * i, y: TILE_TOP, w: tw, h: TILE_H }
+    Rect::new(x0 + (tw + gap) * i, TILE_TOP, tw, TILE_H)
 }
 
-pub fn card_targets(w: i32, h: i32) -> CardTargets {
+pub fn card_targets(w: i32) -> CardTargets {
     CardTargets {
-        search: tile_rect(w, h, 0),
-        capabilities: tile_rect(w, h, 1),
-        skills: tile_rect(w, h, 2),
+        search: tile_rect(w, 0),
+        capabilities: tile_rect(w, 1),
+        skills: tile_rect(w, 2),
     }
 }
 
-pub fn home_targets(w: i32, h: i32) -> HomeTargets {
-    let (fx, fy, fw, fh) = search_rect(w, h);
+pub fn home_targets(w: i32) -> HomeTargets {
     HomeTargets {
-        search: Rect {
-            x: fx,
-            y: fy,
-            w: fw,
-            h: fh,
-        },
-        cards: card_targets(w, h),
+        search: search_rect(w),
+        cards: card_targets(w),
     }
 }
 
@@ -378,8 +371,9 @@ mod tests {
     #[test]
     fn search_field_is_the_primary_target() {
         // Typing must be reachable without hunting for a card.
-        let t = home_targets(1024, 768);
-        let (fx, fy, fw, fh) = search_rect(1024, 768);
+        let t = home_targets(1024);
+        let r = search_rect(1024);
+        let (fx, fy, fw, fh) = (r.x, r.y, r.w, r.h);
         assert_eq!(
             t.search,
             Rect {
@@ -397,18 +391,19 @@ mod tests {
 
     #[test]
     fn tiles_do_not_overlap_the_search_field() {
-        let (_, fy, _, fh) = search_rect(1024, 768);
+        let r = search_rect(1024);
+        let (fy, fh) = (r.y, r.h);
         assert!(TILE_TOP >= fy + fh, "tiles collide with the field");
     }
 
     #[test]
     fn each_tile_hit_tests_to_its_own_id() {
-        let t = home_targets(1024, 768);
+        let t = home_targets(1024);
         for (i, want) in [CardId::Search, CardId::Capabilities, CardId::Skills]
             .iter()
             .enumerate()
         {
-            let r = tile_rect(1024, 768, i as i32);
+            let r = tile_rect(1024, i as i32);
             assert_eq!(t.cards.hit(r.x + r.w / 2, r.y + r.h / 2), Some(*want));
         }
     }
@@ -416,15 +411,15 @@ mod tests {
     #[test]
     fn tiles_are_side_by_side_without_overlap() {
         for i in 1..3 {
-            let prev = tile_rect(1024, 768, i - 1);
-            let cur = tile_rect(1024, 768, i);
+            let prev = tile_rect(1024, i - 1);
+            let cur = tile_rect(1024, i);
             assert!(cur.x >= prev.x + prev.w, "tile {i} overlaps its neighbour");
         }
     }
 
     #[test]
     fn everything_fits_a_768_screen() {
-        let last = tile_rect(1024, 768, 2);
+        let last = tile_rect(1024, 2);
         assert!(last.x + last.w <= 1024 - PAD_X);
         assert!(last.y + last.h + 120 < 768, "content runs off the screen");
     }
@@ -472,7 +467,7 @@ mod tests {
 
     #[test]
     fn tile_text_fits_its_column() {
-        let r = tile_rect(1024, 768, 0);
+        let r = tile_rect(1024, 0);
         for s in ["Search", "Capabilities", "Skills"] {
             assert!(H2_FACE.width(s, 0) < r.w - 36, "tile title overflows: {s}");
         }
@@ -484,7 +479,7 @@ mod tests {
     fn drawing_the_home_screen_does_not_panic() {
         // Exercises the offline branch and the count formatting together.
         let mail = MailPeek::empty(BridgeStatus::Offline);
-        let _ = home_targets(1024, 768);
+        let _ = home_targets(1024);
         assert_eq!(mail.count, 0);
     }
 }

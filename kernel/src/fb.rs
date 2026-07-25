@@ -9,6 +9,15 @@ use core::cell::Cell;
 
 use crate::font::Face;
 
+/// Accept only 32-bit XRGB8888 with a sane pitch — Surface and Screen share this.
+fn mode_ok(width: u64, height: u64, pitch: u64, bpp: u16, mask_shifts: (u8, u8, u8)) -> bool {
+    bpp == 32
+        && width > 0
+        && height > 0
+        && pitch >= width * 4
+        && mask_shifts == (16, 8, 0)
+}
+
 /// Live framebuffer surface.
 ///
 /// Tracks a dirty rectangle so `Screen::present` can blit only what changed.
@@ -87,10 +96,7 @@ impl Surface {
         bpp: u16,
         mask_shifts: (u8, u8, u8),
     ) -> Option<Self> {
-        if bpp != 32 || width == 0 || height == 0 || pitch < width * 4 {
-            return None;
-        }
-        if mask_shifts != (16, 8, 0) {
+        if !mode_ok(width, height, pitch, bpp, mask_shifts) {
             return None;
         }
         Some(Self {
@@ -606,10 +612,7 @@ impl Screen {
         bpp: u16,
         mask_shifts: (u8, u8, u8),
     ) -> Option<Self> {
-        if bpp != 32 || width == 0 || height == 0 || pitch < width * 4 {
-            return None;
-        }
-        if mask_shifts != (16, 8, 0) {
+        if !mode_ok(width, height, pitch, bpp, mask_shifts) {
             return None;
         }
         let (w, h) = (width as usize, height as usize);

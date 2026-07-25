@@ -26,17 +26,8 @@ pub enum Action {
 
 #[derive(Clone, Copy)]
 struct Zone {
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
+    rect: ui::Rect,
     action: Action,
-}
-
-impl Zone {
-    fn contains(&self, px: i32, py: i32) -> bool {
-        ui::Rect::new(self.x, self.y, self.w, self.h).contains(px, py)
-    }
 }
 
 /// The journey, in order.
@@ -79,10 +70,7 @@ impl Setup {
             // personal files is opt-in, matching the "no ambient root" rule.
             caps: [true, true, false, false, false],
             zones: [Zone {
-                x: 0,
-                y: 0,
-                w: 0,
-                h: 0,
+                rect: ui::Rect::new(0, 0, 0, 0),
                 action: Action::Continue,
             }; MAX_ZONES],
             n_zones: 0,
@@ -105,7 +93,10 @@ impl Setup {
 
     fn push_zone(&mut self, x: i32, y: i32, w: i32, h: i32, action: Action) {
         if self.n_zones < MAX_ZONES {
-            self.zones[self.n_zones] = Zone { x, y, w, h, action };
+            self.zones[self.n_zones] = Zone {
+                rect: ui::Rect::new(x, y, w, h),
+                action,
+            };
             self.n_zones += 1;
         }
     }
@@ -113,7 +104,7 @@ impl Setup {
     fn hit(&self, px: i32, py: i32) -> Option<Action> {
         self.zones[..self.n_zones]
             .iter()
-            .find(|z| z.contains(px, py))
+            .find(|z| z.rect.contains(px, py))
             .map(|z| z.action)
     }
 
@@ -202,7 +193,6 @@ impl Setup {
         let top = self.header(
             fb,
             w,
-            h,
             "Connect the Bridge",
             "Connectors run on the host, never in the kernel.",
         );
@@ -219,7 +209,6 @@ impl Setup {
         let top = self.header(
             fb,
             w,
-            h,
             "Capabilities",
             "Every tool sits behind a grant. Turn on only what you need.",
         );
@@ -236,7 +225,6 @@ impl Setup {
         let top = self.header(
             fb,
             w,
-            h,
             "Default Skills",
             if skills.from_bridge {
                 "Live from the host bridge. Tap Continue when ready."
@@ -273,8 +261,7 @@ impl Setup {
     // --- shared chrome -----------------------------------------------------
 
     /// Title + subtitle. Returns the y where content should start.
-    fn header(&mut self, fb: &Surface, w: i32, h: i32, title: &str, sub: &str) -> i32 {
-        let _ = h;
+    fn header(&mut self, fb: &Surface, w: i32, title: &str, sub: &str) -> i32 {
         let track = font::tracking_pct(TITLE_FACE.px, -20);
         let y = 132;
         fb.draw_text_centered(w / 2, y, title, &TITLE_FACE, track, theme::INK);

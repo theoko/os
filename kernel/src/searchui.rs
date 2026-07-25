@@ -176,34 +176,30 @@ const FIELD_H: i32 = 52;
 const ROW_H: i32 = 64;
 
 /// Geometry shared by the renderer and hit-testing.
-pub fn field_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
-    let _ = h;
+pub fn field_rect(w: i32) -> crate::ui::Rect {
     let (x, cw) = screens::column(w);
-    (x, 150, cw, FIELD_H)
+    crate::ui::Rect::new(x, 150, cw, FIELD_H)
 }
 
 /// Bounding box of result row `i`, shared by drawing and hit-testing.
-pub fn row_rect(w: i32, h: i32, i: usize) -> (i32, i32, i32, i32) {
-    let (fx, fy, fw, fh) = field_rect(w, h);
-    (fx, fy + fh + 26 + i as i32 * (ROW_H + 10), fw, ROW_H)
+pub fn row_rect(w: i32, i: usize) -> crate::ui::Rect {
+    let f = field_rect(w);
+    crate::ui::Rect::new(f.x, f.y + f.h + 26 + i as i32 * (ROW_H + 10), f.w, ROW_H)
 }
 
 /// Which result was clicked, if any.
-pub fn result_hit(w: i32, h: i32, count: usize, x: i32, y: i32) -> Option<usize> {
-    crate::ui::hit_among(count.min(search::MAX_HITS), x, y, |i| {
-        let (rx, ry, rw, rh) = row_rect(w, h, i);
-        crate::ui::Rect::new(rx, ry, rw, rh)
-    })
+pub fn result_hit(w: i32, count: usize, x: i32, y: i32) -> Option<usize> {
+    crate::ui::hit_among(count.min(search::MAX_HITS), x, y, |i| row_rect(w, i))
 }
 
 /// Draw the search screen. `caret` blinks the insertion point on.
 pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_note: &str) {
     let w = fb.width() as i32;
-    let h = fb.height() as i32;
     screens::chrome(fb, w, "Search", Some("What do you want to know?"));
 
     // Input field.
-    let (fx, fy, fw, fh) = field_rect(w, h);
+    let f = field_rect(w);
+    let (fx, fy, fw, fh) = (f.x, f.y, f.w, f.h);
     crate::ui::draw_query_field(
         fb,
         fx,
@@ -300,21 +296,24 @@ mod tests {
     #[test]
     fn field_fits_a_1024_screen() {
         use crate::ui::PAD_X;
-        let (x, _y, w, _h) = field_rect(1024, 768);
+        let r = field_rect(1024);
+        let (x, w) = (r.x, r.w);
         assert!(x >= PAD_X);
         assert!(x + w <= 1024 - PAD_X);
     }
 
     #[test]
     fn results_fit_below_the_field_at_768() {
-        let (_x, fy, _w, fh) = field_rect(1024, 768);
+        let r = field_rect(1024);
+        let (fy, fh) = (r.y, r.h);
         let bottom = fy + fh + 26 + (search::MAX_HITS as i32) * (ROW_H + 10);
         assert!(bottom < 768, "results run off a 768px screen: {bottom}");
     }
 
     #[test]
     fn back_target_is_clickable_sized() {
-        let (_x, _y, w, h) = screens::back_rect(1024);
+        let b = screens::back_rect();
+        let (w, h) = (b.w, b.h);
         assert!(w >= 44 && h >= 24, "back target too small to hit");
     }
 }
@@ -402,7 +401,8 @@ pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage) {
     let h = fb.height() as i32;
     screens::chrome(fb, w, "", None);
 
-    let (fx, _, fw, _) = field_rect(w, h);
+    let f = field_rect(w);
+    let (fx, fw) = (f.x, f.w);
     fb.draw_text(fx, 108, title, &TITLE_FACE, font::tracking_pct(TITLE_FACE.px, -20), theme::INK);
 
     if page.denied {
@@ -436,28 +436,31 @@ mod reader_tests {
     #[test]
     fn result_rows_are_clickable_at_their_centre() {
         for i in 0..search::MAX_HITS {
-            let (x, y, w, h) = row_rect(1024, 768, i);
-            assert_eq!(result_hit(1024, 768, search::MAX_HITS, x + w / 2, y + h / 2), Some(i));
+            let r = row_rect(1024, i);
+            let (x, y, w, h) = (r.x, r.y, r.w, r.h);
+            assert_eq!(result_hit(1024, search::MAX_HITS, x + w / 2, y + h / 2), Some(i));
         }
     }
 
     #[test]
     fn clicks_below_the_last_result_open_nothing() {
-        let (_, y, _, h) = row_rect(1024, 768, search::MAX_HITS - 1);
-        assert_eq!(result_hit(1024, 768, search::MAX_HITS, 512, y + h + 40), None);
+        let r = row_rect(1024, search::MAX_HITS - 1);
+        assert_eq!(result_hit(1024, search::MAX_HITS, 512, r.y + r.h + 40), None);
     }
 
     #[test]
     fn rows_beyond_the_result_count_are_not_hittable() {
         // Only the rows actually drawn may be opened.
-        let (x, y, w, h) = row_rect(1024, 768, 2);
-        assert_eq!(result_hit(1024, 768, 1, x + w / 2, y + h / 2), None);
+        let r = row_rect(1024, 2);
+        let (x, y, w, h) = (r.x, r.y, r.w, r.h);
+        assert_eq!(result_hit(1024, 1, x + w / 2, y + h / 2), None);
     }
 
     #[test]
     fn result_rows_do_not_overlap_the_query_field() {
-        let (_, fy, _, fh) = field_rect(1024, 768);
-        let (_, ry, _, _) = row_rect(1024, 768, 0);
+        let r = field_rect(1024);
+        let (fy, fh) = (r.y, r.h);
+        let ry = row_rect(1024, 0).y;
         assert!(ry >= fy + fh, "first result overlaps the input");
     }
 

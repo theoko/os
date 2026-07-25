@@ -34,9 +34,8 @@ const ROW_GAP: i32 = 8;
 const TOP: i32 = 150;
 
 /// Back affordance used by Skills, Caps, Search, and Reader.
-pub fn back_rect(w: i32) -> (i32, i32, i32, i32) {
-    let _ = w;
-    (PAD_X, (NAV_H - 24) / 2, 72, 28)
+pub fn back_rect() -> ui::Rect {
+    ui::Rect::new(PAD_X, (NAV_H - 24) / 2, 72, 28)
 }
 
 pub(crate) fn column(w: i32) -> (i32, i32) {
@@ -45,17 +44,14 @@ pub(crate) fn column(w: i32) -> (i32, i32) {
 }
 
 /// Bounding box of row `i`, for both drawing and hit-testing.
-pub fn row_rect(w: i32, i: usize) -> (i32, i32, i32, i32) {
+pub fn row_rect(w: i32, i: usize) -> ui::Rect {
     let (x, cw) = column(w);
-    (x, TOP + i as i32 * (ROW_H + ROW_GAP), cw, ROW_H)
+    ui::Rect::new(x, TOP + i as i32 * (ROW_H + ROW_GAP), cw, ROW_H)
 }
 
 /// Which row in `0..count` contains this point, if any.
 fn row_hit(w: i32, count: usize, x: i32, y: i32) -> Option<usize> {
-    ui::hit_among(count, x, y, |i| {
-        let (rx, ry, rw, rh) = row_rect(w, i);
-        ui::Rect::new(rx, ry, rw, rh)
-    })
+    ui::hit_among(count, x, y, |i| row_rect(w, i))
 }
 
 /// Which capability row contains this point, if any.
@@ -66,8 +62,8 @@ pub fn caps_hit(w: i32, x: i32, y: i32) -> Option<usize> {
 /// Shared top chrome: Back, centered title, rule, optional heading.
 pub fn chrome(fb: &Surface, w: i32, title: &str, heading: Option<&str>) {
     fb.fill(theme::BG);
-    let (bx, by, _, _) = back_rect(w);
-    fb.draw_text(bx, by + BTN_FACE.baseline(), "Back", &BTN_FACE, 0, theme::ACCENT);
+    let back = back_rect();
+    fb.draw_text(back.x, back.y + BTN_FACE.baseline(), "Back", &BTN_FACE, 0, theme::ACCENT);
     fb.draw_text_centered(
         w / 2,
         (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline(),
@@ -84,13 +80,13 @@ pub fn chrome(fb: &Surface, w: i32, title: &str, heading: Option<&str>) {
 }
 
 /// A bordered row with a title and a subtitle.
-fn row(fb: &Surface, w: i32, i: usize, title: &str, sub: &str, accent: bool) -> (i32, i32, i32, i32) {
-    let (x, y, cw, h) = row_rect(w, i);
+fn row(fb: &Surface, w: i32, i: usize, title: &str, sub: &str, accent: bool) -> ui::Rect {
+    let r = row_rect(w, i);
     let border = if accent { theme::ACCENT } else { theme::CARD_BORDER };
-    ui::outlined_round_rect(fb, x, y, cw, h, 10, border, theme::BG);
-    fb.draw_text(x + 18, y + 26, title, &BRAND_FACE, 0, theme::INK);
-    fb.draw_text(x + 18, y + 46, sub, &SMALL_FACE, 0, theme::MUTED);
-    (x, y, cw, h)
+    ui::outlined_round_rect(fb, r.x, r.y, r.w, r.h, 10, border, theme::BG);
+    fb.draw_text(r.x + 18, r.y + 26, title, &BRAND_FACE, 0, theme::INK);
+    fb.draw_text(r.x + 18, r.y + 46, sub, &SMALL_FACE, 0, theme::MUTED);
+    r
 }
 
 /// Skills the agent can load — names from bridge `skills.list`, else builtins.
@@ -144,10 +140,10 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
 
     for (i, cap) in Cap::ALL.iter().enumerate() {
         let on = grants.allows(*cap);
-        let (x, y, cw, h) = row(fb, w, i, cap.name(), CAP_BLURBS[i], false);
+        let r = row(fb, w, i, cap.name(), CAP_BLURBS[i], false);
 
-        let tx = x + cw - 18 - ui::SWITCH_W;
-        let ty = y + (h - ui::SWITCH_H) / 2;
+        let tx = r.x + r.w - 18 - ui::SWITCH_W;
+        let ty = r.y + (r.h - ui::SWITCH_H) / 2;
         ui::draw_switch(fb, tx, ty, on);
     }
 
@@ -178,23 +174,24 @@ mod tests {
     #[test]
     fn rows_stack_without_overlapping() {
         for i in 1..Cap::ALL.len() {
-            let (_, prev_y, _, prev_h) = row_rect(1024, i - 1);
-            let (_, y, _, _) = row_rect(1024, i);
-            assert!(y >= prev_y + prev_h, "row {i} overlaps its predecessor");
+            let prev = row_rect(1024, i - 1);
+            let cur = row_rect(1024, i);
+            assert!(cur.y >= prev.y + prev.h, "row {i} overlaps its predecessor");
         }
     }
 
     #[test]
     fn every_capability_row_is_hittable_at_its_centre() {
         for i in 0..Cap::ALL.len() {
-            let (x, y, w, h) = row_rect(1024, i);
-            assert_eq!(caps_hit(1024, x + w / 2, y + h / 2), Some(i));
+            let r = row_rect(1024, i);
+            assert_eq!(caps_hit(1024, r.x + r.w / 2, r.y + r.h / 2), Some(i));
         }
     }
 
     #[test]
     fn clicks_between_and_outside_rows_hit_nothing() {
-        let (_, y, _, h) = row_rect(1024, 0);
+        let r = row_rect(1024, 0);
+        let (y, h) = (r.y, r.h);
         // In the gap below the first row.
         assert_eq!(caps_hit(1024, 512, y + h + ROW_GAP / 2), None);
         // Left of the column.
@@ -228,7 +225,8 @@ mod tests {
     #[test]
     fn all_rows_fit_a_768_screen() {
         let n = BUILTIN.len().min(6).max(Cap::ALL.len());
-        let (_, y, _, h) = row_rect(1024, n - 1);
+        let r = row_rect(1024, n - 1);
+        let (y, h) = (r.y, r.h);
         assert!(y + h + 40 < 768, "rows run off the screen: {}", y + h);
     }
 
@@ -261,7 +259,7 @@ mod tests {
 
     #[test]
     fn skill_text_fits_its_row() {
-        let (_, _, cw, _) = row_rect(1024, 0);
+        let cw = row_rect(1024, 0).w;
         let peek = SkillPeek::from_builtin();
         for i in 0..peek.count.min(6) {
             assert!(
@@ -279,14 +277,15 @@ mod tests {
 
     #[test]
     fn skills_hit_finds_first_row() {
-        let (x, y, _, _) = row_rect(1024, 0);
+        let r = row_rect(1024, 0);
+        let (x, y) = (r.x, r.y);
         assert_eq!(skills_hit(1024, 3, x + 4, y + 4), Some(0));
         assert_eq!(skills_hit(1024, 0, x + 4, y + 4), None);
     }
 
     #[test]
     fn capability_text_clears_the_switch() {
-        let (_, _, cw, _) = row_rect(1024, 0);
+        let cw = row_rect(1024, 0).w;
         // Switch occupies the right 58px of the row.
         for (i, cap) in Cap::ALL.iter().enumerate() {
             let name = cap.name();

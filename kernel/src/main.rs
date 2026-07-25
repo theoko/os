@@ -231,7 +231,6 @@ unsafe extern "C" fn kmain() -> ! {
                                 skill_peek = mcp::fetch_skill_peek();
                                 log_skill_source(&serial_port, &skill_peek);
                             }
-                            cursor.hide(surface);
                             if setup.is_finished() {
                                 grants = setup.grants();
                                 skills::copy_field(&mut status_buf, grants.footer_status());
@@ -240,9 +239,15 @@ unsafe extern "C" fn kmain() -> ! {
                                 serial_port.write_str(skills::str_at(&status_buf));
                                 serial_port.write_str("\n");
                                 mail = mcp::fetch_mail_peek(grants);
-                                paint_view(
+                                view = screens::View::Home;
+                                repaint(
+                                    &mut cursor,
                                     surface,
-                                    screens::View::Home,
+                                    &screen,
+                                    x,
+                                    y,
+                                    &mut moved,
+                                    view,
                                     &mail,
                                     &skill_peek,
                                     skills::str_at(&status_buf),
@@ -254,11 +259,12 @@ unsafe extern "C" fn kmain() -> ! {
                                     grants,
                                 );
                             } else {
+                                cursor.hide(surface);
                                 setup.draw(surface, &mail, &skill_peek);
+                                cursor.show_at(surface, x, y);
+                                enter(&screen);
+                                moved = false;
                             }
-                            cursor.show_at(surface, x, y);
-                            enter(&screen);
-                            moved = false;
                         }
                     } else {
                         let mut dirty = false;
@@ -290,7 +296,7 @@ unsafe extern "C" fn kmain() -> ! {
                             let left_down = buttons & 1 != 0;
                             let left_was = prev_buttons & 1 != 0;
                             if left_down && !left_was {
-                                let targets = ui::home_targets(w, h);
+                                let targets = ui::home_targets(w);
                                 match targets.hit(x, y) {
                                     Some(ui::HomeHit::SearchField)
                                     | Some(ui::HomeHit::Card(ui::CardId::Search)) => {
@@ -348,8 +354,7 @@ unsafe extern "C" fn kmain() -> ! {
                         let left_down = buttons & 0x01 != 0;
                         let was_down = prev_buttons & 0x01 != 0;
                         if left_down && !was_down {
-                            let (bx, by, bw, bh) = screens::back_rect(w);
-                            if ui::Rect::new(bx, by, bw, bh).contains(x, y) {
+                            if screens::back_rect().contains(x, y) {
                                 // Back from the reader returns to results.
                                 view = if view == screens::View::Reader {
                                     screens::View::Search
@@ -360,7 +365,7 @@ unsafe extern "C" fn kmain() -> ! {
                             } else if view == screens::View::Search {
                                 // Open a result.
                                 if let Some(i) =
-                                    searchui::result_hit(w, h, sview.count, x, y)
+                                    searchui::result_hit(w, sview.count, x, y)
                                 {
                                     let row = &sview.rows[i];
                                     open_title.clear();
@@ -494,28 +499,6 @@ fn repaint(
     grants: caps::Caps,
 ) {
     cursor.hide(surface);
-    paint_view(
-        surface, view, mail, skills, status, query, caret, sview, open_title, page, grants,
-    );
-    cursor.show_at(surface, x, y);
-    enter(screen);
-    *moved = false;
-}
-
-/// Paint the active full-screen view (home, search, skills, caps, or reader).
-fn paint_view(
-    surface: &fb::Surface,
-    view: screens::View,
-    mail: &mcp::MailPeek,
-    skills: &skills::SkillPeek,
-    status: &str,
-    query: &str,
-    caret: bool,
-    sview: &searchui::SearchView,
-    open_title: &str,
-    page: &mcp::DocPage,
-    grants: caps::Caps,
-) {
     match view {
         screens::View::Search => {
             searchui::draw(surface, sview, query, caret, bridge_note(mail))
@@ -527,6 +510,9 @@ fn paint_view(
             ui::draw_home_full(surface, mail, skills, status, query, caret)
         }
     }
+    cursor.show_at(surface, x, y);
+    enter(screen);
+    *moved = false;
 }
 
 /// Play a screen entrance: the frame is already composed in the back buffer.
