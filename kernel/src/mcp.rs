@@ -20,6 +20,9 @@ pub enum BridgeStatus {
     Online,
 }
 
+/// Footer / empty-state hint when COM2 has no host bridge.
+pub const BRIDGE_OFFLINE_HINT: &str = "Bridge offline - run: make utm-bridged";
+
 pub struct MailRow {
     pub from: [u8; 40],
     pub subj: [u8; 72],
@@ -132,20 +135,9 @@ fn parse_row_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
 pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
     let com2 = Serial::com2();
     com2.init();
-
-    for _ in 0..64 {
-        if com2.try_read_byte().is_none() {
-            break;
-        }
-    }
-
-    com2.write_str("PING\n");
     let mut line = [0u8; LINE_BUF];
-    let Some(n) = com2.read_line(&mut line, TIMEOUT_PING) else {
-        return MailPeek::empty(BridgeStatus::Offline);
-    };
-    let resp = str_prefix(&line[..n]);
-    if !resp.starts_with("OK pong") {
+
+    if ping_bridge(&com2, &mut line) != BridgeStatus::Online {
         return MailPeek::empty(BridgeStatus::Offline);
     }
 

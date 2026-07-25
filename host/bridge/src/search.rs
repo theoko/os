@@ -360,16 +360,6 @@ print(json.dumps(hits))
     Ok(out)
 }
 
-pub fn query_with(
-    q: &str,
-    k: usize,
-    cat: Option<&str>,
-    backend: &str,
-    include_email: bool,
-) -> Vec<String> {
-    query_scoped(q, k, cat, backend, include_email, false, false)
-}
-
 pub fn query_scoped(
     q: &str,
     k: usize,

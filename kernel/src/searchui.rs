@@ -449,7 +449,7 @@ pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage) {
     if page.count == 0 {
         let msg = match page.status {
             crate::mcp::BridgeStatus::Online => "Nothing readable here.",
-            crate::mcp::BridgeStatus::Offline => "Bridge offline - run: make utm-bridged",
+            crate::mcp::BridgeStatus::Offline => crate::mcp::BRIDGE_OFFLINE_HINT,
         };
         fb.draw_text(fx, 160, msg, &BODY_FACE, 0, theme::MUTED);
         return;

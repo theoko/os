@@ -122,10 +122,6 @@ pub fn docs() -> &'static [RawDoc] {
     })
 }
 
-pub fn is_available() -> bool {
-    cache_path().is_file()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -155,7 +151,7 @@ mod tests {
     #[test]
     fn missing_cache_yields_no_documents_not_a_panic() {
         unsafe { env::set_var("OS_TSEARCH_CACHE", "/nonexistent/os-teddy/none.json") };
-        assert!(!is_available());
+        assert!(!cache_path().is_file());
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
     }
 
@@ -247,11 +243,6 @@ pub fn index() -> &'static Index {
 impl Index {
     pub fn is_empty(&self) -> bool {
         self.terms.is_empty()
-    }
-
-    #[allow(dead_code)] // used by the bridge's startup prewarm log
-    pub fn term_count(&self) -> usize {
-        self.terms.len()
     }
 
     fn find(&self, w: &str) -> Option<&Term> {

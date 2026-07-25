@@ -476,35 +476,8 @@ unsafe extern "C" fn kmain() -> ! {
                             let targets = ui::home_targets(w, h, &skill_peek);
                             let mut clicked = false;
                             match targets.hit(x, y) {
-                                Some(ui::HomeHit::Cta(ui::CtaId::Ready)) => {
-                                    serial_port.write_str("ui: click Ready\n");
-                                    setup = setup::Setup::new();
-                                    cursor.hide(surface);
-                                    setup.draw(surface, &mail, &skill_peek);
-                                    cursor.show_at(surface, x, y);
-                                    enter(&screen);
-                                    clicked = true;
-                                    moved = false;
-                                }
-                                Some(ui::HomeHit::Cta(ui::CtaId::Skills))
-                                | Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
-                                    serial_port.write_str("ui: click Skills\n");
-                                    skill_peek = mcp::fetch_skill_peek();
-                                    serial_port.write_str(if skill_peek.from_bridge {
-                                        "skills: listed from bridge\n"
-                                    } else {
-                                        "skills: builtins (bridge offline)\n"
-                                    });
-                                    view = screens::View::Skills;
-                                    cursor.hide(surface);
-                                    screens::draw_skills(surface, &skill_peek);
-                                    cursor.show_at(surface, x, y);
-                                    enter(&screen);
-                                    // Don't fall through to the home redraw below.
-                                    clicked = false;
-                                    moved = false;
-                                }
-                                Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
+                                Some(ui::HomeHit::SearchField)
+                                | Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
                                     serial_port.write_str("ui: open search\n");
                                     view = screens::View::Search;
                                     query.clear();
@@ -519,45 +492,24 @@ unsafe extern "C" fn kmain() -> ! {
                                     );
                                     cursor.show_at(surface, x, y);
                                     enter(&screen);
-                                    clicked = true;
+                                    clicked = false;
                                     moved = false;
                                 }
-                                #[allow(unreachable_patterns)]
-                                Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
-                                    serial_port.write_str("ui: click Connectors\n");
-                                    mail = mcp::fetch_mail_peek(grants);
-                                    let search = mcp::fetch_search_peek(grants, "capability");
-                                    if search.denied {
-                                        write_status(
-                                            &mut status_buf,
-                                            "search.query denied by caps",
-                                        );
-                                        serial_port.write_str("search: denied\n");
-                                    } else if search.status == mcp::BridgeStatus::Offline {
-                                        write_status(&mut status_buf, "bridge offline - no search");
-                                        serial_port.write_str("search: offline\n");
-                                    } else if search.count == 0 {
-                                        write_status(&mut status_buf, "search: no hits");
-                                        serial_port.write_str("search: n=0\n");
+                                Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
+                                    serial_port.write_str("ui: click Skills\n");
+                                    skill_peek = mcp::fetch_skill_peek();
+                                    serial_port.write_str(if skill_peek.from_bridge {
+                                        "skills: listed from bridge\n"
                                     } else {
-                                        // "search: <title>" into the footer buffer.
-                                        let title = search.title_at(0);
-                                        let mut msg = [0u8; 72];
-                                        let prefix = b"search: ";
-                                        msg[..prefix.len()].copy_from_slice(prefix);
-                                        let tn = title.len().min(72 - prefix.len() - 1);
-                                        msg[prefix.len()..prefix.len() + tn]
-                                            .copy_from_slice(&title.as_bytes()[..tn]);
-                                        let n = prefix.len() + tn;
-                                        write_status(
-                                            &mut status_buf,
-                                            core::str::from_utf8(&msg[..n]).unwrap_or("search: ok"),
-                                        );
-                                        serial_port.write_str("search: n=");
-                                        let d = b'0' + (search.count.min(9) as u8);
-                                        serial_port.write_bytes(&[d, b'\n']);
-                                    }
-                                    clicked = true;
+                                        "skills: builtins (bridge offline)\n"
+                                    });
+                                    view = screens::View::Skills;
+                                    cursor.hide(surface);
+                                    screens::draw_skills(surface, &skill_peek);
+                                    cursor.show_at(surface, x, y);
+                                    enter(&screen);
+                                    clicked = false;
+                                    moved = false;
                                 }
                                 Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
                                     serial_port.write_str("ui: click Capabilities\n");
@@ -608,7 +560,7 @@ unsafe extern "C" fn kmain() -> ! {
 fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
     match mail.status {
         mcp::BridgeStatus::Online => "Answers come from the local index and the host bridge.",
-        mcp::BridgeStatus::Offline => "Bridge offline - run: make utm-bridged",
+        mcp::BridgeStatus::Offline => mcp::BRIDGE_OFFLINE_HINT,
     }
 }
 

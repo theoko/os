@@ -51,14 +51,7 @@ impl Rect {
     }
 }
 
-/// Which home CTA was under the pointer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CtaId {
-    Ready,
-    Skills,
-}
-
-/// Which home card was under the pointer.
+/// Which home tile was under the pointer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CardId {
     Connectors,
@@ -69,30 +62,12 @@ pub enum CardId {
 /// Any clickable region on the finished home screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HomeHit {
-    Cta(CtaId),
+    /// The primary search field (type or click to open Search).
+    SearchField,
     Card(CardId),
 }
 
-/// Hit targets for the CTA pair, computed with the same layout as `draw_home`.
-#[derive(Clone, Copy, Debug)]
-pub struct CtaTargets {
-    pub ready: Rect,
-    pub skills: Rect,
-}
-
-impl CtaTargets {
-    pub fn hit(self, px: i32, py: i32) -> Option<CtaId> {
-        if self.ready.contains(px, py) {
-            Some(CtaId::Ready)
-        } else if self.skills.contains(px, py) {
-            Some(CtaId::Skills)
-        } else {
-            None
-        }
-    }
-}
-
-/// Hit targets for the three "What's wired" cards.
+/// Hit targets for the three destination tiles.
 #[derive(Clone, Copy, Debug)]
 pub struct CardTargets {
     pub connectors: Rect,
@@ -114,17 +89,17 @@ impl CardTargets {
     }
 }
 
-/// Combined home hit-test (CTAs preferred over cards when overlapping — they don't).
+/// Combined home hit-test (search field preferred over tiles).
 #[derive(Clone, Copy, Debug)]
 pub struct HomeTargets {
-    pub ctas: CtaTargets,
+    pub search: Rect,
     pub cards: CardTargets,
 }
 
 impl HomeTargets {
     pub fn hit(self, px: i32, py: i32) -> Option<HomeHit> {
-        if let Some(c) = self.ctas.hit(px, py) {
-            return Some(HomeHit::Cta(c));
+        if self.search.contains(px, py) {
+            return Some(HomeHit::SearchField);
         }
         self.cards.hit(px, py).map(HomeHit::Card)
     }
@@ -224,7 +199,7 @@ pub fn draw_home_full(
             ry,
             match mail.status {
                 BridgeStatus::Online => "Inbox empty, or email.search not granted.",
-                BridgeStatus::Offline => "Bridge offline - run: make utm-bridged",
+                BridgeStatus::Offline => crate::mcp::BRIDGE_OFFLINE_HINT,
             },
             &SMALL_FACE,
             0,
@@ -276,15 +251,6 @@ pub(crate) fn tile_top(_h: i32) -> i32 {
 
 pub(crate) const TILE_H: i32 = 78;
 
-pub fn cta_targets(w: i32, h: i32, _skills: &SkillPeek) -> CtaTargets {
-    // The search field is now the primary action; Skills keeps its tile.
-    let (fx, fy, fw, fh) = search_rect(w, h);
-    CtaTargets {
-        ready: Rect { x: fx, y: fy, w: fw, h: fh },
-        skills: tile_rect(w, h, 2),
-    }
-}
-
 /// Bounding box of home tile `i` (0 = Search, 1 = Capabilities, 2 = Skills).
 pub fn tile_rect(w: i32, h: i32, i: i32) -> Rect {
     let (x0, cw) = home_column(w);
@@ -301,9 +267,15 @@ pub fn card_targets(w: i32, h: i32) -> CardTargets {
     }
 }
 
-pub fn home_targets(w: i32, h: i32, skills: &SkillPeek) -> HomeTargets {
+pub fn home_targets(w: i32, h: i32, _skills: &SkillPeek) -> HomeTargets {
+    let (fx, fy, fw, fh) = search_rect(w, h);
     HomeTargets {
-        ctas: cta_targets(w, h, skills),
+        search: Rect {
+            x: fx,
+            y: fy,
+            w: fw,
+            h: fh,
+        },
         cards: card_targets(w, h),
     }
 }
@@ -350,7 +322,19 @@ mod tests {
         // Typing must be reachable without hunting for a card.
         let t = home_targets(1024, 768, &peek());
         let (fx, fy, fw, fh) = search_rect(1024, 768);
-        assert_eq!(t.ctas.ready, Rect { x: fx, y: fy, w: fw, h: fh });
+        assert_eq!(
+            t.search,
+            Rect {
+                x: fx,
+                y: fy,
+                w: fw,
+                h: fh
+            }
+        );
+        assert_eq!(
+            t.hit(fx + fw / 2, fy + fh / 2),
+            Some(HomeHit::SearchField)
+        );
     }
 
     #[test]
@@ -416,7 +400,7 @@ mod tests {
             "Skills",
             "Recent mail",
             "Inbox empty, or email.search not granted.",
-            "Bridge offline - run: make utm-bridged",
+            crate::mcp::BRIDGE_OFFLINE_HINT,
             "bridge connected",
             "bridge offline",
             "os",

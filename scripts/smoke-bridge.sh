@@ -40,7 +40,7 @@ addr = os.environ["OS_SMOKE_ADDR"]
 serial_path = Path(os.environ["OS_SMOKE_SERIAL"])
 serial_path.write_bytes(b"")
 
-# Guest listens; bridge (already dialing) connects. server,nowait = boot without peer.
+# Guest listens; wait for the dialing bridge before the guest runs (early PING).
 proc = subprocess.Popen(
     [
         "qemu-system-x86_64",
@@ -50,7 +50,7 @@ proc = subprocess.Popen(
         "-boot", "d",
         "-display", "none",
         "-serial", f"file:{serial_path}",
-        "-serial", f"tcp:{addr},server,nowait",
+        "-serial", f"tcp:{addr},server",
         "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
         "-no-reboot",
     ],

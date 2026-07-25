@@ -80,7 +80,7 @@ run-bridged: iso bridge
 	$(QEMU) -M q35 -cdrom $(IMAGE_NAME).iso -boot d \
 		-m 512M -display none \
 		-serial stdio \
-		-serial tcp:$(BRIDGE_ADDR),server,nowait \
+		-serial tcp:$(BRIDGE_ADDR),server \
 		$(QEMU_DEBUG_EXIT) || true
 
 utm: iso
