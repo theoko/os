@@ -1079,6 +1079,21 @@ mod read_tests {
     }
 
     #[test]
+    fn reading_builtin_corpus_needs_no_wire_bit() {
+        // Curated os:// docs are not personal data — open without portal/files.
+        let rows = read_doc("os://AGENTS.md", 8, &args(&[])).expect("builtin");
+        let text: String = rows
+            .iter()
+            .filter_map(|r| r.strip_prefix("ROW line="))
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            text.contains("Capability-based agents") || text.contains("Agent-centric"),
+            "{text}"
+        );
+    }
+
+    #[test]
     fn reading_a_transcript_needs_the_audio_grant() {
         let e = read_doc("audio:///tmp/x.wav", 10, &args(&[("files", "1")])).unwrap_err();
         assert_eq!(e, "needs_audio_cap", "the files grant must not unlock recordings");

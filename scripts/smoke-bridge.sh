@@ -386,6 +386,29 @@ if mail_url:
     print("smoke-bridge: doc.read email=1 ok")
 else:
     print("smoke-bridge: doc.read email=1 skipped (no email:// hit)")
+
+# Built-in corpus: os:// opens with no personal-data wire bit.
+builtin = call("CALL search.query q=Agent-centric k=3")
+os_url = None
+for line in builtin.splitlines():
+    if line.startswith("ROW ") and "os://" in line:
+        for part in line.split("|"):
+            if part.startswith("url="):
+                os_url = part[4:]
+                break
+if not os_url:
+    # Fall back to the known identity card URL if ranking missed the hit.
+    os_url = "os://AGENTS.md"
+opened_os = call(f"CALL doc.read url={os_url} lines=8")
+if not opened_os.startswith("OK doc.read"):
+    print("error: doc.read os:// must succeed without wire bits", file=sys.stderr)
+    print(opened_os, file=sys.stderr)
+    sys.exit(1)
+if "Capability-based" not in opened_os and "Agent-centric" not in opened_os:
+    print("error: doc.read os:// must return curated body text", file=sys.stderr)
+    print(opened_os, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: doc.read os:// ok")
 PY
 
 python3 <<'PY'

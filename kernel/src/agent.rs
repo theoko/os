@@ -424,7 +424,11 @@ fn run_plan_act(brief: &mut Brief, caps: Caps) {
         brief.push_line("Need", Cap::SearchQuery.label());
     }
 
-    // Recordings: no COM2 here — point at Search so host unit tests stay safe.
+    // Your files / Recordings: no COM2 here — point at Search so host unit
+    // tests stay safe (grant alone must not open the serial).
+    if caps.allows(Cap::WorkspaceIndex) {
+        brief.push_line("Info", "Your files on - open file hits from Search.");
+    }
     if caps.allows(Cap::AudioTranscribe) {
         brief.push_line("Info", "Recordings on - open audio hits from Search.");
     }
@@ -748,6 +752,21 @@ mod tests {
     }
 
     #[test]
+    fn plan_act_mentions_files_when_granted_without_com2() {
+        // WorkspaceIndex alone must not open COM2 (SearchQuery stays off).
+        let mut caps = Caps::none();
+        caps.set(Cap::WorkspaceIndex, true);
+        let b = run("agent-plan-act", caps);
+        assert!(
+            b.lines
+                .iter()
+                .any(|l| l.text().contains("Your files on")),
+            "expected files lane: {:?}",
+            b.lines.iter().map(|l| l.text()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
     fn copy_is_ascii_only() {
         for s in [
             "Morning mail brief",
@@ -766,6 +785,7 @@ mod tests {
             "Playbook only",
             "Saved skills show body text until they get a runner.",
             "Playbook body unavailable.",
+            "Your files on - open file hits from Search.",
             "Recordings on - open audio hits from Search.",
             "Acting only with switches that are on.",
         ] {

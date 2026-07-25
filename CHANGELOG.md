@@ -1,8 +1,17 @@
 ---
-version: 0.9.13
+version: 0.9.14
 ---
 
 # Changelog
+
+## 0.9.14 — 2026-07-25
+
+Morning brief files lane + open the built-in corpus:
+
+- `plan_act` notes when Your files is on (Search to open `file://` hits),
+  same no-COM2 pattern as Recordings.
+- Smoke + unit: `doc.read os://…` returns curated body text with no wire
+  bit (`portal` / `files` / … stay off). Completes search→open for docs.
 
 ## 0.9.13 — 2026-07-25
 
