@@ -27,8 +27,8 @@ pub enum View {
     Reader,
 }
 
-pub const NAV_H: i32 = 56;
-const PAD_X: i32 = 28;
+use crate::ui::{NAV_H, PAD_X};
+
 const CONTENT_MAX: i32 = 720;
 const ROW_H: i32 = 62;
 const ROW_GAP: i32 = 8;

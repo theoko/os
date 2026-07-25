@@ -137,7 +137,7 @@ unsafe extern "C" fn kmain() -> ! {
 
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
-                ui::draw_home(surface, &mail, &skill_peek, "");
+                ui::draw_home_full(surface, &mail, &skill_peek, "", "", false);
                 mouse::paint_pointer(surface, cx, cy);
                 screen.present();
                 serial_port.write_str("mouse: pointer painted\n");
@@ -271,11 +271,18 @@ unsafe extern "C" fn kmain() -> ! {
                                 serial_port.write_str(status_str(&status_buf));
                                 serial_port.write_str("\n");
                                 mail = mcp::fetch_mail_peek(grants);
-                                ui::draw_home(
+                                paint_view(
                                     surface,
+                                    screens::View::Home,
                                     &mail,
                                     &skill_peek,
                                     status_str(&status_buf),
+                                    "",
+                                    false,
+                                    &sview,
+                                    "",
+                                    &page,
+                                    grants,
                                 );
                             } else {
                                 setup.draw(surface, &mail, &skill_peek);
@@ -345,30 +352,19 @@ unsafe extern "C" fn kmain() -> ! {
                         }
                         if dirty {
                             cursor.hide(surface);
-                            match view {
-                                screens::View::Search => searchui::draw(
-                                    surface,
-                                    &sview,
-                                    query.as_str(),
-                                    caret,
-                                    bridge_note(&mail),
-                                ),
-                                screens::View::Skills => {
-                                    screens::draw_skills(surface, &skill_peek)
-                                }
-                                screens::View::Caps => screens::draw_caps(surface, grants),
-                                screens::View::Reader => {
-                                    searchui::draw_reader(surface, open_title.as_str(), &page)
-                                }
-                                screens::View::Home => ui::draw_home_full(
-                                    surface,
-                                    &mail,
-                                    &skill_peek,
-                                    status_str(&status_buf),
-                                    query.as_str(),
-                                    caret,
-                                ),
-                            }
+                            paint_view(
+                                surface,
+                                view,
+                                &mail,
+                                &skill_peek,
+                                status_str(&status_buf),
+                                query.as_str(),
+                                caret,
+                                &sview,
+                                open_title.as_str(),
+                                &page,
+                                grants,
+                            );
                             cursor.show_at(surface, x, y);
                             enter(&screen);
                             moved = false;
@@ -476,28 +472,19 @@ unsafe extern "C" fn kmain() -> ! {
                         }
                         if dirty {
                             cursor.hide(surface);
-                            match view {
-                                screens::View::Search => searchui::draw(
-                                    surface,
-                                    &sview,
-                                    query.as_str(),
-                                    caret,
-                                    bridge_note(&mail),
-                                ),
-                                screens::View::Skills => screens::draw_skills(surface, &skill_peek),
-                                screens::View::Caps => screens::draw_caps(surface, grants),
-                                screens::View::Reader => {
-                                    searchui::draw_reader(surface, open_title.as_str(), &page)
-                                }
-                                screens::View::Home => {
-                                    ui::draw_home(
-                                        surface,
-                                        &mail,
-                                        &skill_peek,
-                                        status_str(&status_buf),
-                                    )
-                                }
-                            }
+                            paint_view(
+                                surface,
+                                view,
+                                &mail,
+                                &skill_peek,
+                                status_str(&status_buf),
+                                query.as_str(),
+                                caret,
+                                &sview,
+                                open_title.as_str(),
+                                &page,
+                                grants,
+                            );
                             cursor.show_at(surface, x, y);
                             enter(&screen);
                             moved = false;
@@ -532,6 +519,33 @@ fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
     match mail.status {
         mcp::BridgeStatus::Online => "Answers come from the local index and the host bridge.",
         mcp::BridgeStatus::Offline => mcp::BRIDGE_OFFLINE_HINT,
+    }
+}
+
+/// Paint the active full-screen view (home, search, skills, caps, or reader).
+fn paint_view(
+    surface: &fb::Surface,
+    view: screens::View,
+    mail: &mcp::MailPeek,
+    skills: &skills::SkillPeek,
+    status: &str,
+    query: &str,
+    caret: bool,
+    sview: &searchui::SearchView,
+    open_title: &str,
+    page: &mcp::DocPage,
+    grants: caps::Caps,
+) {
+    match view {
+        screens::View::Search => {
+            searchui::draw(surface, sview, query, caret, bridge_note(mail))
+        }
+        screens::View::Skills => screens::draw_skills(surface, skills),
+        screens::View::Caps => screens::draw_caps(surface, grants),
+        screens::View::Reader => searchui::draw_reader(surface, open_title, page),
+        screens::View::Home => {
+            ui::draw_home_full(surface, mail, skills, status, query, caret)
+        }
     }
 }
 

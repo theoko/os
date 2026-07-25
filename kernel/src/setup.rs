@@ -2,8 +2,8 @@
 //!
 //! One decision per screen, centred on a white page, with a single primary
 //! action and a quiet way back. The steps mirror what this OS actually has to
-//! establish before the agent can do anything: where it is, whether the host
-//! bridge is reachable, which capabilities are granted, and which skills load.
+//! establish before the agent can do anything: whether the host bridge is
+//! reachable, which capabilities are granted, and which skills load.
 //!
 //! Drawing records its own hit zones, so `click()` needs no separate layout
 //! table to drift out of sync.
@@ -43,7 +43,6 @@ impl Zone {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Step {
     Welcome,
-    Region,
     Bridge,
     Capabilities,
     Skills,
@@ -51,8 +50,6 @@ pub enum Step {
     /// Setup finished; the home screen takes over.
     Finished,
 }
-
-pub const REGIONS: [&str; 4] = ["United States", "United Kingdom", "Greece", "Japan"];
 
 /// Capabilities the agent may be granted up front. Mirrors [`Cap`] / bridge tools.
 pub const CAPS: [(&str, &str); 5] = [
@@ -67,7 +64,6 @@ const MAX_ZONES: usize = 12;
 
 pub struct Setup {
     pub step: Step,
-    pub region: usize,
     pub caps: [bool; CAPS.len()],
     zones: [Zone; MAX_ZONES],
     n_zones: usize,
@@ -79,7 +75,6 @@ impl Setup {
     pub const fn new() -> Self {
         Self {
             step: Step::Welcome,
-            region: 0,
             // Read-only tools on; anything that writes to disk or reaches
             // personal files is opt-in, matching the "no ambient root" rule.
             caps: [true, true, false, false, false],
@@ -144,8 +139,7 @@ impl Setup {
         match action {
             Action::Continue => {
                 self.step = match self.step {
-                    Step::Welcome => Step::Region,
-                    Step::Region => Step::Bridge,
+                    Step::Welcome => Step::Bridge,
                     Step::Bridge => Step::Capabilities,
                     Step::Capabilities => Step::Skills,
                     Step::Skills => Step::Done,
@@ -156,8 +150,8 @@ impl Setup {
             }
             Action::Back => {
                 self.step = match self.step {
-                    Step::Welcome | Step::Region => Step::Welcome,
-                    Step::Bridge => Step::Region,
+                    Step::Welcome => Step::Welcome,
+                    Step::Bridge => Step::Welcome,
                     Step::Capabilities => Step::Bridge,
                     Step::Skills => Step::Capabilities,
                     Step::Done => Step::Skills,
@@ -166,13 +160,6 @@ impl Setup {
                 true
             }
             Action::Row(i) => match self.step {
-                Step::Region => {
-                    if i < REGIONS.len() {
-                        self.region = i;
-                        return true;
-                    }
-                    false
-                }
                 Step::Capabilities => {
                     if i < CAPS.len() {
                         self.caps[i] = !self.caps[i];
@@ -194,7 +181,6 @@ impl Setup {
 
         match self.step {
             Step::Welcome => self.draw_welcome(fb, w, h),
-            Step::Region => self.draw_region(fb, w, h),
             Step::Bridge => self.draw_bridge(fb, w, h, mail),
             Step::Capabilities => self.draw_caps(fb, w, h),
             Step::Skills => self.draw_skills(fb, w, h, skills),
@@ -209,23 +195,6 @@ impl Setup {
         let cy = h / 2 - 40;
         fb.draw_text_centered(w / 2, cy, "hello", &HERO_FACE, track, theme::INK);
         self.primary(fb, w, cy + 90, "Continue");
-    }
-
-    fn draw_region(&mut self, fb: &Surface, w: i32, h: i32) {
-        let top = self.header(
-            fb,
-            w,
-            h,
-            "Select Your Region",
-            "This sets formatting defaults. It does not leave the machine.",
-        );
-        let sel = self.region;
-        let mut y = top;
-        for (i, name) in REGIONS.iter().enumerate() {
-            self.row(fb, w, y, name, None, i == sel, false, Action::Row(i));
-            y += ROW_H + 8;
-        }
-        self.footer(fb, w, h, y, true);
     }
 
     fn draw_bridge(&mut self, fb: &Surface, w: i32, h: i32, mail: &MailPeek) {
@@ -435,7 +404,6 @@ mod tests {
         let mut s = setup();
         let order = [
             Step::Welcome,
-            Step::Region,
             Step::Bridge,
             Step::Capabilities,
             Step::Skills,
@@ -452,7 +420,7 @@ mod tests {
     #[test]
     fn back_walks_the_journey_in_reverse() {
         let mut s = setup();
-        for _ in 0..4 {
+        for _ in 0..3 {
             s.apply(Action::Continue);
         }
         assert_eq!(s.step, Step::Skills);
@@ -460,6 +428,8 @@ mod tests {
         assert_eq!(s.step, Step::Capabilities);
         s.apply(Action::Back);
         assert_eq!(s.step, Step::Bridge);
+        s.apply(Action::Back);
+        assert_eq!(s.step, Step::Welcome);
     }
 
     #[test]
@@ -476,17 +446,6 @@ mod tests {
         s.apply(Action::Continue);
         s.apply(Action::Back);
         assert_eq!(s.step, Step::Finished);
-    }
-
-    #[test]
-    fn region_selection_sticks() {
-        let mut s = setup();
-        s.step = Step::Region;
-        assert!(s.apply(Action::Row(2)));
-        assert_eq!(s.region, 2);
-        // Out of range must not panic or change anything.
-        assert!(!s.apply(Action::Row(99)));
-        assert_eq!(s.region, 2);
     }
 
     #[test]
@@ -531,14 +490,14 @@ mod tests {
         let mut s = setup();
         s.push_zone(0, 0, 100, 100, Action::Continue);
         assert!(s.pointer(10, 10, 1), "press should act");
-        assert_eq!(s.step, Step::Region);
+        assert_eq!(s.step, Step::Bridge);
         // Still held: must not keep advancing.
         assert!(!s.pointer(10, 10, 1));
-        assert_eq!(s.step, Step::Region);
+        assert_eq!(s.step, Step::Bridge);
         // Release then press again.
         assert!(!s.pointer(10, 10, 0));
         assert!(s.pointer(10, 10, 1));
-        assert_eq!(s.step, Step::Bridge);
+        assert_eq!(s.step, Step::Capabilities);
     }
 
     #[test]
@@ -562,8 +521,6 @@ mod tests {
     fn copy_is_ascii_only() {
         let mut all: Vec<&str> = vec![
             "hello",
-            "Select Your Region",
-            "This sets formatting defaults. It does not leave the machine.",
             "Connect the Bridge",
             "Connectors run on the host, never in the kernel.",
             crate::mcp::BRIDGE_OFFLINE_HINT,
@@ -580,7 +537,6 @@ mod tests {
             "Start",
             "Host bridge",
         ];
-        all.extend(REGIONS);
         for (n, b) in CAPS {
             all.push(n);
             all.push(b);
@@ -598,9 +554,6 @@ mod tests {
         for (n, b) in CAPS {
             assert!(BRAND_FACE.width(n, 0) < CONTENT_W - 90, "cap name too wide: {n}");
             assert!(SMALL_FACE.width(b, 0) < CONTENT_W - 90, "cap blurb too wide: {b}");
-        }
-        for r in REGIONS {
-            assert!(BRAND_FACE.width(r, 0) < CONTENT_W - 60, "region too wide: {r}");
         }
     }
 }

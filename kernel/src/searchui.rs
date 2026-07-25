@@ -11,7 +11,7 @@ use crate::fb::Surface;
 use crate::font::{self, BODY_FACE, BRAND_FACE, SMALL_FACE, TITLE_FACE};
 use crate::screens;
 use crate::search;
-use crate::ui::theme;
+use crate::ui::{theme, PAD_X};
 
 /// Longest query we accept. Comfortably wider than the field renders.
 pub const QUERY_MAX: usize = 64;
@@ -183,7 +183,6 @@ impl SearchView {
     }
 }
 
-const PAD_X: i32 = 28;
 const FIELD_H: i32 = 52;
 const ROW_H: i32 = 64;
 const CONTENT_MAX: i32 = 720;

@@ -31,8 +31,10 @@ pub mod theme {
     pub const OFFLINE: u32 = 0x00FF_3B30;
 }
 
-const NAV_H: i32 = 56;
-const PAD_X: i32 = 28;
+/// Shared chrome height (home nav, Skills/Caps/Search Back bar).
+pub const NAV_H: i32 = 56;
+/// Shared horizontal page margin.
+pub const PAD_X: i32 = 28;
 const CONTENT_MAX: i32 = 920;
 
 
@@ -106,19 +108,14 @@ impl HomeTargets {
 }
 
 
-/// Draw the home composition on `fb`.
-///
-/// `status` is a short footer line (ASCII); empty falls back to the version bar.
-pub fn draw_home(fb: &Surface, mail: &MailPeek, skills: &SkillPeek, status: &str) {
-    draw_home_full(fb, mail, skills, status, "", false)
-}
-
 /// The home screen: a launcher, not a landing page.
 ///
 /// A search field you can type into immediately, three destinations carrying
 /// live counts, and recent mail when the capability was granted. The previous
 /// version led with a tagline and a primary button whose only effect was to
 /// restart the setup wizard.
+///
+/// `status` is a short footer line (ASCII); empty falls back to the version bar.
 pub fn draw_home_full(
     fb: &Surface,
     mail: &MailPeek,
