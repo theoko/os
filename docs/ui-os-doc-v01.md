@@ -49,6 +49,12 @@ not inferred from caps, bridge, or click history. RAM-only until reboot.
 
 Code: [`kernel/src/level.rs`](../kernel/src/level.rs), setup Experience step.
 
+## Recent mail (v0.9.22)
+
+Home lists recent inbox rows when Email is granted. Each row is clickable and
+opens `email://{id}` in the Reader — same `doc.read` path as Search. The id
+comes from the bridge `email.search` ROW (graph-stable hash of from+subject).
+
 ## Chill 60 Hz loop (v0.9.19)
 
 After the framebuffer is up, the guest runs a paced **60 fps** game loop

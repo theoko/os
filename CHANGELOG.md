@@ -1,8 +1,18 @@
 ---
-version: 0.9.21
+version: 0.9.22
 ---
 
 # Changelog
+
+## 0.9.22 — 2026-07-25
+
+Home Recent mail opens in the Reader:
+
+- `email.search` ROWs carry stable `id=` matching the mail graph /
+  `doc.read email://…` (mock + gog).
+- Guest `MailPeek` stores the id; clicking a home mail row opens the same
+  Reader path Search already uses. Cap refuse still needs `email=1`.
+- Smoke opens mail via the ROW id; unit tests cover hit geometry + URL build.
 
 ## 0.9.21 — 2026-07-25
 

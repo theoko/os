@@ -742,7 +742,8 @@ fn email_search_mock(query: &str, max: usize) -> Vec<String> {
     let n = samples.len().min(max);
     let mut out = vec![format!("OK email.search n={n}")];
     for (from, subj) in samples.iter().take(n) {
-        out.push(format!("ROW from={from}|subj={subj}"));
+        let id = graph::id_for(from, subj);
+        out.push(format!("ROW id={id}|from={from}|subj={subj}"));
     }
     out.push("END".into());
     out
@@ -800,11 +801,10 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
                 .or_else(|| item.get("snippet"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("(no subject)");
-            rows.push(format!(
-                "ROW from={}|subj={}",
-                sanitize_field(from),
-                sanitize_field(subj)
-            ));
+            let from = sanitize_field(from);
+            let subj = sanitize_field(subj);
+            let id = graph::id_for(&from, &subj);
+            rows.push(format!("ROW id={id}|from={from}|subj={subj}"));
         }
     }
 
@@ -812,7 +812,8 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
         for line in stdout.lines().take(max) {
             let line = sanitize_field(line);
             if !line.is_empty() {
-                rows.push(format!("ROW from=gog|subj={line}"));
+                let id = graph::id_for("gog", &line);
+                rows.push(format!("ROW id={id}|from=gog|subj={line}"));
             }
         }
     }
@@ -989,6 +990,17 @@ mod tests {
             allowed.iter().any(|l| l.starts_with("ROW ") && l.contains("title=")),
             "expected a demo ROW: {allowed:?}"
         );
+    }
+
+    #[test]
+    fn email_search_rows_carry_graph_ids() {
+        let rows = email_search_mock("in:inbox", 2);
+        let row = rows.iter().find(|l| l.starts_with("ROW ")).expect("ROW");
+        let id = parse_row_field(row, "id").expect("id=");
+        let from = parse_row_field(row, "from").expect("from=");
+        let subj = parse_row_field(row, "subj").expect("subj=");
+        assert_eq!(id, graph::id_for(from, subj), "ROW id must match graph");
+        assert_eq!(id.len(), 16);
     }
 
     #[test]

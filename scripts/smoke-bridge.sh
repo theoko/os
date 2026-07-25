@@ -268,6 +268,17 @@ if not allowed_mail.startswith("OK email.search"):
     print("error: email.search email=1 must succeed", file=sys.stderr)
     print(allowed_mail, file=sys.stderr)
     sys.exit(1)
+mail_row_id = None
+for line in allowed_mail.splitlines():
+    if line.startswith("ROW ") and "id=" in line:
+        for part in line.split("|"):
+            if part.startswith("id="):
+                mail_row_id = part[3:]
+                break
+if not mail_row_id or len(mail_row_id) != 16:
+    print("error: email.search ROW must carry a 16-char id=", file=sys.stderr)
+    print(allowed_mail, file=sys.stderr)
+    sys.exit(1)
 print("smoke-bridge: email.search email=1 ok")
 
 denied_cal = call("CALL calendar.list")
@@ -404,20 +415,31 @@ if "Smoke Workspace Alpha" in ws_miss:
     sys.exit(1)
 print("smoke-bridge: workspace.forget ok")
 
-# Mail open: re-seed the graph (email.forget ran earlier), then open a hit.
+# Mail open: re-seed the graph (email.forget ran earlier), then open via the
+# same id= the guest Home Recent-mail rows will use.
 reseed = call("CALL email.search q=in:inbox max=2 email=1")
 if not reseed.startswith("OK email.search"):
     print("error: could not re-seed mail graph for doc.read", file=sys.stderr)
     print(reseed, file=sys.stderr)
     sys.exit(1)
-mail_hit = call("CALL search.query q=Q2-planning k=3 email=1")
 mail_url = None
-for line in mail_hit.splitlines():
-    if line.startswith("ROW ") and "email://" in line:
+for line in reseed.splitlines():
+    if line.startswith("ROW ") and "id=" in line:
         for part in line.split("|"):
-            if part.startswith("url="):
-                mail_url = part[4:]
+            if part.startswith("id="):
+                mail_url = f"email://{part[3:]}"
                 break
+        if mail_url:
+            break
+if not mail_url:
+    # Fallback: search.query email graph (older path).
+    mail_hit = call("CALL search.query q=Q2-planning k=3 email=1")
+    for line in mail_hit.splitlines():
+        if line.startswith("ROW ") and "email://" in line:
+            for part in line.split("|"):
+                if part.startswith("url="):
+                    mail_url = part[4:]
+                    break
 if mail_url:
     denied_mail_doc = call(f"CALL doc.read url={mail_url} lines=8")
     if "needs_email_cap" not in denied_mail_doc:

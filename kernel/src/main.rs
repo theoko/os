@@ -664,7 +664,7 @@ unsafe extern "C" fn kmain() -> ! {
                         let left_down = buttons & 1 != 0;
                         let left_was = prev_buttons & 1 != 0;
                         if left_down && !left_was {
-                            let targets = ui::home_targets(w, h, &skill_peek, &brief);
+                            let targets = ui::home_targets(w, h, &skill_peek, &brief, &mail);
                             let mut clicked = false;
                             match targets.hit(x, y) {
                                 Some(ui::HomeHit::Cta(ui::CtaId::Ready)) => {
@@ -728,6 +728,29 @@ unsafe extern "C" fn kmain() -> ! {
                                     screens::draw_brief(surface, &brief);
                                     cursor.show_at(surface, x, y);
                                     enter(&screen, &mut motion, x, y);
+                                    clicked = false;
+                                }
+                                Some(ui::HomeHit::Mail(i)) => {
+                                    let mut url_buf = [0u8; 40];
+                                    if let Some(url) = mail.url_at(i, &mut url_buf) {
+                                        open_title.clear();
+                                        for b in mail.row_subj(i).bytes() {
+                                            open_title.apply(keyboard::Key::Char(b));
+                                        }
+                                        page = mcp::fetch_doc(grants, url);
+                                        view = screens::View::Reader;
+                                        serial_port.write_str("ui: open mail\n");
+                                        cursor.hide(surface);
+                                        searchui::draw_reader(
+                                            surface,
+                                            open_title.as_str(),
+                                            &page,
+                                        );
+                                        cursor.show_at(surface, x, y);
+                                        enter(&screen, &mut motion, x, y);
+                                    } else {
+                                        serial_port.write_str("ui: mail missing id\n");
+                                    }
                                     clicked = false;
                                 }
                                 None => {}

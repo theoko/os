@@ -53,7 +53,7 @@ Host → guest:
 |----------|---------|
 | `OK pong` | Alive |
 | `OK tools=a,b,c` | Tool list |
-| `OK email.search n=<N>` / `ROW from=…\|subj=…` / `END` | Mail hits |
+| `OK email.search n=<N>` / `ROW id=…\|from=…\|subj=…` / `END` | Mail hits |
 | `OK search.query n=<N> backend=…` / `ROW title=…\|…` / `END` | Knowledge hits |
 | `ERR <tool> <reason>` | Failure |
 
