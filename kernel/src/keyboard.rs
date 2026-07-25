@@ -4,22 +4,11 @@
 //! controller's AUX flag is clear. Under UTM the pointer is a USB tablet, so
 //! nothing else is draining port 0x60.
 
+use crate::port;
+
 const DATA: u16 = 0x60;
 const STATUS: u16 = 0x64;
 
-#[cfg(target_arch = "x86_64")]
-mod port {
-    use core::arch::asm;
-
-    #[inline]
-    pub unsafe fn inb(port: u16) -> u8 {
-        let val: u8;
-        unsafe {
-            asm!("in al, dx", out("al") val, in("dx") port, options(nostack, preserves_flags));
-        }
-        val
-    }
-}
 
 /// What a keypress produced.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

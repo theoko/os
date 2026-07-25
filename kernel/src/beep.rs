@@ -8,6 +8,8 @@
 //! else's copyright baked into a build artifact in a public repo — see
 //! `docs/` for pointing this at your own licensed audio instead.
 
+use crate::port;
+
 use crate::serial::{rdtsc, ASSUMED_HZ};
 
 const PIT_CMD: u16 = 0x43;
@@ -17,26 +19,6 @@ const SPEAKER: u16 = 0x61;
 /// PIT input clock.
 const PIT_HZ: u32 = 1_193_182;
 
-#[cfg(target_arch = "x86_64")]
-mod port {
-    use core::arch::asm;
-
-    #[inline]
-    pub unsafe fn outb(port: u16, val: u8) {
-        unsafe {
-            asm!("out dx, al", in("dx") port, in("al") val, options(nostack, preserves_flags));
-        }
-    }
-
-    #[inline]
-    pub unsafe fn inb(port: u16) -> u8 {
-        let val: u8;
-        unsafe {
-            asm!("in al, dx", out("al") val, in("dx") port, options(nostack, preserves_flags));
-        }
-        val
-    }
-}
 
 /// PIT divisor for a frequency, clamped to what the 16-bit counter can hold.
 ///

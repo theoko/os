@@ -209,13 +209,9 @@ impl UsbTablet {
     }
 
     fn outl_flbase(&self, val: u32) {
-        #[cfg(target_arch = "x86_64")]
         unsafe {
-            let port = self.io + FLBASEADD;
-            core::arch::asm!("out dx, eax", in("dx") port, in("eax") val, options(nostack, preserves_flags));
+            crate::port::outl(self.io + FLBASEADD, val);
         }
-        #[cfg(not(target_arch = "x86_64"))]
-        let _ = val;
     }
 
     fn hc_reset(&mut self) {

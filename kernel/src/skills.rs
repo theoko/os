@@ -78,12 +78,19 @@ impl SkillPeek {
     }
 }
 
-fn str_at(buf: &[u8]) -> &str {
-    let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    match core::str::from_utf8(&buf[..n]) {
+/// Decode the longest valid UTF-8 prefix — a cut mid-character must degrade
+/// to a shorter string, not vanish entirely.
+pub(crate) fn utf8_prefix(bytes: &[u8]) -> &str {
+    match core::str::from_utf8(bytes) {
         Ok(s) => s,
-        Err(e) => core::str::from_utf8(&buf[..e.valid_up_to()]).unwrap_or(""),
+        Err(e) => core::str::from_utf8(&bytes[..e.valid_up_to()]).unwrap_or(""),
     }
+}
+
+/// Null-terminated fixed field as a string (UTF-8 prefix).
+pub(crate) fn str_at(buf: &[u8]) -> &str {
+    let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
+    utf8_prefix(&buf[..n])
 }
 
 /// Copy `src` into a fixed field, never splitting a UTF-8 char.

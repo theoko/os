@@ -7,6 +7,7 @@ mod graph;
 mod paths;
 mod workspace;
 mod search;
+mod text;
 mod transcribe;
 mod tsearch;
 mod skills;
@@ -605,16 +606,7 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
 }
 
 fn sanitize_field(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            '\n' | '\r' | '|' => ' ',
-            c if c.is_control() => ' ',
-            c => c,
-        })
-        .take(90)
-        .collect::<String>()
-        .trim()
-        .to_string()
+    text::sanitize(s, 90, false, true)
 }
 
 #[cfg(test)]

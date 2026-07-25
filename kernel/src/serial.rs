@@ -1,28 +1,10 @@
 //! Early PC UART (COM1 / COM2) for debug + MCP bridge.
 
+use crate::port;
+
 /// Line ending used after the hello banner.
 pub const LINE_ENDING: &str = "\n";
 
-#[cfg(target_arch = "x86_64")]
-mod port {
-    use core::arch::asm;
-
-    #[inline]
-    pub unsafe fn outb(port: u16, val: u8) {
-        unsafe {
-            asm!("out dx, al", in("dx") port, in("al") val, options(nostack, preserves_flags));
-        }
-    }
-
-    #[inline]
-    pub unsafe fn inb(port: u16) -> u8 {
-        let val: u8;
-        unsafe {
-            asm!("in al, dx", out("al") val, in("dx") port, options(nostack, preserves_flags));
-        }
-        val
-    }
-}
 
 /// Classic PC UART.
 pub struct Serial {

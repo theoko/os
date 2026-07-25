@@ -256,11 +256,7 @@ unsafe extern "C" fn kmain() -> ! {
                             }
                             if setup.step == setup::Step::Skills && before != setup::Step::Skills {
                                 skill_peek = mcp::fetch_skill_peek();
-                                serial_port.write_str(if skill_peek.from_bridge {
-                                    "skills: listed from bridge\n"
-                                } else {
-                                    "skills: builtins (bridge offline)\n"
-                                });
+                                log_skill_source(&serial_port, &skill_peek);
                             }
                             cursor.hide(surface);
                             if setup.is_finished() {
@@ -333,11 +329,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
                                     serial_port.write_str("ui: click Skills\n");
                                     skill_peek = mcp::fetch_skill_peek();
-                                    serial_port.write_str(if skill_peek.from_bridge {
-                                        "skills: listed from bridge\n"
-                                    } else {
-                                        "skills: builtins (bridge offline)\n"
-                                    });
+                                    log_skill_source(&serial_port, &skill_peek);
                                     view = screens::View::Skills;
                                     dirty = true;
                                 }
@@ -351,9 +343,13 @@ unsafe extern "C" fn kmain() -> ! {
                             }
                         }
                         if dirty {
-                            cursor.hide(surface);
-                            paint_view(
+                            repaint(
+                                &mut cursor,
                                 surface,
+                                &screen,
+                                x,
+                                y,
+                                &mut moved,
                                 view,
                                 &mail,
                                 &skill_peek,
@@ -365,9 +361,6 @@ unsafe extern "C" fn kmain() -> ! {
                                 &page,
                                 grants,
                             );
-                            cursor.show_at(surface, x, y);
-                            enter(&screen);
-                            moved = false;
                         }
                     } else {
                         // Non-home screens: keyboard + clicks (mutually exclusive
@@ -471,9 +464,13 @@ unsafe extern "C" fn kmain() -> ! {
                             }
                         }
                         if dirty {
-                            cursor.hide(surface);
-                            paint_view(
+                            repaint(
+                                &mut cursor,
                                 surface,
+                                &screen,
+                                x,
+                                y,
+                                &mut moved,
                                 view,
                                 &mail,
                                 &skill_peek,
@@ -485,9 +482,6 @@ unsafe extern "C" fn kmain() -> ! {
                                 &page,
                                 grants,
                             );
-                            cursor.show_at(surface, x, y);
-                            enter(&screen);
-                            moved = false;
                         }
                     }
                     prev_buttons = buttons;
@@ -520,6 +514,42 @@ fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
         mcp::BridgeStatus::Online => "Answers come from the local index and the host bridge.",
         mcp::BridgeStatus::Offline => mcp::BRIDGE_OFFLINE_HINT,
     }
+}
+
+fn log_skill_source(port: &serial::Serial, peek: &skills::SkillPeek) {
+    port.write_str(if peek.from_bridge {
+        "skills: listed from bridge\n"
+    } else {
+        "skills: builtins (bridge offline)\n"
+    });
+}
+
+/// Hide cursor, paint the active view, show cursor, play entrance.
+fn repaint(
+    cursor: &mut mouse::Cursor,
+    surface: &fb::Surface,
+    screen: &fb::Screen,
+    x: i32,
+    y: i32,
+    moved: &mut bool,
+    view: screens::View,
+    mail: &mcp::MailPeek,
+    skills: &skills::SkillPeek,
+    status: &str,
+    query: &str,
+    caret: bool,
+    sview: &searchui::SearchView,
+    open_title: &str,
+    page: &mcp::DocPage,
+    grants: caps::Caps,
+) {
+    cursor.hide(surface);
+    paint_view(
+        surface, view, mail, skills, status, query, caret, sview, open_title, page, grants,
+    );
+    cursor.show_at(surface, x, y);
+    enter(screen);
+    *moved = false;
 }
 
 /// Paint the active full-screen view (home, search, skills, caps, or reader).

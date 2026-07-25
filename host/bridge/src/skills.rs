@@ -158,14 +158,7 @@ pub fn get_response(name: &str) -> Vec<String> {
 }
 
 fn sanitize(s: &str) -> String {
-    s.chars()
-        .map(|c| match c {
-            '\n' | '\r' | '|' => ' ',
-            c if c.is_control() => ' ',
-            c => c,
-        })
-        .take(120)
-        .collect()
+    crate::text::sanitize(s, 120, false, false)
 }
 
 fn strip_line_controls(s: &str) -> String {

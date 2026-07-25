@@ -12,6 +12,7 @@ pub mod keyboard;
 pub mod mcp;
 pub mod mouse;
 pub mod pci;
+pub mod port;
 pub mod screens;
 pub mod search;
 pub mod searchui;

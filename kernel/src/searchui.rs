@@ -11,6 +11,7 @@ use crate::fb::Surface;
 use crate::font::{self, BODY_FACE, BRAND_FACE, SMALL_FACE, TITLE_FACE};
 use crate::screens;
 use crate::search;
+use crate::skills::{copy_field, str_at};
 use crate::ui::{theme, PAD_X};
 
 /// Longest query we accept. Comfortably wider than the field renders.
@@ -34,34 +35,22 @@ impl Row {
     }
 
     fn set(&mut self, title: &str, url: &str, cat: &'static str) {
-        copy_into(&mut self.title, title);
-        copy_into(&mut self.url, url);
+        copy_field(&mut self.title, title);
+        copy_field(&mut self.url, url);
         self.cat = cat;
     }
 
     pub fn title(&self) -> &str {
-        as_str(&self.title)
+        str_at(&self.title)
     }
 
     pub fn url(&self) -> &str {
-        as_str(&self.url)
+        str_at(&self.url)
     }
 
     pub fn cat(&self) -> &str {
         self.cat
     }
-}
-
-fn copy_into(dst: &mut [u8], src: &str) {
-    dst.fill(0);
-    let b = src.as_bytes();
-    let n = b.len().min(dst.len());
-    dst[..n].copy_from_slice(&b[..n]);
-}
-
-fn as_str(buf: &[u8]) -> &str {
-    let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    core::str::from_utf8(&buf[..n]).unwrap_or("")
 }
 
 /// What the last query actually did, so the empty state can be truthful.

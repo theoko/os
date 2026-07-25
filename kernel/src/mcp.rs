@@ -1,7 +1,7 @@
 //! Guest MCP client over COM2 (host bridge).
 
 use crate::serial::Serial;
-use crate::skills::copy_field;
+use crate::skills::{copy_field, str_at, utf8_prefix};
 
 const TIMEOUT_PING: u32 = 80_000;
 const TIMEOUT_LINE: u32 = 200_000;
@@ -49,11 +49,11 @@ impl MailPeek {
     }
 
     pub fn row_from(&self, i: usize) -> &str {
-        str_prefix(trim_buf(&self.rows[i].from))
+        str_at(&self.rows[i].from)
     }
 
     pub fn row_subj(&self, i: usize) -> &str {
-        str_prefix(trim_buf(&self.rows[i].subj))
+        str_at(&self.rows[i].subj)
     }
 }
 
@@ -84,27 +84,14 @@ impl SearchPeek {
     }
 
     pub fn title_at(&self, i: usize) -> &str {
-        str_prefix(trim_buf(&self.hits[i].title))
+        str_at(&self.hits[i].title)
     }
 
     pub fn url_at(&self, i: usize) -> &str {
-        str_prefix(trim_buf(&self.hits[i].url))
+        str_at(&self.hits[i].url)
     }
 }
 
-fn trim_buf(buf: &[u8]) -> &[u8] {
-    let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
-    &buf[..n]
-}
-
-/// Decode the longest valid UTF-8 prefix — a line cut mid-character (buffer
-/// truncation) must degrade to a shorter string, not vanish entirely.
-fn str_prefix(bytes: &[u8]) -> &str {
-    match core::str::from_utf8(bytes) {
-        Ok(s) => s,
-        Err(e) => core::str::from_utf8(&bytes[..e.valid_up_to()]).unwrap_or(""),
-    }
-}
 
 fn parse_row_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     let rest = line.strip_prefix("ROW ")?;
@@ -146,7 +133,7 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
             break;
         };
         first = false;
-        let resp = str_prefix(&line[..n]);
+        let resp = utf8_prefix(&line[..n]);
         if resp.starts_with("ERR ") || resp == "END" {
             break;
         }
@@ -181,7 +168,7 @@ impl DocPage {
     }
 
     pub fn line_at(&self, i: usize) -> &str {
-        str_prefix(trim_buf(&self.lines[i]))
+        str_at(&self.lines[i])
     }
 }
 
@@ -219,7 +206,7 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
             break;
         };
         first = false;
-        let resp = str_prefix(&line[..n]);
+        let resp = utf8_prefix(&line[..n]);
         if resp == "END" {
             break;
         }
@@ -259,7 +246,7 @@ pub fn forget(tool: &str) -> BridgeStatus {
         let Some(n) = com2.read_line(&mut line, TIMEOUT_REPLY) else {
             break;
         };
-        if str_prefix(&line[..n]) == "END" {
+        if utf8_prefix(&line[..n]) == "END" {
             break;
         }
     }
@@ -300,7 +287,7 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
             break;
         };
         first = false;
-        let resp = str_prefix(&line[..n]);
+        let resp = utf8_prefix(&line[..n]);
         if resp.starts_with("ERR ") || resp == "END" {
             break;
         }
@@ -353,7 +340,7 @@ pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
             break;
         };
         first = false;
-        let resp = str_prefix(&line[..n]);
+        let resp = utf8_prefix(&line[..n]);
         if resp == "END" || resp.starts_with("ERR ") {
             break;
         }
@@ -396,7 +383,7 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
     let Some(n) = com2.read_line(line, TIMEOUT_PING) else {
         return BridgeStatus::Offline;
     };
-    let resp = str_prefix(&line[..n]);
+    let resp = utf8_prefix(&line[..n]);
     if resp.starts_with("OK pong") {
         BridgeStatus::Online
     } else {
@@ -452,7 +439,7 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
             break;
         };
         first = false;
-        let resp = str_prefix(&line[..n]);
+        let resp = utf8_prefix(&line[..n]);
         if resp.starts_with("ERR ") || resp == "END" {
             break;
         }
