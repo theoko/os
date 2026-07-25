@@ -56,6 +56,8 @@ impl MailPeek {
 /// One hit from `search.query`.
 pub struct SearchHit {
     pub title: [u8; 48],
+    /// Source URL, needed to open the document rather than only name it.
+    pub url: [u8; 72],
 }
 
 /// Short corpus peek for the home Connectors card.
@@ -68,7 +70,7 @@ pub struct SearchPeek {
 
 impl SearchPeek {
     pub const fn empty(status: BridgeStatus, denied: bool) -> Self {
-        const EMPTY: SearchHit = SearchHit { title: [0; 48] };
+        const EMPTY: SearchHit = SearchHit { title: [0; 48], url: [0; 72] };
         Self {
             status,
             denied,
@@ -79,6 +81,10 @@ impl SearchPeek {
 
     pub fn title_at(&self, i: usize) -> &str {
         str_prefix(trim_buf(&self.hits[i].title))
+    }
+
+    pub fn url_at(&self, i: usize) -> &str {
+        str_prefix(trim_buf(&self.hits[i].url))
     }
 }
 
@@ -176,6 +182,80 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
     }
 
     peek
+}
+
+/// Lines of a document, for the reader.
+pub struct DocPage {
+    pub status: BridgeStatus,
+    pub denied: bool,
+    pub count: usize,
+    pub lines: [[u8; 84]; Self::MAX],
+}
+
+impl DocPage {
+    pub const MAX: usize = 18;
+
+    pub const fn empty(status: BridgeStatus, denied: bool) -> Self {
+        Self { status, denied, count: 0, lines: [[0; 84]; Self::MAX] }
+    }
+
+    pub fn line_at(&self, i: usize) -> &str {
+        str_prefix(trim_buf(&self.lines[i]))
+    }
+}
+
+/// Read a document the search results pointed at.
+///
+/// The same grants are sent as for the query, because the bridge checks scope
+/// per source: a caller that could not have found a document must not be able
+/// to read it by knowing its URL.
+pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+
+    match ping_bridge(&com2, &mut line) {
+        BridgeStatus::Offline => return DocPage::empty(BridgeStatus::Offline, false),
+        BridgeStatus::Online => {}
+    }
+
+    com2.write_str("CALL doc.read url=");
+    com2.write_str(url);
+    com2.write_str(" lines=18");
+    if caps.allows(crate::caps::Cap::WorkspaceIndex) {
+        com2.write_str(" files=1");
+    }
+    if caps.allows(crate::caps::Cap::AudioTranscribe) {
+        com2.write_str(" audio=1");
+    }
+    com2.write_str("\n");
+
+    let mut page = DocPage::empty(BridgeStatus::Online, false);
+    let mut first = true;
+    for _ in 0..40 {
+        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
+        let Some(n) = com2.read_line(&mut line, timeout) else {
+            break;
+        };
+        first = false;
+        let resp = str_prefix(&line[..n]);
+        if resp == "END" {
+            break;
+        }
+        if resp.starts_with("ERR ") {
+            page.denied = true;
+            break;
+        }
+        if resp.starts_with("OK doc.read") {
+            continue;
+        }
+        if resp.starts_with("ROW ") && page.count < DocPage::MAX {
+            let text = parse_row_field(resp, "line").unwrap_or("");
+            copy_field(&mut page.lines[page.count], text);
+            page.count += 1;
+        }
+    }
+    page
 }
 
 /// Ask the bridge to delete what a revoked capability produced.
@@ -294,6 +374,7 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
         if resp.starts_with("ROW ") && peek.count < peek.hits.len() {
             let title = parse_row_field(resp, "title").unwrap_or("?");
             copy_field(&mut peek.hits[peek.count].title, title);
+            copy_field(&mut peek.hits[peek.count].url, parse_row_field(resp, "url").unwrap_or(""));
             peek.count += 1;
         }
     }

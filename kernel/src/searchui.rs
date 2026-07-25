@@ -170,7 +170,7 @@ impl SearchView {
         };
         if online {
             for i in 0..peek.count.min(search::MAX_HITS) {
-                self.rows[self.count].set(peek.title_at(i), "", "bridge");
+                self.rows[self.count].set(peek.title_at(i), peek.url_at(i), "bridge");
                 self.count += 1;
             }
         }
@@ -199,6 +199,20 @@ pub fn field_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
 pub fn back_rect(w: i32) -> (i32, i32, i32, i32) {
     let _ = w;
     (PAD_X, (NAV_H - 24) / 2, 72, 28)
+}
+
+/// Bounding box of result row `i`, shared by drawing and hit-testing.
+pub fn row_rect(w: i32, h: i32, i: usize) -> (i32, i32, i32, i32) {
+    let (fx, fy, fw, fh) = field_rect(w, h);
+    (fx, fy + fh + 26 + i as i32 * (ROW_H + 10), fw, ROW_H)
+}
+
+/// Which result was clicked, if any.
+pub fn result_hit(w: i32, h: i32, count: usize, x: i32, y: i32) -> Option<usize> {
+    (0..count.min(search::MAX_HITS)).find(|&i| {
+        let (rx, ry, rw, rh) = row_rect(w, h, i);
+        x >= rx && x < rx + rw && y >= ry && y < ry + rh
+    })
 }
 
 /// Draw the search screen. `caret` blinks the insertion point on.
@@ -412,5 +426,83 @@ mod teddy_tests {
     fn the_line_renders() {
         assert!(Source::TEDDY.bytes().all(|b| (0x20..=0x7E).contains(&b)));
         assert!(BODY_FACE.width(Source::TEDDY, 0) < 980);
+    }
+}
+
+/// Draw a document the user opened from a result.
+pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage) {
+    let w = fb.width() as i32;
+    let h = fb.height() as i32;
+    fb.fill(theme::BG);
+
+    let (bx, by, _, _) = back_rect(w);
+    fb.draw_text(bx, by + BTN_FACE.baseline(), "Back", &BTN_FACE, 0, theme::ACCENT);
+    fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
+
+    let (fx, _, fw, _) = field_rect(w, h);
+    fb.draw_text(fx, 108, title, &TITLE_FACE, font::tracking_pct(TITLE_FACE.px, -20), theme::INK);
+
+    if page.denied {
+        fb.draw_text(fx, 160, Source::TEDDY, &BODY_FACE, 0, theme::MUTED);
+        return;
+    }
+    if page.count == 0 {
+        let msg = match page.status {
+            crate::mcp::BridgeStatus::Online => "Nothing readable here.",
+            crate::mcp::BridgeStatus::Offline => "Bridge offline - cannot open documents.",
+        };
+        fb.draw_text(fx, 160, msg, &BODY_FACE, 0, theme::MUTED);
+        return;
+    }
+
+    let mut y = 156;
+    for i in 0..page.count {
+        fb.draw_text(fx, y, page.line_at(i), &BODY_FACE, 0, theme::INK);
+        y += 26;
+        if y > h - 40 {
+            break;
+        }
+    }
+    let _ = fw;
+}
+
+#[cfg(test)]
+mod reader_tests {
+    use super::*;
+
+    #[test]
+    fn result_rows_are_clickable_at_their_centre() {
+        for i in 0..search::MAX_HITS {
+            let (x, y, w, h) = row_rect(1024, 768, i);
+            assert_eq!(result_hit(1024, 768, search::MAX_HITS, x + w / 2, y + h / 2), Some(i));
+        }
+    }
+
+    #[test]
+    fn clicks_below_the_last_result_open_nothing() {
+        let (_, y, _, h) = row_rect(1024, 768, search::MAX_HITS - 1);
+        assert_eq!(result_hit(1024, 768, search::MAX_HITS, 512, y + h + 40), None);
+    }
+
+    #[test]
+    fn rows_beyond_the_result_count_are_not_hittable() {
+        // Only the rows actually drawn may be opened.
+        let (x, y, w, h) = row_rect(1024, 768, 2);
+        assert_eq!(result_hit(1024, 768, 1, x + w / 2, y + h / 2), None);
+    }
+
+    #[test]
+    fn result_rows_do_not_overlap_the_query_field() {
+        let (_, fy, _, fh) = field_rect(1024, 768);
+        let (_, ry, _, _) = row_rect(1024, 768, 0);
+        assert!(ry >= fy + fh, "first result overlaps the input");
+    }
+
+    #[test]
+    fn a_result_carries_the_url_needed_to_open_it() {
+        let mut v = SearchView::new();
+        v.run("capability agent");
+        assert!(v.count > 0);
+        assert!(!v.rows[0].url().is_empty(), "offline results must be openable too");
     }
 }

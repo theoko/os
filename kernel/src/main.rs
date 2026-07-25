@@ -196,6 +196,8 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut kb = keyboard::Keyboard::new();
                 let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut sview = searchui::SearchView::new();
+                let mut page = mcp::DocPage::empty(mcp::BridgeStatus::Offline, false);
+                let mut open_title = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut view = screens::View::Home;
                 let caret = true;
                 // First boot: run the setup journey before the home screen.
@@ -365,8 +367,28 @@ unsafe extern "C" fn kmain() -> ! {
                         if left_down && !was_down {
                             let (bx, by, bw, bh) = searchui::back_rect(w);
                             if x >= bx && x < bx + bw && y >= by && y < by + bh {
-                                view = screens::View::Home;
+                                // Back from the reader returns to results.
+                                view = if view == screens::View::Reader {
+                                    screens::View::Search
+                                } else {
+                                    screens::View::Home
+                                };
                                 dirty = true;
+                            } else if view == screens::View::Search {
+                                // Open a result.
+                                if let Some(i) =
+                                    searchui::result_hit(w, h, sview.count, x, y)
+                                {
+                                    let row = &sview.rows[i];
+                                    open_title.clear();
+                                    for b in row.title().bytes() {
+                                        open_title.apply(keyboard::Key::Char(b));
+                                    }
+                                    page = mcp::fetch_doc(grants, row.url());
+                                    view = screens::View::Reader;
+                                    serial_port.write_str("ui: open doc\n");
+                                    dirty = true;
+                                }
                             } else if view == screens::View::Caps {
                                 // Live switches: revoke or grant after setup.
                                 if let Some(i) = screens::caps_hit(w, x, y) {
@@ -402,6 +424,9 @@ unsafe extern "C" fn kmain() -> ! {
                                 ),
                                 screens::View::Skills => screens::draw_skills(surface, &skill_peek),
                                 screens::View::Caps => screens::draw_caps(surface, grants),
+                                screens::View::Reader => {
+                                    searchui::draw_reader(surface, open_title.as_str(), &page)
+                                }
                                 screens::View::Home => {
                                     ui::draw_home(
                                         surface,

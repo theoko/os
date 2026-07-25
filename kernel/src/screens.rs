@@ -22,6 +22,8 @@ pub enum View {
     Search,
     Skills,
     Caps,
+    /// Reading a document opened from a search result.
+    Reader,
 }
 
 const NAV_H: i32 = 56;
