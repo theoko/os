@@ -3,7 +3,7 @@
 
 use core::hint::black_box;
 
-use kernel::{anim, beep, caps, fb, hello_message, keyboard, mcp, mouse, screens, searchui, serial, setup, skills, ui, usb_tablet};
+use kernel::{agent, anim, beep, caps, fb, hello_message, keyboard, mcp, mouse, screens, searchui, serial, setup, skills, ui, usb_tablet};
 use limine::BaseRevision;
 use limine::request::{
     FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
@@ -198,6 +198,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut sview = searchui::SearchView::new();
                 let mut page = mcp::DocPage::empty(mcp::BridgeStatus::Offline, false);
                 let mut open_title = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
+                let mut brief = agent::Brief::empty();
                 let mut view = screens::View::Home;
                 let caret = true;
                 // First boot: run the setup journey before the home screen.
@@ -285,12 +286,13 @@ unsafe extern "C" fn kmain() -> ! {
                                     serial_port.write_str("caps: indexing workspace\n");
                                 }
                                 mail = mcp::fetch_mail_peek(grants);
-                                ui::draw_home(
-                                    surface,
-                                    &mail,
-                                    &skill_peek,
-                                    status_str(&status_buf, status_len),
-                                );
+                                // First act: run the plan/act skill under the
+                                // grants just chosen so home is never empty
+                                // theatre — the OS does something immediately.
+                                brief = agent::morning(grants);
+                                view = screens::View::Brief;
+                                serial_port.write_str("agent: morning brief\n");
+                                screens::draw_brief(surface, &brief);
                             } else {
                                 setup.draw(surface, &mail, &skill_peek);
                             }
@@ -362,7 +364,13 @@ unsafe extern "C" fn kmain() -> ! {
                                     }
                                 }
                                 keyboard::Key::Escape => {
-                                    view = screens::View::Home;
+                                    view = if view == screens::View::Brief {
+                                        screens::View::Home
+                                    } else if view == screens::View::Reader {
+                                        screens::View::Search
+                                    } else {
+                                        screens::View::Home
+                                    };
                                     dirty = true;
                                 }
                                 other => {
@@ -446,21 +454,37 @@ unsafe extern "C" fn kmain() -> ! {
                             } else if view == screens::View::Skills {
                                 if let Some(i) = screens::skills_hit(w, skill_peek.count, x, y) {
                                     let name = skill_peek.name_at(i);
-                                    let mut blurb = [0u8; 72];
-                                    if mcp::fetch_skill_blurb(name, &mut blurb) {
-                                        let n = blurb.iter().position(|&b| b == 0).unwrap_or(blurb.len());
-                                        write_status(
-                                            &mut status_buf,
-                                            core::str::from_utf8(&blurb[..n]).unwrap_or(name),
-                                        );
-                                        serial_port.write_str("skills: got ");
+                                    if agent::is_runnable(name) {
+                                        brief = agent::run(name, grants);
+                                        view = screens::View::Brief;
+                                        serial_port.write_str("agent: run ");
                                         serial_port.write_str(name);
                                         serial_port.write_str("\n");
+                                        if brief.denied {
+                                            serial_port.write_str("agent: need ");
+                                            serial_port.write_str(brief.deny_name());
+                                            serial_port.write_str("\n");
+                                        }
                                     } else {
-                                        write_status(&mut status_buf, name);
-                                        serial_port.write_str("skills: get offline ");
-                                        serial_port.write_str(name);
-                                        serial_port.write_str("\n");
+                                        let mut blurb = [0u8; 72];
+                                        if mcp::fetch_skill_blurb(name, &mut blurb) {
+                                            let n = blurb
+                                                .iter()
+                                                .position(|&b| b == 0)
+                                                .unwrap_or(blurb.len());
+                                            write_status(
+                                                &mut status_buf,
+                                                core::str::from_utf8(&blurb[..n]).unwrap_or(name),
+                                            );
+                                            serial_port.write_str("skills: got ");
+                                            serial_port.write_str(name);
+                                            serial_port.write_str("\n");
+                                        } else {
+                                            write_status(&mut status_buf, name);
+                                            serial_port.write_str("skills: get offline ");
+                                            serial_port.write_str(name);
+                                            serial_port.write_str("\n");
+                                        }
                                     }
                                     dirty = true;
                                 }
@@ -478,6 +502,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 ),
                                 screens::View::Skills => screens::draw_skills(surface, &skill_peek),
                                 screens::View::Caps => screens::draw_caps(surface, grants),
+                                screens::View::Brief => screens::draw_brief(surface, &brief),
                                 screens::View::Reader => {
                                     searchui::draw_reader(surface, open_title.as_str(), &page)
                                 }
@@ -547,47 +572,16 @@ unsafe extern "C" fn kmain() -> ! {
                                     clicked = true;
                                     moved = false;
                                 }
-                                #[allow(unreachable_patterns)]
-                                Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
-                                    serial_port.write_str("ui: click Connectors\n");
-                                    mail = mcp::fetch_mail_peek(grants);
-                                    let search = mcp::fetch_search_peek(grants, "capability");
-                                    if search.denied {
-                                        write_status(
-                                            &mut status_buf,
-                                            "search.query denied by caps",
-                                        );
-                                        serial_port.write_str("search: denied\n");
-                                    } else if search.status == mcp::BridgeStatus::Offline {
-                                        write_status(&mut status_buf, "bridge offline - no search");
-                                        serial_port.write_str("search: offline\n");
-                                    } else if search.count == 0 {
-                                        write_status(&mut status_buf, "search: no hits");
-                                        serial_port.write_str("search: n=0\n");
-                                    } else {
-                                        // "search: <title>" into the footer buffer.
-                                        let title = search.title_at(0);
-                                        let mut msg = [0u8; 72];
-                                        let prefix = b"search: ";
-                                        msg[..prefix.len()].copy_from_slice(prefix);
-                                        let tn = title.len().min(72 - prefix.len() - 1);
-                                        msg[prefix.len()..prefix.len() + tn]
-                                            .copy_from_slice(&title.as_bytes()[..tn]);
-                                        let n = prefix.len() + tn;
-                                        write_status(
-                                            &mut status_buf,
-                                            core::str::from_utf8(&msg[..n]).unwrap_or("search: ok"),
-                                        );
-                                        serial_port.write_str("search: n=");
-                                        let d = b'0' + (search.count.min(9) as u8);
-                                        serial_port.write_bytes(&[d, b'\n']);
-                                    }
-                                    clicked = true;
-                                }
                                 Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
                                     serial_port.write_str("ui: click Capabilities\n");
                                     status_len = grants.describe(&mut status_buf);
-                                    clicked = true;
+                                    view = screens::View::Caps;
+                                    cursor.hide(surface);
+                                    screens::draw_caps(surface, grants);
+                                    cursor.show_at(surface, x, y);
+                                    enter(&screen);
+                                    clicked = false;
+                                    moved = false;
                                 }
                                 None => {}
                             }

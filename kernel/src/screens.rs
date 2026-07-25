@@ -1,4 +1,4 @@
-//! The Skills and Capabilities screens.
+//! The Skills, Capabilities, and Brief screens.
 //!
 //! Both cards on the home page used to just log to COM1. They now open real
 //! views that share the search screen's chrome: a Back affordance, a title,
@@ -6,7 +6,11 @@
 //!
 //! Capabilities is not merely a report — the switches are live, so grants
 //! chosen during setup can be changed afterwards without reinstalling.
+//!
+//! Brief is where a skill actually runs: plan lines, then results (or the
+//! name of the switch still standing in the way).
 
+use crate::agent::Brief;
 use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{self, BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
@@ -26,6 +30,8 @@ pub enum View {
     Caps,
     /// Reading a document opened from a search result.
     Reader,
+    /// A skill just ran; show its plan and outcomes.
+    Brief,
 }
 
 const NAV_H: i32 = 56;
@@ -85,13 +91,16 @@ fn row(fb: &Surface, w: i32, i: usize, title: &str, sub: &str, accent: bool) -> 
 /// Skills the agent can load — names from bridge `skills.list`, else builtins.
 pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
     let w = fb.width() as i32;
-    chrome(fb, w, "Skills", "Playbooks the agent can load");
+    chrome(fb, w, "Skills", "Tap a playbook to run it");
 
     let n = peek.count.min(6);
     for i in 0..n {
+        let name = peek.name_at(i);
         let desc = peek.desc_at(i);
         let sub = if desc.is_empty() {
-            if peek.from_bridge {
+            if crate::agent::is_runnable(name) {
+                "Tap to run under current grants"
+            } else if peek.from_bridge {
                 "From host bridge"
             } else {
                 "Shipped with the ISO"
@@ -99,14 +108,14 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
         } else {
             desc
         };
-        row(fb, w, i, peek.name_at(i), sub, false);
+        row(fb, w, i, name, sub, crate::agent::is_runnable(name));
     }
 
     let (x, cw) = column(w);
     let note = if peek.from_bridge {
-        "Listed live from the host bridge (skills.list)."
+        "Runnable skills call MCP under your grants. Others show their body."
     } else if peek.count > 0 {
-        "Compiled into the ISO. Saved skills live on the host."
+        "Compiled into the ISO. Tap inbox-brief or knowledge-search to act."
     } else {
         "No skills loaded."
     };
@@ -119,6 +128,98 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
         theme::MUTED,
     );
     let _ = cw;
+}
+
+/// Show the outcome of a skill run: plan, then tagged result lines.
+pub fn draw_brief(fb: &Surface, brief: &Brief) {
+    let w = fb.width() as i32;
+    let heading = if brief.heading().is_empty() {
+        brief.skill_name()
+    } else {
+        brief.heading()
+    };
+    chrome(fb, w, "Brief", heading);
+
+    let (x, cw) = column(w);
+    let mut y = TOP - 24;
+
+    if brief.denied {
+        let mut msg = [0u8; 64];
+        let prefix = b"Blocked: grant ";
+        let mut n = 0;
+        for &b in prefix {
+            msg[n] = b;
+            n += 1;
+        }
+        for &b in brief.deny_name().as_bytes() {
+            if n < msg.len() {
+                msg[n] = b;
+                n += 1;
+            }
+        }
+        let s = core::str::from_utf8(&msg[..n]).unwrap_or("Blocked by caps");
+        fb.draw_text(x, y, s, &SMALL_FACE, 0, theme::ACCENT);
+        y += 22;
+    }
+
+    if brief.plan_n > 0 {
+        fb.draw_text(x, y, "Plan", &BRAND_FACE, 0, theme::INK);
+        y += 22;
+        for i in 0..brief.plan_n {
+            let mut step = [0u8; 56];
+            let mut n = 0;
+            step[n] = b'0' + (i as u8 + 1);
+            n += 1;
+            step[n] = b'.';
+            n += 1;
+            step[n] = b' ';
+            n += 1;
+            for &b in brief.plan_at(i).as_bytes() {
+                if n < step.len() {
+                    step[n] = b;
+                    n += 1;
+                }
+            }
+            let s = core::str::from_utf8(&step[..n]).unwrap_or(brief.plan_at(i));
+            fb.draw_text(x, y, s, &SMALL_FACE, 0, theme::MUTED);
+            y += 18;
+        }
+        y += 10;
+    }
+
+    if brief.count > 0 {
+        fb.draw_text(x, y, "Report", &BRAND_FACE, 0, theme::INK);
+        y += 8;
+        for i in 0..brief.count {
+            let (rx, ry, rw, rh) = (
+                x,
+                y + 8 + i as i32 * (ROW_H - 10),
+                cw,
+                ROW_H - 14,
+            );
+            fb.fill_round_rect(rx, ry, rw, rh, 10, theme::CARD_BORDER);
+            fb.fill_round_rect(rx + 1, ry + 1, rw - 2, rh - 2, 9, theme::BG);
+            let tag = brief.lines[i].tag();
+            let accent = matches!(tag, "Urgent" | "Reply" | "Need");
+            fb.draw_text(
+                rx + 16,
+                ry + 22,
+                tag,
+                &BRAND_FACE,
+                0,
+                if accent { theme::ACCENT } else { theme::MUTED },
+            );
+            fb.draw_text(
+                rx + 16,
+                ry + 42,
+                brief.lines[i].text(),
+                &SMALL_FACE,
+                0,
+                theme::INK,
+            );
+            let _ = rh;
+        }
+    }
 }
 
 /// Which skill row contains this point, if any.
@@ -241,17 +342,21 @@ mod tests {
     #[test]
     fn copy_is_ascii_only() {
         let mut all = vec![
-            "Playbooks the agent can load",
+            "Tap a playbook to run it",
             "What the agent may do",
-            "Compiled into the ISO. Saved skills live on the host.",
-            "Listed live from the host bridge (skills.list).",
+            "Compiled into the ISO. Tap inbox-brief or knowledge-search to act.",
+            "Runnable skills call MCP under your grants. Others show their body.",
             "Tap a row to grant or revoke. Takes effect immediately.",
             "No skills loaded.",
             "Skills",
             "Capabilities",
+            "Brief",
             "Back",
             "From host bridge",
             "Shipped with the ISO",
+            "Tap to run under current grants",
+            "Plan",
+            "Report",
         ];
         for s in BUILTIN {
             all.push(s.name);

@@ -82,9 +82,11 @@ pub struct CtaTargets {
 
 impl CtaTargets {
     pub fn hit(self, px: i32, py: i32) -> Option<CtaId> {
-        if self.ready.contains(px, py) {
+        // Ready is a small nav control; the search field must never map here
+        // (that used to restart setup whenever you clicked the query box).
+        if self.ready.w > 0 && self.ready.contains(px, py) {
             Some(CtaId::Ready)
-        } else if self.skills.contains(px, py) {
+        } else if self.skills.w > 0 && self.skills.contains(px, py) {
             Some(CtaId::Skills)
         } else {
             None
@@ -277,11 +279,23 @@ pub(crate) fn tile_top(_h: i32) -> i32 {
 pub(crate) const TILE_H: i32 = 78;
 
 pub fn cta_targets(w: i32, h: i32, _skills: &SkillPeek) -> CtaTargets {
-    // The search field is now the primary action; Skills keeps its tile.
-    let (fx, fy, fw, fh) = search_rect(w, h);
+    let _ = h;
+    // Setup lives in the nav. Skills is reached via its tile (CardId), so the
+    // duplicate CTA rect stays empty — one hit target per destination.
+    let (sx, sy, sw, sh) = setup_rect(w);
     CtaTargets {
-        ready: Rect { x: fx, y: fy, w: fw, h: fh },
-        skills: tile_rect(w, h, 2),
+        ready: Rect {
+            x: sx,
+            y: sy,
+            w: sw,
+            h: sh,
+        },
+        skills: Rect {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+        },
     }
 }
 
@@ -312,6 +326,17 @@ fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
     let base = (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline();
     fb.draw_text(PAD_X, base, "os", &BRAND_FACE, 0, theme::INK);
 
+    // Quiet way to re-enter setup without stealing the search field's hit box.
+    let (sx, sy, _sw, sh) = setup_rect(w);
+    fb.draw_text(
+        sx,
+        sy + (sh - SMALL_FACE.px) / 2 + SMALL_FACE.baseline(),
+        "setup",
+        &SMALL_FACE,
+        0,
+        theme::MUTED,
+    );
+
     let (label, dot) = match mail.status {
         BridgeStatus::Online => ("bridge connected", theme::ONLINE),
         BridgeStatus::Offline => ("bridge offline", theme::OFFLINE),
@@ -333,6 +358,13 @@ fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
     fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
 }
 
+/// Nav "setup" control — restarts the first-boot journey on purpose.
+pub fn setup_rect(_w: i32) -> (i32, i32, i32, i32) {
+    let label_w = SMALL_FACE.width("setup", 0);
+    let x = PAD_X + BRAND_FACE.width("os", 0) + 18;
+    (x, (NAV_H - 28) / 2, label_w + 8, 28)
+}
+
 
 
 #[cfg(test)]
@@ -346,11 +378,16 @@ mod tests {
     }
 
     #[test]
-    fn search_field_is_the_primary_target() {
-        // Typing must be reachable without hunting for a card.
+    fn search_field_is_not_a_cta() {
+        // Clicking the query box used to fire CtaId::Ready and restart setup.
         let t = home_targets(1024, 768, &peek());
         let (fx, fy, fw, fh) = search_rect(1024, 768);
-        assert_eq!(t.ctas.ready, Rect { x: fx, y: fy, w: fw, h: fh });
+        assert_eq!(t.hit(fx + fw / 2, fy + fh / 2), None);
+        let (sx, sy, sw, sh) = setup_rect(1024);
+        assert_eq!(
+            t.ctas.hit(sx + sw / 2, sy + sh / 2),
+            Some(CtaId::Ready)
+        );
     }
 
     #[test]
@@ -420,6 +457,7 @@ mod tests {
             "bridge connected",
             "bridge offline",
             "os",
+            "setup",
         ] {
             assert!(
                 s.bytes().all(|b| (0x20..=0x7E).contains(&b)),

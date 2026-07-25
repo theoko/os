@@ -1,8 +1,25 @@
 ---
-version: 0.9.1
+version: 0.9.2
 ---
 
 # Changelog
+
+## 0.9.2 — 2026-07-25
+
+Skills act. Clicking a builtin playbook runs a fixed guest plan under the
+current grants and opens a Brief: plan steps, then tagged outcomes — or the
+name of the switch still blocking the call. No inference in the kernel.
+
+- **Skill runner** (`agent.rs`): `inbox-brief`, `email-triage`,
+  `knowledge-search`, `agent-plan-act`, `capability-safe-tools`.
+- After setup, `agent-plan-act` runs immediately so the first screen is a
+  report, not an empty launcher.
+- Capabilities tile opens the live switches (it only rewrote the footer
+  before). Search field no longer restarts setup; a quiet nav **setup**
+  control does that on purpose.
+- Grants tell the truth: privacy-first defaults, `from_bools` keyed by
+  `Cap::ALL`, workspace/portal build-on-grant, teddy scoped to `portal=1`,
+  tsearch prewarm restored on the bridge.
 
 ## 0.9.1 — 2026-07-25
 

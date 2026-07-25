@@ -496,6 +496,10 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     if caps.allows(crate::caps::Cap::AudioTranscribe) {
         com2.write_str(" audio=1");
     }
+    // Teddy / remote corpora leave the machine — only with portal.sync.
+    if caps.allows(crate::caps::Cap::PortalSync) {
+        com2.write_str(" portal=1");
+    }
     com2.write_str("\n");
 
     let mut peek = SearchPeek::empty(BridgeStatus::Online, false);

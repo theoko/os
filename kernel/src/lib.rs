@@ -3,6 +3,7 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod agent;
 pub mod anim;
 pub mod beep;
 pub mod caps;

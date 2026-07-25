@@ -82,10 +82,11 @@ pub struct Caps {
 }
 
 impl Caps {
-    /// Defaults match the setup assistant: read tools on, disk writes off.
+    /// Defaults match the setup assistant: privacy first — only the corpus
+    /// that ships with the OS is searchable. Personal data stays off.
     pub const fn default_grants() -> Self {
         Self {
-            bits: (1 << Cap::EmailSearch.index()) | (1 << Cap::SearchQuery.index()),
+            bits: 1 << Cap::SearchQuery.index(),
         }
     }
 
@@ -173,8 +174,8 @@ mod tests {
     #[test]
     fn default_denies_skills_save() {
         let c = Caps::default_grants();
-        assert!(c.allows(Cap::EmailSearch));
         assert!(c.allows(Cap::SearchQuery));
+        assert!(!c.allows(Cap::EmailSearch));
         assert!(!c.allows(Cap::SkillsSave));
     }
 

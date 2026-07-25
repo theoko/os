@@ -39,4 +39,11 @@ Guest always knows **builtin** defaults even if the bridge is offline.
 | `inbox-brief` | Short mail brief for UI/chat |
 | `knowledge-search` | Curated corpus via `search.query` (tSearch-style) |
 
+## Guest runner (v0.9.2)
+
+The kernel does **not** interpret skill markdown. Named builtins map to a
+fixed plan in `kernel/src/agent.rs` that issues MCP calls under the current
+`Caps` and paints a Brief screen. Unknown / saved skills still use
+`skills.get` for a body blurb only.
+
 Also see [`docs/search-os-doc-v01.md`](search-os-doc-v01.md).
