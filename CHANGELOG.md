@@ -1,8 +1,31 @@
 ---
-version: 0.6.2
+version: 0.7.0
 ---
 
 # Changelog
+
+## 0.7.0 — 2026-07-25
+
+- UI: anti-aliased proportional type. `build.rs` rasterizes a real outline font
+  (SF Pro when present, `OS_UI_FONT` to override) into an 8-bit coverage atlas
+  at six size/weight cuts; the kernel only blends. Replaces the 8x8 bitmap face
+  that made display type blocky and spaced letters on a fixed 8px cell.
+- UI: home screen rebuilt against superintelmarkets.com — white page, 44px/600
+  hero at -3% tracking, muted sub-copy, accent + tinted pill pair, bordered
+  card row. Palette taken from the site (`#1D1D1F` / `#86868B` / `#0071E3`).
+- UI: `fill_round_rect` and the new `fill_polygon` anti-alias via 4x4 integer
+  supersampling — no floats, since the kernel never enables the FPU.
+- Mouse: pointer is now an AA polygon (~12x19) with a white keyline, replacing
+  the 44x68 nearest-neighbour bitmap arrow.
+- UTM: fix `AdditionalArguments` serialization. It must be a flat list of plain
+  strings, one per argv token; a `{"ArgumentString": "flag value"}` entry fails
+  to decode and UTM silently drops the VM from its library — which is why the
+  pointer stayed dead. Verified `-global usb-tablet.usb_version=1` reaches QEMU,
+  putting the tablet on a 12 Mb/s UHCI companion where the guest driver binds it.
+
+## 0.6.3 — 2026-07-25
+
+- Mouse: disable EHCI via PCI (not MMIO) so UHCI companions see the tablet; force `usb_version=1`; HID SET_IDLE/PROTOCOL; don't triple-fault on probe.
 
 ## 0.6.2 — 2026-07-25
 

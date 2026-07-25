@@ -83,10 +83,25 @@ cfg.setdefault("QEMU", {})["UEFIBoot"] = True
 cfg["QEMU"]["Hypervisor"] = False
 # PS/2 on for keyboards; pointer comes from usb-tablet (guest UHCI HID driver).
 cfg["QEMU"]["PS2Controller"] = True
-# UTM/SPICE needs usb-tablet for absolute pointer — guest drives it via UHCI.
+# USB 2.0 bus. UTM attaches `usb-tablet` to usb-bus.0, which enumerates at
+# high speed (480 Mb/s) on ich9-usb-ehci1 — invisible to a UHCI-only guest driver.
 cfg.setdefault("Input", {})
 cfg["Input"]["UsbBusSupport"] = "2.0"
 cfg["Input"]["UsbSharing"] = False
+# `usb_version=1` makes the tablet advertise USB 1.1, so QEMU routes it to a
+# full-speed (12 Mb/s) UHCI companion where the guest driver can bind it.
+# Verified: `info usb` reports "Speed 12 Mb/s" and the guest logs "usb-tablet ready".
+#
+# AdditionalArguments MUST be a flat list of plain strings, one per argv token.
+# A dict entry (e.g. {"ArgumentString": ...}) or a single "flag value" string
+# fails to decode and UTM silently drops the VM from its library entirely.
+EXTRA_ARGS = ["-global", "usb-tablet.usb_version=1"]
+existing = cfg.setdefault("QEMU", {}).get("AdditionalArguments")
+existing = [a for a in existing if isinstance(a, str)] if isinstance(existing, list) else []
+for tok in EXTRA_ARGS:
+    if tok not in existing:
+        existing.append(tok)
+cfg["QEMU"]["AdditionalArguments"] = existing
 cfg.setdefault("System", {})["MemorySize"] = 1024
 cfg["Display"] = [{
     "Hardware": "virtio-vga",
