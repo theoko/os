@@ -338,16 +338,22 @@ unsafe extern "C" fn kmain() -> ! {
                         while let Some(key) = kb.poll() {
                             match key {
                                 keyboard::Key::Enter => {
-                                    sview.run_via(query.as_str(), grants);
-                                    serial_port.write_str("search: ran\n");
-                                    dirty = true;
+                                    if view == screens::View::Search {
+                                        sview.run_via(query.as_str(), grants);
+                                        serial_port.write_str("search: ran\n");
+                                        dirty = true;
+                                    }
                                 }
                                 keyboard::Key::Escape => {
                                     view = screens::View::Home;
                                     dirty = true;
                                 }
                                 other => {
-                                    if query.apply(other) {
+                                    // Only the search screen has a field.
+                                    // Without this, typing on Skills or
+                                    // Capabilities silently built a query you
+                                    // could not see.
+                                    if view == screens::View::Search && query.apply(other) {
                                         dirty = true;
                                     }
                                 }
