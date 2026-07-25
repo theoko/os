@@ -25,7 +25,11 @@ Frontmatter: `name`, `description` (same convention as Cursor skills).
 |------|--------|
 | `CALL skills.list` | `OK skills.list n=N` + `ROW name=…\|desc=…` + `END` |
 | `CALL skills.get name=…` | `OK skills.get` + `LINE …` body lines + `END` |
-| `CALL skills.save name=…` | writes under Application Support (body via `LINE`…`END` after request) |
+| `CALL skills.save name=… skills=1` | writes under Application Support (body via `LINE`…`END` after request) |
+
+`skills.save` requires `skills=1` (guest `Cap::SkillsSave`). Without it the
+bridge returns `ERR skills.save needs_skills_cap` and still drains any
+`LINE`…`END` body so the protocol stays in sync.
 
 Guest always knows **builtin** defaults even if the bridge is offline.
 

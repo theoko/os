@@ -187,10 +187,26 @@ fn handle_client<R: Read, W: Write>(
         // Multi-line save: CALL skills.save name=foo  then LINE… END.
         // A one-line form with desc= creates a starter skill with no body read,
         // so a client that never sends LINE/END cannot desync the protocol.
+        // Both forms require skills=1; denied multiline still drains to END.
         if line.starts_with("CALL skills.save ") {
             let args = parse_args(line.trim_start_matches("CALL skills.save "));
             let name = arg_val(&args, "name").unwrap_or("").to_string();
-            let reply = if let Some(desc) = arg_val(&args, "desc") {
+            let has_skills = matches!(arg_val(&args, "skills"), Some("1"));
+            let reply = if !has_skills {
+                if arg_val(&args, "desc").is_none() {
+                    // Drain LINE…END so the next command stays aligned.
+                    loop {
+                        if read_line_bounded(&mut reader, &mut raw)?.is_none() {
+                            break;
+                        }
+                        let t = raw.trim_end_matches(['\r', '\n']);
+                        if t == "END" {
+                            break;
+                        }
+                    }
+                }
+                vec!["ERR skills.save needs_skills_cap".into()]
+            } else if let Some(desc) = arg_val(&args, "desc") {
                 let body = format!(
                     "---\nname: {name}\ndescription: {desc}\n---\n\n# {name}\n\n(edit me)\n"
                 );
@@ -352,6 +368,9 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
         "skills.get" => {
             let name = arg_val(args, "name").unwrap_or("");
             skills::get_response(name)
+        }
+        "skills.save" if !matches!(arg_val(args, "skills"), Some("1")) => {
+            vec!["ERR skills.save needs_skills_cap".into()]
         }
         "skills.save" => {
             // Reached only via dispatch (tests); the socket path handles
@@ -851,6 +870,63 @@ mod tests {
     fn list_includes_portal_forget() {
         let r = dispatch("LIST", &test_backends());
         assert!(r[0].contains("portal.forget"), "{}", r[0]);
+    }
+
+    #[test]
+    fn skills_save_needs_the_skills_cap() {
+        let denied = dispatch(
+            "CALL skills.save name=x desc=demo",
+            &test_backends(),
+        );
+        assert!(
+            denied[0].contains("needs_skills_cap"),
+            "ungated skills.save: {denied:?}"
+        );
+        // With the bit, the one-line form still works (writes under temp dirs
+        // in normal runs; here we only care it is not a cap error).
+        let allowed = dispatch(
+            "CALL skills.save name=smoke-cap-test desc=demo skills=1",
+            &test_backends(),
+        );
+        assert!(
+            allowed[0].starts_with("OK skills.save") || allowed[0].starts_with("ERR skills.save"),
+            "{allowed:?}"
+        );
+        assert!(!allowed[0].contains("needs_skills_cap"), "{allowed:?}");
+    }
+
+    #[test]
+    fn skills_save_socket_path_denies_and_drains_body() {
+        // The live wire path is handle_client, not dispatch — deny both forms
+        // and keep reading after a rejected LINE…END body.
+        let input = concat!(
+            "CALL skills.save name=x desc=demo\n",
+            "CALL skills.save name=y\n",
+            "LINE must-not-persist\n",
+            "END\n",
+            "PING\n",
+        );
+        let mut out = Vec::new();
+        handle_client(
+            BufReader::new(input.as_bytes()),
+            &mut out,
+            &test_backends(),
+        )
+        .expect("handle_client");
+        let lines: Vec<&str> = std::str::from_utf8(&out)
+            .expect("utf8")
+            .lines()
+            .collect();
+        assert_eq!(lines.len(), 3, "{lines:?}");
+        assert!(
+            lines[0].contains("needs_skills_cap"),
+            "one-line deny: {lines:?}"
+        );
+        assert!(
+            lines[1].contains("needs_skills_cap"),
+            "body deny: {lines:?}"
+        );
+        assert_eq!(lines[2], "OK pong", "desync after denied body: {lines:?}");
     }
 
     #[test]

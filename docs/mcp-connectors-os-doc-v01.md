@@ -52,9 +52,19 @@ Fields use `key=value`; use `|` between fields. Values are single-line; spaces a
 
 ## Capabilities (guest)
 
-Minting `Cap::EmailSearch` (later: real cap table) is required before `CALL email.search`.
-v0.3 bootstraps a **kernel-held demo cap** so the home UI can show inbox peek;
-ambient root is still forbidden for arbitrary tools.
+Guest `Caps` (setup + live switches) gate COM2 calls. The bridge also checks
+wire flags so a forged CALL cannot bypass consent:
+
+| Cap | Wire bit | Tools |
+|-----|----------|-------|
+| `email.search` | (guest refuse) / `email=1` on search | inbox + email graph |
+| `search.query` | guest refuse | `search.query` |
+| `workspace.index` | `files=1` | workspace index / file docs |
+| `audio.transcribe` | `audio=1` | transcripts |
+| `skills.save` | `skills=1` | `skills.save` |
+| `portal.sync` | `portal=1` | `tsearch.sync`, `teddy.*`, `market.*` |
+
+Ambient root is forbidden: a missing grant is a hard deny.
 
 ## Host backends
 

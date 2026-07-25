@@ -50,16 +50,19 @@ body `b`, optional PageRank-ish boost `pr`.
 |------|-------|------------|
 | **Teddy API** | `tsearch.sync`, `search.query … portal=1` | Cached `corpus.json` ranked locally |
 | **Teddy portals** | `teddy.health`, `teddy.fear_greed`, `teddy.gex` | Live HTTPS JSON on teddysearch.com |
+| **Market portals** | `market.health`, `market.fear_greed` | Live HTTPS JSON on superintelmarkets.com |
 
-Both require `portal=1` / guest `Cap::PortalSync`. Corpus hits also need
-`search.query`. See skill `teddy-portals`.
+Teddy API, teddy portals, and market portals all require `portal=1` / guest
+`Cap::PortalSync`. Corpus hits also need `search.query`. See skills
+`teddy-portals` and `market-portals`.
 
 Override corpus path with `OS_SEARCH_CORPUS`.
 
 ## Skill
 
 `knowledge-search` — playbook for agents; see `skills/defaults/knowledge-search/SKILL.md`.
-`teddy-portals` — corpus API plus live portal tools under the same grant.
+`teddy-portals` — corpus API plus live teddysearch.com tools under the same grant.
+`market-portals` — live superintelmarkets.com tools under the same grant.
 
 ## Non-goals (v1)
 

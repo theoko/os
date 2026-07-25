@@ -1,8 +1,18 @@
 ---
-version: 0.9.7
+version: 0.9.8
 ---
 
 # Changelog
+
+## 0.9.8 — 2026-07-25
+
+Consent on the wire for skills and markets in CI:
+
+- `skills.save` requires `skills=1` (`needs_skills_cap`); denied saves still
+  drain `LINE`…`END` so the peer cannot desync.
+- Smoke-bridge lists and cap-checks `market.*` alongside teddy, with a
+  best-effort live `market.health portal=1`.
+- Docs: mcp connectors and search name the real cap table + market portals.
 
 ## 0.9.7 — 2026-07-25
 

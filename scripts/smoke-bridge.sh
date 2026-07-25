@@ -75,8 +75,8 @@ export OS_SMOKE_ISO="$ISO"
 export OS_SMOKE_ADDR="$ADDR"
 export OS_SMOKE_SERIAL="$SERIAL_OUT"
 
-# Host-side wire checks against the live bridge: teddy API + portals must both
-# appear in LIST, and portal tools must refuse calls without portal=1.
+# Host-side wire checks: teddy API + teddy/market portals in LIST, portal
+# tools refuse without portal=1, skills.save refuses without skills=1.
 python3 <<'PY'
 import os, socket, sys
 
@@ -109,39 +109,56 @@ def call(line: str, timeout: float = 8.0) -> str:
     finally:
         s.close()
 
-listing = call("LIST")
-if "tsearch.sync" not in listing:
-    print("error: LIST missing teddy API (tsearch.sync)", file=sys.stderr)
-    print(listing, file=sys.stderr)
-    sys.exit(1)
-for tool in ("teddy.health", "teddy.fear_greed", "teddy.gex"):
-    if tool not in listing:
-        print(f"error: LIST missing teddy portal {tool}", file=sys.stderr)
-        print(listing, file=sys.stderr)
+def require_listed(listing: str, *tools: str) -> None:
+    for tool in tools:
+        if tool not in listing:
+            print(f"error: LIST missing {tool}", file=sys.stderr)
+            print(listing, file=sys.stderr)
+            sys.exit(1)
+
+def require_portal_cap(tool: str) -> None:
+    denied = call(f"CALL {tool}")
+    if "needs_portal_cap" not in denied:
+        print(f"error: {tool} must require portal=1", file=sys.stderr)
+        print(denied, file=sys.stderr)
         sys.exit(1)
 
-denied = call("CALL teddy.health")
-if "needs_portal_cap" not in denied:
-    print("error: teddy.health must require portal=1", file=sys.stderr)
-    print(denied, file=sys.stderr)
-    sys.exit(1)
+def try_live(tool: str) -> None:
+    allowed = call(f"CALL {tool} portal=1", timeout=25.0)
+    if allowed.startswith(f"OK {tool}"):
+        print(f"smoke-bridge: {tool} portal=1 ok")
+    elif "needs_portal_cap" in allowed:
+        print(f"error: {tool} portal=1 still denied", file=sys.stderr)
+        print(allowed, file=sys.stderr)
+        sys.exit(1)
+    else:
+        print(f"smoke-bridge: {tool} live call skipped ({allowed.splitlines()[:1]})")
 
-# Live allow-path: best-effort. Network blips must not fail the smoke; a
-# successful OK proves both teddy portals and the consent bit work together.
-allowed = call("CALL teddy.health portal=1", timeout=25.0)
-if allowed.startswith("OK teddy.health"):
-    print("smoke-bridge: teddy.health portal=1 ok")
-elif "needs_portal_cap" in allowed:
-    print("error: portal=1 still denied", file=sys.stderr)
-    print(allowed, file=sys.stderr)
-    sys.exit(1)
-else:
-    print(f"smoke-bridge: teddy.health live call skipped ({allowed.splitlines()[:1]})")
+listing = call("LIST")
+require_listed(
+    listing,
+    "tsearch.sync",
+    "teddy.health",
+    "teddy.fear_greed",
+    "teddy.gex",
+    "market.health",
+    "market.fear_greed",
+    "portal.forget",
+    "skills.save",
+)
 
-if "portal.forget" not in listing:
-    print("error: LIST missing portal.forget", file=sys.stderr)
-    print(listing, file=sys.stderr)
+require_portal_cap("teddy.health")
+require_portal_cap("market.health")
+try_live("teddy.health")
+try_live("market.health")
+
+denied_save = call("CALL skills.save name=smoke-denied desc=nope")
+if "needs_skills_cap" not in denied_save:
+    print("error: skills.save must require skills=1", file=sys.stderr)
+    print(denied_save, file=sys.stderr)
     sys.exit(1)
+print("smoke-bridge: skills.save needs_skills_cap ok")
+
 forgotten = call("CALL portal.forget")
 if not forgotten.startswith("OK portal.forget"):
     print("error: portal.forget failed", file=sys.stderr)
@@ -196,5 +213,5 @@ if b"mcp: email connected" not in serial:
     print("error: MCP bridge not connected", file=sys.stderr)
     sys.stderr.buffer.write(serial + b"\n")
     sys.exit(1)
-print("smoke-bridge ok: hello + mcp email + teddy portals")
+print("smoke-bridge ok: hello + mcp email + teddy/market portals")
 PY
