@@ -96,7 +96,7 @@ impl Source {
             return Self::TEDDY;
         }
         if !self.bridge_online {
-            return "No matches. Bridge offline - only built-in docs are searchable.";
+            return "No matches. Bridge offline - run: make utm-bridged";
         }
         if !self.files_in_scope {
             return "No matches. Turn on workspace.index in Capabilities to search your files.";
@@ -449,7 +449,7 @@ pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage) {
     if page.count == 0 {
         let msg = match page.status {
             crate::mcp::BridgeStatus::Online => "Nothing readable here.",
-            crate::mcp::BridgeStatus::Offline => "Bridge offline - cannot open documents.",
+            crate::mcp::BridgeStatus::Offline => "Bridge offline - run: make utm-bridged",
         };
         fb.draw_text(fx, 160, msg, &BODY_FACE, 0, theme::MUTED);
         return;

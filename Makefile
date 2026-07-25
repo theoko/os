@@ -73,14 +73,14 @@ iso: limine/limine kernel
 run: iso
 	$(QEMU) -M q35 -cdrom $(IMAGE_NAME).iso -boot d $(QEMUFLAGS) $(QEMU_DEBUG_EXIT) || true
 
-# COM1 = stdio, COM2 = TCP client → host MCP bridge (start bridge first, or use smoke-bridge).
+# COM1 = stdio, COM2 = TCP server; host bridge dials (same topology as UTM).
 run-bridged: iso bridge
-	@echo "Start bridge in another terminal: make bridge-run EMAIL_BACKEND=gog"
-	@echo "Or with mock: make bridge-run"
+	chmod +x scripts/ensure-bridge.sh
+	OS_MCP_BRIDGE_CONNECT=tcp:$(BRIDGE_ADDR) ./scripts/ensure-bridge.sh
 	$(QEMU) -M q35 -cdrom $(IMAGE_NAME).iso -boot d \
 		-m 512M -display none \
 		-serial stdio \
-		-serial tcp:$(BRIDGE_ADDR) \
+		-serial tcp:$(BRIDGE_ADDR),server,nowait \
 		$(QEMU_DEBUG_EXIT) || true
 
 utm: iso
@@ -91,12 +91,11 @@ utm-run: iso
 	chmod +x scripts/make-utm.sh
 	UTM_START=1 ./scripts/make-utm.sh
 
-# UTM COM2 = Serial TcpServer on :7420; host bridge dials (retries). QEMU's
-# TcpClient mode never retries a refused connect, which left Search offline.
+# COM2 TcpServer + dialing bridge (retries). One wiring model for QEMU and UTM.
 utm-bridged: iso bridge
 	chmod +x scripts/ensure-bridge.sh scripts/make-utm.sh
 	OS_MCP_BRIDGE_CONNECT=tcp:$(BRIDGE_ADDR) ./scripts/ensure-bridge.sh
-	UTM_BRIDGE=1 UTM_START=1 OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) ./scripts/make-utm.sh
+	UTM_START=1 OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) ./scripts/make-utm.sh
 
 test: test-host smoke smoke-bridge
 

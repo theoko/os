@@ -14,7 +14,6 @@ cd "$ROOT"
 VM_NAME="${UTM_VM_NAME:-os}"
 ISO="${IMAGE_NAME:-os}.iso"
 START="${UTM_START:-0}"
-BRIDGE="${UTM_BRIDGE:-0}"
 BRIDGE_ADDR="${OS_MCP_BRIDGE_ADDR:-127.0.0.1:7420}"
 UTM_DOCS="$HOME/Library/Containers/com.utmapp.UTM/Data/Documents"
 UTM_DIR="$UTM_DOCS/${VM_NAME}.utm"
@@ -30,8 +29,6 @@ fi
 as_escape() { printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'; }
 STAGED_AS="$(as_escape "$STAGED")"
 
-# Quit/reopen UTM with real synchronization — fixed sleeps race a slow quit and
-# the AppleScript bridge coming back up.
 utm_quit() {
   osascript -e 'tell application "UTM" to quit' >/dev/null 2>&1 || true
   for _ in $(seq 1 40); do
@@ -47,6 +44,28 @@ utm_open() {
     fi
     sleep 0.25
   done
+}
+utm_stop_vm() {
+  osascript <<EOF >/dev/null 2>&1 || true
+tell application "UTM"
+  try
+    set vm to virtual machine named "$VM_NAME"
+    if status of vm is not stopped then
+      stop vm by kill
+      delay 1
+    end if
+  end try
+end tell
+EOF
+}
+utm_create_vm() {
+  osascript <<EOF
+set isoPath to POSIX file "$STAGED_AS"
+tell application "UTM"
+  activate
+  make new virtual machine with properties {backend:qemu, configuration:{name:"$VM_NAME", architecture:"x86_64", memory:1024, hypervisor:false, uefi:true, displays:{{hardware:"virtio-vga"}}, drives:{{removable:true, source:isoPath}}}}
+end tell
+EOF
 }
 
 if [[ ! -f "$ISO" ]]; then
@@ -76,17 +95,7 @@ listed="$(utmctl list 2>/dev/null | awk -v n="$VM_NAME" 'NR>1 && $3==n {print $1
 
 if have_bundle; then
   echo "refreshing existing VM bundle: $UTM_DIR"
-  osascript <<EOF >/dev/null 2>&1 || true
-tell application "UTM"
-  try
-    set vm to virtual machine named "$VM_NAME"
-    if status of vm is not stopped then
-      stop vm by kill
-      delay 1
-    end if
-  end try
-end tell
-EOF
+  utm_stop_vm
 elif [[ -n "$listed" ]]; then
   echo "scrubbing ghost UTM library entries named '$VM_NAME'"
   utm_quit
@@ -108,21 +117,9 @@ if changed:
     print("purged ghost entries from", p)
 PY
   utm_open
-  osascript <<EOF
-set isoPath to POSIX file "$STAGED_AS"
-tell application "UTM"
-  activate
-  make new virtual machine with properties {backend:qemu, configuration:{name:"$VM_NAME", architecture:"x86_64", memory:1024, hypervisor:false, uefi:true, displays:{{hardware:"virtio-vga"}}, drives:{{removable:true, source:isoPath}}}}
-end tell
-EOF
+  utm_create_vm
 else
-  osascript <<EOF
-set isoPath to POSIX file "$STAGED_AS"
-tell application "UTM"
-  activate
-  make new virtual machine with properties {backend:qemu, configuration:{name:"$VM_NAME", architecture:"x86_64", memory:1024, hypervisor:false, uefi:true, displays:{{hardware:"virtio-vga"}}, drives:{{removable:true, source:isoPath}}}}
-end tell
-EOF
+  utm_create_vm
 fi
 
 for _ in $(seq 1 20); do
@@ -131,22 +128,11 @@ for _ in $(seq 1 20); do
 done
 [[ -d "$UTM_DIR" ]] || { echo "error: VM bundle missing" >&2; exit 1; }
 
-osascript <<EOF
-tell application "UTM"
-  try
-    set vm to virtual machine named "$VM_NAME"
-    if status of vm is not stopped then
-      stop vm by kill
-      delay 1
-    end if
-  end try
-end tell
-EOF
-
+utm_stop_vm
 mkdir -p "$UTM_DIR/Data"
 cp -f "$STAGED" "$UTM_DIR/Data/os.iso"
 
-UTM_DIR="$UTM_DIR" UTM_BRIDGE="$BRIDGE" OS_MCP_BRIDGE_ADDR="$BRIDGE_ADDR" python3 <<'PY'
+UTM_DIR="$UTM_DIR" OS_MCP_BRIDGE_ADDR="$BRIDGE_ADDR" python3 <<'PY'
 import plistlib, uuid, os
 from pathlib import Path
 p = Path(os.environ["UTM_DIR"]) / "config.plist"
@@ -188,22 +174,20 @@ EXTRA_ARGS = [
 # Set outright rather than merging token-by-token: EXTRA_ARGS repeats "-device",
 # so a per-token dedup would collapse the two devices into one.
 cfg.setdefault("QEMU", {})["AdditionalArguments"] = list(EXTRA_ARGS)
-# COM1 = PTTY (utmctl attach). Optional COM2 = TCP *server* for the host bridge.
-# QEMU's TcpClient mode does not retry a refused connect — if the bridge is
-# briefly down at VM start, Search stays "Bridge offline" forever. TcpServer +
-# WaitForConnection lets the bridge dial (with retry) and keeps COM2 live.
-serial = [{"Mode": "Ptty", "Target": "Auto"}]
-if os.environ.get("UTM_BRIDGE", "0") == "1":
-    addr = os.environ.get("OS_MCP_BRIDGE_ADDR", "127.0.0.1:7420")
-    _host, _, port = addr.rpartition(":")
-    serial.append({
+# Always wire COM2 as TcpServer. Host bridge dials (make utm-bridged). No
+# WaitForConnection — plain `make utm` must boot without a dialer attached.
+addr = os.environ.get("OS_MCP_BRIDGE_ADDR", "127.0.0.1:7420")
+_port = addr.rsplit(":", 1)[-1]
+cfg["Serial"] = [
+    {"Mode": "Ptty", "Target": "Auto"},
+    {
         "Mode": "TcpServer",
         "Target": "Auto",
-        "TcpPort": int(port or "7420"),
-        "WaitForConnection": True,
+        "TcpPort": int(_port or "7420"),
+        "WaitForConnection": False,
         "RemoteConnectionAllowed": False,
-    })
-cfg["Serial"] = serial
+    },
+]
 # The PC speaker needs an emulated sound card to reach the host. UTM creates
 # VMs with Sound: [] and the chime is silent without this.
 cfg["Sound"] = [{"Hardware": "intel-hda"}]
@@ -220,8 +204,7 @@ cfg["Display"] = [{
 }]
 p.write_bytes(plistlib.dumps(cfg, fmt=plistlib.FMT_XML))
 print("bundled", Path(os.environ["UTM_DIR"]) / "Data" / "os.iso")
-if os.environ.get("UTM_BRIDGE", "0") == "1":
-    print("com2 TcpServer <-", os.environ.get("OS_MCP_BRIDGE_ADDR", "127.0.0.1:7420"), "(bridge dials)")
+print("com2 TcpServer on", addr, "(bridge dials via make utm-bridged)")
 PY
 
 # Reload so UTM picks up ImageName (in-memory config would ignore our plist edit).
@@ -233,8 +216,6 @@ if [[ "$START" == "1" ]]; then
 fi
 
 echo "utm ok: $(du -h "$UTM_DIR/Data/os.iso" | awk '{print $1}') ISO in VM bundle"
-if [[ "$BRIDGE" == "1" ]]; then
-  echo ">>> COM2 TcpServer on $BRIDGE_ADDR — host bridge dials in (retries)"
-fi
+echo ">>> COM2 TcpServer on $BRIDGE_ADDR (host bridge dials; use make utm-bridged)"
 echo ">>> Double-click 'os' in the sidebar to open the guest display window."
 echo ">>> The black rectangle in the library list is only a thumbnail — not the GUI."

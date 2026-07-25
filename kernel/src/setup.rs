@@ -240,7 +240,7 @@ impl Setup {
         let (label, detail, tint) = if online {
             ("Host bridge", "Connected on COM2", theme::ONLINE)
         } else {
-            ("Host bridge", "Offline - start it with 'make bridge-run'", theme::OFFLINE)
+            ("Host bridge", "Offline - run: make utm-bridged", theme::OFFLINE)
         };
         self.status_card(fb, w, top, label, detail, tint);
         self.footer(fb, w, h, top + ROW_H + 8, true);
@@ -566,7 +566,7 @@ mod tests {
             "This sets formatting defaults. It does not leave the machine.",
             "Connect the Bridge",
             "Connectors run on the host, never in the kernel.",
-            "Offline - start it with 'make bridge-run'",
+            "Offline - run: make utm-bridged",
             "Connected on COM2",
             "Capabilities",
             "Every tool sits behind a grant. Turn on only what you need.",

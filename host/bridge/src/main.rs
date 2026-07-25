@@ -12,11 +12,8 @@ mod tsearch;
 mod skills;
 
 use std::env;
-use std::fs;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
-use std::os::unix::net::{UnixListener, UnixStream};
-use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 
@@ -67,47 +64,19 @@ fn main() {
     );
 
     if let Some(target) = connect {
-        connect_loop(&target, backends);
-    } else if let Some(path) = addr.strip_prefix("unix:") {
-        serve_unix(path, backends);
+        // Guest (QEMU/UTM) listens; we dial and retry. One topology everywhere.
+        let addr = target.strip_prefix("tcp:").unwrap_or(target.as_str());
+        dial_loop(addr, backends);
     } else {
+        // Foreground debug only (`make bridge-run` + nc). Bridged runs dial.
         serve_tcp(&addr, backends);
     }
 }
 
-/// Dial a peer that is already listening (UTM COM2 TcpServer, or a unix
-/// chardev). Retries until the guest appears, serves one session, reconnects.
-///
-/// UTM's QEMU TcpClient does **not** retry a refused connect — flipping the
-/// direction (guest listens, bridge dials) is what keeps Search online across
-/// bridge restarts and slow host startup.
-fn connect_loop(target: &str, backends: Arc<Backends>) {
-    if let Some(path) = target.strip_prefix("unix:") {
-        connect_unix_loop(path, backends);
-    } else {
-        let addr = target.strip_prefix("tcp:").unwrap_or(target);
-        connect_tcp_loop(addr, backends);
-    }
-}
-
-fn connect_unix_loop(path: &str, backends: Arc<Backends>) {
-    loop {
-        match UnixStream::connect(path) {
-            Ok(stream) => {
-                eprintln!("connected to unix:{path}");
-                if let Err(e) = handle_unix(stream, &backends) {
-                    eprintln!("client error: {e}");
-                }
-                eprintln!("guest disconnected — waiting to reconnect");
-            }
-            Err(_) => {
-                std::thread::sleep(std::time::Duration::from_millis(400));
-            }
-        }
-    }
-}
-
-fn connect_tcp_loop(addr: &str, backends: Arc<Backends>) {
+/// Dial COM2 (guest TcpServer). Retries until the guest appears, serves one
+/// session, reconnects. QEMU's TcpClient mode does not retry — that is why the
+/// bridge is always the client for interactive runs.
+fn dial_loop(addr: &str, backends: Arc<Backends>) {
     loop {
         match TcpStream::connect(addr) {
             Ok(stream) => {
@@ -141,39 +110,7 @@ fn serve_tcp(addr: &str, backends: Arc<Backends>) {
     }
 }
 
-fn serve_unix(path: &str, backends: Arc<Backends>) {
-    let path = Path::new(path);
-    if let Some(parent) = path.parent() {
-        let _ = fs::create_dir_all(parent);
-    }
-    if path.exists() {
-        let _ = fs::remove_file(path);
-    }
-    let listener = UnixListener::bind(path).expect("bind bridge unix");
-    for conn in listener.incoming() {
-        match conn {
-            Ok(stream) => {
-                let backends = Arc::clone(&backends);
-                std::thread::spawn(move || {
-                    if let Err(e) = handle_unix(stream, &backends) {
-                        eprintln!("client error: {e}");
-                    }
-                });
-            }
-            Err(e) => eprintln!("accept error: {e}"),
-        }
-    }
-}
-
 fn handle_tcp(stream: TcpStream, backends: &Backends) -> std::io::Result<()> {
-    stream.set_read_timeout(Some(std::time::Duration::from_secs(120)))?;
-    stream.set_write_timeout(Some(std::time::Duration::from_secs(30)))?;
-    let writer = stream.try_clone()?;
-    let reader = BufReader::new(stream);
-    handle_client(reader, writer, backends)
-}
-
-fn handle_unix(stream: UnixStream, backends: &Backends) -> std::io::Result<()> {
     stream.set_read_timeout(Some(std::time::Duration::from_secs(120)))?;
     stream.set_write_timeout(Some(std::time::Duration::from_secs(30)))?;
     let writer = stream.try_clone()?;

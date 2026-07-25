@@ -73,6 +73,7 @@ Also see skills in [`docs/skills-os-doc-v01.md`](skills-os-doc-v01.md) and searc
 
 ```sh
 make bridge          # build host/bridge
-make bridge-run      # listen :7420 (mock)
-make run-bridged     # QEMU COM1 stdio + COM2 → bridge (gog if set)
+make bridge-run      # foreground listen :7420 (debug / nc)
+make run-bridged     # guest COM2 listens; host bridge dials
+make utm-bridged     # same topology under UTM
 ```

@@ -608,7 +608,7 @@ unsafe extern "C" fn kmain() -> ! {
 fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
     match mail.status {
         mcp::BridgeStatus::Online => "Answers come from the local index and the host bridge.",
-        mcp::BridgeStatus::Offline => "Bridge offline - answering from the index baked into the kernel.",
+        mcp::BridgeStatus::Offline => "Bridge offline - run: make utm-bridged",
     }
 }
 

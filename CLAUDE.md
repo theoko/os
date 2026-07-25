@@ -39,8 +39,9 @@ not in the kernel. Guest holds caps and calls tools over COM2 until a guest netw
 ```sh
 make build           # ISO
 make run             # QEMU (MCP offline unless COM2 wired)
-make bridge-run      # host bridge on :7420 (EMAIL_BACKEND=mock|gog)
-make run-bridged     # QEMU COM2 → bridge
+make bridge-run      # foreground listen :7420 (debug; EMAIL_BACKEND=mock|gog)
+make run-bridged     # guest COM2 listens; host bridge dials
+make utm-bridged     # same under UTM
 make test
 ```
 

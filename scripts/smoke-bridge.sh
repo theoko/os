@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Boot with COM2 wired to the host MCP bridge; require "mcp: email connected".
+# Boot with COM2 as TCP server; host bridge dials in. Require "mcp: email connected".
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,47 +14,16 @@ if [[ ! -f "$ISO" ]]; then
   exit 1
 fi
 
-BRIDGE_BIN="target/debug/os-mcp-bridge"
-if [[ ! -x "$BRIDGE_BIN" ]]; then
-  cargo build -p os-mcp-bridge
-fi
+chmod +x scripts/ensure-bridge.sh
+OS_MCP_BRIDGE_CONNECT="tcp:$ADDR" ./scripts/ensure-bridge.sh
+BRIDGE_PID="$(cat .bridge.pid)"
 
 SERIAL_OUT="$(mktemp "${TMPDIR:-/tmp}/os-bridge-serial.XXXXXX")"
-BRIDGE_LOG="$(mktemp "${TMPDIR:-/tmp}/os-bridge-log.XXXXXX")"
 cleanup() {
   if [[ -n "${BRIDGE_PID:-}" ]]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi
-  rm -f "$SERIAL_OUT" "$BRIDGE_LOG"
+  rm -f "$SERIAL_OUT" .bridge.pid
 }
 trap cleanup EXIT
-
-OS_MCP_BRIDGE_ADDR="$ADDR" OS_MCP_EMAIL_BACKEND=mock "$BRIDGE_BIN" >"$BRIDGE_LOG" 2>&1 &
-BRIDGE_PID=$!
-
-# Wait until the bridge is actually accepting connections (a fixed sleep races
-# a slow bind, and QEMU's tcp: client chardev does not retry). Also fail fast
-# if the bridge died on startup, e.g. port already in use.
-BRIDGE_HOST="${ADDR%:*}"
-BRIDGE_PORT="${ADDR##*:}"
-bridge_up=0
-for _ in $(seq 1 50); do
-  if ! kill -0 "$BRIDGE_PID" 2>/dev/null; then
-    echo "error: bridge exited during startup" >&2
-    cat "$BRIDGE_LOG" >&2
-    exit 1
-  fi
-  # Prefer python: many CI images ship without `nc`.
-  if python3 -c "import socket; s=socket.create_connection(('${BRIDGE_HOST}', int('${BRIDGE_PORT}')), 0.2); s.close()" 2>/dev/null \
-    || nc -z "$BRIDGE_HOST" "$BRIDGE_PORT" 2>/dev/null; then
-    bridge_up=1
-    break
-  fi
-  sleep 0.1
-done
-if [[ "$bridge_up" != 1 ]]; then
-  echo "error: bridge never listened on $ADDR" >&2
-  cat "$BRIDGE_LOG" >&2
-  exit 1
-fi
 
 export OS_SMOKE_ROOT="$ROOT"
 export OS_SMOKE_ISO="$ISO"
@@ -71,6 +40,7 @@ addr = os.environ["OS_SMOKE_ADDR"]
 serial_path = Path(os.environ["OS_SMOKE_SERIAL"])
 serial_path.write_bytes(b"")
 
+# Guest listens; bridge (already dialing) connects. server,nowait = boot without peer.
 proc = subprocess.Popen(
     [
         "qemu-system-x86_64",
@@ -80,7 +50,7 @@ proc = subprocess.Popen(
         "-boot", "d",
         "-display", "none",
         "-serial", f"file:{serial_path}",
-        "-serial", f"tcp:{addr}",
+        "-serial", f"tcp:{addr},server,nowait",
         "-device", "isa-debug-exit,iobase=0xf4,iosize=0x04",
         "-no-reboot",
     ],
