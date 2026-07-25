@@ -65,9 +65,13 @@ argv tokens — dict-shaped entries make UTM drop the VM from the library).
 PS/2 stays on for keyboards. Move the Mac pointer over the guest window — no
 capture required for the tablet.
 
-Serial should show `mouse: usb-tablet ready` then `mouse: ps2 ready`. If the
-cursor is visible but stuck, the interrupt-IN pipe is usually desynced — see
-`0.7.1` in `CHANGELOG.md`.
+If a prior run left **ghost** library entries (name `os` registered but the
+`.utm` bundle was deleted), `make utm` scrubs them from UTM's preferences and
+recreates once. Subsequent runs only refresh the ISO + config in place.
+
+Serial should show `mouse: usb-tablet ready` then `mouse: ps2 ready`, then
+`ui: setup welcome`. If the cursor is visible but stuck, the interrupt-IN pipe
+is usually desynced — see `0.7.1` in `CHANGELOG.md`.
 
 ## Override
 

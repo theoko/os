@@ -30,34 +30,71 @@ fi
 mkdir -p "$UTM_DOCS/Public"
 cp -f "$ISO" "$STAGED"
 
-# Orphan bundles (screenshot/ISO but no config.plist) are invisible to UTM's
-# AppleScript API yet still block `make new` with -2700 "already exists".
+have_bundle() { [[ -d "$UTM_DIR" && -f "$UTM_DIR/config.plist" ]]; }
+
+# Orphan on-disk bundles (ISO/screenshot, no config) block AppleScript create.
 if [[ -d "$UTM_DIR" && ! -f "$UTM_DIR/config.plist" ]]; then
   echo "removing orphan bundle: $UTM_DIR"
   rm -rf "$UTM_DIR"
 fi
 
-osascript <<EOF
+# Prefer refresh over delete+create. Ghost library rows (name registered, bundle
+# gone) make `make new` fail with -2700 and `utmctl delete` cannot remove them
+# either — scrub Name==$VM_NAME from UTM's preferences, then create once.
+listed="$(utmctl list 2>/dev/null | awk -v n="$VM_NAME" 'NR>1 && $3==n {print $1}' || true)"
+
+if have_bundle; then
+  echo "refreshing existing VM bundle: $UTM_DIR"
+  osascript <<EOF >/dev/null 2>&1 || true
+tell application "UTM"
+  try
+    set vm to virtual machine named "$VM_NAME"
+    if status of vm is not stopped then
+      stop vm by kill
+      delay 1
+    end if
+  end try
+end tell
+EOF
+elif [[ -n "$listed" ]]; then
+  echo "scrubbing ghost UTM library entries named '$VM_NAME'"
+  osascript -e 'tell application "UTM" to quit' >/dev/null 2>&1 || true
+  sleep 2
+  UTM_VM_NAME="$VM_NAME" python3 <<'PY'
+import os, plistlib
+from pathlib import Path
+name = os.environ["UTM_VM_NAME"]
+p = Path.home() / "Library/Containers/com.utmapp.UTM/Data/Library/Preferences/com.utmapp.UTM.plist"
+cfg = plistlib.loads(p.read_bytes())
+changed = False
+for k, v in list(cfg.items()):
+    if isinstance(v, list) and v and isinstance(v[0], dict) and "UUID" in v[0]:
+        keep = [i for i in v if i.get("Name") != name]
+        if len(keep) != len(v):
+            cfg[k] = keep
+            changed = True
+if changed:
+    p.write_bytes(plistlib.dumps(cfg, fmt=plistlib.FMT_XML))
+    print("purged ghost entries from", p)
+PY
+  open -a UTM
+  sleep 3
+  osascript <<EOF
 set isoPath to POSIX file "$STAGED"
 tell application "UTM"
   activate
-  try
-    -- Delete *every* VM with this name, not just the first. A failed run can
-    -- leave duplicate entries behind, and creating over them errors with -2700
-    -- ("already exists") only after the bundle has been removed.
-    repeat 10 times
-      set old to virtual machine named "$VM_NAME"
-      if status of old is not stopped then
-        stop old by kill
-        delay 1
-      end if
-      delete old
-      delay 0.5
-    end repeat
-  end try
   make new virtual machine with properties {backend:qemu, configuration:{name:"$VM_NAME", architecture:"x86_64", memory:1024, hypervisor:false, uefi:true, displays:{{hardware:"virtio-vga"}}, drives:{{removable:true, source:isoPath}}}}
 end tell
 EOF
+else
+  osascript <<EOF
+set isoPath to POSIX file "$STAGED"
+tell application "UTM"
+  activate
+  make new virtual machine with properties {backend:qemu, configuration:{name:"$VM_NAME", architecture:"x86_64", memory:1024, hypervisor:false, uefi:true, displays:{{hardware:"virtio-vga"}}, drives:{{removable:true, source:isoPath}}}}
+end tell
+EOF
+fi
 
 for _ in $(seq 1 20); do
   [[ -d "$UTM_DIR" ]] && break
@@ -67,11 +104,13 @@ done
 
 osascript <<EOF
 tell application "UTM"
-  set vm to virtual machine named "$VM_NAME"
-  if status of vm is not stopped then
-    stop vm by kill
-    delay 1
-  end if
+  try
+    set vm to virtual machine named "$VM_NAME"
+    if status of vm is not stopped then
+      stop vm by kill
+      delay 1
+    end if
+  end try
 end tell
 EOF
 
