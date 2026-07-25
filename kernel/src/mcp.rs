@@ -154,7 +154,9 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
         return MailPeek::empty(BridgeStatus::Online);
     }
 
-    com2.write_str("CALL email.search q=in:inbox max=3\n");
+    // Wire bit must match Cap::EmailSearch — bridge refuses without email=1.
+    // max=5 matches the inbox Brief plan text.
+    com2.write_str("CALL email.search q=in:inbox max=5 email=1\n");
 
     let mut peek = MailPeek::empty(BridgeStatus::Online);
 
@@ -710,6 +712,16 @@ pub fn fetch_portal(caps: crate::caps::Caps, tool: &str) -> PortalPeek {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mail_peek_stays_behind_email_search() {
+        use crate::caps::{Cap, Caps};
+        // Do not call fetch_mail_peek: host unit tests cannot touch COM2.
+        // Guest refuse + wire email=1 are the gate; search alone must not unlock mail.
+        let mut caps = Caps::none();
+        caps.set(Cap::SearchQuery, true);
+        assert!(!caps.allows(Cap::EmailSearch));
+    }
 
     #[test]
     fn email_graph_requested_only_with_the_email_cap() {

@@ -432,6 +432,11 @@ unsafe extern "C" fn kmain() -> ! {
                                     // grant produced.
                                     for (cap, forget_tool, build_tools) in [
                                         (
+                                            caps::Cap::EmailSearch,
+                                            "email.forget",
+                                            &[][..],
+                                        ),
+                                        (
                                             caps::Cap::WorkspaceIndex,
                                             "workspace.forget",
                                             &["workspace.index"][..],
@@ -463,6 +468,13 @@ unsafe extern "C" fn kmain() -> ! {
                                                 serial_port.write_str(" - ready\n");
                                             }
                                         }
+                                    }
+                                    // Email grant flips the home peek; refresh
+                                    // after forget/grant so Recent mail matches.
+                                    if before.allows(caps::Cap::EmailSearch)
+                                        != grants.allows(caps::Cap::EmailSearch)
+                                    {
+                                        mail = mcp::fetch_mail_peek(grants);
                                     }
                                     status_len = grants.describe(&mut status_buf);
                                     dirty = true;

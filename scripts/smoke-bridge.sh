@@ -75,8 +75,8 @@ export OS_SMOKE_ISO="$ISO"
 export OS_SMOKE_ADDR="$ADDR"
 export OS_SMOKE_SERIAL="$SERIAL_OUT"
 
-# Host-side wire checks: teddy API + teddy/market portals in LIST, portal
-# tools refuse without portal=1, skills.save refuses without skills=1.
+# Host-side wire checks: teddy/market portals, email.search/email.forget,
+# skills.save — each behind its wire bit.
 python3 <<'PY'
 import os, socket, sys
 
@@ -144,6 +144,7 @@ require_listed(
     "market.health",
     "market.fear_greed",
     "portal.forget",
+    "email.forget",
     "skills.save",
 )
 
@@ -179,6 +180,25 @@ if not forgotten.startswith("OK portal.forget"):
     print(forgotten, file=sys.stderr)
     sys.exit(1)
 print("smoke-bridge: portal.forget ok")
+
+denied_mail = call("CALL email.search q=in:inbox max=2")
+if "needs_email_cap" not in denied_mail:
+    print("error: email.search must require email=1", file=sys.stderr)
+    print(denied_mail, file=sys.stderr)
+    sys.exit(1)
+allowed_mail = call("CALL email.search q=in:inbox max=2 email=1")
+if not allowed_mail.startswith("OK email.search"):
+    print("error: email.search email=1 must succeed", file=sys.stderr)
+    print(allowed_mail, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: email.search email=1 ok")
+
+forgot_mail = call("CALL email.forget")
+if not forgot_mail.startswith("OK email.forget"):
+    print("error: email.forget failed", file=sys.stderr)
+    print(forgot_mail, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: email.forget ok")
 PY
 
 python3 <<'PY'
@@ -227,5 +247,5 @@ if b"mcp: email connected" not in serial:
     print("error: MCP bridge not connected", file=sys.stderr)
     sys.stderr.buffer.write(serial + b"\n")
     sys.exit(1)
-print("smoke-bridge ok: hello + mcp email + teddy/market portals")
+print("smoke-bridge ok: hello + mcp email + teddy/market + email.forget")
 PY

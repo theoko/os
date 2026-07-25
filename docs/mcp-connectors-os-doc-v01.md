@@ -34,7 +34,8 @@ Guest → host:
 |---------|---------|
 | `PING` | Liveness |
 | `LIST` | Tool names |
-| `CALL email.search q=<gmail query> max=<n>` | Search mail |
+| `CALL email.search q=<gmail query> max=<n> email=1` | Search mail (needs `email=1`) |
+| `CALL email.forget` | Delete the host mail knowledge graph |
 | `CALL email.send to=<addr> subj=<s> body=<b>` | Send (cap-gated; bridge may require confirm) |
 | `CALL search.query q=<keywords> k=<n> cat=<opt>` | Knowledge search (curated corpus) |
 
@@ -57,12 +58,12 @@ wire flags so a forged CALL cannot bypass consent:
 
 | Cap | Wire bit | Tools |
 |-----|----------|-------|
-| `email.search` | (guest refuse) / `email=1` on search | inbox + email graph |
-| `search.query` | guest refuse | `search.query` |
-| `workspace.index` | `files=1` | workspace index / file docs |
-| `audio.transcribe` | `audio=1` | transcripts |
+| `email.search` | `email=1` | `email.search`; revoke → `email.forget` |
+| `search.query` | guest refuse | `search.query` (`email=1`/`files=1`/… opt-in) |
+| `workspace.index` | `files=1` | workspace index / file docs; `workspace.forget` |
+| `audio.transcribe` | `audio=1` | transcripts; `audio.forget` |
 | `skills.save` | `skills=1` | `skills.save` |
-| `portal.sync` | `portal=1` | `tsearch.sync`, `teddy.*`, `market.*` |
+| `portal.sync` | `portal=1` | `tsearch.sync`, `teddy.*`, `market.*`; `portal.forget` |
 
 Ambient root is forbidden: a missing grant is a hard deny.
 

@@ -250,17 +250,12 @@ pub fn draw_home_full(
             y += 22;
         }
     } else if !brief.has_report() {
-        fb.draw_text(
-            x0,
-            ry,
-            match mail.status {
-                BridgeStatus::Online => "Inbox empty, or email.search not granted.",
-                BridgeStatus::Offline => "Bridge offline - run: make utm-bridged",
-            },
-            &SMALL_FACE,
-            0,
-            theme::MUTED,
-        );
+        let empty_mail = match mail.status {
+            BridgeStatus::Offline => "Bridge offline - run: make utm-bridged",
+            BridgeStatus::Online if caps.allows(Cap::EmailSearch) => "Inbox empty right now.",
+            BridgeStatus::Online => "Grant Email to show recent mail.",
+        };
+        fb.draw_text(x0, ry, empty_mail, &SMALL_FACE, 0, theme::MUTED);
     }
 
     fb.draw_text_centered(w / 2, h - 24, mail_label, &SMALL_FACE, 0, theme::MUTED);
@@ -634,7 +629,8 @@ mod tests {
             "docs + mail + files + online",
             "7 writable",
             "7 read-only",
-            "Inbox empty, or email.search not granted.",
+            "Inbox empty right now.",
+            "Grant Email to show recent mail.",
             "Bridge offline - run: make utm-bridged",
             "bridge connected",
             "bridge offline",

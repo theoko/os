@@ -306,7 +306,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
     match cmd {
         "PING" => vec!["OK pong".into()],
         "LIST" => {
-            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,teddy.health,teddy.fear_greed,teddy.gex,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,portal.forget,doc.read".into()]
+            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,teddy.health,teddy.fear_greed,teddy.gex,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,portal.forget,email.forget,doc.read".into()]
         }
         "CALL" => {
             let (tool, rest) = split_word(rest);
@@ -357,6 +357,9 @@ fn parse_args(rest: &str) -> Vec<(String, String)> {
 
 fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<String> {
     match tool {
+        "email.search" if !matches!(arg_val(args, "email"), Some("1")) => {
+            vec!["ERR email.search needs_email_cap".into()]
+        }
         "email.search" => email_search(args, &backends.email),
         "email.send" => vec!["ERR email.send disabled_until_cap_confirm".into()],
         "calendar.list" => vec![
@@ -474,6 +477,11 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                 vec!["OK audio.forget nothing_to_remove".into(), "END".into()]
             }
             Err(e) => vec![format!("ERR audio.forget {e}")],
+        },
+        // Revoking Email: purge the mail knowledge graph so "off" forgets.
+        "email.forget" => match graph::forget() {
+            Ok(status) => vec![format!("OK email.forget {status}"), "END".into()],
+            Err(e) => vec![format!("ERR email.forget {e}")],
         },
         // Revoking Online services: purge teddy corpus API cache and live
         // portal snapshots so "off" means forgotten, not merely hidden.
@@ -870,6 +878,64 @@ mod tests {
     fn list_includes_portal_forget() {
         let r = dispatch("LIST", &test_backends());
         assert!(r[0].contains("portal.forget"), "{}", r[0]);
+        assert!(r[0].contains("email.forget"), "{}", r[0]);
+    }
+
+    #[test]
+    fn email_search_needs_the_email_cap() {
+        let denied = dispatch("CALL email.search q=in:inbox max=2", &test_backends());
+        assert!(
+            denied[0].contains("needs_email_cap"),
+            "ungated email.search: {denied:?}"
+        );
+        // Allowed path ingests into the mail graph — keep it off the real home.
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("os-es-cap-{}", std::process::id()));
+        let path = dir.join("emails.json");
+        let _ = std::fs::create_dir_all(&dir);
+        unsafe {
+            std::env::set_var("OS_GRAPH_PATH", &path);
+        }
+        let allowed = dispatch(
+            "CALL email.search q=in:inbox max=2 email=1",
+            &test_backends(),
+        );
+        assert!(
+            allowed[0].starts_with("OK email.search"),
+            "email=1 should search: {allowed:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        unsafe {
+            std::env::remove_var("OS_GRAPH_PATH");
+        }
+    }
+
+    #[test]
+    fn email_forget_clears_the_graph() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("os-ef-{}", std::process::id()));
+        let path = dir.join("emails.json");
+        let _ = std::fs::create_dir_all(&dir);
+        unsafe {
+            std::env::set_var("OS_GRAPH_PATH", &path);
+        }
+        let mut g = graph::Graph::default();
+        g.ingest(&[(
+            "a@x".into(),
+            "secret".into(),
+            "snippet".into(),
+        )]);
+        g.save().expect("save");
+        assert!(path.exists());
+        let r = dispatch("CALL email.forget", &test_backends());
+        assert!(r[0].starts_with("OK email.forget"), "{r:?}");
+        assert!(!path.exists(), "graph file should be gone");
+        let again = dispatch("CALL email.forget", &test_backends());
+        assert!(again[0].contains("nothing_to_remove"), "{again:?}");
+        let _ = std::fs::remove_dir_all(&dir);
+        unsafe {
+            std::env::remove_var("OS_GRAPH_PATH");
+        }
     }
 
     #[test]

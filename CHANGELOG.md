@@ -1,8 +1,19 @@
 ---
-version: 0.9.9
+version: 0.9.10
 ---
 
 # Changelog
+
+## 0.9.10 — 2026-07-25
+
+Email consent matches the other personal-data grants:
+
+- Bridge `email.search` requires `email=1` (`needs_email_cap`); guest peeks
+  send the bit and use `max=5` to match the inbox Brief plan.
+- `email.forget` deletes the mail knowledge graph; Caps revoke of Email
+  purges and refreshes the home peek.
+- Home empty-mail copy splits granted+empty vs not granted.
+- Smoke asserts LIST / deny / allow / forget for email.
 
 ## 0.9.9 — 2026-07-25
 
