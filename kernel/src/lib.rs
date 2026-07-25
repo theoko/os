@@ -10,6 +10,7 @@ pub mod caps;
 pub mod fb;
 pub mod font;
 pub mod keyboard;
+pub mod level;
 pub mod mcp;
 pub mod mouse;
 pub mod pci;

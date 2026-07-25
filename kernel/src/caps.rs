@@ -46,7 +46,7 @@ impl Cap {
         }
     }
 
-    /// The consequence of granting it, in one clause.
+    /// The consequence of granting it, in one clause (Guided UI).
     pub const fn detail(self) -> &'static str {
         match self {
             Cap::EmailSearch => "Read your inbox",
@@ -58,7 +58,15 @@ impl Cap {
         }
     }
 
-    /// The wire/tool identifier. Not shown to the user.
+    /// Blurb beside the Caps label — plain language or wire name by level.
+    pub const fn blurb(self, level: crate::level::Level) -> &'static str {
+        match level {
+            crate::level::Level::Guided => self.detail(),
+            crate::level::Level::Advanced => self.name(),
+        }
+    }
+
+    /// The wire/tool identifier. Shown in Advanced Caps rows.
     pub const fn name(self) -> &'static str {
         match self {
             Cap::EmailSearch => "email.search",

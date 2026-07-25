@@ -7,6 +7,7 @@
 //! see it act within the grants, or be told which switch is still off.
 
 use crate::caps::{Cap, Caps};
+use crate::level::Level;
 use crate::mcp::{self, BridgeStatus, MailPeek, SearchPeek};
 
 /// Which builtin playbook the runner knows how to execute.
@@ -264,8 +265,14 @@ pub fn enrich_playbook(brief: &mut Brief, caps: Caps, body: &str) {
 }
 
 /// Morning brief used on home after setup: plan/act over whatever is granted.
-pub fn morning(caps: Caps) -> Brief {
-    run("agent-plan-act", caps)
+pub fn morning(caps: Caps, level: Level) -> Brief {
+    let mut brief = run("agent-plan-act", caps);
+    if !level.is_guided() {
+        // Advanced: keep the report lines; drop the long plan checklist.
+        brief.plan_n = brief.plan_n.min(2);
+        brief.set_heading("Morning");
+    }
+    brief
 }
 
 fn run_inbox(brief: &mut Brief, caps: Caps, triage: bool) {
@@ -850,6 +857,15 @@ mod tests {
         brief.push_line("Info", "Email off - skipping inbox.");
         assert!(brief.plan_at(1).contains("grants"));
         assert!(brief.lines[0].text().contains("Email off"));
+    }
+
+    #[test]
+    fn morning_advanced_shortens_the_plan() {
+        let guided = morning(Caps::none(), Level::Guided);
+        let advanced = morning(Caps::none(), Level::Advanced);
+        assert!(guided.plan_n >= advanced.plan_n);
+        assert_eq!(advanced.heading(), "Morning");
+        assert!(advanced.plan_n <= 2);
     }
 
     #[test]

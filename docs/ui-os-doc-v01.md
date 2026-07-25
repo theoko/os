@@ -35,7 +35,22 @@ No skill lists, mail rows, or secondary pills in the hero.
 **Constraint:** the 8x8 framebuffer font is ASCII only (`0x20..=0x7E`).
 Never put em dashes, middots, or curly quotes in on-screen strings — they become `?`.
 
+## Experience level (v0.9.18)
+
+Setup asks **How should it feel?** — Guided or Advanced. Chosen explicitly;
+not inferred from caps, bridge, or click history. RAM-only until reboot.
+
+| | Guided | Advanced |
+|--|--------|----------|
+| Caps blurbs | Plain language (`detail`) | Wire names (`email.search`, …) |
+| Home / Search placeholders | Longer teaching copy | Short query / path hints |
+| Morning brief | Full plan checklist | Heading + at most two plan lines |
+| Default grants | Privacy-first (docs only) | Same — Advanced is not ambient root |
+
+Code: [`kernel/src/level.rs`](../kernel/src/level.rs), setup Experience step.
+
 ## Code
 
 - [`kernel/src/ui.rs`](../kernel/src/ui.rs)
 - [`kernel/src/fb.rs`](../kernel/src/fb.rs)
+- [`kernel/src/level.rs`](../kernel/src/level.rs)

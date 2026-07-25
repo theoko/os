@@ -155,8 +155,9 @@ pub fn draw_home(
     status: &str,
     caps: Caps,
     brief: &Brief,
+    level: crate::level::Level,
 ) {
-    draw_home_full(fb, mail, skills, status, "", false, caps, brief)
+    draw_home_full(fb, mail, skills, status, "", false, caps, brief, level)
 }
 
 /// The home screen: a launcher, not a landing page.
@@ -173,6 +174,7 @@ pub fn draw_home_full(
     caret: bool,
     caps: Caps,
     brief: &Brief,
+    level: crate::level::Level,
 ) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
@@ -188,7 +190,14 @@ pub fn draw_home_full(
     fb.fill_round_rect(fx + 1, fy + 1, fw - 2, fh - 2, 11, theme::BG);
     let base = fy + (fh - BODY_FACE.px) / 2 + BODY_FACE.baseline();
     if query.is_empty() {
-        fb.draw_text(fx + 18, base, "Search the knowledge base", &BODY_FACE, 0, theme::MUTED);
+        fb.draw_text(
+            fx + 18,
+            base,
+            level.home_search_placeholder(),
+            &BODY_FACE,
+            0,
+            theme::MUTED,
+        );
     } else {
         fb.draw_text(fx + 18, base, query, &BODY_FACE, 0, theme::INK);
     }
@@ -199,7 +208,7 @@ pub fn draw_home_full(
     fb.draw_text(
         fx + 2,
         fy + fh + 22,
-        "Type a query and press Enter. Works with the bridge offline.",
+        level.home_search_hint(),
         &SMALL_FACE,
         0,
         theme::MUTED,
@@ -622,9 +631,7 @@ mod tests {
 
     #[test]
     fn copy_is_ascii_only() {
-        for s in [
-            "Search the knowledge base",
-            "Type a query and press Enter. Works with the bridge offline.",
+        let mut all = vec![
             "Search",
             "Capabilities",
             "Skills",
@@ -642,7 +649,12 @@ mod tests {
             "bridge offline",
             "os",
             "setup",
-        ] {
+        ];
+        for level in crate::level::Level::ALL {
+            all.push(level.home_search_placeholder());
+            all.push(level.home_search_hint());
+        }
+        for s in all {
             assert!(
                 s.bytes().all(|b| (0x20..=0x7E).contains(&b)),
                 "non-ASCII renders as '?': {s:?}"

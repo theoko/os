@@ -14,6 +14,7 @@ use crate::agent::Brief;
 use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{self, BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
+use crate::level::Level;
 use crate::searchui::back_rect;
 use crate::setup::{cap_rows, N_CAPS};
 use crate::skills::SkillPeek;
@@ -265,11 +266,11 @@ pub fn skills_save_hit(w: i32, count: usize, can_save: bool, x: i32, y: i32) -> 
 }
 
 /// Live capability switches. Clicking a row toggles the grant.
-pub fn draw_caps(fb: &Surface, grants: Caps) {
+pub fn draw_caps(fb: &Surface, grants: Caps, level: Level) {
     let w = fb.width() as i32;
-    chrome(fb, w, "Capabilities", "What the agent may do");
+    chrome(fb, w, "Capabilities", level.caps_subtitle());
 
-    for (i, (name, blurb)) in cap_rows().enumerate() {
+    for (i, (name, blurb)) in cap_rows(level).enumerate() {
         let on = Cap::ALL
             .get(i)
             .map(|c| grants.allows(*c))
@@ -291,7 +292,7 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
     fb.draw_text(
         x,
         TOP + N_CAPS as i32 * (ROW_H + ROW_GAP) + 26,
-        "Tap a row to grant or revoke. Takes effect immediately.",
+        level.caps_footer(),
         &SMALL_FACE,
         0,
         theme::MUTED,
@@ -388,12 +389,10 @@ mod tests {
         let mut all = vec![
             "Tap a playbook to run it",
             "Run a playbook, or save a starter",
-            "What the agent may do",
             "Compiled into the ISO. Tap a playbook to open its Brief.",
             "Runnable skills call MCP under your grants. Others open a Brief with body text.",
             "Save starter needs the bridge. Every playbook opens a Brief.",
             "Playbook body unavailable.",
-            "Tap a row to grant or revoke. Takes effect immediately.",
             "No skills loaded.",
             "Skills",
             "Capabilities",
@@ -408,6 +407,10 @@ mod tests {
             "Plan",
             "Report",
         ];
+        for level in Level::ALL {
+            all.push(level.caps_subtitle());
+            all.push(level.caps_footer());
+        }
         for s in BUILTIN {
             all.push(s.name);
             all.push(s.blurb);
@@ -449,9 +452,11 @@ mod tests {
     fn capability_text_clears_the_switch() {
         let (_, _, cw, _) = row_rect(1024, 0);
         // Switch occupies the right 58px of the row.
-        for (name, blurb) in cap_rows() {
-            assert!(BRAND_FACE.width(name, 0) < cw - 76, "name hits the switch: {name}");
-            assert!(SMALL_FACE.width(blurb, 0) < cw - 76, "blurb hits the switch: {blurb}");
+        for level in Level::ALL {
+            for (name, blurb) in cap_rows(level) {
+                assert!(BRAND_FACE.width(name, 0) < cw - 76, "name hits the switch: {name}");
+                assert!(SMALL_FACE.width(blurb, 0) < cw - 76, "blurb hits the switch: {blurb}");
+            }
         }
     }
 }

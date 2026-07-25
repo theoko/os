@@ -1,8 +1,20 @@
 ---
-version: 0.9.17
+version: 0.9.18
 ---
 
 # Changelog
+
+## 0.9.18 — 2026-07-25
+
+The UI adapts to how advanced you are — by choice, not profiling:
+
+- Setup **Experience** step: Guided vs Advanced (explicit; reboot resets).
+- Guided keeps plain-language Caps blurbs and longer hints; Advanced shows
+  wire tool names and shorter chrome (home/search placeholders, Caps footer,
+  setup Bridge/Skills/Done copy).
+- Morning brief shortens its plan checklist in Advanced.
+- Default grants stay privacy-first at every level. Re-running setup keeps
+  the last Experience selection highlighted.
 
 ## 0.9.17 — 2026-07-25
 

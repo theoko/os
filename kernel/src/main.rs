@@ -3,7 +3,7 @@
 
 use core::hint::black_box;
 
-use kernel::{agent, anim, beep, caps, fb, hello_message, keyboard, mcp, mouse, screens, searchui, serial, setup, skills, ui, usb_tablet};
+use kernel::{agent, anim, beep, caps, fb, hello_message, keyboard, level, mcp, mouse, screens, searchui, serial, setup, skills, ui, usb_tablet};
 use limine::BaseRevision;
 use limine::request::{
     FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
@@ -131,20 +131,37 @@ unsafe extern "C" fn kmain() -> ! {
                 // thing that touches video memory.
                 let surface = screen.surface();
                 let boot_brief = agent::Brief::empty();
-                ui::draw_home(surface, &mail, &skill_peek, "", caps::Caps::none(), &boot_brief);
+                ui::draw_home(
+                    surface,
+                    &mail,
+                    &skill_peek,
+                    "",
+                    caps::Caps::none(),
+                    &boot_brief,
+                    level::Level::Guided,
+                );
                 screen.present();
 
                 // Liveness only until the user consents. Reading the inbox
                 // here would fetch — and, because the bridge indexes results,
                 // persist to disk — mail before anyone agreed to it.
                 let mut grants = caps::Caps::none();
+                let mut level = level::Level::Guided;
                 mail = mcp::MailPeek::empty(mcp::probe_bridge());
                 match mail.status {
                     mcp::BridgeStatus::Online => serial_port.write_str("mcp: email connected\n"),
                     mcp::BridgeStatus::Offline => serial_port.write_str("mcp: email offline\n"),
                 }
                 serial_port.write_str("skills: builtins ready\n");
-                ui::draw_home(surface, &mail, &skill_peek, "", caps::Caps::none(), &boot_brief);
+                ui::draw_home(
+                    surface,
+                    &mail,
+                    &skill_peek,
+                    "",
+                    caps::Caps::none(),
+                    &boot_brief,
+                    level,
+                );
 
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
@@ -190,7 +207,7 @@ unsafe extern "C" fn kmain() -> ! {
                 }
 
                 let mut brief = agent::Brief::empty();
-                ui::draw_home(surface, &mail, &skill_peek, "", grants, &brief);
+                ui::draw_home(surface, &mail, &skill_peek, "", grants, &brief, level);
                 let mut cursor = mouse::Cursor::new();
                 let mut x = cx;
                 let mut y = cy;
@@ -282,8 +299,12 @@ unsafe extern "C" fn kmain() -> ! {
                             cursor.hide(surface);
                             if setup.is_finished() {
                                 grants = setup.grants();
+                                level = setup.level;
                                 status_len = grants.describe(&mut status_buf);
                                 serial_port.write_str("ui: setup done\n");
+                                serial_port.write_str("ui: level ");
+                                serial_port.write_str(level.serial_tag());
+                                serial_port.write_str("\n");
                                 serial_port.write_str("caps: ");
                                 serial_port.write_str(status_str(&status_buf, status_len));
                                 serial_port.write_str("\n");
@@ -313,7 +334,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 // First act: run the plan/act skill under the
                                 // grants just chosen so home is never empty
                                 // theatre — the OS does something immediately.
-                                brief = agent::morning(grants);
+                                brief = agent::morning(grants, level);
                                 view = screens::View::Brief;
                                 serial_port.write_str("agent: morning brief\n");
                                 screens::draw_brief(surface, &brief);
@@ -370,6 +391,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     query.as_str(),
                                     caret,
                                     bridge_note(&mail),
+                                    level,
                                 );
                             } else {
                                 ui::draw_home_full(
@@ -381,6 +403,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     caret,
                                     grants,
                                     &brief,
+                                    level,
                                 );
                             }
                             cursor.show_at(surface, x, y);
@@ -609,11 +632,12 @@ unsafe extern "C" fn kmain() -> ! {
                                     query.as_str(),
                                     caret,
                                     bridge_note(&mail),
+                                    level,
                                 ),
                                 screens::View::Skills => {
                                     screens::draw_skills(surface, &skill_peek, grants)
                                 }
-                                screens::View::Caps => screens::draw_caps(surface, grants),
+                                screens::View::Caps => screens::draw_caps(surface, grants, level),
                                 screens::View::Brief => screens::draw_brief(surface, &brief),
                                 screens::View::Reader => {
                                     searchui::draw_reader(surface, open_title.as_str(), &page)
@@ -626,6 +650,7 @@ unsafe extern "C" fn kmain() -> ! {
                                         status_str(&status_buf, status_len),
                                         grants,
                                         &brief,
+                                        level,
                                     )
                                 }
                             }
@@ -642,7 +667,7 @@ unsafe extern "C" fn kmain() -> ! {
                             match targets.hit(x, y) {
                                 Some(ui::HomeHit::Cta(ui::CtaId::Ready)) => {
                                     serial_port.write_str("ui: click Ready\n");
-                                    setup = setup::Setup::new();
+                                    setup = setup::Setup::restart(level);
                                     cursor.hide(surface);
                                     setup.draw(surface, &mail, &skill_peek);
                                     cursor.show_at(surface, x, y);
@@ -680,6 +705,7 @@ unsafe extern "C" fn kmain() -> ! {
                                         query.as_str(),
                                         caret,
                                         bridge_note(&mail),
+                                        level,
                                     );
                                     cursor.show_at(surface, x, y);
                                     enter(&screen, &mut motion, x, y);
@@ -691,7 +717,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     status_len = grants.describe(&mut status_buf);
                                     view = screens::View::Caps;
                                     cursor.hide(surface);
-                                    screens::draw_caps(surface, grants);
+                                    screens::draw_caps(surface, grants, level);
                                     cursor.show_at(surface, x, y);
                                     enter(&screen, &mut motion, x, y);
                                     clicked = false;
@@ -718,6 +744,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     status_str(&status_buf, status_len),
                                     grants,
                                     &brief,
+                                    level,
                                 );
                                 cursor.show_at(surface, x, y);
                                 enter(&screen, &mut motion, x, y);

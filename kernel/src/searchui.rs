@@ -284,7 +284,14 @@ pub fn result_hit(w: i32, h: i32, count: usize, x: i32, y: i32) -> Option<usize>
 }
 
 /// Draw the search screen. `caret` blinks the insertion point on.
-pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_note: &str) {
+pub fn draw(
+    fb: &Surface,
+    view: &SearchView,
+    query: &str,
+    caret: bool,
+    bridge_note: &str,
+    level: crate::level::Level,
+) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
     fb.fill(theme::BG);
@@ -307,7 +314,7 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
     let tx = fx + 18;
     let base = fy + (fh - BODY_FACE.px) / 2 + BODY_FACE.baseline();
     if query.is_empty() {
-        fb.draw_text(tx, base, "Type a query or /path.wav", &BODY_FACE, 0, theme::MUTED);
+        fb.draw_text(tx, base, level.search_placeholder(), &BODY_FACE, 0, theme::MUTED);
     } else {
         fb.draw_text(tx, base, query, &BODY_FACE, 0, theme::INK);
     }
