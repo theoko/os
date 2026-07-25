@@ -10,7 +10,7 @@
 use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{self, BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
-use crate::setup::CAPS;
+use crate::setup::CAP_BLURBS;
 use crate::skills::SkillPeek;
 #[cfg(test)]
 use crate::skills::BUILTIN;
@@ -54,7 +54,7 @@ pub fn row_rect(w: i32, i: usize) -> (i32, i32, i32, i32) {
 
 /// Which capability row contains this point, if any.
 pub fn caps_hit(w: i32, x: i32, y: i32) -> Option<usize> {
-    (0..CAPS.len()).find(|&i| {
+    (0..Cap::ALL.len()).find(|&i| {
         let (rx, ry, rw, rh) = row_rect(w, i);
         x >= rx && x < rx + rw && y >= ry && y < ry + rh
     })
@@ -143,12 +143,9 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
     let w = fb.width() as i32;
     chrome(fb, w, "Capabilities", Some("What the agent may do"));
 
-    for (i, (name, blurb)) in CAPS.iter().enumerate() {
-        let on = Cap::ALL
-            .get(i)
-            .map(|c| grants.allows(*c))
-            .unwrap_or(false);
-        let (x, y, cw, h) = row(fb, w, i, name, blurb, false);
+    for (i, cap) in Cap::ALL.iter().enumerate() {
+        let on = grants.allows(*cap);
+        let (x, y, cw, h) = row(fb, w, i, cap.name(), CAP_BLURBS[i], false);
 
         // Pill switch, filled when granted.
         let tw = 40;
@@ -164,7 +161,7 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
     let (x, _) = column(w);
     fb.draw_text(
         x,
-        TOP + CAPS.len() as i32 * (ROW_H + ROW_GAP) + 26,
+        TOP + Cap::ALL.len() as i32 * (ROW_H + ROW_GAP) + 26,
         "Tap a row to grant or revoke. Takes effect immediately.",
         &SMALL_FACE,
         0,
@@ -187,7 +184,7 @@ mod tests {
 
     #[test]
     fn rows_stack_without_overlapping() {
-        for i in 1..CAPS.len() {
+        for i in 1..Cap::ALL.len() {
             let (_, prev_y, _, prev_h) = row_rect(1024, i - 1);
             let (_, y, _, _) = row_rect(1024, i);
             assert!(y >= prev_y + prev_h, "row {i} overlaps its predecessor");
@@ -196,7 +193,7 @@ mod tests {
 
     #[test]
     fn every_capability_row_is_hittable_at_its_centre() {
-        for i in 0..CAPS.len() {
+        for i in 0..Cap::ALL.len() {
             let (x, y, w, h) = row_rect(1024, i);
             assert_eq!(caps_hit(1024, x + w / 2, y + h / 2), Some(i));
         }
@@ -232,12 +229,12 @@ mod tests {
     fn caps_screen_labels_match_the_capability_list() {
         // The switch for row i reflects Cap::ALL[i]; a mismatch would show the
         // wrong state against the wrong name.
-        assert_eq!(CAPS.len(), Cap::ALL.len());
+        assert_eq!(CAP_BLURBS.len(), Cap::ALL.len());
     }
 
     #[test]
     fn all_rows_fit_a_768_screen() {
-        let n = BUILTIN.len().min(6).max(CAPS.len());
+        let n = BUILTIN.len().min(6).max(Cap::ALL.len());
         let (_, y, _, h) = row_rect(1024, n - 1);
         assert!(y + h + 40 < 768, "rows run off the screen: {}", y + h);
     }
@@ -298,7 +295,9 @@ mod tests {
     fn capability_text_clears_the_switch() {
         let (_, _, cw, _) = row_rect(1024, 0);
         // Switch occupies the right 58px of the row.
-        for (name, blurb) in CAPS {
+        for (i, cap) in Cap::ALL.iter().enumerate() {
+            let name = cap.name();
+            let blurb = CAP_BLURBS[i];
             assert!(BRAND_FACE.width(name, 0) < cw - 76, "name hits the switch: {name}");
             assert!(SMALL_FACE.width(blurb, 0) < cw - 76, "blurb hits the switch: {blurb}");
         }

@@ -444,7 +444,7 @@ mod ascii_tests {
         // Real document titles contain emoji; the kernel atlas cannot render
         // them and would show '?' for each byte.
         let out =
-            crate::search::query_scoped("greek events engine", 3, None, false, false, false);
+            crate::search::query_all("greek events engine", 3, None, false, false, false);
         for row in &out {
             assert!(row.is_ascii(), "non-ASCII reached the wire: {row}");
         }
@@ -469,8 +469,8 @@ mod consent_tests {
         unsafe { env::set_var("OS_WORKSPACE_INDEX", &ix_path) };
         build(&[dir.clone()]).save().expect("save index");
 
-        let without = crate::search::query_scoped("zygote notary", 5, None, false, false, false);
-        let with = crate::search::query_scoped("zygote notary", 5, None, false, true, false);
+        let without = crate::search::query_all("zygote notary", 5, None, false, false, false);
+        let with = crate::search::query_all("zygote notary", 5, None, false, true, false);
 
         assert!(
             !without.iter().any(|r| r.contains("Zygote Notary")),

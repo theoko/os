@@ -8,7 +8,7 @@
 //! Drawing records its own hit zones, so `click()` needs no separate layout
 //! table to drift out of sync.
 
-use crate::caps::Caps;
+use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{self, BODY_FACE, BRAND_FACE, BTN_FACE, HERO_FACE, SMALL_FACE, TITLE_FACE};
 use crate::mcp::{BridgeStatus, MailPeek};
@@ -51,20 +51,20 @@ pub enum Step {
     Finished,
 }
 
-/// Capabilities the agent may be granted up front. Mirrors [`Cap`] / bridge tools.
-pub const CAPS: [(&str, &str); 5] = [
-    ("email.search", "Read the inbox through the host bridge"),
-    ("search.query", "Query the built-in knowledge corpus"),
-    ("skills.save", "Write new skill playbooks to disk"),
-    ("workspace.index", "Search your own files on this machine"),
-    ("audio.transcribe", "Transcribe recordings and index what was said"),
+/// Blurbs for each [`Cap::ALL`] row (tool names come from [`Cap::name`]).
+pub const CAP_BLURBS: [&str; 5] = [
+    "Read the inbox through the host bridge",
+    "Query the built-in knowledge corpus",
+    "Write new skill playbooks to disk",
+    "Search your own files on this machine",
+    "Transcribe recordings and index what was said",
 ];
 
 const MAX_ZONES: usize = 12;
 
 pub struct Setup {
     pub step: Step,
-    pub caps: [bool; CAPS.len()],
+    pub caps: [bool; Cap::ALL.len()],
     zones: [Zone; MAX_ZONES],
     n_zones: usize,
     /// Edge detection: a held button must not advance every frame.
@@ -161,7 +161,7 @@ impl Setup {
             }
             Action::Row(i) => match self.step {
                 Step::Capabilities => {
-                    if i < CAPS.len() {
+                    if i < Cap::ALL.len() {
                         self.caps[i] = !self.caps[i];
                         return true;
                     }
@@ -224,9 +224,9 @@ impl Setup {
             "Every tool sits behind a grant. Turn on only what you need.",
         );
         let mut y = top;
-        for (i, (name, blurb)) in CAPS.iter().enumerate() {
+        for (i, cap) in Cap::ALL.iter().enumerate() {
             let on = self.caps[i];
-            self.row(fb, w, y, name, Some(blurb), on, true, Action::Row(i));
+            self.row(fb, w, y, cap.name(), Some(CAP_BLURBS[i]), on, true, Action::Row(i));
             y += ROW_H + 8;
         }
         self.footer(fb, w, h, y, true);
@@ -463,17 +463,15 @@ mod tests {
     fn skills_write_is_off_by_default() {
         // "No ambient root" - granting disk writes must be a deliberate act.
         let s = setup();
-        let idx = CAPS.iter().position(|(n, _)| *n == "skills.save").unwrap();
-        assert!(!s.caps[idx]);
+        assert!(!s.caps[Cap::SkillsSave.index()]);
     }
 
     #[test]
     fn grants_match_cap_module() {
-        use crate::caps::Cap;
         let s = setup();
         let g = s.grants();
+        assert_eq!(CAP_BLURBS.len(), Cap::ALL.len());
         for (i, cap) in Cap::ALL.iter().enumerate() {
-            assert_eq!(CAPS[i].0, cap.name());
             assert_eq!(s.caps[i], g.allows(*cap));
         }
     }
@@ -537,10 +535,10 @@ mod tests {
             "Start",
             "Host bridge",
         ];
-        for (n, b) in CAPS {
-            all.push(n);
-            all.push(b);
+        for cap in Cap::ALL {
+            all.push(cap.name());
         }
+        all.extend_from_slice(&CAP_BLURBS);
         for s in all {
             assert!(
                 s.bytes().all(|b| (0x20..=0x7E).contains(&b)),
@@ -551,7 +549,9 @@ mod tests {
 
     #[test]
     fn step_copy_fits_the_content_column() {
-        for (n, b) in CAPS {
+        for (i, cap) in Cap::ALL.iter().enumerate() {
+            let n = cap.name();
+            let b = CAP_BLURBS[i];
             assert!(BRAND_FACE.width(n, 0) < CONTENT_W - 90, "cap name too wide: {n}");
             assert!(SMALL_FACE.width(b, 0) < CONTENT_W - 90, "cap blurb too wide: {b}");
         }
@@ -577,11 +577,11 @@ mod layout_tests {
     fn capability_rows_clear_the_footer_at_768() {
         // Overlapping rows and the Continue pill would misroute clicks — the
         // exact failure a previous review caught on a short framebuffer.
-        let bottom = rows_bottom(CAPS.len());
+        let bottom = rows_bottom(Cap::ALL.len());
         assert!(
             bottom < footer_top(768),
             "{} capability rows reach {bottom}px, footer starts at {}",
-            CAPS.len(),
+            Cap::ALL.len(),
             footer_top(768)
         );
     }
@@ -597,7 +597,7 @@ mod layout_tests {
         // Capabilities have grown 3 -> 5 in this session; make the next
         // addition fail loudly here rather than silently on screen.
         assert!(
-            rows_bottom(CAPS.len() + 1) < footer_top(768),
+            rows_bottom(Cap::ALL.len() + 1) < footer_top(768),
             "adding another capability would collide with the footer"
         );
     }
@@ -606,7 +606,7 @@ mod layout_tests {
     fn every_capability_row_is_reachable_by_click() {
         let mut s = Setup::new();
         s.step = Step::Capabilities;
-        for i in 0..CAPS.len() {
+        for i in 0..Cap::ALL.len() {
             let before = s.caps[i];
             assert!(s.apply(Action::Row(i)), "row {i} did nothing");
             assert_ne!(s.caps[i], before, "row {i} did not toggle");
@@ -615,7 +615,9 @@ mod layout_tests {
 
     #[test]
     fn capability_names_and_blurbs_fit_the_column() {
-        for (name, blurb) in CAPS {
+        for (i, cap) in Cap::ALL.iter().enumerate() {
+            let name = cap.name();
+            let blurb = CAP_BLURBS[i];
             assert!(BRAND_FACE.width(name, 0) < CONTENT_W - 76, "name hits the switch: {name}");
             assert!(SMALL_FACE.width(blurb, 0) < CONTENT_W - 76, "blurb hits the switch: {blurb}");
         }

@@ -320,7 +320,7 @@ unsafe extern "C" fn kmain() -> ! {
                         let left_down = buttons & 1 != 0;
                         let left_was = prev_buttons & 1 != 0;
                         if left_down && !left_was {
-                            let targets = ui::home_targets(w, h, &skill_peek);
+                            let targets = ui::home_targets(w, h);
                             match targets.hit(x, y) {
                                 Some(ui::HomeHit::SearchField)
                                 | Some(ui::HomeHit::Card(ui::CardId::Search)) => {

@@ -45,6 +45,6 @@ path with `OS_SEARCH_CORPUS`.
 
 ## Non-goals (v1)
 
-- No in-kernel index or networking
+- No in-kernel networking (offline index is baked by `build.rs`)
 - No web crawler, LSA, Louvain, or GraphRAG edges
 - No secrets in `search/corpus.json`

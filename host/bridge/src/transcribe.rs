@@ -320,13 +320,13 @@ mod scope_tests {
         st.save().unwrap();
 
         // workspace.index granted, audio.transcribe not: must stay hidden.
-        let files_only = crate::search::query_scoped("xenon ledger", 5, None, false, true, false);
+        let files_only = crate::search::query_all("xenon ledger", 5, None, false, true, false);
         assert!(
             !files_only.iter().any(|r| r.contains("Xenon Ledger")),
             "a recording surfaced under the files grant: {files_only:?}"
         );
 
-        let with_audio = crate::search::query_scoped("xenon ledger", 5, None, false, false, true);
+        let with_audio = crate::search::query_all("xenon ledger", 5, None, false, false, true);
         assert!(
             with_audio.iter().any(|r| r.contains("Xenon Ledger")),
             "granted search should find the transcript: {with_audio:?}"

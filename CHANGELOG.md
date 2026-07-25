@@ -10,7 +10,8 @@ Dropped unused host portals (`market.health`, `market.fear_greed`) and the
 Python `tsearch_mcp.py` search shell-out. Guest never called either path;
 native teddy indexing covers live corpus search. Also dropped the mock search
 backend / `OS_MCP_SEARCH_BACKEND`, folded five bridge `home()` copies into
-`paths::home`, and shared the bridge tokenizer.
+`paths::home`, shared the bridge tokenizer, and folded setup cap names into
+`Cap::name()` (blurbs-only table).
 
 ## 0.9.1 — 2026-07-25
 
@@ -47,8 +48,6 @@ choose at first boot.
   corpus file *is* the API; it is fetched, validated and indexed once.
 - **Transcripts** — `ffmpeg` + `whisper.cpp`, entirely local, so speech is
   searchable next to everything else.
-- Live portal calls to superintelmarkets.com (`market.health`,
-  `market.fear_greed`), cached 120s so the guest cannot rate-limit the host.
 
 ### Consent
 

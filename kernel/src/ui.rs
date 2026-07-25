@@ -262,7 +262,7 @@ pub fn card_targets(w: i32, h: i32) -> CardTargets {
     }
 }
 
-pub fn home_targets(w: i32, h: i32, _skills: &SkillPeek) -> HomeTargets {
+pub fn home_targets(w: i32, h: i32) -> HomeTargets {
     let (fx, fy, fw, fh) = search_rect(w, h);
     HomeTargets {
         search: Rect {
@@ -308,14 +308,10 @@ mod tests {
     use crate::caps::Caps;
     use crate::mcp::MailPeek;
 
-    fn peek() -> SkillPeek {
-        SkillPeek::from_builtin()
-    }
-
     #[test]
     fn search_field_is_the_primary_target() {
         // Typing must be reachable without hunting for a card.
-        let t = home_targets(1024, 768, &peek());
+        let t = home_targets(1024, 768);
         let (fx, fy, fw, fh) = search_rect(1024, 768);
         assert_eq!(
             t.search,
@@ -340,7 +336,7 @@ mod tests {
 
     #[test]
     fn each_tile_hit_tests_to_its_own_id() {
-        let t = home_targets(1024, 768, &peek());
+        let t = home_targets(1024, 768);
         for (i, want) in [CardId::Search, CardId::Capabilities, CardId::Skills]
             .iter()
             .enumerate()
@@ -421,7 +417,7 @@ mod tests {
     fn drawing_the_home_screen_does_not_panic() {
         // Exercises the offline branch and the count formatting together.
         let mail = MailPeek::empty(BridgeStatus::Offline);
-        let _ = home_targets(1024, 768, &peek());
+        let _ = home_targets(1024, 768);
         assert_eq!(mail.count, 0);
     }
 }

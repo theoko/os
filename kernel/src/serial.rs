@@ -3,11 +3,6 @@
 /// Line ending used after the hello banner.
 pub const LINE_ENDING: &str = "\n";
 
-/// Encode a string as bytes for the serial port (UTF-8 as-is).
-pub fn encode_for_serial(s: &str) -> &[u8] {
-    s.as_bytes()
-}
-
 #[cfg(target_arch = "x86_64")]
 mod port {
     use core::arch::asm;
@@ -91,7 +86,7 @@ impl Serial {
     }
 
     pub fn write_str(&self, s: &str) {
-        self.write_bytes(encode_for_serial(s));
+        self.write_bytes(s.as_bytes());
     }
 
     /// Non-blocking read: `None` if no byte waiting.
@@ -181,17 +176,6 @@ pub fn halt() -> ! {
         }
         #[cfg(not(target_arch = "x86_64"))]
         core::hint::spin_loop();
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn encode_preserves_utf8() {
-        assert_eq!(encode_for_serial("os: hello"), b"os: hello");
-        assert_eq!(encode_for_serial(crate::HELLO_MESSAGE), crate::HELLO_MESSAGE.as_bytes());
     }
 }
 

@@ -99,10 +99,6 @@ impl Caps {
         }
     }
 
-    /// Count of granted caps.
-    pub fn count(self) -> usize {
-        Cap::ALL.iter().filter(|&&c| self.allows(c)).count()
-    }
 }
 
 #[cfg(test)]
@@ -123,7 +119,6 @@ mod tests {
         assert!(!c.allows(Cap::EmailSearch));
         assert!(c.allows(Cap::SearchQuery));
         assert!(c.allows(Cap::SkillsSave));
-        assert_eq!(c.count(), 2);
     }
 
     #[test]
@@ -137,9 +132,11 @@ mod tests {
     }
 
     #[test]
-    fn names_match_setup_rows() {
+    fn wire_names_are_stable() {
         assert_eq!(Cap::EmailSearch.name(), "email.search");
         assert_eq!(Cap::SearchQuery.name(), "search.query");
         assert_eq!(Cap::SkillsSave.name(), "skills.save");
+        assert_eq!(Cap::WorkspaceIndex.name(), "workspace.index");
+        assert_eq!(Cap::AudioTranscribe.name(), "audio.transcribe");
     }
 }

@@ -342,9 +342,9 @@ mod gate_tests {
         g.save().expect("save");
 
         let without =
-            crate::search::query_scoped("confidential merger", 5, None, false, false, false);
+            crate::search::query_all("confidential merger", 5, None, false, false, false);
         let with =
-            crate::search::query_scoped("confidential merger", 5, None, true, false, false);
+            crate::search::query_all("confidential merger", 5, None, true, false, false);
 
         assert!(
             !without.iter().any(|r| r.contains("Confidential merger")),

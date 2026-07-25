@@ -211,13 +211,11 @@ fn sanitize(s: &str) -> String {
         .collect()
 }
 
-/// `include_email` folds the runtime email graph in alongside the static
-/// corpus. It defaults to *off* everywhere: email content must stay behind the
-/// email capability, or a caller holding only `search.query` could read mail.
-/// `include_files` folds in the user's own indexed documents. Off by default
-/// for the same reason as email: holding `search.query` grants the built-in
-/// corpus, not a personal file tree.
-#[allow(clippy::too_many_arguments)]
+/// Search the curated corpus (plus optional email / files / audio scopes).
+///
+/// `include_email` / `include_files` / `include_audio` default off everywhere:
+/// holding `search.query` alone must not reach mail, personal files, or
+/// recordings.
 pub fn query_all(
     q: &str,
     k: usize,
@@ -225,8 +223,11 @@ pub fn query_all(
     include_email: bool,
     include_files: bool,
     include_audio: bool,
-) -> Result<Vec<String>, String> {
-    let mut docs = load_docs()?;
+) -> Vec<String> {
+    let mut docs = match load_docs() {
+        Ok(d) => d,
+        Err(e) => return vec![format!("ERR search.query {e}")],
+    };
     if include_files {
         docs.extend(workspace_docs());
     }
@@ -270,19 +271,7 @@ pub fn query_all(
         ));
     }
     out.push("END".into());
-    Ok(out)
-}
-
-pub fn query_scoped(
-    q: &str,
-    k: usize,
-    cat: Option<&str>,
-    include_email: bool,
-    include_files: bool,
-    include_audio: bool,
-) -> Vec<String> {
-    query_all(q, k, cat, include_email, include_files, include_audio)
-        .unwrap_or_else(|e| vec![format!("ERR search.query {e}")])
+    out
 }
 
 #[cfg(test)]

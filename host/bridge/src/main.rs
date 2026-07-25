@@ -414,7 +414,7 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             if q.is_empty() {
                 vec!["ERR search.query missing_q".into()]
             } else {
-                search::query_scoped(q, k, cat, with_email, with_files, with_audio)
+                search::query_all(q, k, cat, with_email, with_files, with_audio)
             }
         }
         _ => vec![format!("ERR {tool} not_found")],

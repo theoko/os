@@ -52,9 +52,8 @@ Fields use `key=value`; use `|` between fields. Values are single-line; spaces a
 
 ## Capabilities (guest)
 
-Minting `Cap::EmailSearch` (later: real cap table) is required before `CALL email.search`.
-v0.3 bootstraps a **kernel-held demo cap** so the home UI can show inbox peek;
-ambient root is still forbidden for arbitrary tools.
+`Cap::EmailSearch` (chosen at setup / Caps screen) is required before
+`CALL email.search`. Ambient root is forbidden for arbitrary tools.
 
 ## Host backends
 
