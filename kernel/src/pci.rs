@@ -176,40 +176,6 @@ pub fn for_each_ehci(mut f: impl FnMut(u8, u8, u8)) {
     }
 }
 
-pub fn find_ehci_mmio() -> Option<(u8, u8, u8, u64)> {
-    for bus in 0..4u8 {
-        for slot in 0..32u8 {
-            for func in 0..8u8 {
-                let id = read32(bus, slot, func, 0x00);
-                if id == 0xFFFF_FFFF {
-                    if func == 0 {
-                        break;
-                    }
-                    continue;
-                }
-                let class = read32(bus, slot, func, 0x08);
-                let base_class = (class >> 24) & 0xFF;
-                let subclass = (class >> 16) & 0xFF;
-                let prog_if = (class >> 8) & 0xFF;
-                if base_class == 0x0C && subclass == 0x03 && prog_if == 0x20 {
-                    let bar0 = read32(bus, slot, func, 0x10);
-                    if bar0 & 1 == 0 {
-                        let mem = (bar0 & 0xFFFF_FFF0) as u64;
-                        let cmd = read16(bus, slot, func, 0x04);
-                        write16(bus, slot, func, 0x04, cmd | 0x06); // mem + bus master
-                        return Some((bus, slot, func, mem));
-                    }
-                }
-                let header = (read32(bus, slot, func, 0x0C) >> 16) as u8;
-                if func == 0 && header & 0x80 == 0 {
-                    break;
-                }
-            }
-        }
-    }
-    None
-}
-
 /// Tiny fixed vec so we don't need alloc — max 8 UHCI controllers.
 pub mod heapless_vec {
     pub struct UhciList {

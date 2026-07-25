@@ -10,7 +10,6 @@
 use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{self, BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
-use crate::searchui::back_rect;
 use crate::setup::CAPS;
 use crate::skills::SkillPeek;
 #[cfg(test)]
@@ -28,12 +27,18 @@ pub enum View {
     Reader,
 }
 
-const NAV_H: i32 = 56;
+pub const NAV_H: i32 = 56;
 const PAD_X: i32 = 28;
 const CONTENT_MAX: i32 = 720;
 const ROW_H: i32 = 62;
 const ROW_GAP: i32 = 8;
 const TOP: i32 = 150;
+
+/// Back affordance used by Skills, Caps, Search, and Reader.
+pub fn back_rect(w: i32) -> (i32, i32, i32, i32) {
+    let _ = w;
+    (PAD_X, (NAV_H - 24) / 2, 72, 28)
+}
 
 fn column(w: i32) -> (i32, i32) {
     let cw = (w - PAD_X * 2).min(CONTENT_MAX);
@@ -54,7 +59,8 @@ pub fn caps_hit(w: i32, x: i32, y: i32) -> Option<usize> {
     })
 }
 
-fn chrome(fb: &Surface, w: i32, title: &str, heading: &str) {
+/// Shared top chrome: Back, centered title, rule, optional heading.
+pub fn chrome(fb: &Surface, w: i32, title: &str, heading: Option<&str>) {
     fb.fill(theme::BG);
     let (bx, by, _, _) = back_rect(w);
     fb.draw_text(bx, by + BTN_FACE.baseline(), "Back", &BTN_FACE, 0, theme::ACCENT);
@@ -67,8 +73,10 @@ fn chrome(fb: &Surface, w: i32, title: &str, heading: &str) {
         theme::INK,
     );
     fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
-    let track = font::tracking_pct(TITLE_FACE.px, -20);
-    fb.draw_text_centered(w / 2, 112, heading, &TITLE_FACE, track, theme::INK);
+    if let Some(heading) = heading {
+        let track = font::tracking_pct(TITLE_FACE.px, -20);
+        fb.draw_text_centered(w / 2, 112, heading, &TITLE_FACE, track, theme::INK);
+    }
 }
 
 /// A bordered row with a title and a subtitle.
@@ -85,7 +93,7 @@ fn row(fb: &Surface, w: i32, i: usize, title: &str, sub: &str, accent: bool) -> 
 /// Skills the agent can load — names from bridge `skills.list`, else builtins.
 pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
     let w = fb.width() as i32;
-    chrome(fb, w, "Skills", "Playbooks the agent can load");
+    chrome(fb, w, "Skills", Some("Playbooks the agent can load"));
 
     let n = peek.count.min(6);
     for i in 0..n {
@@ -132,7 +140,7 @@ pub fn skills_hit(w: i32, count: usize, x: i32, y: i32) -> Option<usize> {
 /// Live capability switches. Clicking a row toggles the grant.
 pub fn draw_caps(fb: &Surface, grants: Caps) {
     let w = fb.width() as i32;
-    chrome(fb, w, "Capabilities", "What the agent may do");
+    chrome(fb, w, "Capabilities", Some("What the agent may do"));
 
     for (i, (name, blurb)) in CAPS.iter().enumerate() {
         let on = Cap::ALL

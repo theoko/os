@@ -57,8 +57,14 @@ unsafe extern "C" fn kmain() -> ! {
     serial_port.write_str(hello_message());
     serial_port.write_str(serial::LINE_ENDING);
 
-    // Paint UI immediately (don't block on MCP). Bridge is optional.
-    let mut mail = mcp::MailPeek::empty(mcp::BridgeStatus::Offline);
+    // Liveness only until the user consents. Reading the inbox here would
+    // fetch — and persist — mail before anyone agreed to it.
+    let mut mail = mcp::MailPeek::empty(mcp::probe_bridge());
+    match mail.status {
+        mcp::BridgeStatus::Online => serial_port.write_str("mcp: email connected\n"),
+        mcp::BridgeStatus::Offline => serial_port.write_str("mcp: email offline\n"),
+    }
+    serial_port.write_str("skills: builtins ready\n");
     let mut skill_peek = skills::SkillPeek::from_builtin();
     if let Some(resp) = FRAMEBUFFER_REQUEST.get_response() {
         if let Some(fb_info) = resp.framebuffers().next() {
@@ -127,17 +133,7 @@ unsafe extern "C" fn kmain() -> ! {
                 // Everything composes in cached RAM; `present()` is the only
                 // thing that touches video memory.
                 let surface = screen.surface();
-
-                // Liveness only until the user consents. Reading the inbox
-                // here would fetch — and, because the bridge indexes results,
-                // persist to disk — mail before anyone agreed to it.
                 let mut grants = caps::Caps::none();
-                mail = mcp::MailPeek::empty(mcp::probe_bridge());
-                match mail.status {
-                    mcp::BridgeStatus::Online => serial_port.write_str("mcp: email connected\n"),
-                    mcp::BridgeStatus::Offline => serial_port.write_str("mcp: email offline\n"),
-                }
-                serial_port.write_str("skills: builtins ready\n");
 
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
@@ -314,33 +310,73 @@ unsafe extern "C" fn kmain() -> ! {
                                 }
                             }
                         }
+                        let left_down = buttons & 1 != 0;
+                        let left_was = prev_buttons & 1 != 0;
+                        if left_down && !left_was {
+                            let targets = ui::home_targets(w, h, &skill_peek);
+                            match targets.hit(x, y) {
+                                Some(ui::HomeHit::SearchField)
+                                | Some(ui::HomeHit::Card(ui::CardId::Search)) => {
+                                    serial_port.write_str("ui: open search\n");
+                                    view = screens::View::Search;
+                                    query.clear();
+                                    sview = searchui::SearchView::new();
+                                    dirty = true;
+                                }
+                                Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
+                                    serial_port.write_str("ui: click Skills\n");
+                                    skill_peek = mcp::fetch_skill_peek();
+                                    serial_port.write_str(if skill_peek.from_bridge {
+                                        "skills: listed from bridge\n"
+                                    } else {
+                                        "skills: builtins (bridge offline)\n"
+                                    });
+                                    view = screens::View::Skills;
+                                    dirty = true;
+                                }
+                                Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
+                                    serial_port.write_str("ui: click Capabilities\n");
+                                    write_status(&mut status_buf, grants.footer_status());
+                                    view = screens::View::Caps;
+                                    dirty = true;
+                                }
+                                None => {}
+                            }
+                        }
                         if dirty {
                             cursor.hide(surface);
-                            if view == screens::View::Search {
-                                searchui::draw(
+                            match view {
+                                screens::View::Search => searchui::draw(
                                     surface,
                                     &sview,
                                     query.as_str(),
                                     caret,
                                     bridge_note(&mail),
-                                );
-                            } else {
-                                ui::draw_home_full(
+                                ),
+                                screens::View::Skills => {
+                                    screens::draw_skills(surface, &skill_peek)
+                                }
+                                screens::View::Caps => screens::draw_caps(surface, grants),
+                                screens::View::Reader => {
+                                    searchui::draw_reader(surface, open_title.as_str(), &page)
+                                }
+                                screens::View::Home => ui::draw_home_full(
                                     surface,
                                     &mail,
                                     &skill_peek,
                                     status_str(&status_buf),
                                     query.as_str(),
                                     caret,
-                                );
+                                ),
                             }
                             cursor.show_at(surface, x, y);
                             enter(&screen);
                             moved = false;
                         }
-                    }
-                    if view != screens::View::Home {
-                        // --- search screen: keyboard drives it ---
+                    } else {
+                        // Non-home screens: keyboard + clicks (mutually exclusive
+                        // with the Home arm so a same-frame tile open is not
+                        // double-handled).
                         let mut dirty = false;
                         while let Some(key) = kb.poll() {
                             match key {
@@ -370,7 +406,7 @@ unsafe extern "C" fn kmain() -> ! {
                         let left_down = buttons & 0x01 != 0;
                         let was_down = prev_buttons & 0x01 != 0;
                         if left_down && !was_down {
-                            let (bx, by, bw, bh) = searchui::back_rect(w);
+                            let (bx, by, bw, bh) = screens::back_rect(w);
                             if x >= bx && x < bx + bw && y >= by && y < by + bh {
                                 // Back from the reader returns to results.
                                 view = if view == screens::View::Reader {
@@ -465,58 +501,6 @@ unsafe extern "C" fn kmain() -> ! {
                             cursor.show_at(surface, x, y);
                             enter(&screen);
                             moved = false;
-                        }
-                    } else {
-                        let left_down = buttons & 1 != 0;
-                        let left_was = prev_buttons & 1 != 0;
-                        if left_down && !left_was {
-                            let targets = ui::home_targets(w, h, &skill_peek);
-                            match targets.hit(x, y) {
-                                Some(ui::HomeHit::SearchField)
-                                | Some(ui::HomeHit::Card(ui::CardId::Search)) => {
-                                    serial_port.write_str("ui: open search\n");
-                                    view = screens::View::Search;
-                                    query.clear();
-                                    sview = searchui::SearchView::new();
-                                    cursor.hide(surface);
-                                    searchui::draw(
-                                        surface,
-                                        &sview,
-                                        query.as_str(),
-                                        caret,
-                                        bridge_note(&mail),
-                                    );
-                                    cursor.show_at(surface, x, y);
-                                    enter(&screen);
-                                    moved = false;
-                                }
-                                Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
-                                    serial_port.write_str("ui: click Skills\n");
-                                    skill_peek = mcp::fetch_skill_peek();
-                                    serial_port.write_str(if skill_peek.from_bridge {
-                                        "skills: listed from bridge\n"
-                                    } else {
-                                        "skills: builtins (bridge offline)\n"
-                                    });
-                                    view = screens::View::Skills;
-                                    cursor.hide(surface);
-                                    screens::draw_skills(surface, &skill_peek);
-                                    cursor.show_at(surface, x, y);
-                                    enter(&screen);
-                                    moved = false;
-                                }
-                                Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
-                                    serial_port.write_str("ui: click Capabilities\n");
-                                    write_status(&mut status_buf, grants.footer_status());
-                                    view = screens::View::Caps;
-                                    cursor.hide(surface);
-                                    screens::draw_caps(surface, grants);
-                                    cursor.show_at(surface, x, y);
-                                    enter(&screen);
-                                    moved = false;
-                                }
-                                None => {}
-                            }
                         }
                     }
                     prev_buttons = buttons;

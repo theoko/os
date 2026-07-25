@@ -242,7 +242,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
     match cmd {
         "PING" => vec!["OK pong".into()],
         "LIST" => {
-            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,doc.read".into()]
+            vec!["OK tools=email.search,email.send,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,doc.read".into()]
         }
         "CALL" => {
             let (tool, rest) = split_word(rest);
@@ -295,11 +295,6 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
     match tool {
         "email.search" => email_search(args, &backends.email),
         "email.send" => vec!["ERR email.send disabled_until_cap_confirm".into()],
-        "calendar.list" => vec![
-            "OK calendar.list n=1".into(),
-            "ROW title=Demo event|when=tomorrow".into(),
-            "END".into(),
-        ],
         "skills.list" => skills::list_response(),
         "skills.get" => {
             let name = arg_val(args, "name").unwrap_or("");

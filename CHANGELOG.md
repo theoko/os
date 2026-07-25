@@ -124,10 +124,9 @@ Review hardening: 29 confirmed findings from a multi-agent code review
 
 ## 0.7.6 — 2026-07-25
 
-- UTM: `make utm-bridged` starts the host bridge and adds a COM2 **Serial**
-  device in `TcpClient` mode to `127.0.0.1:7420`. Setup's Bridge step re-probes
-  on entry (`mcp: bridge live`). Bridge also supports `unix:` listen and
-  `OS_MCP_BRIDGE_CONNECT` dial modes for non-UTM use.
+- UTM: `make utm-bridged` wires COM2 as **TcpServer** on `127.0.0.1:7420` and
+  starts the host bridge in dial mode (`OS_MCP_BRIDGE_CONNECT=tcp:…`) so it
+  retries. Setup's Bridge step re-probes on entry (`mcp: bridge live`).
 - Bridge: scrub CSI/control noise on COM2 so `PING`/`CALL` survive UEFI
   chatter; ignore non-protocol lines instead of `ERR unknown`.
 

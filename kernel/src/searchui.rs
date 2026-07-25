@@ -8,7 +8,8 @@
 //! to COM1 — invisible unless you were watching a serial console.
 
 use crate::fb::Surface;
-use crate::font::{self, BODY_FACE, BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
+use crate::font::{self, BODY_FACE, BRAND_FACE, SMALL_FACE, TITLE_FACE};
+use crate::screens;
 use crate::search;
 use crate::ui::theme;
 
@@ -183,7 +184,6 @@ impl SearchView {
 }
 
 const PAD_X: i32 = 28;
-const NAV_H: i32 = 56;
 const FIELD_H: i32 = 52;
 const ROW_H: i32 = 64;
 const CONTENT_MAX: i32 = 720;
@@ -193,12 +193,6 @@ pub fn field_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
     let _ = h;
     let cw = (w - PAD_X * 2).min(CONTENT_MAX);
     ((w - cw) / 2, 150, cw, FIELD_H)
-}
-
-/// Where the "Back" affordance sits.
-pub fn back_rect(w: i32) -> (i32, i32, i32, i32) {
-    let _ = w;
-    (PAD_X, (NAV_H - 24) / 2, 72, 28)
 }
 
 /// Bounding box of result row `i`, shared by drawing and hit-testing.
@@ -219,17 +213,7 @@ pub fn result_hit(w: i32, h: i32, count: usize, x: i32, y: i32) -> Option<usize>
 pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_note: &str) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
-    fb.fill(theme::BG);
-
-    // Nav: a way back, and the brand.
-    let (bx, by, bw, bh) = back_rect(w);
-    fb.draw_text(bx, by + BTN_FACE.baseline(), "Back", &BTN_FACE, 0, theme::ACCENT);
-    let _ = (bw, bh);
-    fb.draw_text_centered(w / 2, (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline(), "Search", &BRAND_FACE, 0, theme::INK);
-    fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
-
-    let track = font::tracking_pct(TITLE_FACE.px, -20);
-    fb.draw_text_centered(w / 2, 112, "What do you want to know?", &TITLE_FACE, track, theme::INK);
+    screens::chrome(fb, w, "Search", Some("What do you want to know?"));
 
     // Input field.
     let (fx, fy, fw, fh) = field_rect(w, h);
@@ -347,7 +331,7 @@ mod tests {
 
     #[test]
     fn back_target_is_clickable_sized() {
-        let (_x, _y, w, h) = back_rect(1024);
+        let (_x, _y, w, h) = screens::back_rect(1024);
         assert!(w >= 44 && h >= 24, "back target too small to hit");
     }
 }
@@ -433,11 +417,7 @@ mod teddy_tests {
 pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
-    fb.fill(theme::BG);
-
-    let (bx, by, _, _) = back_rect(w);
-    fb.draw_text(bx, by + BTN_FACE.baseline(), "Back", &BTN_FACE, 0, theme::ACCENT);
-    fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
+    screens::chrome(fb, w, "", None);
 
     let (fx, _, fw, _) = field_rect(w, h);
     fb.draw_text(fx, 108, title, &TITLE_FACE, font::tracking_pct(TITLE_FACE.px, -20), theme::INK);
