@@ -66,11 +66,7 @@ const MAX_BYTES: u64 = 512 * 1024;
 pub const MAX_ENTRIES: usize = 4000;
 
 pub fn index_path() -> PathBuf {
-    env::var("OS_WORKSPACE_INDEX")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            crate::paths::knowledge("workspace.json")
-        })
+    crate::paths::env_or_knowledge("OS_WORKSPACE_INDEX", "workspace.json")
 }
 
 /// Roots to index. `OS_WORKSPACE_ROOTS` is a `:`-separated list.

@@ -328,7 +328,7 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
         "audio.transcribe" => {
             // Reads media and puts the words in a searchable index, so it
             // needs the grant just like workspace.index does.
-            if !matches!(arg_val(args, "audio"), Some("1")) {
+            if !arg_flag(args, "audio") {
                 return vec!["ERR audio.transcribe needs_audio_cap".into()];
             }
             let Some(path) = arg_val(args, "path") else {
@@ -383,7 +383,7 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
         "workspace.index" => {
             // Building the index reads the user's files, so it needs the same
             // grant as searching them.
-            if !matches!(arg_val(args, "files"), Some("1")) {
+            if !arg_flag(args, "files") {
                 return vec!["ERR workspace.index needs_workspace_cap".into()];
             }
             let roots = workspace::roots();
@@ -407,11 +407,11 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             // Email content is opt-in per call. The guest only sets this when
             // the user granted email.search at setup, so holding search.query
             // alone cannot reach mail.
-            let with_email = matches!(arg_val(args, "email"), Some("1"));
-            let with_files = matches!(arg_val(args, "files"), Some("1"));
+            let with_email = arg_flag(args, "email");
+            let with_files = arg_flag(args, "files");
             // Recordings have their own grant, so they get their own scope:
             // enabling workspace.index must not surface transcripts.
-            let with_audio = matches!(arg_val(args, "audio"), Some("1"));
+            let with_audio = arg_flag(args, "audio");
             if q.is_empty() {
                 vec!["ERR search.query missing_q".into()]
             } else {
@@ -459,8 +459,8 @@ fn parse_row_field<'a>(row: &'a str, key: &str) -> Option<&'a str> {
 /// caller that could not have found the document must not be able to read it
 /// by guessing its URL.
 fn read_doc(url: &str, max: usize, args: &[(String, String)]) -> Result<Vec<String>, String> {
-    let with_files = matches!(arg_val(args, "files"), Some("1"));
-    let with_audio = matches!(arg_val(args, "audio"), Some("1"));
+    let with_files = arg_flag(args, "files");
+    let with_audio = arg_flag(args, "audio");
 
     let body = if let Some(rel) = url.strip_prefix("file://") {
         if !with_files {
@@ -504,6 +504,11 @@ fn arg_val<'a>(args: &'a [(String, String)], key: &str) -> Option<&'a str> {
     args.iter()
         .find(|(k, _)| k == key)
         .map(|(_, v)| v.as_str())
+}
+
+/// Scope / grant bits on the wire are `key=1`.
+fn arg_flag(args: &[(String, String)], key: &str) -> bool {
+    matches!(arg_val(args, key), Some("1"))
 }
 
 fn email_search(args: &[(String, String)], backend: &str) -> Vec<String> {

@@ -24,6 +24,13 @@ pub fn knowledge(file: &str) -> PathBuf {
     app_support().join("knowledge").join(file)
 }
 
+/// `$VAR` if set, else `knowledge(file)`.
+pub fn env_or_knowledge(var: &str, file: &str) -> PathBuf {
+    env::var(var)
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| knowledge(file))
+}
+
 /// Create parent dirs and write `value` as compact JSON.
 pub fn write_json<T: Serialize>(path: impl AsRef<Path>, value: &T) -> Result<PathBuf, String> {
     let path = path.as_ref();

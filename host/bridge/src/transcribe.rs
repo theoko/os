@@ -34,11 +34,7 @@ pub struct Store {
 }
 
 pub fn store_path() -> PathBuf {
-    env::var("OS_TRANSCRIPT_STORE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            crate::paths::knowledge("transcripts.json")
-        })
+    crate::paths::env_or_knowledge("OS_TRANSCRIPT_STORE", "transcripts.json")
 }
 
 /// Whisper model to use. `small` is the speed/quality compromise the
@@ -274,6 +270,7 @@ mod tests {
 
     #[test]
     fn store_lives_outside_the_repo() {
+        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::remove_var("OS_TRANSCRIPT_STORE") };
         let p = store_path().to_string_lossy().to_string();
         assert!(!p.contains("/os/search"), "transcripts must not land in the repo: {p}");

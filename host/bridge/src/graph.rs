@@ -19,7 +19,6 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::env;
 use std::fs;
 use std::path::PathBuf;
 
@@ -45,11 +44,7 @@ pub struct Graph {
 
 /// Where the index lives. Never inside the repo.
 pub fn graph_path() -> PathBuf {
-    env::var("OS_GRAPH_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            crate::paths::knowledge("emails.json")
-        })
+    crate::paths::env_or_knowledge("OS_GRAPH_PATH", "emails.json")
 }
 
 /// Cheap stable id. Not cryptographic — only needs to dedupe re-ingests.
@@ -208,6 +203,7 @@ pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
 
     fn msg(from: &str, subj: &str) -> (String, String, String) {
         (from.into(), subj.into(), format!("snippet for {subj}"))
@@ -357,6 +353,7 @@ mod gate_tests {
 #[cfg(test)]
 mod hardening_tests {
     use super::*;
+    use std::env;
 
     #[test]
     fn corrupt_file_is_quarantined_not_silently_wiped() {

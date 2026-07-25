@@ -20,28 +20,17 @@ use std::process::Command;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use crate::search::Doc;
+
 /// Live corpus published by the tsearch front-end.
 pub const DEFAULT_URL: &str = "https://teddysearch.com/tsearch/corpus.json";
 
 #[derive(Debug, Deserialize)]
 struct CorpusFile {
     #[serde(default)]
-    docs: Vec<RawDoc>,
+    docs: Vec<Doc>,
     #[serde(default)]
     crawled_at: String,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-pub struct RawDoc {
-    pub t: String,
-    #[serde(default)]
-    pub u: String,
-    #[serde(default)]
-    pub c: String,
-    #[serde(default)]
-    pub b: String,
-    #[serde(default)]
-    pub pr: f64,
 }
 
 pub fn url() -> String {
@@ -49,11 +38,7 @@ pub fn url() -> String {
 }
 
 pub fn cache_path() -> PathBuf {
-    env::var("OS_TSEARCH_CACHE")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| {
-            crate::paths::knowledge("teddysearch.json")
-        })
+    crate::paths::env_or_knowledge("OS_TSEARCH_CACHE", "teddysearch.json")
 }
 
 /// Fetch the live corpus into the cache. Returns (documents, crawl stamp).
@@ -99,13 +84,13 @@ pub fn sync() -> Result<(usize, String), String> {
     Ok((n, parsed.crawled_at))
 }
 
-static CACHE: OnceLock<Vec<RawDoc>> = OnceLock::new();
+static CACHE: OnceLock<Vec<Doc>> = OnceLock::new();
 
 /// Cached corpus documents, parsed once per process.
 ///
 /// Re-reading 64 MB on every `search.query` would make the search field
 /// unusable; this is why the source is a cache rather than a live call.
-pub fn docs() -> &'static [RawDoc] {
+pub fn docs() -> &'static [Doc] {
     CACHE.get_or_init(|| {
         let Ok(raw) = fs::read_to_string(cache_path()) else {
             return Vec::new();
@@ -126,6 +111,7 @@ mod tests {
 
     #[test]
     fn default_url_is_the_published_corpus() {
+        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::remove_var("OS_TSEARCH_URL") };
         assert_eq!(url(), DEFAULT_URL);
         assert!(url().starts_with("https://"), "corpus must be fetched over TLS");
@@ -133,6 +119,7 @@ mod tests {
 
     #[test]
     fn url_is_overridable() {
+        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_TSEARCH_URL", "https://example.test/c.json") };
         assert_eq!(url(), "https://example.test/c.json");
         unsafe { env::remove_var("OS_TSEARCH_URL") };
@@ -140,6 +127,7 @@ mod tests {
 
     #[test]
     fn cache_lives_outside_the_repo() {
+        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
         let p = cache_path().to_string_lossy().to_string();
         assert!(!p.contains("/os/search"), "cache must not land in the repo: {p}");
@@ -148,6 +136,7 @@ mod tests {
 
     #[test]
     fn missing_cache_yields_no_documents_not_a_panic() {
+        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_TSEARCH_CACHE", "/nonexistent/os-teddy/none.json") };
         assert!(!cache_path().is_file());
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
@@ -201,9 +190,7 @@ pub fn index() -> &'static Index {
         let mut acc: HashMap<String, HashMap<usize, f64>> = HashMap::new();
         let mut lens = vec![0usize; docs.len()];
         for (i, d) in docs.iter().enumerate() {
-            let mut t = crate::search::tokenize(&d.t);
-            t.extend(crate::search::tokenize(&d.t)); // title counts double, as in the client
-            t.extend(crate::search::tokenize(&d.b));
+            let t = crate::search::title_body_tokens(&d.t, &d.b);
             lens[i] = t.len().max(1);
             for w in t {
                 *acc.entry(w).or_default().entry(i).or_insert(0.0) += 1.0;
@@ -216,7 +203,7 @@ pub fn index() -> &'static Index {
         for w in words {
             let per_doc = &acc[&w];
             let df = per_doc.len() as f64;
-            let idf = ((n + 1.0) / (df + 1.0)).ln() + 1.0;
+            let idf = crate::search::idf(n, df);
             let start = postings.len();
             let mut ids: Vec<usize> = per_doc.keys().copied().collect();
             ids.sort_unstable();
@@ -264,13 +251,12 @@ impl Index {
         }
         let mut out: Vec<(f64, usize)> = score
             .into_iter()
-            .map(|(doc, mut s)| {
-                let pr = docs[doc].pr.clamp(0.0, 1.0);
-                s *= 1.0 + 4.0 * pr;
-                if seen > 0 && hits.get(&doc).copied().unwrap_or(0) >= seen {
-                    s *= 1.35;
-                }
-                (s, doc)
+            .map(|(doc, s)| {
+                let hit_all = seen > 0 && hits.get(&doc).copied().unwrap_or(0) >= seen;
+                (
+                    crate::search::with_and_bonus(crate::search::blend_pr(s, docs[doc].pr), hit_all),
+                    doc,
+                )
             })
             .collect();
         out.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));

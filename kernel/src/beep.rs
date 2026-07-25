@@ -8,9 +8,8 @@
 //! else's copyright baked into a build artifact in a public repo — see
 //! `docs/` for pointing this at your own licensed audio instead.
 
+use crate::anim;
 use crate::port;
-
-use crate::serial::{rdtsc, ASSUMED_HZ};
 
 const PIT_CMD: u16 = 0x43;
 const PIT_CH2: u16 = 0x42;
@@ -75,20 +74,6 @@ fn tone_off() {
     }
 }
 
-fn sleep_ms(ms: u32) {
-    let target = rdtsc().wrapping_add(ASSUMED_HZ / 1000 * ms as u64);
-    // Guard against a non-monotonic or unavailable TSC: cap the spin so a
-    // stuck counter cannot hang the boot.
-    let mut guard: u64 = 0;
-    while rdtsc() < target {
-        guard += 1;
-        if guard > 200_000_000 {
-            return;
-        }
-        core::hint::spin_loop();
-    }
-}
-
 /// Play a sequence, leaving the speaker off afterwards.
 pub fn play(notes: &[Note]) {
     for n in notes {
@@ -97,7 +82,7 @@ pub fn play(notes: &[Note]) {
         } else {
             tone_on(n.hz);
         }
-        sleep_ms(n.ms);
+        let _ = anim::pace(crate::serial::rdtsc(), n.ms.saturating_mul(1000));
     }
     tone_off();
 }

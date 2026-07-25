@@ -15,17 +15,46 @@ struct CorpusFile {
     docs: Vec<Doc>,
 }
 
+/// Curated / teddy / projected corpus document (`{t,u,c,b,pr}`).
 #[derive(Debug, Clone, Deserialize)]
-struct Doc {
-    t: String,
+pub struct Doc {
+    pub t: String,
     #[serde(default)]
-    u: String,
+    pub u: String,
     #[serde(default)]
-    c: String,
+    pub c: String,
     #[serde(default)]
-    b: String,
+    pub b: String,
     #[serde(default)]
-    pr: f64,
+    pub pr: f64,
+}
+
+/// Inverse document frequency used by both the small-corpus scan and the teddy index.
+pub(crate) fn idf(n_docs: f64, df: f64) -> f64 {
+    ((n_docs + 1.0) / (df + 1.0)).ln() + 1.0
+}
+
+/// Title tokens twice, then body — tSearch client ethos.
+pub(crate) fn title_body_tokens(title: &str, body: &str) -> Vec<String> {
+    let mut t = tokenize(title);
+    t.extend(tokenize(title));
+    t.extend(tokenize(body));
+    t
+}
+
+/// tf-idf × (1 + 4·PageRank), with finite/clamp on `pr`.
+pub(crate) fn blend_pr(tf_score: f64, pr: f64) -> f64 {
+    let pr = if pr.is_finite() { pr.clamp(0.0, 1.0) } else { 0.0 };
+    tf_score * (1.0 + 4.0 * pr)
+}
+
+/// Exact-AND ladder bonus when every query term hit.
+pub(crate) fn with_and_bonus(score: f64, hit_all: bool) -> f64 {
+    if hit_all {
+        score * 1.35
+    } else {
+        score
+    }
 }
 
 /// Transcripts, projected into corpus documents so speech is searchable
@@ -107,13 +136,9 @@ fn search_tfidf(docs: &[Doc], query: &str, k: usize, cat: Option<&str>) -> Vec<(
     }
     let q_set: HashSet<&str> = q_terms.iter().map(|s| s.as_str()).collect();
 
-    // Document tokens (title counts double — tSearch client ethos).
     let mut doc_toks: Vec<Vec<String>> = Vec::with_capacity(docs.len());
     for d in docs {
-        let mut t = tokenize(&d.t);
-        t.extend(tokenize(&d.t)); // title double
-        t.extend(tokenize(&d.b));
-        doc_toks.push(t);
+        doc_toks.push(title_body_tokens(&d.t, &d.b));
     }
 
     let n = docs.len() as f64;
@@ -141,19 +166,13 @@ fn search_tfidf(docs: &[Doc], query: &str, k: usize, cat: Option<&str>) -> Vec<(
                 hit_all = false;
                 continue;
             }
-            let idf = ((n + 1.0) / (df.get(qt).copied().unwrap_or(0.0) + 1.0)).ln() + 1.0;
-            tf_score += (tf / terms.len().max(1) as f64) * idf;
+            tf_score += (tf / terms.len().max(1) as f64)
+                * idf(n, df.get(qt).copied().unwrap_or(0.0));
         }
         if tf_score <= 0.0 {
             continue;
         }
-        // tSearch MCP blend: lexical * (1 + 8*pr) — we use milder 4× on 0..1 pr.
-        let pr = if d.pr.is_finite() { d.pr.clamp(0.0, 1.0) } else { 0.0 };
-        let mut score = tf_score * (1.0 + 4.0 * pr);
-        if hit_all {
-            score *= 1.35; // exact AND bonus (ladder)
-        }
-        scored.push((score, i));
+        scored.push((with_and_bonus(blend_pr(tf_score, d.pr), hit_all), i));
     }
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(k);
@@ -234,13 +253,11 @@ pub fn query_all(
     if !teddy.is_empty() && cat.is_none() {
         let tdocs = crate::tsearch::docs();
         for (score, i) in teddy.search(q, k) {
-            docs.push(Doc {
-                t: tdocs[i].t.clone(),
-                u: tdocs[i].u.clone(),
-                c: if tdocs[i].c.is_empty() { "teddy".into() } else { tdocs[i].c.clone() },
-                b: tdocs[i].b.clone(),
-                pr: tdocs[i].pr,
-            });
+            let mut d = tdocs[i].clone();
+            if d.c.is_empty() {
+                d.c = "teddy".into();
+            }
+            docs.push(d);
             // `docs` just grew by one; that entry is what this score refers to.
             hits.push((score, docs.len() - 1));
         }
