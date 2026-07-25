@@ -30,18 +30,30 @@ fi
 mkdir -p "$UTM_DOCS/Public"
 cp -f "$ISO" "$STAGED"
 
+# Orphan bundles (screenshot/ISO but no config.plist) are invisible to UTM's
+# AppleScript API yet still block `make new` with -2700 "already exists".
+if [[ -d "$UTM_DIR" && ! -f "$UTM_DIR/config.plist" ]]; then
+  echo "removing orphan bundle: $UTM_DIR"
+  rm -rf "$UTM_DIR"
+fi
+
 osascript <<EOF
 set isoPath to POSIX file "$STAGED"
 tell application "UTM"
   activate
   try
-    set old to virtual machine named "$VM_NAME"
-    if status of old is not stopped then
-      stop old by kill
-      delay 1
-    end if
-    delete old
-    delay 0.5
+    -- Delete *every* VM with this name, not just the first. A failed run can
+    -- leave duplicate entries behind, and creating over them errors with -2700
+    -- ("already exists") only after the bundle has been removed.
+    repeat 10 times
+      set old to virtual machine named "$VM_NAME"
+      if status of old is not stopped then
+        stop old by kill
+        delay 1
+      end if
+      delete old
+      delay 0.5
+    end repeat
   end try
   make new virtual machine with properties {backend:qemu, configuration:{name:"$VM_NAME", architecture:"x86_64", memory:1024, hypervisor:false, uefi:true, displays:{{hardware:"virtio-vga"}}, drives:{{removable:true, source:isoPath}}}}
 end tell
@@ -83,10 +95,31 @@ cfg.setdefault("QEMU", {})["UEFIBoot"] = True
 cfg["QEMU"]["Hypervisor"] = False
 # PS/2 on for keyboards; pointer comes from usb-tablet (guest UHCI HID driver).
 cfg["QEMU"]["PS2Controller"] = True
-# UTM/SPICE needs usb-tablet for absolute pointer — guest drives it via UHCI.
+# Turn UTM's own USB input off and supply our own pointer instead.
+#
+# UTM's USB bus is hostile to a small guest driver: `-usb` on q35 builds an ICH9
+# set at 00:1d.x (EHCI + 3 UHCI companions) carrying usb-tablet on usb-bus.0,
+# while UTM adds a *second* explicit ich9-usb-ehci1 at 00:01.0 hosting three
+# usb-redir stubs. Two EHCIs, four UHCIs and several decoy HID devices — the
+# guest ends up enumerating a redirect stub or a keyboard instead of the tablet.
 cfg.setdefault("Input", {})
-cfg["Input"]["UsbBusSupport"] = "2.0"
+cfg["Input"]["UsbBusSupport"] = "Disabled"
 cfg["Input"]["UsbSharing"] = False
+# One dedicated UHCI controller with exactly one device on it. Full speed by
+# construction, no EHCI to hand the port off from, nothing else to confuse the
+# probe. Verified end to end: `info usb` reports 12 Mb/s, the guest logs
+# "usb-tablet ready", and the cursor tracks absolute input.
+#
+# AdditionalArguments MUST be a flat list of plain strings, one per argv token.
+# A dict entry (e.g. {"ArgumentString": ...}) or a single "flag value" string
+# fails to decode and UTM silently drops the VM from its library entirely.
+EXTRA_ARGS = [
+    "-device", "piix3-usb-uhci,id=uhci0",
+    "-device", "usb-tablet,bus=uhci0.0",
+]
+# Set outright rather than merging token-by-token: EXTRA_ARGS repeats "-device",
+# so a per-token dedup would collapse the two devices into one.
+cfg.setdefault("QEMU", {})["AdditionalArguments"] = list(EXTRA_ARGS)
 cfg.setdefault("System", {})["MemorySize"] = 1024
 cfg["Display"] = [{
     "Hardware": "virtio-vga",

@@ -129,29 +129,38 @@ unsafe extern "C" fn kmain() -> ! {
                 serial_port.write_str("skills: builtins ready\n");
                 ui::draw_home(&surface, &mail, &skill_peek);
 
-                // Draw a fat pointer immediately so UTM always shows something.
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
                 mouse::paint_pointer(&surface, cx, cy);
+                serial_port.write_str("mouse: pointer painted\n");
 
-                // QEMU CI exits here. UTM (no isa-debug-exit) continues.
                 serial::request_qemu_exit(true);
 
                 let hhdm = HHDM_REQUEST
                     .get_response()
                     .map(|r| r.offset())
                     .unwrap_or(0);
+                serial_port.write_str("mouse: probing usb\n");
                 let mut tablet = None;
+                let mut why = [0u8; 24];
                 if let Some(mmap) = MEMORY_MAP_REQUEST.get_response() {
                     if let Some((p0, p1)) = usb_tablet::alloc_dma_pages(mmap) {
-                        // SAFETY: pages are Usable per Limine; only used for UHCI DMA.
-                        tablet = unsafe { usb_tablet::UsbTablet::init(hhdm, p0, p1) };
+                        tablet = unsafe { usb_tablet::UsbTablet::init(hhdm, p0, p1, &mut why) };
+                    } else {
+                        let m = b"no-dma";
+                        why[..m.len()].copy_from_slice(m);
                     }
+                } else {
+                    let m = b"no-mmap";
+                    why[..m.len()].copy_from_slice(m);
                 }
                 if tablet.is_some() {
                     serial_port.write_str("mouse: usb-tablet ready\n");
                 } else {
-                    serial_port.write_str("mouse: usb-tablet missing\n");
+                    serial_port.write_str("mouse: usb-tablet missing ");
+                    let n = why.iter().position(|&b| b == 0).unwrap_or(why.len());
+                    serial_port.write_bytes(&why[..n]);
+                    serial_port.write_str("\n");
                 }
 
                 let mut mice = mouse::Mouse::new(surface.width() as i32, surface.height() as i32);
@@ -176,9 +185,17 @@ unsafe extern "C" fn kmain() -> ! {
                         if t.poll(w, h) {
                             x = t.x;
                             y = t.y;
+                            mice.x = x;
+                            mice.y = y;
                             moved = true;
+                            if t.hits <= 5 {
+                                serial_port.write_str("mouse: tablet hit ");
+                                let d = b'0' + (t.hits.min(9) as u8);
+                                serial_port.write_bytes(&[d, b'\n']);
+                            }
                         }
-                    } else if mice.poll(w, h) {
+                    }
+                    if !moved && mice.poll(w, h) {
                         x = mice.x;
                         y = mice.y;
                         moved = true;

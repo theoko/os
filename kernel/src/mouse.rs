@@ -213,33 +213,21 @@ impl Mouse {
     }
 }
 
-/// Classic arrow pattern (1 = outline/black, 2 = fill). Drawn at SCALE pixels per cell.
-const CURSOR: [[u8; 11]; 17] = [
-    [1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    [1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-    [1, 2, 1, 0, 0, 0, 0, 0, 0, 0, 0],
-    [1, 2, 2, 1, 0, 0, 0, 0, 0, 0, 0],
-    [1, 2, 2, 2, 1, 0, 0, 0, 0, 0, 0],
-    [1, 2, 2, 2, 2, 1, 0, 0, 0, 0, 0],
-    [1, 2, 2, 2, 2, 2, 1, 0, 0, 0, 0],
-    [1, 2, 2, 2, 2, 2, 2, 1, 0, 0, 0],
-    [1, 2, 2, 2, 2, 2, 2, 2, 1, 0, 0],
-    [1, 2, 2, 2, 2, 2, 2, 2, 2, 1, 0],
-    [1, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1],
-    [1, 2, 2, 1, 2, 2, 1, 0, 0, 0, 0],
-    [1, 2, 1, 0, 1, 2, 2, 1, 0, 0, 0],
-    [1, 1, 0, 0, 1, 2, 2, 1, 0, 0, 0],
-    [1, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0],
-    [0, 0, 0, 0, 0, 1, 2, 2, 1, 0, 0],
-    [0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0],
+/// Arrow outline in 1/8-px units, tip at (0,0) — a real polygon so the cursor
+/// is anti-aliased like the rest of the UI instead of a stair-stepped bitmap.
+const ARROW: [(i32, i32); 7] = [
+    (0, 0),
+    (0, 136),
+    (34, 104),
+    (56, 152),
+    (76, 144),
+    (55, 97),
+    (92, 96),
 ];
 
-/// 4× scale → ~44×68 — visible on virtio-vga / Retina-scaled UTM windows.
-const SCALE: i32 = 4;
-const CURSOR_W: usize = 11;
-const CURSOR_H: usize = 17;
-const DRAW_W: usize = CURSOR_W * SCALE as usize;
-const DRAW_H: usize = CURSOR_H * SCALE as usize;
+/// Bounding box in whole px (from ARROW, plus 1px for the white keyline).
+const DRAW_W: usize = 14;
+const DRAW_H: usize = 21;
 const SAVE_LEN: usize = DRAW_W * DRAW_H;
 
 /// Saves under-cursor pixels so we can move without full redraws.
@@ -294,25 +282,26 @@ fn restore(fb: &Surface, x: i32, y: i32, saved: &[u32; SAVE_LEN]) {
 }
 
 fn draw_arrow(fb: &Surface, x: i32, y: i32) {
-    // Blue fill + black outline — matches UI accent, obvious on white.
-    const OUTLINE: u32 = 0x0000_0000;
-    const FILL: u32 = 0x0000_71E3;
-    for row in 0..CURSOR_H {
-        for col in 0..CURSOR_W {
-            let v = CURSOR[row][col];
-            if v == 0 {
-                continue;
-            }
-            let color = if v == 1 { OUTLINE } else { FILL };
-            fb.fill_rect(
-                x + (col as i32) * SCALE,
-                y + (row as i32) * SCALE,
-                SCALE,
-                SCALE,
-                color,
-            );
+    // Ink body under a white keyline, so the pointer stays legible on both the
+    // white page and the blue CTA.
+    const INK: u32 = 0x001D_1D1F;
+    const KEYLINE: u32 = 0x00FF_FFFF;
+
+    let mut pts = [(0i32, 0i32); ARROW.len()];
+    let ox = x * 8;
+    let oy = y * 8;
+
+    // Cheap 1px outline: stamp the silhouette at four offsets in white first.
+    for (dx, dy) in [(-8, 0), (8, 0), (0, -8), (0, 8)] {
+        for (i, (px, py)) in ARROW.iter().enumerate() {
+            pts[i] = (ox + px + dx, oy + py + dy);
         }
+        fb.fill_polygon(&pts, KEYLINE);
     }
+    for (i, (px, py)) in ARROW.iter().enumerate() {
+        pts[i] = (ox + px, oy + py);
+    }
+    fb.fill_polygon(&pts, INK);
 }
 
 /// Paint a one-shot pointer (no save buffer) — safe during first UI frame.
@@ -325,14 +314,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cursor_glyph_tip() {
-        assert_eq!(CURSOR[0][0], 1);
-        assert_eq!(CURSOR[1][1], 1);
+    fn arrow_tip_is_at_origin() {
+        assert_eq!(ARROW[0], (0, 0), "hotspot must be the polygon tip");
     }
 
     #[test]
-    fn scaled_size_roomy() {
-        assert!(DRAW_W >= 40);
-        assert!(DRAW_H >= 60);
+    fn arrow_fits_its_save_buffer() {
+        // The save/restore box must cover the silhouette plus the 1px keyline.
+        let max_x = ARROW.iter().map(|p| p.0).max().unwrap();
+        let max_y = ARROW.iter().map(|p| p.1).max().unwrap();
+        assert!((max_x / 8 + 2) as usize <= DRAW_W, "arrow wider than save box");
+        assert!((max_y / 8 + 2) as usize <= DRAW_H, "arrow taller than save box");
+    }
+
+    #[test]
+    fn arrow_is_pointer_shaped() {
+        // Taller than wide, like every desktop pointer.
+        let w = ARROW.iter().map(|p| p.0).max().unwrap();
+        let h = ARROW.iter().map(|p| p.1).max().unwrap();
+        assert!(h > w, "arrow should be taller than it is wide");
     }
 }

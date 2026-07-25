@@ -1,7 +1,8 @@
 //! Minimal UHCI + QEMU usb-tablet (absolute HID) for UTM/SPICE.
 //!
-//! UTM always attaches `-device usb-tablet`, which overrides PS/2. Without this
-//! driver the guest pointer never moves under Spice.
+//! On q35 the tablet lands on **EHCI** (`usb-bus.0`). Full-speed handoff to the
+//! ICH9 UHCI companions only happens after EHCI releases the port — we halt
+//! EHCI first, then talk UHCI.
 
 use crate::pci;
 
@@ -34,7 +35,6 @@ struct Qh {
     element: u32,
 }
 
-/// DMA arena: frame list (4KiB) + scratch (4KiB).
 struct Dma {
     fl_phys: u32,
     fl: *mut u32,
@@ -46,11 +46,19 @@ pub struct UsbTablet {
     io: u16,
     dma: Dma,
     addr: u8,
+    /// Interrupt IN endpoint number (low 4 bits of bEndpointAddress).
+    ep: u8,
+    /// Max packet size for the interrupt endpoint (minus one goes in the TD).
+    max_packet: u8,
     data_toggle: bool,
     pub x: i32,
     pub y: i32,
     pub buttons: u8,
     ready: bool,
+    /// Successful interrupt reports since bind (for serial diagnostics).
+    pub hits: u32,
+    /// Interrupt IN TD is armed in the frame list; poll only checks completion.
+    outstanding: bool,
 }
 
 fn delay(spins: u32) {
@@ -59,17 +67,76 @@ fn delay(spins: u32) {
     }
 }
 
-impl UsbTablet {
-    /// Probe UHCI, reset port, configure tablet @ addr 1, return driver.
-    pub unsafe fn init(hhdm: u64, phys_page0: u64, phys_page1: u64) -> Option<Self> {
-        let (_b, _s, _f, io) = pci::find_uhci()?;
+/// Disable *every* EHCI via PCI command (no MMIO) so companion UHCIs own the
+/// ports. There is more than one controller under UTM, and leaving either
+/// enabled strands the devices behind it.
+fn disable_ehci_pci() -> u32 {
+    let mut n = 0;
+    pci::for_each_ehci(|b, s, f| {
+        let cmd = pci::read16(b, s, f, 0x04);
+        pci::write16(b, s, f, 0x04, cmd & !0x06); // clear Mem Space + Bus Master
+        n += 1;
+    });
+    n
+}
 
+/// Outcome of probing one (controller, port) pair.
+enum Probe {
+    /// A verified tablet, configured and ready.
+    Bound(UsbTablet),
+    /// Nothing connected on this port.
+    Empty,
+    /// A device enumerated but is not an absolute pointer (with reason).
+    NotTablet(&'static str),
+}
+
+impl UsbTablet {
+    /// Probe every UHCI controller and every port, binding only a device that
+    /// identifies as an absolute tablet. `err` gets a short ASCII reason.
+    pub unsafe fn init(hhdm: u64, phys_page0: u64, phys_page1: u64, err: &mut [u8]) -> Option<Self> {
+        set_err(err, "start");
+        let _ = disable_ehci_pci();
+
+        let controllers = pci::find_all_uhci();
+        if controllers.is_empty() {
+            set_err(err, "no-uhci");
+            return None;
+        }
+
+        let mut saw_device = false;
+        let mut reason = "not-tablet";
+        for &(_b, _s, _f, io) in controllers.iter() {
+            for port in 0..2u16 {
+                match unsafe { Self::init_on(io, port, hhdm, phys_page0, phys_page1) } {
+                    Probe::Bound(t) => {
+                        set_err(err, "ok");
+                        return Some(t);
+                    }
+                    // Something enumerated but was a keyboard / redirect stub.
+                    Probe::NotTablet(r) => {
+                        saw_device = true;
+                        reason = r;
+                    }
+                    Probe::Empty => {}
+                }
+            }
+        }
+        set_err(err, if saw_device { reason } else { "no-port" });
+        None
+    }
+
+    unsafe fn init_on(
+        io: u16,
+        port: u16,
+        hhdm: u64,
+        phys_page0: u64,
+        phys_page1: u64,
+    ) -> Probe {
         let fl = (phys_page0 + hhdm) as *mut u32;
         let scratch = (phys_page1 + hhdm) as *mut u8;
-        // Clear
         unsafe {
             for i in 0..1024 {
-                fl.add(i).write_volatile(1); // terminate
+                fl.add(i).write_volatile(1);
             }
             for i in 0..4096 {
                 scratch.add(i).write_volatile(0);
@@ -85,22 +152,39 @@ impl UsbTablet {
                 scratch,
             },
             addr: 0,
+            ep: 1,
+            max_packet: 8,
             data_toggle: false,
-            x: 0,
-            y: 0,
+            // -1 so the first absolute report always counts as motion.
+            x: -1,
+            y: -1,
             buttons: 0,
             ready: false,
+            hits: 0,
+            outstanding: false,
         };
 
-        me.hc_reset()?;
-        me.port_enable()?;
-        // Device starts at address 0
+        me.hc_reset();
+        if !me.port_enable(port) {
+            return Probe::Empty;
+        }
+        // Port reset returns the device to the default address.
         me.addr = 0;
-        me.set_address(1)?;
+        if me.set_address(1).is_none() {
+            return Probe::NotTablet("set-addr");
+        }
         me.addr = 1;
-        me.set_configuration(1)?;
+        if let Err(r) = me.identify() {
+            return Probe::NotTablet(r);
+        }
+        if me.set_configuration(1).is_none() {
+            return Probe::NotTablet("set-cfg");
+        }
+        // HID: prefer Report protocol; ignore failures (some firmwares NAK).
+        let _ = me.hid_set_idle();
+        let _ = me.hid_set_protocol(1);
         me.ready = true;
-        Some(me)
+        Probe::Bound(me)
     }
 
     fn outw(&self, off: u16, val: u16) {
@@ -127,7 +211,6 @@ impl UsbTablet {
     fn outl_flbase(&self, val: u32) {
         #[cfg(target_arch = "x86_64")]
         unsafe {
-            // FLBASEADD is 32-bit at io+8 — use two outw or outl via pci helper
             let port = self.io + FLBASEADD;
             core::arch::asm!("out dx, eax", in("dx") port, in("eax") val, options(nostack, preserves_flags));
         }
@@ -135,8 +218,7 @@ impl UsbTablet {
         let _ = val;
     }
 
-    fn hc_reset(&mut self) -> Option<()> {
-        // Host controller reset
+    fn hc_reset(&mut self) {
         self.outw(USBCMD, 0x0002);
         for _ in 0..100_000 {
             if self.inw(USBCMD) & 0x0002 == 0 {
@@ -144,39 +226,38 @@ impl UsbTablet {
             }
             delay(50);
         }
-        self.outw(USBSTS, 0xFFFF); // clear status
+        self.outw(USBINTR_ZERO, 0); // defined below as 0x04 — disable IRQs
+        self.outw(USBSTS, 0xFFFF);
         self.outw(SOFMOD, 64);
         self.outl_flbase(self.dma.fl_phys);
         self.outw(FRNUM, 0);
-        // Run + max packet 64
-        self.outw(USBCMD, 0x0001 | 0x0080);
-        delay(10_000);
-        Some(())
+        self.outw(USBCMD, 0x0001 | 0x0080); // RS | MaxPacket
+        delay(20_000);
     }
 
-    fn port_enable(&mut self) -> Option<()> {
-        // Try ports 0 and 1 (PORTSC at +0x10 and +0x12)
-        for port in 0..2u16 {
-            let off = PORTSC1 + port * 2;
-            let mut sc = self.inw(off);
-            if sc & 1 == 0 {
-                continue; // no device
-            }
-            // Port reset
-            self.outw(off, sc | 0x0200);
-            delay(200_000);
+    /// Reset and enable a single port. False if nothing is connected there.
+    fn port_enable(&mut self, port: u16) -> bool {
+        let off = PORTSC1 + port * 2;
+        let mut sc = self.inw(off);
+        // CSC clear, check CCS
+        if sc & 0x02 != 0 {
+            self.outw(off, sc | 0x02); // write-1-to-clear CSC
             sc = self.inw(off);
-            self.outw(off, sc & !0x0200);
-            delay(50_000);
-            sc = self.inw(off);
-            // Enable port
-            self.outw(off, (sc & !0x000A) | 0x0004);
-            delay(50_000);
-            if self.inw(off) & 0x0004 != 0 {
-                return Some(());
-            }
         }
-        None
+        if sc & 1 == 0 {
+            return false;
+        }
+        // Reset
+        self.outw(off, (sc & !0x000A) | 0x0200);
+        delay(500_000);
+        sc = self.inw(off);
+        self.outw(off, sc & !0x0200);
+        delay(100_000);
+        sc = self.inw(off);
+        // Enable + clear status change bits
+        self.outw(off, (sc & !0x000A) | 0x0004 | 0x000A);
+        delay(100_000);
+        self.inw(off) & 0x0004 != 0
     }
 
     fn scratch_offset(&self, off: usize) -> (*mut u8, u32) {
@@ -192,8 +273,7 @@ impl UsbTablet {
         for _ in 0..spins {
             let st = unsafe { core::ptr::addr_of!((*td).status).read_volatile() };
             if st & TD_ACTIVE == 0 {
-                // bit 22 = stalled, 21 = buffer error, etc.
-                return st & (1 << 22) == 0;
+                return st & (1 << 22) == 0; // not stalled
             }
             delay(20);
         }
@@ -208,19 +288,23 @@ impl UsbTablet {
         index: u16,
         data: &mut [u8],
     ) -> Option<()> {
-        // Layout in scratch:
-        // 0x00: setup packet (8)
-        // 0x10: qh
-        // 0x20: td_setup
-        // 0x30: td_data (optional)
-        // 0x40: td_status
-        // 0x50: data buffer
+        // Scratch layout is fixed so the control and interrupt paths never
+        // overlap: 0x100..0x160 belongs to poll_once().
+        const DATA_TD_BASE: usize = 0x200;
+        const DATA_TD_STRIDE: usize = 0x20;
+        const DATA_BUF: usize = 0x600;
+        // Control endpoint max packet for a full-speed QEMU HID device.
+        const MPS: usize = 8;
+
+        if data.len() > 256 {
+            return None;
+        }
+
         let (setup_v, setup_p) = self.scratch_offset(0x00);
         let (qh_v, qh_p) = self.scratch_offset(0x10);
-        let (td0_v, td0_p) = self.scratch_offset(0x20);
-        let (td1_v, td1_p) = self.scratch_offset(0x30);
+        let (td0_v, td0_p) = self.scratch_offset(0x30);
         let (td2_v, td2_p) = self.scratch_offset(0x40);
-        let (buf_v, buf_p) = self.scratch_offset(0x50);
+        let (buf_v, buf_p) = self.scratch_offset(DATA_BUF);
 
         unsafe {
             setup_v.add(0).write_volatile(request_type);
@@ -232,79 +316,91 @@ impl UsbTablet {
             let n = data.len() as u16;
             setup_v.add(6).write_volatile((n & 0xFF) as u8);
             setup_v.add(7).write_volatile((n >> 8) as u8);
-
             for (i, b) in data.iter().enumerate() {
                 buf_v.add(i).write_volatile(*b);
             }
         }
 
         let addr = self.addr as u32;
-        let setup_token = (7 << 21) | (addr << 8) | TOKEN_SETUP; // 8 bytes - 1 = 7
-        // DATA1 for status/data toggles: bit 19
-
-        let td0 = td0_v as *mut Td;
-        let td1 = td1_v as *mut Td;
-        let td2 = td2_v as *mut Td;
-        let qh = qh_v as *mut Qh;
-
+        let setup_token = (7 << 21) | (addr << 8) | TOKEN_SETUP;
         let has_data = !data.is_empty();
         let data_is_in = request_type & 0x80 != 0;
 
+        let td0 = td0_v as *mut Td;
+        let td2 = td2_v as *mut Td;
+        let qh = qh_v as *mut Qh;
+
+        // Split the data stage into max-packet-sized TDs. A single TD carrying
+        // more than bMaxPacketSize0 babbles — which is why an 18-byte device
+        // descriptor could never be read before.
+        let n_data = data.len().div_ceil(MPS);
+
         unsafe {
-            // SETUP TD
+            let first_data = if has_data {
+                (self.dma.scratch_phys + DATA_TD_BASE as u32) | 0x4
+            } else {
+                td2_p | 0x4
+            };
             td0.write(Td {
-                link: if has_data { td1_p | 0x4 } else { td2_p | 0x4 }, // depth first
-                status: TD_ACTIVE | (3 << 27), // 3 errors
+                link: first_data,
+                status: TD_ACTIVE | (3 << 27),
                 token: setup_token,
                 buffer: setup_p,
             });
 
-            if has_data {
-                let len = data.len() as u32;
+            for i in 0..n_data {
+                let (tdv, _tdp) = self.scratch_offset(DATA_TD_BASE + i * DATA_TD_STRIDE);
+                let next = if i + 1 == n_data {
+                    td2_p | 0x4
+                } else {
+                    (self.dma.scratch_phys + (DATA_TD_BASE + (i + 1) * DATA_TD_STRIDE) as u32) | 0x4
+                };
+                let off = i * MPS;
+                let len = (data.len() - off).min(MPS) as u32;
                 let tok = if data_is_in { TOKEN_IN } else { TOKEN_OUT };
-                let token = ((len - 1) << 21) | (1 << 19) | (addr << 8) | tok; // DATA1
-                td1.write(Td {
-                    link: td2_p | 0x4,
-                    status: TD_ACTIVE | (3 << 27) | if data_is_in { TD_SPD } else { 0 },
+                // DATA1 on the first data packet, alternating thereafter.
+                let toggle = if i % 2 == 0 { 1u32 << 19 } else { 0 };
+                let token = ((len - 1) << 21) | toggle | (addr << 8) | tok;
+                (tdv as *mut Td).write(Td {
+                    link: next,
+                    status: TD_ACTIVE | (3 << 27),
                     token,
-                    buffer: buf_p,
+                    buffer: buf_p + off as u32,
                 });
             }
 
-            // STATUS TD: opposite direction, DATA1, 0 length -> maxlen 0x7FF encoding is length-1 with 0 bytes => 0x7FF?
-            // UHCI: Maximum Length field is length-1; 0-byte packet uses 0x7FF
-            let stok = if data_is_in || !has_data {
+            let stok = if !has_data {
+                TOKEN_IN
+            } else if data_is_in {
                 TOKEN_OUT
             } else {
                 TOKEN_IN
             };
-            // For no-data control (SET_ADDRESS): status is IN
-            let stok = if !has_data { TOKEN_IN } else { stok };
             let status_token = (0x7FF << 21) | (1 << 19) | (addr << 8) | stok;
             td2.write(Td {
-                link: 1, // terminate
+                link: 1,
                 status: TD_ACTIVE | TD_IOC | (3 << 27),
                 token: status_token,
                 buffer: 0,
             });
 
             qh.write(Qh {
-                head_link: 1, // terminate horizontal
+                head_link: 1,
                 element: td0_p,
             });
 
-            // Point all frames at this QH (select execute)
             for i in 0..1024 {
-                self.dma.fl.add(i).write_volatile(qh_p | 0x2); // QH bit
+                self.dma.fl.add(i).write_volatile(qh_p | 0x2);
             }
         }
 
-        let wait_td = if has_data { td2 } else { td2 };
-        if !self.wait_td(wait_td, 500_000) {
-            // also check setup
-            if !self.wait_td(td0, 10_000) {
-                return None;
+        if !self.wait_td(td2, 1_000_000) {
+            unsafe {
+                for i in 0..1024 {
+                    self.dma.fl.add(i).write_volatile(1);
+                }
             }
+            return None;
         }
 
         if has_data && data_is_in {
@@ -315,13 +411,83 @@ impl UsbTablet {
             }
         }
 
-        // Detach schedule
         unsafe {
             for i in 0..1024 {
                 self.dma.fl.add(i).write_volatile(1);
             }
         }
         Some(())
+    }
+
+    /// GET_DESCRIPTOR(type, index) into `buf`, requesting exactly `buf.len()`.
+    fn get_descriptor(&mut self, desc_type: u8, index: u8, buf: &mut [u8]) -> Option<()> {
+        self.control(0x80, 0x06, ((desc_type as u16) << 8) | index as u16, 0, buf)
+    }
+
+    /// Is the device on this port an absolute pointer we can drive?
+    ///
+    /// UTM populates the bus with keyboards and usb-redir stubs, so binding the
+    /// first device that enumerates picks up the wrong one and then reports
+    /// "ready" while never producing motion. QEMU's HID cuts are distinguished
+    /// by the interface descriptor:
+    ///   usb-kbd     subclass 1 (boot), protocol 1 (keyboard)
+    ///   usb-mouse   subclass 1 (boot), protocol 2 (relative mouse)
+    ///   usb-tablet  subclass 0,        protocol 0  <- absolute, what we want
+    fn identify(&mut self) -> Result<(), &'static str> {
+        let mut dev = [0u8; 18];
+        if self.get_descriptor(1, 0, &mut dev).is_none() {
+            return Err("dev-desc");
+        }
+        // bDescriptorType must be DEVICE, and the device class must be 0 so the
+        // interface descriptor is the one that carries the HID class.
+        if dev[1] != 0x01 {
+            return Err("bad-dev");
+        }
+
+        // Config descriptor header first, to learn wTotalLength.
+        let mut head = [0u8; 9];
+        if self.get_descriptor(2, 0, &mut head).is_none() || head[1] != 0x02 {
+            return Err("cfg-hdr");
+        }
+        let total = u16::from_le_bytes([head[2], head[3]]) as usize;
+        if total < 9 || total > 128 {
+            return Err("cfg-len");
+        }
+        let mut cfg = [0u8; 128];
+        if self.get_descriptor(2, 0, &mut cfg[..total]).is_none() {
+            return Err("cfg-body");
+        }
+
+        // Walk looking for HID tablet INTERFACE, then its IN ENDPOINT.
+        let mut i = 0usize;
+        let mut found_iface = false;
+        while i + 1 < total {
+            let len = cfg[i] as usize;
+            if len < 2 || i + len > total {
+                break;
+            }
+            let dtype = cfg[i + 1];
+            if dtype == 0x04 && len >= 9 {
+                let class = cfg[i + 5];
+                let subclass = cfg[i + 6];
+                let protocol = cfg[i + 7];
+                found_iface = class == 0x03 && subclass == 0x00 && protocol == 0x00;
+            } else if found_iface && dtype == 0x05 && len >= 7 {
+                let addr = cfg[i + 2];
+                if addr & 0x80 != 0 {
+                    self.ep = addr & 0x0F;
+                    let mps = u16::from_le_bytes([cfg[i + 4], cfg[i + 5]]).min(64) as u8;
+                    self.max_packet = if mps == 0 { 8 } else { mps };
+                    return Ok(());
+                }
+            }
+            i += len;
+        }
+        if found_iface {
+            // Interface matched but no endpoint — still bind with defaults.
+            return Ok(());
+        }
+        Err("not-hid")
     }
 
     fn set_address(&mut self, new_addr: u8) -> Option<()> {
@@ -334,66 +500,57 @@ impl UsbTablet {
         self.control(0x00, 0x09, cfg as u16, 0, &mut empty)
     }
 
-    /// Poll interrupt IN on endpoint 1; update absolute x/y (0..32767).
+    fn hid_set_idle(&mut self) -> Option<()> {
+        let mut empty: [u8; 0] = [];
+        self.control(0x21, 0x0A, 0, 0, &mut empty)
+    }
+
+    fn hid_set_protocol(&mut self, protocol: u16) -> Option<()> {
+        let mut empty: [u8; 0] = [];
+        self.control(0x21, 0x0B, protocol, 0, &mut empty)
+    }
+
     pub fn poll(&mut self, screen_w: i32, screen_h: i32) -> bool {
         if !self.ready {
             return false;
         }
-
-        let (qh_v, qh_p) = self.scratch_offset(0x100);
-        let (td_v, td_p) = self.scratch_offset(0x120);
-        let (buf_v, buf_p) = self.scratch_offset(0x140);
-
-        let addr = self.addr as u32;
-        let toggle = if self.data_toggle { 1u32 << 19 } else { 0 };
-        // EP1, max 8 bytes -> length-1 = 7
-        let token = (7 << 21) | toggle | (1 << 15) | (addr << 8) | TOKEN_IN;
-
-        unsafe {
-            let td = td_v as *mut Td;
-            let qh = qh_v as *mut Qh;
-            td.write(Td {
-                link: 1,
-                status: TD_ACTIVE | (3 << 27) | TD_SPD,
-                token,
-                buffer: buf_p,
-            });
-            qh.write(Qh {
-                head_link: 1,
-                element: td_p,
-            });
-            for i in 0..1024 {
-                self.dma.fl.add(i).write_volatile(qh_p | 0x2);
-            }
-        }
-
-        let td = td_v as *mut Td;
-        if !self.wait_td(td, 50_000) {
-            unsafe {
-                for i in 0..1024 {
-                    self.dma.fl.add(i).write_volatile(1);
-                }
-            }
+        // Non-blocking: arm an interrupt IN once, then only check Active.
+        // Waiting out the full bInterval on every NAK froze the UI and also
+        // tore down the schedule before the HC could retire the TD.
+        if !self.outstanding {
+            self.arm_interrupt_in();
+            self.outstanding = true;
             return false;
         }
 
+        let (td_v, _) = self.scratch_offset(0x120);
+        let td = td_v as *mut Td;
         let st = unsafe { core::ptr::addr_of!((*td).status).read_volatile() };
+        if st & TD_ACTIVE != 0 {
+            return false;
+        }
+
+        // TD retired — unlink from the frame list before touching toggle/state.
         unsafe {
             for i in 0..1024 {
                 self.dma.fl.add(i).write_volatile(1);
             }
         }
-        // Still active / stalled / NAK / timeout → no update
-        if st & TD_ACTIVE != 0
-            || st & (1 << 22) != 0
-            || st & (1 << 19) != 0
+        self.outstanding = false;
+
+        // Stalled / babble / CRC / buffer error → drop, do not flip toggle.
+        // NAK keeps Active set on UHCI, so we never reach here for a NAK.
+        if st & (1 << 22) != 0
+            || st & (1 << 20) != 0
             || st & (1 << 18) != 0
+            || st & (1 << 21) != 0
         {
             return false;
         }
+
         self.data_toggle = !self.data_toggle;
 
-        // ActLen is bits 0-10; value is (length - 1), or 0x7FF if zero length.
+        let (buf_v, _) = self.scratch_offset(0x140);
         let act = (st & 0x7FF) as usize;
         let n = if act == 0x7FF { 0 } else { act + 1 };
         if n < 6 {
@@ -410,17 +567,63 @@ impl UsbTablet {
         let buttons = report[0] & 0x07;
         let ax = u16::from_le_bytes([report[1], report[2]]) as i32;
         let ay = u16::from_le_bytes([report[3], report[4]]) as i32;
+        let ax = ax.clamp(0, 32767);
+        let ay = ay.clamp(0, 32767);
         let nx = (ax * (screen_w - 1)) / 32767;
         let ny = (ay * (screen_h - 1)) / 32767;
         let moved = nx != self.x || ny != self.y || buttons != self.buttons;
         self.x = nx.clamp(0, screen_w.saturating_sub(1));
         self.y = ny.clamp(0, screen_h.saturating_sub(1));
         self.buttons = buttons;
+        if moved {
+            self.hits = self.hits.saturating_add(1);
+        }
         moved
+    }
+
+    fn arm_interrupt_in(&mut self) {
+        let (qh_v, qh_p) = self.scratch_offset(0x100);
+        let (td_v, td_p) = self.scratch_offset(0x120);
+        let (buf_v, buf_p) = self.scratch_offset(0x140);
+
+        let addr = self.addr as u32;
+        let ep = self.ep as u32;
+        let mps = self.max_packet.max(1) as u32;
+        let toggle = if self.data_toggle { 1u32 << 19 } else { 0 };
+        let token = ((mps - 1) << 21) | toggle | (ep << 15) | (addr << 8) | TOKEN_IN;
+
+        unsafe {
+            let td = td_v as *mut Td;
+            let qh = qh_v as *mut Qh;
+            for i in 0..8 {
+                buf_v.add(i).write_volatile(0);
+            }
+            td.write(Td {
+                link: 1,
+                status: TD_ACTIVE | (3 << 27) | TD_SPD,
+                token,
+                buffer: buf_p,
+            });
+            qh.write(Qh {
+                head_link: 1,
+                element: td_p,
+            });
+            for i in 0..1024 {
+                self.dma.fl.add(i).write_volatile(qh_p | 0x2);
+            }
+        }
     }
 }
 
-/// Pick two usable 4KiB pages below 4GiB from the Limine memory map.
+const USBINTR_ZERO: u16 = 0x04;
+
+fn set_err(buf: &mut [u8], msg: &str) {
+    buf.fill(0);
+    let b = msg.as_bytes();
+    let n = b.len().min(buf.len().saturating_sub(1));
+    buf[..n].copy_from_slice(&b[..n]);
+}
+
 pub fn alloc_dma_pages(mmap: &limine::response::MemoryMapResponse) -> Option<(u64, u64)> {
     let mut pages = [0u64; 2];
     let mut n = 0;
@@ -431,7 +634,6 @@ pub fn alloc_dma_pages(mmap: &limine::response::MemoryMapResponse) -> Option<(u6
         let mut base = (entry.base + 0xFFF) & !0xFFF;
         let end = entry.base + entry.length;
         while base + 4096 <= end && n < 2 {
-            // Skip page 0; stay under 4GiB for UHCI 32-bit pointers.
             if base >= 0x10000 && base < 0x1_0000_0000 {
                 pages[n] = base;
                 n += 1;

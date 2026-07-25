@@ -4,6 +4,7 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod fb;
+pub mod font;
 pub mod mcp;
 pub mod mouse;
 pub mod pci;

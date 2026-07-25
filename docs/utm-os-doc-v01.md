@@ -33,7 +33,7 @@ The VM is created via UTM’s AppleScript API:
 - architecture: `x86_64`
 - `hypervisor: false` (TCG — required on Apple Silicon)
 - `uefi: true` (GOP framebuffer for the home UI)
-- memory: 512 MiB
+- memory: 1024 MiB
 - removable drive: repo `os.iso`
 
 ## Seeing the hello banner
@@ -44,10 +44,11 @@ The VM is created via UTM’s AppleScript API:
 **Serial:** UTM does **not** have View → Serial. Default serial is a PTTY. Use:
 
 ```sh
-utmctl attach os
+utmctl attach os   # prints PTTY: /dev/ttysN  (attach itself is not wired yet)
+cat /dev/ttysN     # then read the guest COM1 log
 ```
 
-That attaches this terminal to the guest serial. (Start the VM first; if you
+That shows the guest serial. (Start the VM first; if you
 attach after the Phase 1 halt you may miss the line — the framebuffer stays.)
 
 Optional GUI serial: VM settings (✏️) → Devices → New → Serial → Mode:
@@ -55,11 +56,18 @@ Optional GUI serial: VM settings (✏️) → Devices → New → Serial → Mod
 
 ## Mouse cursor
 
-UTM/SPICE feeds an absolute **usb-tablet** (and that device overrides PS/2).
-The guest drives it with a minimal **UHCI + HID** stack (`kernel/src/usb_tablet.rs`).
+UTM/SPICE feeds an absolute **usb-tablet**. The guest drives it with a minimal
+**UHCI + HID** stack (`kernel/src/usb_tablet.rs`).
 
-`make utm` sets `Input.UsbBusSupport = 2.0` and `QEMU.PS2Controller = true`.
-Move the Mac pointer over the guest window — no capture required for tablet.
+`make utm` turns UTM's built-in USB input **off** and adds a dedicated
+`piix3-usb-uhci` + `usb-tablet` via `QEMU.AdditionalArguments` (flat string
+argv tokens — dict-shaped entries make UTM drop the VM from the library).
+PS/2 stays on for keyboards. Move the Mac pointer over the guest window — no
+capture required for the tablet.
+
+Serial should show `mouse: usb-tablet ready` then `mouse: ps2 ready`. If the
+cursor is visible but stuck, the interrupt-IN pipe is usually desynced — see
+`0.7.1` in `CHANGELOG.md`.
 
 ## Override
 
