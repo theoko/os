@@ -138,6 +138,38 @@ pub fn find_all_uhci() -> heapless_vec::UhciList {
 }
 
 /// EHCI = class 0x0C, subclass 0x03, prog-if 0x20. Returns MMIO BAR phys.
+/// Every EHCI controller on the bus.
+///
+/// q35 with `-usb` builds an ICH9 set at 00:1d.x, and UTM adds a *second*
+/// explicit `ich9-usb-ehci1`. Disabling only the first leaves the other still
+/// owning its ports, so its UHCI companions see nothing.
+pub fn for_each_ehci(mut f: impl FnMut(u8, u8, u8)) {
+    for bus in 0..4u8 {
+        for slot in 0..32u8 {
+            for func in 0..8u8 {
+                let id = read32(bus, slot, func, 0x00);
+                if id == 0xFFFF_FFFF {
+                    if func == 0 {
+                        break;
+                    }
+                    continue;
+                }
+                let class = read32(bus, slot, func, 0x08);
+                if (class >> 24) & 0xFF == 0x0C
+                    && (class >> 16) & 0xFF == 0x03
+                    && (class >> 8) & 0xFF == 0x20
+                {
+                    f(bus, slot, func);
+                }
+                let header = (read32(bus, slot, func, 0x0C) >> 16) as u8;
+                if func == 0 && header & 0x80 == 0 {
+                    break;
+                }
+            }
+        }
+    }
+}
+
 pub fn find_ehci_mmio() -> Option<(u8, u8, u8, u64)> {
     for bus in 0..4u8 {
         for slot in 0..32u8 {

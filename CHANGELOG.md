@@ -6,6 +6,9 @@ version: 0.7.0
 
 ## 0.7.0 — 2026-07-25
 
+- Mouse: USB tablet interrupt-IN is non-blocking and keeps the TD armed across
+  NAKs (no data-toggle flip on empty polls). Fixes "ready but cursor stuck" —
+  QEMU abs input now moves the pointer (verified via screendump + serial hits).
 - UI: vendored **Inter** (SIL OFL 1.1, `assets/fonts/`) as the default UI font, so
   the build is reproducible off macOS and the ISO is redistributable. System
   fonts remain fallbacks and warn at build time; `OS_UI_FONT` overrides.

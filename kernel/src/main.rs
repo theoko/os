@@ -188,6 +188,11 @@ unsafe extern "C" fn kmain() -> ! {
                             mice.x = x;
                             mice.y = y;
                             moved = true;
+                            if t.hits <= 5 {
+                                serial_port.write_str("mouse: tablet hit ");
+                                let d = b'0' + (t.hits.min(9) as u8);
+                                serial_port.write_bytes(&[d, b'\n']);
+                            }
                         }
                     }
                     if !moved && mice.poll(w, h) {
