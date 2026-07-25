@@ -39,6 +39,7 @@ cargo build -p os-mcp-bridge
 
 SERIAL_OUT="$(mktemp "${TMPDIR:-/tmp}/os-bridge-serial.XXXXXX")"
 BRIDGE_LOG="$(mktemp "${TMPDIR:-/tmp}/os-bridge-log.XXXXXX")"
+<<<<<<< HEAD
 SKILLS_DIR="$(mktemp -d "${TMPDIR:-/tmp}/os-bridge-skills.XXXXXX")"
 cleanup() {
   if [[ -n "${BRIDGE_PID:-}" ]]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi
@@ -48,6 +49,19 @@ cleanup() {
 trap cleanup EXIT
 
 OS_MCP_BRIDGE_ADDR="$ADDR" OS_MCP_EMAIL_BACKEND=mock OS_SKILLS_USER="$SKILLS_DIR" \
+=======
+# Isolate transcript store so smoke can seed/search/forget without touching
+# the developer's real Application Support path.
+TRANSCRIPT_STORE="$(mktemp "${TMPDIR:-/tmp}/os-smoke-transcripts.XXXXXX.json")"
+export OS_TRANSCRIPT_STORE="$TRANSCRIPT_STORE"
+cleanup() {
+  if [[ -n "${BRIDGE_PID:-}" ]]; then kill "$BRIDGE_PID" 2>/dev/null || true; fi
+  rm -f "$SERIAL_OUT" "$BRIDGE_LOG" "$TRANSCRIPT_STORE"
+}
+trap cleanup EXIT
+
+OS_MCP_BRIDGE_ADDR="$ADDR" OS_MCP_EMAIL_BACKEND=mock OS_TRANSCRIPT_STORE="$TRANSCRIPT_STORE" \
+>>>>>>> af3cd1e (feat(ui): recordings honesty + saved-skill Brief (0.9.11))
   "$BRIDGE_BIN" >"$BRIDGE_LOG" 2>&1 &
 BRIDGE_PID=$!
 
@@ -95,9 +109,10 @@ export OS_SMOKE_ROOT="$ROOT"
 export OS_SMOKE_ISO="$ISO"
 export OS_SMOKE_ADDR="$ADDR"
 export OS_SMOKE_SERIAL="$SERIAL_OUT"
+export OS_SMOKE_TRANSCRIPT_STORE="$TRANSCRIPT_STORE"
 
-# Host-side wire checks: teddy/market portals, email.search/email.forget,
-# skills.save — each behind its wire bit.
+# Host-side wire checks: teddy/market portals, email, skills, audio —
+# each behind its wire bit (no live whisper).
 python3 <<'PY'
 import os, socket, sys
 
@@ -166,6 +181,8 @@ require_listed(
     "market.fear_greed",
     "portal.forget",
     "email.forget",
+    "audio.transcribe",
+    "audio.forget",
     "skills.save",
 )
 
@@ -220,6 +237,39 @@ if not forgot_mail.startswith("OK email.forget"):
     print(forgot_mail, file=sys.stderr)
     sys.exit(1)
 print("smoke-bridge: email.forget ok")
+
+denied_audio = call("CALL audio.transcribe path=/tmp/os-smoke-missing.wav")
+if "needs_audio_cap" not in denied_audio:
+    print("error: audio.transcribe must require audio=1", file=sys.stderr)
+    print(denied_audio, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: audio.transcribe needs_audio_cap ok")
+
+store = os.environ["OS_SMOKE_TRANSCRIPT_STORE"]
+with open(store, "w", encoding="utf-8") as f:
+    f.write(
+        '{"items":[{"source":"/tmp/os-smoke-rec.wav","title":"Smoke Recording Alpha",'
+        '"text":"smoke recording alpha transcript words for search",'
+        '"seconds":1.0,"words":6}]}'
+    )
+hit = call("CALL search.query q=Smoke-Recording-Alpha k=3 audio=1")
+if "Smoke Recording Alpha" not in hit:
+    print("error: search.query audio=1 missed seeded transcript", file=sys.stderr)
+    print(hit, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: search.query audio=1 ok")
+
+forgot_audio = call("CALL audio.forget")
+if not forgot_audio.startswith("OK audio.forget"):
+    print("error: audio.forget failed", file=sys.stderr)
+    print(forgot_audio, file=sys.stderr)
+    sys.exit(1)
+miss = call("CALL search.query q=Smoke-Recording-Alpha k=3 audio=1")
+if "Smoke Recording Alpha" in miss:
+    print("error: audio.forget left transcript searchable", file=sys.stderr)
+    print(miss, file=sys.stderr)
+    sys.exit(1)
+print("smoke-bridge: audio.forget ok")
 PY
 
 python3 <<'PY'
@@ -268,5 +318,5 @@ if b"mcp: email connected" not in serial:
     print("error: MCP bridge not connected", file=sys.stderr)
     sys.stderr.buffer.write(serial + b"\n")
     sys.exit(1)
-print("smoke-bridge ok: hello + mcp email + teddy/market + email.forget")
+print("smoke-bridge ok: hello + mcp email + portals + audio")
 PY

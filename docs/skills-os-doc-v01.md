@@ -60,4 +60,8 @@ From **0.9.9** the guest also writes: `mcp::save_skill` sends the one-line
 `desc=` form with `skills=1` when `Cap::SkillsSave` is on (cap refusal never
 opens COM2).
 
+From **0.9.11** every Skills row opens Brief — builtins run their MCP plan;
+saved/unknown skills show a playbook body peek (`skills.get`) instead of a
+footer blurb.
+
 Also see [`docs/search-os-doc-v01.md`](search-os-doc-v01.md).

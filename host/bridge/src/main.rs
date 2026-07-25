@@ -882,6 +882,18 @@ mod tests {
     }
 
     #[test]
+    fn audio_transcribe_needs_the_audio_cap() {
+        let denied = dispatch(
+            "CALL audio.transcribe path=/tmp/x.wav",
+            &test_backends(),
+        );
+        assert!(
+            denied[0].contains("needs_audio_cap"),
+            "ungated audio.transcribe: {denied:?}"
+        );
+    }
+
+    #[test]
     fn email_search_needs_the_email_cap() {
         let denied = dispatch("CALL email.search q=in:inbox max=2", &test_backends());
         assert!(

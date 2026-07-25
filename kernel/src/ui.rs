@@ -328,6 +328,12 @@ pub fn search_tile_sub<'a>(caps: Caps, buf: &'a mut [u8; 40]) -> &'a str {
         // Covers teddy corpus/portals and market.* under the same grant.
         push("online", &mut n);
     }
+    if caps.allows(Cap::AudioTranscribe) {
+        if n > 0 {
+            push(" + ", &mut n);
+        }
+        push("audio", &mut n);
+    }
     if n == 0 {
         "grant search first"
     } else {
@@ -626,7 +632,7 @@ mod tests {
             "Last brief",
             "Tap to reopen",
             "grant search first",
-            "docs + mail + files + online",
+            "docs + mail + files + online + audio",
             "7 writable",
             "7 read-only",
             "Inbox empty right now.",
@@ -656,8 +662,10 @@ mod tests {
         caps.set(Cap::EmailSearch, true);
         caps.set(Cap::WorkspaceIndex, true);
         caps.set(Cap::PortalSync, true);
+        caps.set(Cap::AudioTranscribe, true);
         let sub = search_tile_sub(caps, &mut src);
         assert!(SMALL_FACE.width(sub, 0) < r.w - 36, "search sub overflows: {sub}");
+        assert!(sub.contains("audio"), "{sub}");
         let mut sbuf = [0u8; 28];
         let skill_sub = skills_tile_sub(caps, 7, &mut sbuf);
         assert!(
@@ -679,6 +687,8 @@ mod tests {
         assert_eq!(search_tile_sub(caps, &mut buf), "docs");
         caps.set(Cap::PortalSync, true);
         assert_eq!(search_tile_sub(caps, &mut buf), "docs + online");
+        caps.set(Cap::AudioTranscribe, true);
+        assert_eq!(search_tile_sub(caps, &mut buf), "docs + online + audio");
     }
 
     #[test]

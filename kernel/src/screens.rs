@@ -135,11 +135,11 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek, caps: Caps) {
 
     let (x, cw) = column(w);
     let note = if caps.allows(Cap::SkillsSave) {
-        "Save starter needs the bridge. Tap a runnable skill to act under grants."
+        "Save starter needs the bridge. Every playbook opens a Brief."
     } else if peek.from_bridge {
-        "Runnable skills call MCP under your grants. Others show their body."
+        "Runnable skills call MCP under your grants. Others open a Brief with body text."
     } else if peek.count > 0 {
-        "Compiled into the ISO. Tap a runnable skill to act under grants."
+        "Compiled into the ISO. Tap a playbook to open its Brief."
     } else {
         "No skills loaded."
     };
@@ -389,9 +389,10 @@ mod tests {
             "Tap a playbook to run it",
             "Run a playbook, or save a starter",
             "What the agent may do",
-            "Compiled into the ISO. Tap a runnable skill to act under grants.",
-            "Runnable skills call MCP under your grants. Others show their body.",
-            "Save starter needs the bridge. Tap a runnable skill to act under grants.",
+            "Compiled into the ISO. Tap a playbook to open its Brief.",
+            "Runnable skills call MCP under your grants. Others open a Brief with body text.",
+            "Save starter needs the bridge. Every playbook opens a Brief.",
+            "Playbook body unavailable.",
             "Tap a row to grant or revoke. Takes effect immediately.",
             "No skills loaded.",
             "Skills",

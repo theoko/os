@@ -77,11 +77,19 @@ pub struct Source {
     pub files_in_scope: bool,
     /// The caller held email.search.
     pub mail_in_scope: bool,
+    /// The caller held audio.transcribe (recordings in search scope).
+    pub audio_in_scope: bool,
 }
 
 impl Source {
     pub const fn offline() -> Self {
-        Self { bridge_online: false, errored: false, files_in_scope: false, mail_in_scope: false }
+        Self {
+            bridge_online: false,
+            errored: false,
+            files_in_scope: false,
+            mail_in_scope: false,
+            audio_in_scope: false,
+        }
     }
 
     /// Shown when something actually broke, as opposed to simply finding
@@ -103,6 +111,9 @@ impl Source {
         }
         if !self.mail_in_scope {
             return "No matches in your files. Turn on email.search to include mail.";
+        }
+        if !self.audio_in_scope {
+            return "No matches in files and mail. Turn on audio.transcribe for recordings.";
         }
         // Deliberately claims nothing about WHAT was searched. The guest
         // cannot see whether an index has content, and this line previously
@@ -172,6 +183,7 @@ impl SearchView {
             errored: peek.denied,
             files_in_scope: caps.allows(crate::caps::Cap::WorkspaceIndex),
             mail_in_scope: caps.allows(crate::caps::Cap::EmailSearch),
+            audio_in_scope: caps.allows(crate::caps::Cap::AudioTranscribe),
         };
         if online {
             for i in 0..peek.count.min(search::MAX_HITS) {
@@ -365,7 +377,13 @@ mod source_tests {
     fn an_online_bridge_is_never_reported_as_offline() {
         // The bug this replaces: a bridge that answered "n=0" was rendered as
         // "Bridge offline", sending the user to debug a working connection.
-        let s = Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: true };
+        let s = Source {
+            bridge_online: true,
+            errored: false,
+            files_in_scope: true,
+            mail_in_scope: true,
+            audio_in_scope: true,
+        };
         assert!(!s.empty_reason().contains("offline"));
     }
 
@@ -376,7 +394,13 @@ mod source_tests {
 
     #[test]
     fn missing_file_grant_names_the_fix() {
-        let s = Source { bridge_online: true, errored: false, files_in_scope: false, mail_in_scope: true };
+        let s = Source {
+            bridge_online: true,
+            errored: false,
+            files_in_scope: false,
+            mail_in_scope: true,
+            audio_in_scope: false,
+        };
         let m = s.empty_reason();
         assert!(m.contains("workspace.index"), "{m}");
         assert!(!m.contains("offline"), "{m}");
@@ -384,17 +408,60 @@ mod source_tests {
 
     #[test]
     fn missing_mail_grant_names_the_fix() {
-        let s = Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: false };
+        let s = Source {
+            bridge_online: true,
+            errored: false,
+            files_in_scope: true,
+            mail_in_scope: false,
+            audio_in_scope: false,
+        };
         assert!(s.empty_reason().contains("email.search"));
+    }
+
+    #[test]
+    fn missing_audio_grant_names_the_fix() {
+        let s = Source {
+            bridge_online: true,
+            errored: false,
+            files_in_scope: true,
+            mail_in_scope: true,
+            audio_in_scope: false,
+        };
+        assert!(s.empty_reason().contains("audio.transcribe"));
     }
 
     #[test]
     fn every_reason_is_renderable_ascii() {
         for s in [
             Source::offline(),
-            Source { bridge_online: true, errored: false, files_in_scope: false, mail_in_scope: false },
-            Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: false },
-            Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: true },
+            Source {
+                bridge_online: true,
+                errored: false,
+                files_in_scope: false,
+                mail_in_scope: false,
+                audio_in_scope: false,
+            },
+            Source {
+                bridge_online: true,
+                errored: false,
+                files_in_scope: true,
+                mail_in_scope: false,
+                audio_in_scope: false,
+            },
+            Source {
+                bridge_online: true,
+                errored: false,
+                files_in_scope: true,
+                mail_in_scope: true,
+                audio_in_scope: false,
+            },
+            Source {
+                bridge_online: true,
+                errored: false,
+                files_in_scope: true,
+                mail_in_scope: true,
+                audio_in_scope: true,
+            },
         ] {
             let m = s.empty_reason();
             assert!(m.bytes().all(|b| (0x20..=0x7E).contains(&b)), "{m}");
@@ -409,7 +476,13 @@ mod teddy_tests {
 
     #[test]
     fn a_real_failure_gets_the_friendly_line() {
-        let s = Source { bridge_online: true, errored: true, files_in_scope: true, mail_in_scope: true };
+        let s = Source {
+            bridge_online: true,
+            errored: true,
+            files_in_scope: true,
+            mail_in_scope: true,
+            audio_in_scope: true,
+        };
         assert_eq!(s.empty_reason(), Source::TEDDY);
     }
 
@@ -417,7 +490,13 @@ mod teddy_tests {
     fn an_empty_result_is_not_a_failure() {
         // Finding nothing is a legitimate answer and must stay actionable
         // rather than being papered over with a mascot.
-        let s = Source { bridge_online: true, errored: false, files_in_scope: false, mail_in_scope: true };
+        let s = Source {
+            bridge_online: true,
+            errored: false,
+            files_in_scope: false,
+            mail_in_scope: true,
+            audio_in_scope: false,
+        };
         assert_ne!(s.empty_reason(), Source::TEDDY);
         assert!(s.empty_reason().contains("workspace.index"));
     }
@@ -525,6 +604,7 @@ mod honesty_tests {
             errored: false,
             files_in_scope: true,
             mail_in_scope: true,
+            audio_in_scope: true,
         };
         let m = s.empty_reason();
         assert!(!m.contains("searched"), "claims knowledge it does not have: {m}");
@@ -539,7 +619,16 @@ mod honesty_tests {
             errored: false,
             files_in_scope: false,
             mail_in_scope: true,
+            audio_in_scope: false,
         };
         assert!(no_files.empty_reason().contains("workspace.index"));
+        let no_audio = Source {
+            bridge_online: true,
+            errored: false,
+            files_in_scope: true,
+            mail_in_scope: true,
+            audio_in_scope: false,
+        };
+        assert!(no_audio.empty_reason().contains("audio.transcribe"));
     }
 }

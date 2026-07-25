@@ -1,8 +1,19 @@
 ---
-version: 0.9.10
+version: 0.9.11
 ---
 
 # Changelog
+
+## 0.9.11 — 2026-07-25
+
+Recordings honesty and saved-skill Brief:
+
+- Search tile subtitle includes `audio` when Recordings is granted; empty
+  search ladder names `audio.transcribe` after files and mail.
+- Every Skills row opens Brief — saved/unknown show playbook body instead of
+  a footer blurb.
+- Smoke seeds a transcript store, asserts `search.query … audio=1`, then
+  `audio.forget` (no live whisper).
 
 ## 0.9.10 — 2026-07-25
 

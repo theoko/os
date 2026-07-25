@@ -514,10 +514,30 @@ unsafe extern "C" fn kmain() -> ! {
                                 } else if let Some(i) =
                                     screens::skills_hit(w, skill_peek.count, x, y)
                                 {
+                                    // Every row opens Brief — builtins run a
+                                    // plan; saved/unknown show playbook body.
                                     let name = skill_peek.name_at(i);
-                                    if agent::is_runnable(name) {
-                                        brief = agent::run(name, grants);
-                                        view = screens::View::Brief;
+                                    brief = agent::run(name, grants);
+                                    if !agent::is_runnable(name) {
+                                        let mut blurb = [0u8; 68];
+                                        if mcp::fetch_skill_blurb(name, &mut blurb) {
+                                            let n = blurb
+                                                .iter()
+                                                .position(|&b| b == 0)
+                                                .unwrap_or(blurb.len());
+                                            let body = core::str::from_utf8(&blurb[..n])
+                                                .unwrap_or(name);
+                                            brief.push_report("Body", body);
+                                            serial_port.write_str("skills: brief ");
+                                            serial_port.write_str(name);
+                                            serial_port.write_str("\n");
+                                        } else {
+                                            brief.push_report("Info", "Playbook body unavailable.");
+                                            serial_port.write_str("skills: brief offline ");
+                                            serial_port.write_str(name);
+                                            serial_port.write_str("\n");
+                                        }
+                                    } else {
                                         serial_port.write_str("agent: run ");
                                         serial_port.write_str(name);
                                         serial_port.write_str("\n");
@@ -526,27 +546,8 @@ unsafe extern "C" fn kmain() -> ! {
                                             serial_port.write_str(brief.deny_name());
                                             serial_port.write_str("\n");
                                         }
-                                    } else {
-                                        let mut blurb = [0u8; 72];
-                                        if mcp::fetch_skill_blurb(name, &mut blurb) {
-                                            let n = blurb
-                                                .iter()
-                                                .position(|&b| b == 0)
-                                                .unwrap_or(blurb.len());
-                                            write_status(
-                                                &mut status_buf,
-                                                core::str::from_utf8(&blurb[..n]).unwrap_or(name),
-                                            );
-                                            serial_port.write_str("skills: got ");
-                                            serial_port.write_str(name);
-                                            serial_port.write_str("\n");
-                                        } else {
-                                            write_status(&mut status_buf, name);
-                                            serial_port.write_str("skills: get offline ");
-                                            serial_port.write_str(name);
-                                            serial_port.write_str("\n");
-                                        }
                                     }
+                                    view = screens::View::Brief;
                                     dirty = true;
                                 }
                             }

@@ -35,6 +35,11 @@ body `b`, optional PageRank-ish boost `pr`.
 | Call | Result |
 |------|--------|
 | `CALL search.query q=… k=5 cat=docs` | `OK search.query n=N backend=…` + `ROW title=…\|cat=…\|score=…\|snip=…\|url=…` + `END` |
+| `… email=1` / `files=1` / `audio=1` / `portal=1` | Opt-in personal sources (mail graph, workspace, transcripts, teddy corpus) |
+
+Guest Search empty-state names the next missing grant in order: workspace →
+email → audio. The home Search tile subtitle lists `docs` / `mail` / `files` /
+`online` / `audio` from current caps.
 
 ## Host backends
 

@@ -100,6 +100,11 @@ impl Brief {
         self.count > 0 || self.plan_n > 0 || !self.heading().is_empty()
     }
 
+    /// Append a report line (used when enriching Unknown skills with a body peek).
+    pub fn push_report(&mut self, tag: &str, text: &str) {
+        self.push_line(tag, text);
+    }
+
     fn set_skill(&mut self, name: &str) {
         copy_field(&mut self.skill, name);
     }
@@ -163,9 +168,12 @@ pub fn run(name: &str, caps: Caps) -> Brief {
         Kind::TeddyPortals => run_teddy(&mut brief, caps),
         Kind::MarketPortals => run_markets(&mut brief, caps),
         Kind::Unknown => {
-            brief.set_heading("No guest plan for this skill");
-            brief.push_plan("Load playbook text from the host");
-            brief.push_line("Info", "Open the skill body; no MCP calls yet.");
+            // Saved / custom skills: Brief always, with body peek filled by the
+            // click path. No MCP tool plan until a guest runner exists.
+            brief.set_heading("Playbook only");
+            brief.push_plan("Show playbook body from the host");
+            brief.push_plan("No guest MCP plan for this name");
+            brief.push_line("Info", "Saved skills show body text until they get a runner.");
         }
     }
     brief
@@ -606,6 +614,16 @@ mod tests {
     }
 
     #[test]
+    fn unknown_skill_opens_a_brief_without_com2() {
+        // Host unit tests must not grant anything that would open COM2.
+        let b = run("guest-starter", Caps::none());
+        assert_eq!(b.heading(), "Playbook only");
+        assert!(b.plan_n >= 2);
+        assert!(!b.denied);
+        assert!(b.lines.iter().any(|l| l.tag() == "Info"));
+    }
+
+    #[test]
     fn teddy_skill_names_the_portal_cap_when_missing() {
         let b = run("teddy-portals", Caps::none());
         assert!(b.denied);
@@ -725,6 +743,9 @@ mod tests {
             "Bridge offline - cannot save.",
             "Save skills off - no write.",
             "skills.save failed on the host.",
+            "Playbook only",
+            "Saved skills show body text until they get a runner.",
+            "Playbook body unavailable.",
             "Acting only with switches that are on.",
         ] {
             assert!(
