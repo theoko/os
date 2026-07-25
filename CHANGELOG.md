@@ -1,8 +1,17 @@
 ---
-version: 0.9.1
+version: 0.9.2
 ---
 
 # Changelog
+
+## 0.9.2 — 2026-07-25
+
+Home Recent mail opens in the Reader:
+
+- `email.search` ROWs carry stable `id=`; `doc.read email://…` needs `email=1`.
+- Guest hit-tests Recent mail rows; click opens the Reader (same path as Search
+  results). Cap refuse / missing id never opens a blank reader.
+- Also gates `email.search` behind `email=1` on the bridge wire.
 
 ## 0.9.1 — 2026-07-25
 

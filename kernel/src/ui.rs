@@ -94,6 +94,8 @@ pub enum CardId {
 pub enum HomeHit {
     Cta(CtaId),
     Card(CardId),
+    /// Open a Recent mail row (`email://` via the peek's graph id).
+    Mail(usize),
 }
 
 /// Hit targets for the CTA pair, computed with the same layout as `draw_home`.
@@ -142,6 +144,8 @@ impl CardTargets {
 pub struct HomeTargets {
     pub ctas: CtaTargets,
     pub cards: CardTargets,
+    pub mail: [Rect; 3],
+    pub mail_n: usize,
 }
 
 impl HomeTargets {
@@ -149,7 +153,15 @@ impl HomeTargets {
         if let Some(c) = self.ctas.hit(px, py) {
             return Some(HomeHit::Cta(c));
         }
-        self.cards.hit(px, py).map(HomeHit::Card)
+        if let Some(c) = self.cards.hit(px, py) {
+            return Some(HomeHit::Card(c));
+        }
+        for i in 0..self.mail_n.min(self.mail.len()) {
+            if self.mail[i].w > 0 && self.mail[i].contains(px, py) {
+                return Some(HomeHit::Mail(i));
+            }
+        }
+        None
     }
 }
 
@@ -324,11 +336,48 @@ pub fn card_targets(w: i32, h: i32) -> CardTargets {
     }
 }
 
-pub fn home_targets(w: i32, h: i32, skills: &SkillPeek) -> HomeTargets {
+pub fn home_targets(w: i32, h: i32, skills: &SkillPeek, mail: &MailPeek) -> HomeTargets {
+    let (mail_rects, mail_n) = mail_targets(w, h, mail);
     HomeTargets {
         ctas: cta_targets(w, h, skills),
         cards: card_targets(w, h),
+        mail: mail_rects,
+        mail_n,
     }
+}
+
+/// Y origin of the Recent mail heading, matching `draw_home_full`.
+fn mail_block_top(h: i32) -> i32 {
+    tile_top(h) + TILE_H + 40
+}
+
+const MAIL_HEADING: i32 = 30;
+const MAIL_ROW_PITCH: i32 = 38;
+
+/// Hit boxes for Recent mail rows. Empty when there is nothing to open.
+pub fn mail_targets(w: i32, h: i32, mail: &MailPeek) -> ([Rect; 3], usize) {
+    let mut rects = [Rect {
+        x: 0,
+        y: 0,
+        w: 0,
+        h: 0,
+    }; 3];
+    if mail.count == 0 {
+        return (rects, 0);
+    }
+    let (x0, cw) = home_column(w);
+    let n = mail.count.min(3).min(rects.len());
+    // Heading at mail_block_top; first row starts MAIL_HEADING below it.
+    let y0 = mail_block_top(h) + MAIL_HEADING;
+    for i in 0..n {
+        rects[i] = Rect {
+            x: x0,
+            y: y0 + i as i32 * MAIL_ROW_PITCH,
+            w: cw,
+            h: MAIL_ROW_PITCH,
+        };
+    }
+    (rects, n)
 }
 
 
@@ -347,7 +396,8 @@ mod tests {
     #[test]
     fn search_field_is_the_primary_target() {
         // Typing must be reachable without hunting for a card.
-        let t = home_targets(1024, 768, &peek());
+        let mail = MailPeek::empty(BridgeStatus::Offline);
+        let t = home_targets(1024, 768, &peek(), &mail);
         let (fx, fy, fw, fh) = search_rect(1024, 768);
         assert_eq!(t.ctas.ready, Rect { x: fx, y: fy, w: fw, h: fh });
     }
@@ -360,7 +410,8 @@ mod tests {
 
     #[test]
     fn each_tile_hit_tests_to_its_own_id() {
-        let t = home_targets(1024, 768, &peek());
+        let mail = MailPeek::empty(BridgeStatus::Offline);
+        let t = home_targets(1024, 768, &peek(), &mail);
         for (i, want) in [CardId::Connectors, CardId::Capabilities, CardId::Skills]
             .iter()
             .enumerate()
@@ -444,7 +495,53 @@ mod tests {
     fn drawing_the_home_screen_does_not_panic() {
         // Exercises the offline branch and the count formatting together.
         let mail = MailPeek::empty(BridgeStatus::Offline);
-        let _ = home_targets(1024, 768, &peek());
+        let _ = home_targets(1024, 768, &peek(), &mail);
         assert_eq!(mail.count, 0);
+    }
+
+    #[test]
+    fn recent_mail_rows_are_hittable() {
+        let mut mail = MailPeek::empty(BridgeStatus::Online);
+        copy_ascii(&mut mail.rows[0].id, "0123456789abcdef");
+        copy_ascii(&mut mail.rows[0].from, "Alice Chen");
+        copy_ascii(&mut mail.rows[0].subj, "Q2 planning notes");
+        copy_ascii(&mut mail.rows[1].id, "fedcba9876543210");
+        copy_ascii(&mut mail.rows[1].from, "GitHub");
+        copy_ascii(&mut mail.rows[1].subj, "Your Actions workflow run");
+        mail.count = 2;
+
+        let (rects, n) = mail_targets(1024, 768, &mail);
+        assert_eq!(n, 2);
+        let t = home_targets(1024, 768, &peek(), &mail);
+        assert_eq!(
+            t.hit(rects[0].x + 8, rects[0].y + 8),
+            Some(HomeHit::Mail(0))
+        );
+        // Sender sits on the right of the same row — still a hit.
+        assert_eq!(
+            t.hit(rects[0].x + rects[0].w - 16, rects[0].y + 8),
+            Some(HomeHit::Mail(0))
+        );
+        assert_eq!(
+            t.hit(rects[1].x + 8, rects[1].y + 8),
+            Some(HomeHit::Mail(1))
+        );
+    }
+
+    #[test]
+    fn mail_url_builds_email_scheme() {
+        let mut mail = MailPeek::empty(BridgeStatus::Online);
+        copy_ascii(&mut mail.rows[0].id, "0123456789abcdef");
+        mail.count = 1;
+        let mut buf = [0u8; 40];
+        assert_eq!(mail.url_at(0, &mut buf), Some("email://0123456789abcdef"));
+        let empty = MailPeek::empty(BridgeStatus::Online);
+        assert_eq!(empty.url_at(0, &mut buf), None);
+    }
+
+    fn copy_ascii(dst: &mut [u8], s: &str) {
+        dst.fill(0);
+        let n = s.len().min(dst.len());
+        dst[..n].copy_from_slice(&s.as_bytes()[..n]);
     }
 }

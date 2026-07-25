@@ -34,7 +34,8 @@ Guest → host:
 |---------|---------|
 | `PING` | Liveness |
 | `LIST` | Tool names |
-| `CALL email.search q=<gmail query> max=<n>` | Search mail |
+| `CALL email.search q=<gmail query> max=<n> email=1` | Search mail (needs `email=1`) |
+| `CALL doc.read url=email://… email=1` | Open a mail peek (snippet) |
 | `CALL email.send to=<addr> subj=<s> body=<b>` | Send (cap-gated; bridge may require confirm) |
 | `CALL search.query q=<keywords> k=<n> cat=<opt>` | Knowledge search (curated corpus) |
 
@@ -44,7 +45,7 @@ Host → guest:
 |----------|---------|
 | `OK pong` | Alive |
 | `OK tools=a,b,c` | Tool list |
-| `OK email.search n=<N>` / `ROW from=…\|subj=…` / `END` | Mail hits |
+| `OK email.search n=<N>` / `ROW id=…\|from=…\|subj=…` / `END` | Mail hits |
 | `OK search.query n=<N> backend=…` / `ROW title=…\|…` / `END` | Knowledge hits |
 | `ERR <tool> <reason>` | Failure |
 

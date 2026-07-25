@@ -341,6 +341,9 @@ fn parse_args(rest: &str) -> Vec<(String, String)> {
 
 fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<String> {
     match tool {
+        "email.search" if !matches!(arg_val(args, "email"), Some("1")) => {
+            vec!["ERR email.search needs_email_cap".into()]
+        }
         "email.search" => email_search(args, &backends.email),
         "email.send" => vec!["ERR email.send disabled_until_cap_confirm".into()],
         "calendar.list" => vec![
@@ -563,6 +566,7 @@ fn parse_row_field<'a>(row: &'a str, key: &str) -> Option<&'a str> {
 fn read_doc(url: &str, max: usize, args: &[(String, String)]) -> Result<Vec<String>, String> {
     let with_files = matches!(arg_val(args, "files"), Some("1"));
     let with_audio = matches!(arg_val(args, "audio"), Some("1"));
+    let with_email = matches!(arg_val(args, "email"), Some("1"));
 
     let body = if let Some(rel) = url.strip_prefix("file://") {
         if !with_files {
@@ -594,6 +598,27 @@ fn read_doc(url: &str, max: usize, args: &[(String, String)]) -> Result<Vec<Stri
             .find(|t| t.source == src)
             .map(|t| t.text)
             .ok_or("no such transcript")?
+    } else if let Some(id) = url.strip_prefix("email://") {
+        // Mail graph stores sender/subject/snippet only — never the full body.
+        if !with_email {
+            return Err("needs_email_cap".into());
+        }
+        let g = graph::Graph::load_or_empty();
+        let m = g
+            .messages
+            .iter()
+            .find(|m| m.id == id)
+            .ok_or("no such message")?;
+        format!(
+            "From: {}\nSubject: {}\n\n{}",
+            m.from,
+            m.subject,
+            if m.snippet.is_empty() {
+                "(no snippet)"
+            } else {
+                m.snippet.as_str()
+            }
+        )
     } else {
         // Corpus and teddy documents carry their body in the index.
         return search::body_for(url, max).ok_or_else(|| "no readable body".into());
@@ -670,7 +695,8 @@ fn email_search_mock(query: &str, max: usize) -> Vec<String> {
     let n = samples.len().min(max);
     let mut out = vec![format!("OK email.search n={n}")];
     for (from, subj) in samples.iter().take(n) {
-        out.push(format!("ROW from={from}|subj={subj}"));
+        let id = graph::id_for(from, subj);
+        out.push(format!("ROW id={id}|from={from}|subj={subj}"));
     }
     out.push("END".into());
     out
@@ -728,11 +754,10 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
                 .or_else(|| item.get("snippet"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("(no subject)");
-            rows.push(format!(
-                "ROW from={}|subj={}",
-                sanitize_field(from),
-                sanitize_field(subj)
-            ));
+            let from = sanitize_field(from);
+            let subj = sanitize_field(subj);
+            let id = graph::id_for(&from, &subj);
+            rows.push(format!("ROW id={id}|from={from}|subj={subj}"));
         }
     }
 
@@ -740,7 +765,8 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
         for line in stdout.lines().take(max) {
             let line = sanitize_field(line);
             if !line.is_empty() {
-                rows.push(format!("ROW from=gog|subj={line}"));
+                let id = graph::id_for("gog", &line);
+                rows.push(format!("ROW id={id}|from=gog|subj={line}"));
             }
         }
     }
@@ -775,6 +801,59 @@ mod tests {
         assert!(r[0].starts_with("OK email.search n=2"));
         assert!(r.iter().any(|l| l.starts_with("ROW ")));
         assert_eq!(r.last().map(String::as_str), Some("END"));
+    }
+
+    #[test]
+    fn email_search_needs_the_email_cap() {
+        let denied = dispatch("CALL email.search q=in:inbox max=2", &test_backends());
+        assert!(
+            denied[0].contains("needs_email_cap"),
+            "ungated email.search: {denied:?}"
+        );
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("os-es-cap-{}", std::process::id()));
+        let path = dir.join("emails.json");
+        let _ = std::fs::create_dir_all(&dir);
+        unsafe {
+            std::env::set_var("OS_GRAPH_PATH", &path);
+        }
+        let allowed = dispatch(
+            "CALL email.search q=in:inbox max=2 email=1",
+            &test_backends(),
+        );
+        assert!(
+            allowed[0].starts_with("OK email.search"),
+            "email=1 should search: {allowed:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+        unsafe {
+            std::env::remove_var("OS_GRAPH_PATH");
+        }
+    }
+
+    #[test]
+    fn email_search_rows_carry_graph_ids() {
+        let rows = email_search_mock("in:inbox", 2);
+        let row = rows.iter().find(|l| l.starts_with("ROW ")).expect("row");
+        let id = row
+            .strip_prefix("ROW ")
+            .unwrap()
+            .split('|')
+            .find_map(|p| p.strip_prefix("id="))
+            .expect("id=");
+        let from = row
+            .strip_prefix("ROW ")
+            .unwrap()
+            .split('|')
+            .find_map(|p| p.strip_prefix("from="))
+            .unwrap();
+        let subj = row
+            .strip_prefix("ROW ")
+            .unwrap()
+            .split('|')
+            .find_map(|p| p.strip_prefix("subj="))
+            .unwrap();
+        assert_eq!(id, graph::id_for(from, subj), "ROW id must match graph");
     }
 
     fn test_backends() -> Backends {
@@ -871,5 +950,44 @@ mod read_tests {
         let rows = wrap_lines(&"x".repeat(300), 20, 5);
         assert!(!rows.is_empty());
         assert!(rows.len() <= 5);
+    }
+
+    #[test]
+    fn reading_mail_needs_the_email_grant() {
+        let e = read_doc("email://deadbeef", 10, &args(&[("files", "1")])).unwrap_err();
+        assert_eq!(e, "needs_email_cap", "files must not unlock mail peeks");
+    }
+
+    #[test]
+    fn reading_mail_with_email_cap_shows_snippet() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("os-eread-{}", std::process::id()));
+        let path = dir.join("emails.json");
+        let _ = std::fs::create_dir_all(&dir);
+        unsafe {
+            std::env::set_var("OS_GRAPH_PATH", &path);
+        }
+        let mut g = graph::Graph::default();
+        g.ingest(&[(
+            "ada@x.com".into(),
+            "Open me".into(),
+            "snippet for the reader".into(),
+        )]);
+        g.save().expect("save");
+        let id = g.messages[0].id.clone();
+        let rows = read_doc(&format!("email://{id}"), 10, &args(&[("email", "1")]))
+            .expect("read");
+        let text: String = rows
+            .iter()
+            .filter_map(|r| r.strip_prefix("ROW line="))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("ada@x.com"), "{text}");
+        assert!(text.contains("Open me"), "{text}");
+        assert!(text.contains("snippet for the reader"), "{text}");
+        let _ = std::fs::remove_dir_all(&dir);
+        unsafe {
+            std::env::remove_var("OS_GRAPH_PATH");
+        }
     }
 }

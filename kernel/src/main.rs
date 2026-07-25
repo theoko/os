@@ -567,7 +567,7 @@ unsafe extern "C" fn kmain() -> ! {
                         let left_down = buttons & 1 != 0;
                         let left_was = prev_buttons & 1 != 0;
                         if left_down && !left_was {
-                            let targets = ui::home_targets(w, h, &skill_peek);
+                            let targets = ui::home_targets(w, h, &skill_peek, &mail);
                             let mut clicked = false;
                             match targets.hit(x, y) {
                                 Some(ui::HomeHit::Cta(ui::CtaId::Ready)) => {
@@ -652,6 +652,32 @@ unsafe extern "C" fn kmain() -> ! {
                                         serial_port.write_bytes(&[d, b'\n']);
                                     }
                                     clicked = true;
+                                }
+                                Some(ui::HomeHit::Mail(i)) => {
+                                    let mut url_buf = [0u8; 40];
+                                    if let Some(url) = mail.url_at(i, &mut url_buf) {
+                                        open_title.clear();
+                                        for b in mail.row_subj(i).bytes() {
+                                            open_title.apply(keyboard::Key::Char(b));
+                                        }
+                                        page = mcp::fetch_doc(grants, url);
+                                        scroll = 0;
+                                        view = screens::View::Reader;
+                                        serial_port.write_str("ui: open mail\n");
+                                        cursor.hide(surface);
+                                        searchui::draw_reader(
+                                            surface,
+                                            open_title.as_str(),
+                                            &page,
+                                            scroll,
+                                        );
+                                        cursor.show_at(surface, x, y);
+                                        enter(&screen, animate);
+                                    } else {
+                                        serial_port.write_str("ui: mail missing id\n");
+                                    }
+                                    clicked = false;
+                                    moved = false;
                                 }
                                 Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
                                     serial_port.write_str("ui: click Capabilities\n");

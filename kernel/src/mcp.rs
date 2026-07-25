@@ -21,6 +21,8 @@ pub enum BridgeStatus {
 }
 
 pub struct MailRow {
+    /// Graph id from the bridge (`id=`), used to open `email://…`.
+    pub id: [u8; 20],
     pub from: [u8; 40],
     pub subj: [u8; 72],
 }
@@ -34,6 +36,7 @@ pub struct MailPeek {
 impl MailPeek {
     pub const fn empty(status: BridgeStatus) -> Self {
         const EMPTY: MailRow = MailRow {
+            id: [0; 20],
             from: [0; 40],
             subj: [0; 72],
         };
@@ -50,6 +53,27 @@ impl MailPeek {
 
     pub fn row_subj(&self, i: usize) -> &str {
         str_prefix(trim_buf(&self.rows[i].subj))
+    }
+
+    pub fn row_id(&self, i: usize) -> &str {
+        str_prefix(trim_buf(&self.rows[i].id))
+    }
+
+    /// Build `email://{id}` into `buf`. Empty when the row has no id.
+    pub fn url_at<'a>(&self, i: usize, buf: &'a mut [u8; 40]) -> Option<&'a str> {
+        let id = self.row_id(i);
+        if id.is_empty() || id.len() > 24 {
+            return None;
+        }
+        buf.fill(0);
+        let prefix = b"email://";
+        let n = prefix.len() + id.len();
+        if n > buf.len() {
+            return None;
+        }
+        buf[..prefix.len()].copy_from_slice(prefix);
+        buf[prefix.len()..n].copy_from_slice(id.as_bytes());
+        Some(str_prefix(&buf[..n]))
     }
 }
 
@@ -154,7 +178,8 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
         return MailPeek::empty(BridgeStatus::Online);
     }
 
-    com2.write_str("CALL email.search q=in:inbox max=3\n");
+    // Wire bit must match Cap::EmailSearch — bridge refuses without email=1.
+    com2.write_str("CALL email.search q=in:inbox max=3 email=1\n");
 
     let mut peek = MailPeek::empty(BridgeStatus::Online);
 
@@ -173,8 +198,10 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
             continue;
         }
         if resp.starts_with("ROW ") && peek.count < peek.rows.len() {
+            let id = parse_row_field(resp, "id").unwrap_or("");
             let from = parse_row_field(resp, "from").unwrap_or("?");
             let subj = parse_row_field(resp, "subj").unwrap_or("(no subject)");
+            copy_field(&mut peek.rows[peek.count].id, id);
             copy_field(&mut peek.rows[peek.count].from, from);
             copy_field(&mut peek.rows[peek.count].subj, subj);
             peek.count += 1;
@@ -229,6 +256,9 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
     }
     if caps.allows(crate::caps::Cap::AudioTranscribe) {
         com2.write_str(" audio=1");
+    }
+    if caps.allows(crate::caps::Cap::EmailSearch) {
+        com2.write_str(" email=1");
     }
     // Portals are the only source that leaves this machine.
     if caps.allows(crate::caps::Cap::PortalSync) {

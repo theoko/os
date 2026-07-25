@@ -35,6 +35,12 @@ No skill lists, mail rows, or secondary pills in the hero.
 **Constraint:** the 8x8 framebuffer font is ASCII only (`0x20..=0x7E`).
 Never put em dashes, middots, or curly quotes in on-screen strings — they become `?`.
 
+## Recent mail (v0.9.2)
+
+Home lists recent inbox rows when Email is granted. Each row is clickable and
+opens `email://{id}` in the Reader — same `doc.read` path as Search. The id
+comes from the bridge `email.search` ROW (graph-stable hash of from+subject).
+
 ## Code
 
 - [`kernel/src/ui.rs`](../kernel/src/ui.rs)
