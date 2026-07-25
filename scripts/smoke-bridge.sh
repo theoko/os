@@ -14,7 +14,6 @@ if [[ ! -f "$ISO" ]]; then
   exit 1
 fi
 
-chmod +x scripts/ensure-bridge.sh
 OS_MCP_BRIDGE_CONNECT="tcp:$ADDR" ./scripts/ensure-bridge.sh
 BRIDGE_PID="$(cat .bridge.pid)"
 

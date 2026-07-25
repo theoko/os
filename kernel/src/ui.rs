@@ -54,7 +54,7 @@ impl Rect {
 /// Which home tile was under the pointer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CardId {
-    Connectors,
+    Search,
     Capabilities,
     Skills,
 }
@@ -70,15 +70,15 @@ pub enum HomeHit {
 /// Hit targets for the three destination tiles.
 #[derive(Clone, Copy, Debug)]
 pub struct CardTargets {
-    pub connectors: Rect,
+    pub search: Rect,
     pub capabilities: Rect,
     pub skills: Rect,
 }
 
 impl CardTargets {
     pub fn hit(self, px: i32, py: i32) -> Option<CardId> {
-        if self.connectors.contains(px, py) {
-            Some(CardId::Connectors)
+        if self.search.contains(px, py) {
+            Some(CardId::Search)
         } else if self.capabilities.contains(px, py) {
             Some(CardId::Capabilities)
         } else if self.skills.contains(px, py) {
@@ -261,7 +261,7 @@ pub fn tile_rect(w: i32, h: i32, i: i32) -> Rect {
 
 pub fn card_targets(w: i32, h: i32) -> CardTargets {
     CardTargets {
-        connectors: tile_rect(w, h, 0),
+        search: tile_rect(w, h, 0),
         capabilities: tile_rect(w, h, 1),
         skills: tile_rect(w, h, 2),
     }
@@ -346,7 +346,7 @@ mod tests {
     #[test]
     fn each_tile_hit_tests_to_its_own_id() {
         let t = home_targets(1024, 768, &peek());
-        for (i, want) in [CardId::Connectors, CardId::Capabilities, CardId::Skills]
+        for (i, want) in [CardId::Search, CardId::Capabilities, CardId::Skills]
             .iter()
             .enumerate()
         {

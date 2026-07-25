@@ -75,7 +75,6 @@ run: iso
 
 # COM1 = stdio, COM2 = TCP server; host bridge dials (same topology as UTM).
 run-bridged: iso bridge
-	chmod +x scripts/ensure-bridge.sh
 	OS_MCP_BRIDGE_CONNECT=tcp:$(BRIDGE_ADDR) ./scripts/ensure-bridge.sh
 	$(QEMU) -M q35 -cdrom $(IMAGE_NAME).iso -boot d \
 		-m 512M -display none \
@@ -84,16 +83,13 @@ run-bridged: iso bridge
 		$(QEMU_DEBUG_EXIT) || true
 
 utm: iso
-	chmod +x scripts/make-utm.sh
 	./scripts/make-utm.sh
 
 utm-run: iso
-	chmod +x scripts/make-utm.sh
 	UTM_START=1 ./scripts/make-utm.sh
 
 # COM2 TcpServer + dialing bridge (retries). One wiring model for QEMU and UTM.
 utm-bridged: iso bridge
-	chmod +x scripts/ensure-bridge.sh scripts/make-utm.sh
 	OS_MCP_BRIDGE_CONNECT=tcp:$(BRIDGE_ADDR) ./scripts/ensure-bridge.sh
 	UTM_START=1 OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) ./scripts/make-utm.sh
 
@@ -104,11 +100,9 @@ test-host:
 	$(WITH_RUST) $(CARGO) test -p os-mcp-bridge
 
 smoke: iso
-	chmod +x scripts/smoke-qemu.sh
 	./scripts/smoke-qemu.sh
 
 smoke-bridge: iso bridge
-	chmod +x scripts/smoke-bridge.sh
 	./scripts/smoke-bridge.sh
 
 # An existing checkout is never auto-refreshed, so at least surface a

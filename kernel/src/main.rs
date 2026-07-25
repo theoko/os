@@ -127,8 +127,6 @@ unsafe extern "C" fn kmain() -> ! {
                 // Everything composes in cached RAM; `present()` is the only
                 // thing that touches video memory.
                 let surface = screen.surface();
-                ui::draw_home(surface, &mail, &skill_peek, "");
-                screen.present();
 
                 // Liveness only until the user consents. Reading the inbox
                 // here would fetch — and, because the bridge indexes results,
@@ -140,10 +138,10 @@ unsafe extern "C" fn kmain() -> ! {
                     mcp::BridgeStatus::Offline => serial_port.write_str("mcp: email offline\n"),
                 }
                 serial_port.write_str("skills: builtins ready\n");
-                ui::draw_home(surface, &mail, &skill_peek, "");
 
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
+                ui::draw_home(surface, &mail, &skill_peek, "");
                 mouse::paint_pointer(surface, cx, cy);
                 screen.present();
                 serial_port.write_str("mouse: pointer painted\n");
@@ -185,7 +183,6 @@ unsafe extern "C" fn kmain() -> ! {
                     mice.present = true;
                 }
 
-                ui::draw_home(surface, &mail, &skill_peek, "");
                 let mut cursor = mouse::Cursor::new();
                 let mut x = cx;
                 let mut y = cy;
@@ -474,10 +471,9 @@ unsafe extern "C" fn kmain() -> ! {
                         let left_was = prev_buttons & 1 != 0;
                         if left_down && !left_was {
                             let targets = ui::home_targets(w, h, &skill_peek);
-                            let mut clicked = false;
                             match targets.hit(x, y) {
                                 Some(ui::HomeHit::SearchField)
-                                | Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
+                                | Some(ui::HomeHit::Card(ui::CardId::Search)) => {
                                     serial_port.write_str("ui: open search\n");
                                     view = screens::View::Search;
                                     query.clear();
@@ -492,7 +488,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     );
                                     cursor.show_at(surface, x, y);
                                     enter(&screen);
-                                    clicked = false;
                                     moved = false;
                                 }
                                 Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
@@ -508,27 +503,19 @@ unsafe extern "C" fn kmain() -> ! {
                                     screens::draw_skills(surface, &skill_peek);
                                     cursor.show_at(surface, x, y);
                                     enter(&screen);
-                                    clicked = false;
                                     moved = false;
                                 }
                                 Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
                                     serial_port.write_str("ui: click Capabilities\n");
                                     write_status(&mut status_buf, grants.footer_status());
-                                    clicked = true;
+                                    view = screens::View::Caps;
+                                    cursor.hide(surface);
+                                    screens::draw_caps(surface, grants);
+                                    cursor.show_at(surface, x, y);
+                                    enter(&screen);
+                                    moved = false;
                                 }
                                 None => {}
-                            }
-                            if clicked && setup.is_finished() {
-                                cursor.hide(surface);
-                                ui::draw_home(
-                                    surface,
-                                    &mail,
-                                    &skill_peek,
-                                    status_str(&status_buf),
-                                );
-                                cursor.show_at(surface, x, y);
-                                enter(&screen);
-                                moved = false;
                             }
                         }
                     }
