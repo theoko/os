@@ -43,6 +43,31 @@ ACCENT = (0x00, 0x71, 0xE3)
 # clicking nothing.
 CAP_ROW_X, CAP_ROW_TOP, CAP_ROW_PITCH, CAP_ROW_H = 640, 208, 54, 46
 
+# Centre of ui::portal_rect at 1280x800, derived from search_rect: the pill is
+# right-aligned to the field and sits 38px below it.
+# Centre of ui::portal_rect at 1280x800: the pill is right-aligned to the
+# 920px content column and sits 38px below the 132+52 search field.
+PORTAL_CENTRE = (981, 236)
+
+# Centre of the home search field at 1280x800 (920px column, y=132, h=52).
+# Typing works on a freshly drawn home screen without clicking, but after
+# navigating away and back the keystrokes went nowhere - so click it, which is
+# what a person does anyway.
+SEARCH_FIELD_CENTRE = (640, 158)
+
+# The persistent nav "Back" link, top-left on every non-home screen.
+NAV_BACK = (42, 23)
+
+# theme::CARD_BORDER. Result rows are the only thing drawn at the exact left
+# edge of the content column, which makes counting them a matter of counting
+# runs of border pixels in one column rather than guessing at text.
+CARD_BORDER = (0xE8, 0xE8, 0xED)
+
+# searchui geometry: PAD_X 28, CONTENT_MAX 720, field at y=150 h=52, then a
+# 26px gap and a 34px band for the agent's sentence before the first result.
+SEARCH_PAD_X, SEARCH_CONTENT_MAX = 28, 720
+SEARCH_RESULTS_TOP = 150 + 52 + 26 + 34
+
 # Keystrokes QEMU knows by name; anything else has to be spelled out.
 KEYMAP = {
     " ": "spc",
@@ -212,6 +237,53 @@ def find_primary_button(path, tol=28, min_w=90, min_h=20):
     return None if best_blob is None else (best_blob[1], best_blob[2])
 
 
+def count_result_rows(path):
+    """How many result cards are actually drawn.
+
+    The agent's sentence counts the rows it returned; the screen shows what it
+    could fit. Those disagreed in shipped code - "5 matches for nvda." printed
+    above three cards - and no unit test could see it, because the defect only
+    exists once both halves are on screen together. Counting the cards is the
+    only way to check the sentence against reality.
+    """
+    w, h, px = read_ppm(path)
+    cw = min(w - SEARCH_PAD_X * 2, SEARCH_CONTENT_MAX)
+    x = (w - cw) // 2  # left edge of the column: where card borders live
+
+    # Start below the input field. The field is a rounded rect on the same
+    # column, so counting from the top made it look like an extra result.
+    rows, inside = 0, False
+    for y in range(SEARCH_RESULTS_TOP, h):
+        i = (y * w + x) * 3
+        border = all(abs(px[i + c] - CARD_BORDER[c]) <= 12 for c in range(3))
+        if border and not inside:
+            rows += 1
+            inside = True
+        elif not border:
+            inside = False
+    return rows
+
+
+class Checks:
+    """Collected assertions. Reported together so one failure does not hide
+    the rest, and the run exits non-zero if any failed."""
+
+    def __init__(self):
+        self.results = []
+
+    def that(self, name, ok, detail=""):
+        self.results.append((bool(ok), name, detail))
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}" + (f" - {detail}" if detail else ""))
+        return ok
+
+    def report(self):
+        failed = [r for r in self.results if not r[0]]
+        print(f"\n{len(self.results) - len(failed)}/{len(self.results)} checks passed")
+        for _, name, detail in failed:
+            print(f"  FAILED: {name} - {detail}")
+        return 1 if failed else 0
+
+
 def to_png(ppm, png):
     """QEMU writes PPM; nothing else here reads PPM."""
     subprocess.run(
@@ -232,6 +304,7 @@ def main():
         help="host MCP bridge for COM2; empty string to run offline",
     )
     ap.add_argument("--query", default="i wanna work on my paper")
+    ap.add_argument("--portal", default="1", help="click the portal pill; empty to skip")
     ap.add_argument(
         "--grant",
         default="2,5",
@@ -289,6 +362,7 @@ def main():
     )
 
     shots = []
+    rc = 0
 
     def snap(name, keep_ppm=False):
         global WIDTH, HEIGHT
@@ -299,7 +373,13 @@ def main():
             WIDTH, HEIGHT, _ = read_ppm(ppm)
             print(f"  framebuffer: {WIDTH}x{HEIGHT}")
         target = find_primary_button(ppm)
-        to_png(ppm, png) if not keep_ppm else None
+        if keep_ppm:
+            subprocess.run(
+                ["sips", "-s", "format", "png", str(ppm), "--out", str(png)],
+                check=True, capture_output=True,
+            )
+        else:
+            to_png(ppm, png)
         shots.append(png)
         print(f"  shot: {png}" + (f"  primary at {target}" if target else "  (no primary action)"))
         return target
@@ -314,7 +394,10 @@ def main():
         # rather than assuming where it sits.
         for name in ["02-region", "03-bridge", "04-capabilities", "05-skills", "06-done", "07-home"]:
             if target is None:
-                print(f"  stopped before {name}: no primary action on screen")
+                print(f"  no primary action before {name}; using Back to reach home")
+                qmp.click(*NAV_BACK)
+                time.sleep(2.0)
+                snap(f"{name}-viaback")
                 break
             qmp.click(*target)
             time.sleep(2.5)
@@ -332,12 +415,85 @@ def main():
                 target = snap("04b-granted")
 
         # Type straight into the home field, no click needed.
+        # Click the portal affordance before typing. It is drawn next to the
+        # search field; a control that is drawn but does nothing is a bug this
+        # project has shipped twice, so prove it routes somewhere.
+        if args.portal:
+            px, py = PORTAL_CENTRE
+            print(f"  clicking the portal pill at ({px}, {py})")
+            qmp.click(px, py)
+            time.sleep(2.5)
+            snap("07b-portal")
+            # Esc does not return home from every screen; the nav Back link
+            # does. Relying on Esc left the guest on the portal screen, so the
+            # query typed next went nowhere and the bridge never saw it.
+            qmp.click(*NAV_BACK)
+            time.sleep(2.0)
+            snap("07c-back")
+
+        qmp.click(*SEARCH_FIELD_CENTRE)
+        time.sleep(1.0)
         qmp.type(args.query)
         time.sleep(0.6)
         snap("08-typed")
         qmp.key("ret")
-        time.sleep(6)
-        snap("09-answer")
+        time.sleep(8)
+        snap("09-answer", keep_ppm=True)
+
+        # ---- assertions -------------------------------------------------
+        print("\nchecks:")
+        checks = Checks()
+        log = serial.read_text(errors="replace") if serial.exists() else ""
+
+        checks.that("the kernel did not fault", "FAULT" not in log,
+                    next((l for l in log.splitlines() if "FAULT" in l), ""))
+        checks.that("the kernel did not panic", "PANIC" not in log,
+                    next((l for l in log.splitlines() if "PANIC" in l), ""))
+        checks.that("a pointer came up", "usb-tablet ready" in log)
+        checks.that("the setup journey ran", "setup welcome" in log)
+
+        # Keystrokes must arrive intact. Typing once produced "i wanna wy
+        # paper" from "i wanna work on my paper", and nothing on screen or in
+        # the kernel log revealed it - only the goal the bridge received did.
+        bridge_log = ROOT / ".bridge.log"
+        wire = bridge_log.read_text(errors="replace") if bridge_log.exists() else ""
+        sent = [l for l in wire.splitlines() if "agent.act" in l and "goal=" in l]
+
+        # Establish this first. Without it, a bridge that never saw the query
+        # makes the next two checks fail with "received ''" and "n=None",
+        # which reads like a UI bug and is not one.
+        answered = checks.that(
+            "the bridge received the query at all",
+            bool(sent),
+            "no agent.act reached the bridge - COM2 down, or it restarted mid-run",
+        )
+        got = sent[-1].split("goal=", 1)[1].strip() if sent else ""
+        if answered:
+            checks.that(
+                "every keystroke reached the bridge",
+                got.startswith(args.query),
+                f"typed {args.query!r}, bridge received {got!r}",
+            )
+
+        # The sentence counts rows; the screen shows cards. They must agree.
+        claimed = None
+        for line in reversed(wire.splitlines()):
+            if "OK agent.act" in line and "n=" in line:
+                for f in line.split():
+                    if f.startswith("n="):
+                        claimed = int(f[2:])
+                break
+        drawn = count_result_rows(out / "09-answer.ppm")
+        if answered:
+            checks.that(
+                "the answer shows as many rows as it claims",
+                claimed is not None and claimed == drawn,
+                f"bridge claimed n={claimed}, screen drew {drawn} cards",
+            )
+        else:
+            print(f"  SKIP  row count (bridge silent; screen drew {drawn} cards)")
+
+        rc = checks.report()
 
         print("\nserial:")
         if serial.exists():
@@ -352,7 +508,7 @@ def main():
             qemu.kill()
 
     print(f"\n{len(shots)} screenshots in {out}")
-    return 0
+    return rc
 
 
 if __name__ == "__main__":

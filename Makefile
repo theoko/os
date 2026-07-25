@@ -41,7 +41,7 @@ endif
 RUSTUP_BIN := $(patsubst %/,%,$(dir $(CARGO)))
 WITH_RUST := PATH="$(RUSTUP_BIN):$$PATH"
 
-.PHONY: all build kernel arm64-kernel iso arm64-iso bridge bridge-run run run-bridged run-best utm utm-run utm-bridged usb usb-list drive linux-vm refresh refresh-install refresh-uninstall test test-host smoke smoke-bridge clean distclean
+.PHONY: all build kernel arm64-kernel iso arm64-iso iso-arm64 bridge bridge-run run run-bridged run-best utm utm-run utm-bridged usb usb-list drive linux-vm refresh refresh-install refresh-uninstall test test-host smoke smoke-bridge clean distclean
 
 all: build
 
@@ -94,6 +94,9 @@ arm64-iso: limine/limine arm64-kernel
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
 		-o $(ARM64_IMAGE_NAME).iso arm64_iso_root
 	rm -rf arm64_iso_root
+
+# Familiar word order for the artifact name: `make iso-arm64`.
+iso-arm64: arm64-iso
 
 run: iso
 	$(QEMU) -M q35 -cdrom $(IMAGE_NAME).iso -boot d $(QEMUFLAGS) $(QEMU_DEBUG_EXIT) || true

@@ -65,7 +65,7 @@ unsafe extern "C" fn kmain() -> ! {
 
     // Paint UI immediately (don't block on MCP). Bridge is optional.
     let mut mail = mcp::MailPeek::empty(mcp::BridgeStatus::Offline);
-    let mut skill_peek = skills::SkillPeek::from_builtin();
+                let mut skill_peek = skills::SkillPeek::from_builtin();
     if let Some(resp) = FRAMEBUFFER_REQUEST.get_response() {
         if let Some(fb_info) = resp.framebuffers().next() {
             // Always log geometry so UTM/QEMU serial shows why the window may be blank.
@@ -229,6 +229,25 @@ unsafe extern "C" fn kmain() -> ! {
                     }
                     None => grants.describe(&mut status_buf),
                 };
+
+                // Paint it now, not on the next redraw.
+                //
+                // Home was already drawn above, and every later redraw is
+                // triggered by input. On a machine with no input driver that
+                // redraw never comes, so the one message explaining why
+                // nothing responds was only ever shown to people whose input
+                // already worked. The arm64 guest sat there displaying the
+                // capability summary instead.
+                if inputs.note().is_some() {
+                    ui::draw_home(
+                        surface,
+                        &mail,
+                        &skill_peek,
+                        status_str(&status_buf, status_len),
+                    );
+                    screen.present_all();
+                }
+
                 let mut setup = setup::Setup::new();
                 let animate = can_animate(&screen);
                 serial_port.write_str(if animate {
@@ -244,6 +263,9 @@ unsafe extern "C" fn kmain() -> ! {
                     mcp::PortalStatus { reachable: false, cached: false, syncing: false, docs: 0 };
                 let mut scroll = 0usize;
                 let mut open_title = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
+                let mut playbook = skills::workflow_for("agent-plan-act");
+                let mut playbook_step = 0usize;
+                let mut playbook_goal = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut view = screens::View::Home;
                 let caret = true;
                 // First boot: run the setup journey before the home screen.
@@ -475,6 +497,18 @@ unsafe extern "C" fn kmain() -> ! {
                                         sview.run_via(query.as_str(), grants);
                                         serial_port.write_str("search: ran\n");
                                         dirty = true;
+                                    } else if view == screens::View::Playbook {
+                                        if playbook_step + 1 < playbook.steps.len() {
+                                            playbook_step += 1;
+                                            dirty = true;
+                                        } else if !playbook_goal.is_empty()
+                                            && playbook.required.map_or(true, |cap| grants.allows(cap))
+                                        {
+                                            sview.run_via(playbook_goal.as_str(), grants);
+                                            view = screens::View::Search;
+                                            serial_port.write_str("playbook: approved agent run\n");
+                                            dirty = true;
+                                        }
                                     }
                                 }
                                 keyboard::Key::Escape => {
@@ -509,6 +543,10 @@ unsafe extern "C" fn kmain() -> ! {
                                     // Capabilities silently built a query you
                                     // could not see.
                                     if view == screens::View::Search && query.apply(other) {
+                                        dirty = true;
+                                    } else if view == screens::View::Playbook
+                                        && playbook_goal.apply(other)
+                                    {
                                         dirty = true;
                                     }
                                 }
@@ -589,23 +627,33 @@ unsafe extern "C" fn kmain() -> ! {
                             } else if view == screens::View::Skills {
                                 if let Some(i) = screens::skills_hit(w, skill_peek.count, x, y) {
                                     let name = skill_peek.name_at(i);
-                                    let mut blurb = [0u8; 72];
-                                    if mcp::fetch_skill_blurb(name, &mut blurb) {
-                                        let n = blurb.iter().position(|&b| b == 0).unwrap_or(blurb.len());
-                                        write_status(
-                                            &mut status_buf,
-                                            core::str::from_utf8(&blurb[..n]).unwrap_or(name),
-                                        );
-                                        serial_port.write_str("skills: got ");
-                                        serial_port.write_str(name);
-                                        serial_port.write_str("\n");
-                                    } else {
-                                        write_status(&mut status_buf, name);
-                                        serial_port.write_str("skills: get offline ");
-                                        serial_port.write_str(name);
-                                        serial_port.write_str("\n");
-                                    }
+                                    playbook = skills::workflow_for(name);
+                                    playbook_step = 0;
+                                    playbook_goal.clear();
+                                    view = screens::View::Playbook;
+                                    serial_port.write_str("ui: open playbook ");
+                                    serial_port.write_str(name);
+                                    serial_port.write_str("\n");
                                     dirty = true;
+                                }
+                            } else if view == screens::View::Playbook {
+                                let (px, py, pw, ph) = screens::playbook_next_rect(
+                                    w,
+                                    playbook_step,
+                                    playbook.steps.len(),
+                                );
+                                if x >= px && x < px + pw && y >= py && y < py + ph {
+                                    if playbook_step + 1 < playbook.steps.len() {
+                                        playbook_step += 1;
+                                        dirty = true;
+                                    } else if !playbook_goal.is_empty()
+                                        && playbook.required.map_or(true, |cap| grants.allows(cap))
+                                    {
+                                        sview.run_via(playbook_goal.as_str(), grants);
+                                        view = screens::View::Search;
+                                        serial_port.write_str("playbook: approved agent run\n");
+                                        dirty = true;
+                                    }
                                 }
                             }
                         }
@@ -620,6 +668,16 @@ unsafe extern "C" fn kmain() -> ! {
                                     bridge_note(&mail),
                                 ),
                                 screens::View::Skills => screens::draw_skills(surface, &skill_peek),
+                                screens::View::Playbook => {
+                                    screens::draw_playbook(
+                                        surface,
+                                        playbook,
+                                        playbook_step,
+                                        &playbook_goal,
+                                        caret,
+                                        grants,
+                                    )
+                                }
                                 screens::View::Caps => screens::draw_caps(surface, grants),
                                 screens::View::Reader => {
                                     searchui::draw_reader(surface, open_title.as_str(), &page, scroll)
@@ -665,13 +723,40 @@ unsafe extern "C" fn kmain() -> ! {
                             let mut clicked = false;
                             match targets.hit(x, y) {
                                 Some(ui::HomeHit::Cta(ui::CtaId::Ready)) => {
-                                    serial_port.write_str("ui: click Ready\n");
-                                    setup = setup::Setup::new();
+                                    // Clicking the search field means "I want to
+                                    // type here". It used to restart the whole
+                                    // first-boot wizard: the target is the field's
+                                    // own rect, and this arm still did what it did
+                                    // back when the primary action was a "Get
+                                    // started" button. Clicking the most obvious
+                                    // thing on the screen threw the capability
+                                    // choices away and started setup over.
+                                    serial_port.write_str("ui: focus search\n");
                                     cursor.hide(surface);
-                                    setup.draw(surface, &mail, &skill_peek);
+                                    ui::draw_home_full(
+                                        surface,
+                                        &mail,
+                                        &skill_peek,
+                                        status_str(&status_buf, status_len),
+                                        home_query.as_str(),
+                                        true,
+                                    );
+                                    cursor.show_at(surface, x, y);
+                                    screen.present_all();
+                                    clicked = true;
+                                    moved = false;
+                                }
+                                Some(ui::HomeHit::Cta(ui::CtaId::Portal)) => {
+                                    // Credentials stay with the host's Keychain. This
+                                    // guest only requests consent to use that account;
+                                    // it never receives or paints a password.
+                                    serial_port.write_str("ui: connect tsearch account\n");
+                                    view = screens::View::Caps;
+                                    cursor.hide(surface);
+                                    screens::draw_caps(surface, grants);
                                     cursor.show_at(surface, x, y);
                                     enter(&screen, animate);
-                                    clicked = true;
+                                    clicked = false;
                                     moved = false;
                                 }
                                 Some(ui::HomeHit::Cta(ui::CtaId::Skills))
@@ -750,7 +835,13 @@ unsafe extern "C" fn kmain() -> ! {
                                 Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
                                     serial_port.write_str("ui: click Capabilities\n");
                                     status_len = grants.describe(&mut status_buf);
-                                    clicked = true;
+                                    view = screens::View::Caps;
+                                    cursor.hide(surface);
+                                    screens::draw_caps(surface, grants);
+                                    cursor.show_at(surface, x, y);
+                                    enter(&screen, animate);
+                                    clicked = false;
+                                    moved = false;
                                 }
                                 None => {}
                             }

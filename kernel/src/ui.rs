@@ -78,6 +78,8 @@ impl Rect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CtaId {
     Ready,
+    /// Opens the consent screen where a person can connect their own sources.
+    Portal,
     Skills,
 }
 
@@ -100,6 +102,7 @@ pub enum HomeHit {
 #[derive(Clone, Copy, Debug)]
 pub struct CtaTargets {
     pub ready: Rect,
+    pub portal: Rect,
     pub skills: Rect,
 }
 
@@ -107,6 +110,8 @@ impl CtaTargets {
     pub fn hit(self, px: i32, py: i32) -> Option<CtaId> {
         if self.ready.contains(px, py) {
             Some(CtaId::Ready)
+        } else if self.portal.contains(px, py) {
+            Some(CtaId::Portal)
         } else if self.skills.contains(px, py) {
             Some(CtaId::Skills)
         } else {
@@ -206,6 +211,29 @@ pub fn draw_home_full(
         theme::MUTED,
     );
 
+    // A search box with no obvious route to personal sources makes the OS
+    // feel like it has forgotten the user. Keep that route beside search,
+    // rather than burying it behind a generic settings label.
+    let portal = portal_rect(w, h);
+    fb.fill_round_rect(portal.x, portal.y, portal.w, portal.h, portal.h / 2, theme::TINT_BORDER);
+    fb.fill_round_rect(
+        portal.x + 1,
+        portal.y + 1,
+        portal.w - 2,
+        portal.h - 2,
+        (portal.h - 2) / 2,
+        theme::TINT_BG,
+    );
+    let portal_base = portal.y + (portal.h - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
+    fb.draw_text_centered(
+        portal.x + portal.w / 2,
+        portal_base,
+        "Connect tSearch account",
+        &SMALL_FACE,
+        0,
+        theme::ACCENT,
+    );
+
     // Destinations, each showing a real number rather than a slogan.
     let mut mbuf = [0u8; 16];
     let mail_label = fmt_count(&mut mbuf, mail.count, "message", "messages");
@@ -248,7 +276,7 @@ pub fn draw_home_full(
             match (mail.status, mail.needs_connection) {
                 (BridgeStatus::Online, true) => "Connect email on this Mac to show your inbox.",
                 (BridgeStatus::Online, false) => "Inbox empty, or email.search not granted.",
-                (BridgeStatus::Offline, _) => "Bridge offline - run: make utm-bridged",
+                (BridgeStatus::Offline, _) => "Bridge offline - start the host bridge",
             },
             &SMALL_FACE,
             0,
@@ -310,7 +338,12 @@ pub fn search_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
 }
 
 pub(crate) fn tile_top(_h: i32) -> i32 {
-    242
+    // Below the portal pill, not through it. The pill spans 222..250 and the
+    // tiles used to start at 242, so its bottom 8px were drawn over the tile
+    // row - and because CtaTargets::hit checks the portal before the cards,
+    // clicking the top edge of the Search tile opened the portal instead.
+    let p = portal_rect(0, 0);
+    p.y + p.h + 16
 }
 
 pub(crate) const TILE_H: i32 = 78;
@@ -320,8 +353,18 @@ pub fn cta_targets(w: i32, h: i32, _skills: &SkillPeek) -> CtaTargets {
     let (fx, fy, fw, fh) = search_rect(w, h);
     CtaTargets {
         ready: Rect { x: fx, y: fy, w: fw, h: fh },
+        portal: portal_rect(w, h),
         skills: tile_rect(w, h, 2),
     }
+}
+
+/// The personal-sources action sits directly below the search guidance.
+/// Keeping it above the tiles makes it visible on a 768px guest display.
+pub fn portal_rect(w: i32, h: i32) -> Rect {
+    let (fx, fy, fw, fh) = search_rect(w, h);
+    let pw = 238.min(fw);
+    let ph = 28;
+    Rect { x: fx + fw - pw, y: fy + fh + 38, w: pw, h: ph }
 }
 
 /// Bounding box of home tile `i` (0 = Search, 1 = Capabilities, 2 = Skills).
@@ -366,6 +409,14 @@ mod tests {
         let t = home_targets(1024, 768, &peek());
         let (fx, fy, fw, fh) = search_rect(1024, 768);
         assert_eq!(t.ctas.ready, Rect { x: fx, y: fy, w: fw, h: fh });
+    }
+
+    #[test]
+    fn personal_portal_action_is_visible_and_clickable() {
+        let t = home_targets(1024, 768, &peek());
+        let r = portal_rect(1024, 768);
+        assert!(r.y > search_rect(1024, 768).1);
+        assert_eq!(t.ctas.hit(r.x + r.w / 2, r.y + r.h / 2), Some(CtaId::Portal));
     }
 
     #[test]
@@ -426,12 +477,13 @@ mod tests {
         for s in [
             "Search the knowledge base",
             "Type a query and press Enter. Works with the bridge offline.",
+            "Connect tSearch account",
             "Search",
             "Capabilities",
             "Skills",
             "Recent mail",
             "Inbox empty, or email.search not granted.",
-            "Bridge offline - run: make utm-bridged",
+            "Bridge offline - start the host bridge",
             "bridge connected",
             "bridge offline",
             "os",
@@ -502,5 +554,62 @@ mod mail_click_tests {
     #[test]
     fn an_empty_inbox_has_no_targets() {
         assert_eq!(mail_hit(1024, 768, 0, 512, 700), None);
+    }
+}
+
+#[cfg(test)]
+mod portal_link_tests {
+    use super::*;
+
+    fn skills() -> SkillPeek {
+        SkillPeek::from_builtin()
+    }
+
+    fn overlaps(a: Rect, b: Rect) -> bool {
+        a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    }
+
+    #[test]
+    fn the_portal_link_does_not_sit_on_top_of_any_tile() {
+        // It did: the pill's lower 8px overlapped the tile row, and since the
+        // portal is hit-tested before the cards, the top edge of the Search
+        // tile opened the portal instead of Search.
+        for (w, h) in [(1024, 768), (1280, 800), (1600, 1000)] {
+            let p = portal_rect(w, h);
+            for i in 0..3 {
+                assert!(
+                    !overlaps(p, tile_rect(w, h, i)),
+                    "portal pill overlaps tile {i} at {w}x{h}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_portal_link_clears_the_search_field() {
+        for (w, h) in [(1024, 768), (1280, 800)] {
+            let (_, fy, _, fh) = search_rect(w, h);
+            assert!(portal_rect(w, h).y >= fy + fh, "pill overlaps the field at {w}x{h}");
+        }
+    }
+
+    #[test]
+    fn clicking_the_portal_link_reports_the_portal_and_nothing_else() {
+        let (w, h) = (1280, 800);
+        let p = portal_rect(w, h);
+        let t = home_targets(w, h, &skills());
+        assert_eq!(
+            t.hit(p.x + p.w / 2, p.y + p.h / 2),
+            Some(HomeHit::Cta(CtaId::Portal))
+        );
+    }
+
+    #[test]
+    fn the_portal_link_stays_inside_the_content_column() {
+        for (w, h) in [(1024, 768), (1280, 800), (1600, 1000)] {
+            let (fx, _, fw, _) = search_rect(w, h);
+            let p = portal_rect(w, h);
+            assert!(p.x >= fx && p.x + p.w <= fx + fw, "pill escapes the column at {w}x{h}");
+        }
     }
 }

@@ -28,6 +28,10 @@ pub enum Key {
     Backspace,
     Enter,
     Escape,
+    /// Moves the focus ring during setup. `inputdiag::note()` has always told
+    /// people to "Use Tab and Enter"; until this existed that was advice
+    /// nothing implemented.
+    Tab,
     Up,
     Down,
     PageUp,
@@ -46,7 +50,10 @@ const MAP: [u8; 0x40] = [
 ];
 
 /// Shifted forms for the printable keys we map.
-fn shift_char(c: u8) -> u8 {
+///
+/// Scancode-independent, ASCII in and ASCII out, so the USB HID decoder uses
+/// the same table rather than growing a second one that can drift.
+pub(crate) fn shift_char(c: u8) -> u8 {
     match c {
         b'a'..=b'z' => c - 32,
         b'1' => b'!',
@@ -110,6 +117,7 @@ impl Keyboard {
                 None
             }
             0x0E => Some(Key::Backspace),
+            0x0F => Some(Key::Tab),
             0x1C => Some(Key::Enter),
             0x01 => Some(Key::Escape),
             // Navigation, only in their extended form.
@@ -127,6 +135,21 @@ impl Keyboard {
                 }
                 Some(Key::Char(if self.shift { shift_char(c) } else { c }))
             }
+        }
+    }
+
+    /// Translate a byte from a serial console into the same UI key type used
+    /// by the PS/2 path. ARM virtual machines can expose a PL011 console long
+    /// before USB/xHCI input exists, so this deliberately accepts only the
+    /// portable terminal subset rather than pretending serial sends PC scan
+    /// codes.
+    pub fn from_serial(byte: u8) -> Option<Key> {
+        match byte {
+            b'\r' | b'\n' => Some(Key::Enter),
+            0x08 | 0x7f => Some(Key::Backspace),
+            0x1b => Some(Key::Escape),
+            0x20..=0x7e => Some(Key::Char(byte)),
+            _ => None,
         }
     }
 
@@ -167,7 +190,17 @@ impl Keyboard {
                     return Some(k);
                 }
             }
+            None
         }
+        #[cfg(target_arch = "aarch64")]
+        {
+            // PL011 COM1 is a deliberate fallback path, not a substitute for
+            // the eventual USB HID driver. It makes the guest interactive in
+            // QEMU/VirtualBox configurations that redirect COM1 to a host
+            // terminal, without waiting for xHCI endpoint rings and GIC IRQs.
+            crate::serial::Serial::com1().try_read_byte().and_then(Self::from_serial)
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         None
     }
 }
@@ -270,6 +303,15 @@ mod tests {
     }
 
     #[test]
+    fn serial_console_uses_the_same_ui_keys() {
+        assert_eq!(Keyboard::from_serial(b'a'), Some(Key::Char(b'a')));
+        assert_eq!(Keyboard::from_serial(b'\r'), Some(Key::Enter));
+        assert_eq!(Keyboard::from_serial(0x7f), Some(Key::Backspace));
+        assert_eq!(Keyboard::from_serial(0x1b), Some(Key::Escape));
+        assert_eq!(Keyboard::from_serial(0x00), None);
+    }
+
+    #[test]
     fn extended_keys_are_ignored_not_mistyped() {
         let mut k = kb();
         assert_eq!(k.feed(0xE0), None);
@@ -277,6 +319,16 @@ mod tests {
         assert_eq!(k.feed(0x4B), None, "arrow key must not insert a character");
         // The prefix must not persist.
         assert_eq!(k.feed(0x1E), Some(Key::Char(b'a')));
+    }
+
+    #[test]
+    fn tab_arrives_as_a_key_and_not_as_a_character() {
+        // Scancode 0x0F used to fall through the map and produce nothing,
+        // which is why the "Use Tab and Enter" advice went nowhere.
+        let mut k = kb();
+        assert_eq!(k.feed(0x0F), Some(Key::Tab));
+        let mut f = TextField::<8>::new();
+        assert!(!f.apply(Key::Tab), "Tab must not insert a character");
     }
 
     #[test]

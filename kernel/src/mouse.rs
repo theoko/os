@@ -284,12 +284,27 @@ impl Cursor {
     }
 
     pub fn show_at(&mut self, fb: &Surface, x: i32, y: i32) {
+        #[cfg(target_arch = "aarch64")]
+        {
+            // QemuRamFB may refresh independently of our dirty-rectangle
+            // bookkeeping. A persistent paint is more reliable than keeping
+            // an under-cursor save buffer on the ARM virtual display.
+            self.x = x;
+            self.y = y;
+            self.has_saved = false;
+            draw_arrow(fb, x, y);
+            return;
+        }
+
+        #[cfg(not(target_arch = "aarch64"))]
+        {
         self.hide(fb);
         self.x = x;
         self.y = y;
         save(fb, x, y, &mut self.saved);
         self.has_saved = true;
         draw_arrow(fb, x, y);
+        }
     }
 }
 

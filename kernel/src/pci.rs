@@ -1,4 +1,13 @@
-//! Tiny PCI config-space helpers (port I/O).
+//! Tiny PCI config-space helpers.
+//!
+//! x86 uses the legacy configuration ports. ARM virtual machines expose the
+//! standard PCI ECAM window instead; keeping both behind this module lets USB
+//! discovery and the eventual xHCI input driver share one bus view.
+//!
+//! The two access paths meet inside `read32`/`write32`, so every scanner below
+//! is written once and works on both machines.
+
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 #[cfg(target_arch = "x86_64")]
 mod port {
@@ -56,6 +65,119 @@ mod port {
 const CONFIG_ADDR: u16 = 0xCF8;
 const CONFIG_DATA: u16 = 0xCFC;
 
+/// Where QEMU's `virt` machine has historically put its high ECAM window.
+///
+/// A fallback, never a first choice: the base moves with machine type, RAM
+/// size and whether UEFI firmware is loaded, and VirtualBox's `armv8virtual`
+/// is a different device model entirely. Read ACPI MCFG first and only fall
+/// back here — `use_ecam` refuses a window that does not answer, so a wrong
+/// guess degrades to "no PCI" instead of an abort.
+pub const QEMU_VIRT_ECAM: u64 = 0x0000_0040_1000_0000;
+
+/// Virtual base of the ECAM window (already direct-map biased), or 0 for
+/// "there is no window; use the legacy ports".
+///
+/// Runtime state, not a `cfg`: `cargo test` runs on an arm64 Mac, so
+/// `cfg!(target_arch)` describes the machine running the tests rather than the
+/// machine being driven. `inputdiag.rs` records that trap being sprung once
+/// already, and this is the layer where it would be silent.
+static ECAM_BASE: AtomicUsize = AtomicUsize::new(0);
+
+/// `start_bus | end_bus << 8 | 1 << 16`, so 0 still means "unset".
+static ECAM_BUSES: AtomicUsize = AtomicUsize::new(0);
+
+/// Does anything answer on the legacy configuration ports?
+///
+/// The question is asked at runtime so the x86 path stays exactly what it was:
+/// where the ports work they keep being used, and ECAM is never installed.
+pub fn port_io_works() -> bool {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        port::outl(CONFIG_ADDR, cfg_addr(0, 0, 0, 0));
+        port::inl(CONFIG_DATA) != 0xFFFF_FFFF
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        false
+    }
+}
+
+/// Install a config window. `virt_base` must already include the direct-map
+/// offset, because `read32` is a free function with no way to reach it.
+///
+/// Returns false — leaving the ports selected — when nothing on the first bus
+/// answers. A base read out of a bad table must degrade, not fault.
+///
+/// The probe sweeps the first bus rather than asking 00:00.0 alone: which slot
+/// holds the host bridge is a platform decision, and an empty slot 0 would
+/// otherwise condemn a window that works.
+pub fn use_ecam(virt_base: usize, start_bus: u8, end_bus: u8) -> bool {
+    if virt_base == 0 || end_bus < start_bus {
+        return false;
+    }
+    ECAM_BASE.store(virt_base, Ordering::SeqCst);
+    ECAM_BUSES.store(
+        (start_bus as usize) | ((end_bus as usize) << 8) | (1 << 16),
+        Ordering::SeqCst,
+    );
+    let answered = (0..32u8).any(|slot| read32(start_bus, slot, 0, 0x00) != 0xFFFF_FFFF);
+    if !answered {
+        clear_ecam();
+    }
+    answered
+}
+
+pub fn clear_ecam() {
+    ECAM_BASE.store(0, Ordering::SeqCst);
+    ECAM_BUSES.store(0, Ordering::SeqCst);
+}
+
+pub fn ecam_active() -> bool {
+    ECAM_BASE.load(Ordering::SeqCst) != 0
+}
+
+pub fn ecam_bus_range() -> Option<(u8, u8)> {
+    let packed = ECAM_BUSES.load(Ordering::SeqCst);
+    (packed & (1 << 16) != 0).then(|| ((packed & 0xFF) as u8, ((packed >> 8) & 0xFF) as u8))
+}
+
+/// Byte offset of a config dword inside a window, or `None` when the bus falls
+/// outside it.
+///
+/// Pure, so it can be tested without hardware — and it is the only thing
+/// standing between `usb_survey`'s 0..=255 sweep and a data abort. A window is
+/// as narrow as 16 buses; on x86 a read past the end floats harmlessly to
+/// 0xFFFF, on aarch64 it is a synchronous external abort into a kernel with no
+/// vector table.
+pub const fn ecam_offset(
+    bus: u8,
+    slot: u8,
+    func: u8,
+    offset: u8,
+    start_bus: u8,
+    end_bus: u8,
+) -> Option<usize> {
+    if bus < start_bus || bus > end_bus {
+        return None;
+    }
+    Some(
+        (((bus - start_bus) as usize) << 20)
+            | ((slot as usize) << 15)
+            | ((func as usize) << 12)
+            | ((offset as usize) & 0xFC),
+    )
+}
+
+fn ecam_ptr(bus: u8, slot: u8, func: u8, offset: u8) -> Option<*mut u32> {
+    let base = ECAM_BASE.load(Ordering::SeqCst);
+    if base == 0 {
+        return None;
+    }
+    let (lo, hi) = ecam_bus_range()?;
+    let off = ecam_offset(bus, slot, func, offset, lo, hi)?;
+    Some((base + off) as *mut u32)
+}
+
 fn cfg_addr(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
     0x8000_0000
         | ((bus as u32) << 16)
@@ -65,11 +187,16 @@ fn cfg_addr(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
 }
 
 pub fn read32(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
+    if let Some(p) = ecam_ptr(bus, slot, func, offset) {
+        return unsafe { core::ptr::read_volatile(p) };
+    }
     #[cfg(target_arch = "x86_64")]
     unsafe {
         port::outl(CONFIG_ADDR, cfg_addr(bus, slot, func, offset));
         port::inl(CONFIG_DATA)
     }
+    // No window and no ports: an absent device, which is what every scanner
+    // below already knows how to handle.
     #[cfg(not(target_arch = "x86_64"))]
     {
         let _ = (bus, slot, func, offset);
@@ -78,6 +205,10 @@ pub fn read32(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
 }
 
 pub fn write32(bus: u8, slot: u8, func: u8, offset: u8, val: u32) {
+    if let Some(p) = ecam_ptr(bus, slot, func, offset) {
+        unsafe { core::ptr::write_volatile(p, val) };
+        return;
+    }
     #[cfg(target_arch = "x86_64")]
     unsafe {
         port::outl(CONFIG_ADDR, cfg_addr(bus, slot, func, offset));
@@ -210,6 +341,103 @@ pub fn find_ehci_mmio() -> Option<(u8, u8, u8, u64)> {
     None
 }
 
+/// xHCI = class 0x0C, subclass 0x03, prog-if 0x30. Returns its MMIO BAR.
+///
+/// The controller is present on VirtualBox ARM when USB 3 is enabled. This
+/// does not start it; the xHCI driver owns that once its command/event rings
+/// have been installed.
+pub fn find_xhci_mmio() -> Option<(u8, u8, u8, u64)> {
+    for bus in 0..4u8 {
+        for slot in 0..32u8 {
+            for func in 0..8u8 {
+                let id = read32(bus, slot, func, 0x00);
+                if id == 0xFFFF_FFFF {
+                    if func == 0 {
+                        break;
+                    }
+                    continue;
+                }
+                let class = read32(bus, slot, func, 0x08);
+                if (class >> 24) & 0xFF == 0x0C
+                    && (class >> 16) & 0xFF == 0x03
+                    && (class >> 8) & 0xFF == PROG_IF_XHCI
+                {
+                    let lo = read32(bus, slot, func, 0x10);
+                    if lo & 1 == 0 {
+                        let mut base = (lo & 0xFFFF_FFF0) as u64;
+                        if (lo >> 1) & 0x3 == 0x2 {
+                            base |= (read32(bus, slot, func, 0x14) as u64) << 32;
+                        }
+                        // xHCI will neither decode its BAR nor fetch DMA
+                        // rings until these PCI command bits are set. Do this
+                        // at discovery time, before the driver ever writes an
+                        // operational register; `write16` preserves RW1C
+                        // status bits in the other half of this dword.
+                        let command = read16(bus, slot, func, 0x04);
+                        write16(bus, slot, func, 0x04, command | 0x0006);
+                        return Some((bus, slot, func, base));
+                    }
+                }
+                let header = (read32(bus, slot, func, 0x0C) >> 16) as u8;
+                if func == 0 && header & 0x80 == 0 {
+                    break;
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Walk every function that answers, stopping as soon as `f` returns true.
+///
+/// One loop for every later scanner, rather than a second copy for the ECAM
+/// path: the two access methods already meet inside `read32`. The bus range
+/// comes from the installed window when there is one, because ARM firmware is
+/// free to put a controller on a bus x86 never used.
+pub fn for_each_function(mut f: impl FnMut(u8, u8, u8) -> bool) {
+    let (lo, hi) = ecam_bus_range().unwrap_or((0, 3));
+    for bus in lo..=hi {
+        for slot in 0..32u8 {
+            for func in 0..8u8 {
+                if read32(bus, slot, func, 0x00) == 0xFFFF_FFFF {
+                    // Function 0 absent means the whole slot is absent.
+                    if func == 0 {
+                        break;
+                    }
+                    continue;
+                }
+                if f(bus, slot, func) {
+                    return;
+                }
+                let header = (read32(bus, slot, func, 0x0C) >> 16) as u8;
+                if func == 0 && header & 0x80 == 0 {
+                    break;
+                }
+            }
+        }
+        if bus == hi {
+            break;
+        }
+    }
+}
+
+/// First function matching a class triple.
+pub fn find_class(base_class: u8, subclass: u8, prog_if: u8) -> Option<(u8, u8, u8)> {
+    let mut hit = None;
+    for_each_function(|b, s, f| {
+        let class = read32(b, s, f, 0x08);
+        if (class >> 24) as u8 == base_class
+            && (class >> 16) as u8 == subclass
+            && (class >> 8) as u8 == prog_if
+        {
+            hit = Some((b, s, f));
+            return true;
+        }
+        false
+    });
+    hit
+}
+
 /// Tiny fixed vec so we don't need alloc — max 8 UHCI controllers.
 pub mod heapless_vec {
     pub struct UhciList {
@@ -259,8 +487,19 @@ pub struct UsbSurvey {
 
 impl UsbSurvey {
     /// True when a controller exists that we have no driver for.
+    ///
+    /// OHCI came off this list when `ohci.rs` landed. Leaving it on would have
+    /// the status line announce that the controller we just implemented cannot
+    /// be spoken to — on the one machine where it is the only USB there is.
     pub fn has_unsupported(&self) -> bool {
-        self.xhci > 0 || self.ohci > 0
+        self.xhci > 0
+    }
+
+    /// Name the controller we found and cannot drive, for the status line.
+    /// A function rather than a literal in `inputdiag`, so the next driver is
+    /// a one-line edit here instead of a message that quietly goes stale.
+    pub fn unsupported_name(&self) -> Option<&'static str> {
+        (self.xhci > 0).then_some("xHCI")
     }
 
     pub fn none_at_all(&self) -> bool {
@@ -276,14 +515,19 @@ const PROG_IF_XHCI: u32 = 0x30;
 
 pub fn usb_survey() -> UsbSurvey {
     let mut out = UsbSurvey::default();
-    for bus in 0..=255u16 {
+    // The sweep never breaks out early — an absent function is a `continue` —
+    // so under ECAM it would walk straight off the end of the mapping. Clamp
+    // to the buses the window actually covers; the port path keeps its old
+    // 0..=255 range so x86 counts exactly what it counted before.
+    let (lo, hi) = ecam_bus_range().unwrap_or((0, 255));
+    for bus in lo..=hi {
         for slot in 0..32u8 {
             for func in 0..8u8 {
-                let vendor = read16(bus as u8, slot, func, 0x00);
+                let vendor = read16(bus, slot, func, 0x00);
                 if vendor == 0xFFFF {
                     continue;
                 }
-                let class = read32(bus as u8, slot, func, 0x08);
+                let class = read32(bus, slot, func, 0x08);
                 if (class >> 24) & 0xFF != 0x0C || (class >> 16) & 0xFF != 0x03 {
                     continue;
                 }
@@ -314,12 +558,147 @@ mod survey_tests {
 
     #[test]
     fn the_controller_we_can_drive_is_not_flagged() {
-        let s = UsbSurvey { uhci: 1, ehci: 1, ..Default::default() };
-        assert!(!s.has_unsupported(), "UHCI and EHCI are both handled");
+        let s = UsbSurvey { uhci: 1, ohci: 1, ehci: 1, ..Default::default() };
+        assert!(!s.has_unsupported(), "UHCI, OHCI and EHCI all have drivers");
+        assert_eq!(s.unsupported_name(), None);
+    }
+
+    #[test]
+    fn an_unsupported_controller_says_which_one_it_is() {
+        let s = UsbSurvey { xhci: 1, ..Default::default() };
+        assert_eq!(s.unsupported_name(), Some("xHCI"));
     }
 
     #[test]
     fn an_empty_survey_is_not_mistaken_for_a_working_bus() {
         assert!(UsbSurvey::default().none_at_all());
+    }
+}
+
+#[cfg(test)]
+mod ecam_tests {
+    use super::*;
+    use std::sync::{Mutex, MutexGuard};
+
+    /// The window is global state, so the tests that install one take turns.
+    static SERIAL: Mutex<()> = Mutex::new(());
+
+    const BUSES: usize = 2;
+
+    /// A config space we can point the real `read32` at.
+    struct Fake {
+        _guard: MutexGuard<'static, ()>,
+        words: &'static mut [u32],
+    }
+
+    impl Fake {
+        fn new() -> Self {
+            let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
+            clear_ecam();
+            let words: &'static mut [u32] =
+                std::vec![0xFFFF_FFFFu32; (BUSES << 20) / 4].leak();
+            Self { _guard: guard, words }
+        }
+
+        fn base(&self) -> usize {
+            self.words.as_ptr() as usize
+        }
+
+        /// Populate one function: vendor/device, class triple, and BAR0.
+        fn device(&mut self, bus: u8, slot: u8, func: u8, class: u32, bar0: u32) {
+            let off = ecam_offset(bus, slot, func, 0, 0, (BUSES - 1) as u8).expect("in window");
+            self.words[off / 4] = 0x1234_5678;
+            self.words[off / 4 + 1] = 0; // command | status
+            self.words[off / 4 + 2] = class;
+            self.words[off / 4 + 3] = 0; // header type 0, single function
+            self.words[off / 4 + 4] = bar0;
+        }
+
+        fn install(&self) -> bool {
+            use_ecam(self.base(), 0, (BUSES - 1) as u8)
+        }
+    }
+
+    impl Drop for Fake {
+        fn drop(&mut self) {
+            clear_ecam();
+        }
+    }
+
+    #[test]
+    fn a_bus_outside_the_window_is_refused_before_it_is_dereferenced() {
+        // usb_survey sweeps buses without ever breaking out. On aarch64 one
+        // read past the mapping is an abort with no handler, so this bounds
+        // check is the feature, not a guard.
+        assert!(ecam_offset(0, 0, 0, 0, 0, 15).is_some());
+        assert!(ecam_offset(15, 31, 7, 0xFC, 0, 15).is_some());
+        assert_eq!(ecam_offset(16, 0, 0, 0, 0, 15), None);
+        assert_eq!(ecam_offset(3, 0, 0, 0, 4, 15), None, "below the window too");
+    }
+
+    #[test]
+    fn a_window_that_does_not_start_at_bus_zero_is_addressed_from_its_own_start() {
+        // QEMU may hand out buses 0..15 and firmware a slice starting higher;
+        // biasing from bus 0 there reads a megabyte past the end.
+        assert_eq!(ecam_offset(4, 0, 0, 0, 4, 7), Some(0));
+        assert_eq!(ecam_offset(5, 0, 0, 0, 4, 7), Some(1 << 20));
+    }
+
+    #[test]
+    fn config_offsets_are_dword_aligned_so_a_byte_offset_cannot_fault() {
+        // read16/write16 pass raw byte offsets straight through.
+        assert_eq!(ecam_offset(0, 0, 0, 0x06, 0, 0), Some(0x04));
+        assert_eq!(ecam_offset(0, 0, 0, 0x0F, 0, 0), Some(0x0C));
+    }
+
+    #[test]
+    fn the_scanners_find_a_controller_through_a_config_window() {
+        let mut fake = Fake::new();
+        fake.device(0, 0, 0, 0x0600_0000, 0); // host bridge
+        // OHCI: class 0x0C, subclass 0x03, prog-if 0x10, 32-bit memory BAR.
+        fake.device(1, 4, 0, 0x0C03_1000, 0xFEBF_0000);
+        assert!(fake.install(), "a window that answers must be accepted");
+
+        assert!(ecam_active());
+        assert_eq!(ecam_bus_range(), Some((0, (BUSES - 1) as u8)));
+        assert_eq!(find_class(0x0C, 0x03, 0x10), Some((1, 4, 0)));
+        assert_eq!(find_class(0x0C, 0x03, 0x30), None, "there is no xHCI here");
+        assert_eq!(read16(1, 4, 0, 0x00), 0x5678, "vendor id, low half");
+        assert_eq!(read16(1, 4, 0, 0x02), 0x1234, "device id, high half");
+    }
+
+    #[test]
+    fn the_survey_counts_only_the_buses_the_window_covers() {
+        let mut fake = Fake::new();
+        fake.device(0, 1, 0, 0x0C03_1000, 0);
+        fake.device(1, 2, 0, 0x0C03_3000, 0);
+        fake.device(0, 3, 0, 0x0106_0000, 0); // SATA, not USB
+        assert!(fake.install());
+
+        let s = usb_survey();
+        assert_eq!((s.ohci, s.xhci, s.uhci, s.ehci), (1, 1, 0, 0));
+        assert!(s.has_unsupported(), "the xHCI is still undrivable");
+    }
+
+    #[test]
+    fn enabling_bus_mastering_writes_through_and_leaves_status_alone() {
+        let mut fake = Fake::new();
+        fake.device(0, 1, 0, 0x0C03_1000, 0xFEBF_0000);
+        assert!(fake.install());
+
+        // Status bits are RW1C: writing back what we read would clear them.
+        let idx = ecam_offset(0, 1, 0, 0x04, 0, 1).unwrap() / 4;
+        fake.words[idx] = 0xFFFF_0000;
+        let cmd = read16(0, 1, 0, 0x04);
+        write16(0, 1, 0, 0x04, cmd | 0x0406);
+        assert_eq!(read16(0, 1, 0, 0x04), 0x0406, "memory | bus master | intx off");
+        assert_eq!(read16(0, 1, 0, 0x06), 0, "status must not be written back as 1s");
+    }
+
+    #[test]
+    fn a_window_where_nothing_answers_is_rejected_rather_than_used() {
+        let fake = Fake::new(); // every dword left at 0xFFFFFFFF
+        assert!(!fake.install(), "a wrong base must degrade to no PCI");
+        assert!(!ecam_active(), "and must not stay installed");
     }
 }

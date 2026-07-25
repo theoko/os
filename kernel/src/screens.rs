@@ -11,8 +11,9 @@ use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{self, BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
 use crate::searchui::back_rect;
+use crate::keyboard::TextField;
 use crate::setup::{cap_rows, N_CAPS};
-use crate::skills::SkillPeek;
+use crate::skills::{SkillPeek, Workflow};
 #[cfg(test)]
 use crate::skills::BUILTIN;
 use crate::ui::theme;
@@ -28,6 +29,8 @@ pub enum View {
     Reader,
     /// Connection status for every source, opened from the nav dot.
     Status,
+    /// A human-in-the-loop skill checklist.
+    Playbook,
 }
 
 const NAV_H: i32 = 56;
@@ -121,6 +124,62 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
         theme::MUTED,
     );
     let _ = cw;
+}
+
+/// Click target for advancing a workflow. Back uses the common chrome target.
+pub fn playbook_next_rect(w: i32, _step: usize, total: usize) -> (i32, i32, i32, i32) {
+    let (x, cw) = column(w);
+    let y = 198 + total.min(5) as i32 * (ROW_H + ROW_GAP) + 18;
+    (x, y, cw.min(220), 42)
+}
+
+/// Render a playbook as a small, inspectable state machine. Steps never run
+/// bridge calls from this screen; execution stays an explicit later action.
+pub fn draw_playbook(
+    fb: &Surface,
+    flow: Workflow,
+    step: usize,
+    goal: &TextField<{ crate::searchui::QUERY_MAX }>,
+    caret: bool,
+    grants: Caps,
+) {
+    let w = fb.width() as i32;
+    chrome(fb, w, "Playbook", flow.title);
+    let (x, cw) = column(w);
+    let gy = 130;
+    fb.fill_round_rect(x, gy, cw, 44, 10, theme::RULE);
+    fb.fill_round_rect(x + 1, gy + 1, cw - 2, 42, 9, theme::BG);
+    let base = gy + (44 - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
+    if goal.is_empty() {
+        fb.draw_text(x + 14, base, "What do you want to do?", &SMALL_FACE, 0, theme::MUTED);
+    } else {
+        fb.draw_text(x + 14, base, goal.as_str(), &SMALL_FACE, 0, theme::INK);
+    }
+    if caret {
+        let cx = x + 14 + SMALL_FACE.width(goal.as_str(), 0) + 2;
+        fb.fill_rect(cx, gy + 10, 1, 24, theme::INK);
+    }
+    let active = step.min(flow.steps.len().saturating_sub(1));
+    for (i, text) in flow.steps.iter().take(5).enumerate() {
+        let y = 198 + i as i32 * (ROW_H + ROW_GAP);
+        let border = if i == active { theme::ACCENT } else { theme::CARD_BORDER };
+        fb.fill_round_rect(x, y, cw, ROW_H, 10, border);
+        fb.fill_round_rect(x + 1, y + 1, cw - 2, ROW_H - 2, 9, theme::BG);
+        fb.draw_text_clipped(x + 18, y + 26, text, &BRAND_FACE, 0, theme::INK, cw - 36);
+        let state = if i < active { "Done" } else if i == active { "Next" } else { "Later" };
+        fb.draw_text(x + 18, y + 46, state, &SMALL_FACE, 0, theme::MUTED);
+    }
+    let (x, y, bw, bh) = playbook_next_rect(w, step, flow.steps.len());
+    let done = step + 1 >= flow.steps.len();
+    fb.fill_round_rect(x, y, bw, bh, bh / 2, if done { theme::TINT_BORDER } else { theme::ACCENT });
+    let action = if done { "Run approved plan" } else { "Next step" };
+    fb.draw_text_centered(x + bw / 2, y + (bh - BTN_FACE.px) / 2 + BTN_FACE.baseline(), action, &BTN_FACE, 0, if done { theme::ACCENT } else { theme::BG });
+    if let Some(cap) = flow.required {
+        let note = if grants.allows(cap) { "Permission granted. Run only after you review the plan." } else { "Permission needed before the approved action can run." };
+        fb.draw_text(x, y + bh + 24, note, &SMALL_FACE, 0, theme::MUTED);
+    } else {
+        fb.draw_text(x, y + bh + 24, "The final button sends this goal to the scoped agent.", &SMALL_FACE, 0, theme::MUTED);
+    }
 }
 
 /// Which skill row contains this point, if any.
@@ -290,6 +349,12 @@ mod tests {
         let (x, y, _, _) = row_rect(1024, 0);
         assert_eq!(skills_hit(1024, 3, x + 4, y + 4), Some(0));
         assert_eq!(skills_hit(1024, 0, x + 4, y + 4), None);
+    }
+
+    #[test]
+    fn playbook_next_target_fits_the_screen() {
+        let (_, y, _, h) = playbook_next_rect(1024, 0, 5);
+        assert!(y + h < 768);
     }
 
     #[test]
