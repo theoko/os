@@ -26,6 +26,8 @@ pub enum View {
     Caps,
     /// Reading a document opened from a search result.
     Reader,
+    /// Connection status for every source, opened from the nav dot.
+    Status,
 }
 
 const NAV_H: i32 = 56;
@@ -299,4 +301,105 @@ mod tests {
             assert!(SMALL_FACE.width(blurb, 0) < cw - 76, "blurb hits the switch: {blurb}");
         }
     }
+}
+
+/// Status of every source the OS can reach, opened from the nav dot.
+///
+/// The dot alone cannot say whether the portal is synced or the file index
+/// exists; this is where the whole picture lives.
+pub fn draw_status(
+    fb: &Surface,
+    mail: &crate::mcp::MailPeek,
+    portal: &crate::mcp::PortalStatus,
+    grants: Caps,
+) {
+    let w = fb.width() as i32;
+    chrome(fb, w, "Status", "What this machine can reach");
+
+    let (x, cw) = column(w);
+    let mut y = TOP;
+
+    let mut line = |fb: &Surface, y: i32, name: &str, state: &str, ok: bool| {
+        fb.fill_round_rect(x, y, cw, ROW_H, 10, theme::CARD_BORDER);
+        fb.fill_round_rect(x + 1, y + 1, cw - 2, ROW_H - 2, 9, theme::BG);
+        let d = 9;
+        fb.fill_round_rect(
+            x + 18,
+            y + (ROW_H - d) / 2,
+            d,
+            d,
+            d / 2,
+            if ok { theme::ONLINE } else { theme::OFFLINE },
+        );
+        fb.draw_text(x + 18 + d + 12, y + 26, name, &BRAND_FACE, 0, theme::INK);
+        fb.draw_text(x + 18 + d + 12, y + 46, state, &SMALL_FACE, 0, theme::MUTED);
+    };
+
+    let bridge_up = matches!(mail.status, crate::mcp::BridgeStatus::Online);
+    line(
+        fb,
+        y,
+        "Host bridge",
+        if bridge_up { "Connected on COM2" } else { "Offline - run: make bridge-run" },
+        bridge_up,
+    );
+    y += ROW_H + ROW_GAP;
+
+    // Teddy has three distinct states and the dot cannot express them.
+    let granted = grants.allows(Cap::PortalSync);
+    let (teddy_state, teddy_ok) = if !granted {
+        ("Not enabled - turn on Online services", false)
+    } else if !portal.cached {
+        ("Enabled, not synced yet", false)
+    } else if portal.docs == 0 {
+        ("Synced but empty", false)
+    } else {
+        ("Synced", true)
+    };
+    line(fb, y, "Teddy", teddy_state, teddy_ok);
+    y += ROW_H + ROW_GAP;
+
+    let files = grants.allows(Cap::WorkspaceIndex);
+    line(
+        fb,
+        y,
+        "Your files",
+        if files { "Indexed and searchable" } else { "Not enabled" },
+        files,
+    );
+
+    if granted && portal.cached {
+        let mut buf = [0u8; 24];
+        let n = fmt_usize(&mut buf, portal.docs);
+        let txt = core::str::from_utf8(&buf[..n]).unwrap_or("");
+        fb.draw_text(x, y + ROW_H + 34, txt, &SMALL_FACE, 0, theme::MUTED);
+    }
+}
+
+/// "12448 documents cached" into a caller buffer.
+fn fmt_usize(buf: &mut [u8; 24], mut v: usize) -> usize {
+    let mut digits = [0u8; 10];
+    let mut d = 0;
+    if v == 0 {
+        digits[0] = b'0';
+        d = 1;
+    }
+    while v > 0 {
+        digits[d] = b'0' + (v % 10) as u8;
+        v /= 10;
+        d += 1;
+    }
+    let mut n = 0;
+    while d > 0 {
+        d -= 1;
+        buf[n] = digits[d];
+        n += 1;
+    }
+    for &b in b" documents cached" {
+        if n < buf.len() {
+            buf[n] = b;
+            n += 1;
+        }
+    }
+    n
 }

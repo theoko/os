@@ -290,7 +290,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
     match cmd {
         "PING" => vec!["OK pong".into()],
         "LIST" => {
-            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,doc.read".into()]
+            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,portal.forget,portal.status,doc.read".into()]
         }
         "CALL" => {
             let (tool, rest) = split_word(rest);
@@ -445,6 +445,27 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                 vec!["OK workspace.forget nothing_to_remove".into(), "END".into()]
             }
             Err(e) => vec![format!("ERR workspace.forget {e}")],
+        },
+        // Revoking Online services must remove the fetched corpus, not merely
+        // stop consulting it — the other two grants already work that way, and
+        // 64MB of someone else's crawl sitting on disk after they said no is
+        // exactly the gap "off means gone" is meant to close.
+        // Local only: reports what is cached, never fetches. The status dot
+        // must not become a reason to hit the network.
+        "portal.status" => {
+            let n = tsearch::docs().len();
+            let cached = tsearch::is_available();
+            vec![
+                format!("OK portal.status n={n} cached={}", if cached { 1 } else { 0 }),
+                "END".into(),
+            ]
+        }
+        "portal.forget" => match std::fs::remove_file(tsearch::cache_path()) {
+            Ok(()) => vec!["OK portal.forget removed".into(), "END".into()],
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                vec!["OK portal.forget nothing_to_remove".into(), "END".into()]
+            }
+            Err(e) => vec![format!("ERR portal.forget {e}")],
         },
         "audio.forget" => match std::fs::remove_file(transcribe::store_path()) {
             Ok(()) => vec!["OK audio.forget removed".into(), "END".into()],

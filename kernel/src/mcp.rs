@@ -262,6 +262,44 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
     page
 }
 
+/// What the portal source currently holds, locally.
+pub struct PortalStatus {
+    pub reachable: bool,
+    pub cached: bool,
+    pub docs: usize,
+}
+
+/// Read cached-corpus status. Does not cause a fetch.
+pub fn portal_status() -> PortalStatus {
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+    if matches!(ping_bridge(&com2, &mut line), BridgeStatus::Offline) {
+        return PortalStatus { reachable: false, cached: false, docs: 0 };
+    }
+    com2.write_str("CALL portal.status\n");
+    let mut st = PortalStatus { reachable: true, cached: false, docs: 0 };
+    for _ in 0..8 {
+        let Some(n) = com2.read_line(&mut line, TIMEOUT_REPLY) else {
+            break;
+        };
+        let resp = str_prefix(&line[..n]);
+        if resp == "END" || resp.starts_with("ERR ") {
+            break;
+        }
+        if let Some(rest) = resp.strip_prefix("OK portal.status ") {
+            for field in rest.split_whitespace() {
+                if let Some(v) = field.strip_prefix("n=") {
+                    st.docs = v.parse().unwrap_or(0);
+                } else if let Some(v) = field.strip_prefix("cached=") {
+                    st.cached = v == "1";
+                }
+            }
+        }
+    }
+    st
+}
+
 /// Ask the bridge to build what a newly granted capability needs.
 ///
 /// Granting a capability should make it work, not merely permit it. Without

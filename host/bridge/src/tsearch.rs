@@ -336,3 +336,30 @@ mod index_tests {
         assert_eq!(tok("Capability-based Agents v2 a"), vec!["capability", "based", "agents", "v2"]);
     }
 }
+
+#[cfg(test)]
+mod forget_tests {
+    use super::*;
+
+    #[test]
+    fn revoking_can_remove_the_cached_corpus() {
+        // "Off" has to mean gone here too: the corpus is ~64MB fetched from a
+        // remote site, and leaving it behind after the grant is withdrawn is
+        // the loudest possible version of the inconsistency.
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = env::temp_dir().join(format!("os-portal-forget-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let cache = dir.join("teddy.json");
+        unsafe { env::set_var("OS_TSEARCH_CACHE", &cache) };
+
+        fs::write(&cache, r#"{"crawled_at":"now","docs":[{"t":"A","u":"u"}]}"#).unwrap();
+        assert!(is_available());
+
+        fs::remove_file(&cache).unwrap();
+        assert!(!is_available(), "cache survived revocation");
+
+        let _ = fs::remove_dir_all(&dir);
+        unsafe { env::remove_var("OS_TSEARCH_CACHE") };
+    }
+}

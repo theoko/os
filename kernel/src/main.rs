@@ -203,6 +203,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut sview = searchui::SearchView::new();
                 let mut page = mcp::DocPage::empty(mcp::BridgeStatus::Offline, false);
+                let mut portal = mcp::PortalStatus { reachable: false, cached: false, docs: 0 };
                 let mut open_title = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut view = screens::View::Home;
                 let caret = true;
@@ -305,6 +306,21 @@ unsafe extern "C" fn kmain() -> ! {
                             moved = false;
                         }
                     } else if view == screens::View::Home {
+                        // The nav dot is the only nav affordance; clicking it
+                        // shows every source's state, which the dot alone
+                        // cannot express.
+                        let left_down = buttons & 0x01 != 0;
+                        let was_down = prev_buttons & 0x01 != 0;
+                        if left_down && !was_down && ui::status_dot_rect(w).contains(x, y) {
+                            portal = mcp::portal_status();
+                            view = screens::View::Status;
+                            cursor.hide(surface);
+                            screens::draw_status(surface, &mail, &portal, grants);
+                            cursor.show_at(surface, x, y);
+                            enter(&screen, animate);
+                            moved = false;
+                        }
+
                         // Type straight into the home field - no click first.
                         let mut dirty = false;
                         while let Some(key) = kb.poll() {
@@ -427,7 +443,11 @@ unsafe extern "C" fn kmain() -> ! {
                                         // Granting the portal grant also pulls
                                         // the corpus, or the switch is on with
                                         // nothing behind it.
-                                        (caps::Cap::PortalSync, "", Some("tsearch.sync")),
+                                        (
+                                            caps::Cap::PortalSync,
+                                            "portal.forget",
+                                            Some("tsearch.sync"),
+                                        ),
                                     ] {
                                         let was = before.allows(cap);
                                         let now = grants.allows(cap);
@@ -486,6 +506,9 @@ unsafe extern "C" fn kmain() -> ! {
                                 screens::View::Caps => screens::draw_caps(surface, grants),
                                 screens::View::Reader => {
                                     searchui::draw_reader(surface, open_title.as_str(), &page)
+                                }
+                                screens::View::Status => {
+                                    screens::draw_status(surface, &mail, &portal, grants)
                                 }
                                 screens::View::Home => {
                                     ui::draw_home(

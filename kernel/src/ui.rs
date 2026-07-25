@@ -9,6 +9,29 @@ use crate::font::{BODY_FACE, BRAND_FACE, H2_FACE, SMALL_FACE};
 use crate::mcp::{BridgeStatus, MailPeek};
 use crate::skills::SkillPeek;
 
+/// Where the status dot sits, for drawing and hit-testing.
+pub fn status_dot_rect(w: i32) -> Rect {
+    let d = 10;
+    Rect { x: w - PAD_X - d, y: NAV_H / 2 - d / 2, w: d, h: d }
+}
+
+fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
+    let base = (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline();
+    fb.draw_text(PAD_X, base, "os", &BRAND_FACE, 0, theme::INK);
+
+    // Just the dot. "bridge connected" was a label that answered half the
+    // question — it said nothing about the portal — and repeated on every
+    // screen. Clicking it opens the full picture instead.
+    let dot = match mail.status {
+        BridgeStatus::Online => theme::ONLINE,
+        BridgeStatus::Offline => theme::OFFLINE,
+    };
+    let r = status_dot_rect(w);
+    fb.fill_round_rect(r.x, r.y, r.w, r.h, r.w / 2, dot);
+
+    fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
+}
+
 /// Palette lifted from the reference site.
 pub mod theme {
     /// Page.
@@ -308,30 +331,6 @@ pub fn home_targets(w: i32, h: i32, skills: &SkillPeek) -> HomeTargets {
     }
 }
 
-fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
-    let base = (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline();
-    fb.draw_text(PAD_X, base, "os", &BRAND_FACE, 0, theme::INK);
-
-    let (label, dot) = match mail.status {
-        BridgeStatus::Online => ("bridge connected", theme::ONLINE),
-        BridgeStatus::Offline => ("bridge offline", theme::OFFLINE),
-    };
-    let tw = SMALL_FACE.width(label, 0);
-    let sbase = (NAV_H - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
-    fb.draw_text(w - PAD_X - tw, sbase, label, &SMALL_FACE, 0, theme::MUTED);
-
-    let dot_d = 7;
-    fb.fill_round_rect(
-        w - PAD_X - tw - 8 - dot_d,
-        NAV_H / 2 - dot_d / 2,
-        dot_d,
-        dot_d,
-        dot_d / 2,
-        dot,
-    );
-
-    fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
-}
 
 
 
