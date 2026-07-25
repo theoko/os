@@ -29,6 +29,22 @@ struct Doc {
     pr: f64,
 }
 
+/// Transcripts, projected into corpus documents so speech is searchable
+/// next to files and mail.
+fn transcript_docs() -> Vec<Doc> {
+    crate::transcribe::Store::load()
+        .items
+        .into_iter()
+        .map(|t| Doc {
+            t: t.title,
+            u: format!("audio://{}", t.source),
+            c: "audio".to_string(),
+            b: t.text,
+            pr: 0.6,
+        })
+        .collect()
+}
+
 /// Workspace files, projected into corpus documents.
 ///
 /// Reached only when the caller passed `files=1`, i.e. the user granted
@@ -213,6 +229,9 @@ pub fn query_all(
     let mut docs = load_docs()?;
     if include_files {
         docs.extend(workspace_docs());
+        // Transcripts ride the same grant as local files: both are the user's
+        // own recorded material.
+        docs.extend(transcript_docs());
     }
     if include_email {
         docs.extend(email_docs());

@@ -7,6 +7,7 @@ mod graph;
 mod workspace;
 mod portals;
 mod search;
+mod transcribe;
 mod tsearch;
 mod skills;
 
@@ -276,7 +277,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
     match cmd {
         "PING" => vec!["OK pong".into()],
         "LIST" => {
-            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,market.health,market.fear_greed".into()]
+            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,search.query,workspace.index,tsearch.sync,market.health,market.fear_greed,audio.transcribe".into()]
         }
         "CALL" => {
             let (tool, rest) = split_word(rest);
@@ -363,6 +364,35 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                     out
                 }
                 Err(e) => vec![format!("ERR {tool} {e}")],
+            }
+        }
+        "audio.transcribe" => {
+            // Reads media and puts the words in a searchable index, so it
+            // needs the grant just like workspace.index does.
+            if !matches!(arg_val(args, "audio"), Some("1")) {
+                return vec!["ERR audio.transcribe needs_audio_cap".into()];
+            }
+            let Some(path) = arg_val(args, "path") else {
+                return vec!["ERR audio.transcribe missing_path".into()];
+            };
+            match transcribe::transcribe(std::path::Path::new(path)) {
+                Ok(t) => {
+                    let mut store = transcribe::Store::load();
+                    let summary = transcribe::summarize(&t.text, 3);
+                    let (title, words, secs) = (t.title.clone(), t.words, t.seconds);
+                    store.upsert(t);
+                    let _ = store.save();
+                    let mut out = vec![format!(
+                        "OK audio.transcribe words={words} seconds={secs:.0}"
+                    )];
+                    out.push(format!("ROW field=title|value={}", sanitize_field(&title)));
+                    for line in summary {
+                        out.push(format!("ROW field=summary|value={}", sanitize_field(&line)));
+                    }
+                    out.push("END".into());
+                    out
+                }
+                Err(e) => vec![format!("ERR audio.transcribe {e}")],
             }
         }
         "tsearch.sync" => match tsearch::sync() {
