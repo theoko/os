@@ -71,6 +71,8 @@ fn as_str(buf: &[u8]) -> &str {
 pub struct Source {
     /// COM2 answered.
     pub bridge_online: bool,
+    /// The bridge answered with ERR, or the capability was refused.
+    pub errored: bool,
     /// The caller held workspace.index, so the user's own files were in scope.
     pub files_in_scope: bool,
     /// The caller held email.search.
@@ -79,11 +81,20 @@ pub struct Source {
 
 impl Source {
     pub const fn offline() -> Self {
-        Self { bridge_online: false, files_in_scope: false, mail_in_scope: false }
+        Self { bridge_online: false, errored: false, files_in_scope: false, mail_in_scope: false }
     }
+
+    /// Shown when something actually broke, as opposed to simply finding
+    /// nothing. Named for the search engine this OS queries.
+    pub const TEDDY: &'static str = "Teddy is looking into it.";
 
     /// One line explaining an empty result set, naming the fix when there is one.
     pub fn empty_reason(self) -> &'static str {
+        // A failure is not the same as an empty result set, and only the
+        // former gets the friendly line.
+        if self.errored {
+            return Self::TEDDY;
+        }
         if !self.bridge_online {
             return "No matches. Bridge offline - only built-in docs are searchable.";
         }
@@ -153,6 +164,7 @@ impl SearchView {
         // simply found nothing is never reported as a connection failure.
         let source = Source {
             bridge_online: online,
+            errored: peek.denied,
             files_in_scope: caps.allows(crate::caps::Cap::WorkspaceIndex),
             mail_in_scope: caps.allows(crate::caps::Cap::EmailSearch),
         };
@@ -334,7 +346,7 @@ mod source_tests {
     fn an_online_bridge_is_never_reported_as_offline() {
         // The bug this replaces: a bridge that answered "n=0" was rendered as
         // "Bridge offline", sending the user to debug a working connection.
-        let s = Source { bridge_online: true, files_in_scope: true, mail_in_scope: true };
+        let s = Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: true };
         assert!(!s.empty_reason().contains("offline"));
     }
 
@@ -345,7 +357,7 @@ mod source_tests {
 
     #[test]
     fn missing_file_grant_names_the_fix() {
-        let s = Source { bridge_online: true, files_in_scope: false, mail_in_scope: true };
+        let s = Source { bridge_online: true, errored: false, files_in_scope: false, mail_in_scope: true };
         let m = s.empty_reason();
         assert!(m.contains("workspace.index"), "{m}");
         assert!(!m.contains("offline"), "{m}");
@@ -353,7 +365,7 @@ mod source_tests {
 
     #[test]
     fn missing_mail_grant_names_the_fix() {
-        let s = Source { bridge_online: true, files_in_scope: true, mail_in_scope: false };
+        let s = Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: false };
         assert!(s.empty_reason().contains("email.search"));
     }
 
@@ -361,13 +373,44 @@ mod source_tests {
     fn every_reason_is_renderable_ascii() {
         for s in [
             Source::offline(),
-            Source { bridge_online: true, files_in_scope: false, mail_in_scope: false },
-            Source { bridge_online: true, files_in_scope: true, mail_in_scope: false },
-            Source { bridge_online: true, files_in_scope: true, mail_in_scope: true },
+            Source { bridge_online: true, errored: false, files_in_scope: false, mail_in_scope: false },
+            Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: false },
+            Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: true },
         ] {
             let m = s.empty_reason();
             assert!(m.bytes().all(|b| (0x20..=0x7E).contains(&b)), "{m}");
             assert!(BODY_FACE.width(m, 0) < 980, "empty-state line overflows: {m}");
         }
+    }
+}
+
+#[cfg(test)]
+mod teddy_tests {
+    use super::*;
+
+    #[test]
+    fn a_real_failure_gets_the_friendly_line() {
+        let s = Source { bridge_online: true, errored: true, files_in_scope: true, mail_in_scope: true };
+        assert_eq!(s.empty_reason(), Source::TEDDY);
+    }
+
+    #[test]
+    fn an_empty_result_is_not_a_failure() {
+        // Finding nothing is a legitimate answer and must stay actionable
+        // rather than being papered over with a mascot.
+        let s = Source { bridge_online: true, errored: false, files_in_scope: false, mail_in_scope: true };
+        assert_ne!(s.empty_reason(), Source::TEDDY);
+        assert!(s.empty_reason().contains("workspace.index"));
+    }
+
+    #[test]
+    fn an_outage_still_says_offline_not_teddy() {
+        assert!(Source::offline().empty_reason().contains("offline"));
+    }
+
+    #[test]
+    fn the_line_renders() {
+        assert!(Source::TEDDY.bytes().all(|b| (0x20..=0x7E).contains(&b)));
+        assert!(BODY_FACE.width(Source::TEDDY, 0) < 980);
     }
 }
