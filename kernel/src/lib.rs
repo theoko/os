@@ -10,6 +10,7 @@ pub mod keyboard;
 pub mod mcp;
 pub mod mouse;
 pub mod pci;
+pub mod screens;
 pub mod search;
 pub mod searchui;
 pub mod serial;

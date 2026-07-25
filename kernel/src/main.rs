@@ -3,7 +3,7 @@
 
 use core::hint::black_box;
 
-use kernel::{caps, fb, hello_message, keyboard, mcp, mouse, searchui, serial, setup, skills, ui, usb_tablet};
+use kernel::{caps, fb, hello_message, keyboard, mcp, mouse, screens, searchui, serial, setup, skills, ui, usb_tablet};
 use limine::BaseRevision;
 use limine::request::{
     FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
@@ -197,8 +197,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut kb = keyboard::Keyboard::new();
                 let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut sview = searchui::SearchView::new();
-                // None = home; Some = the search screen is up.
-                let mut searching = false;
+                let mut view = screens::View::Home;
                 let mut caret = true;
                 // First boot: run the setup journey before the home screen.
                 cursor.hide(surface);
@@ -267,7 +266,7 @@ unsafe extern "C" fn kmain() -> ! {
                             prev_x = x;
                             prev_y = y;
                         }
-                    } else if searching {
+                    } else if view != screens::View::Home {
                         // --- search screen: keyboard drives it ---
                         let mut dirty = false;
                         while let Some(key) = kb.poll() {
@@ -278,7 +277,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     dirty = true;
                                 }
                                 keyboard::Key::Escape => {
-                                    searching = false;
+                                    view = screens::View::Home;
                                     dirty = true;
                                 }
                                 other => {
@@ -294,27 +293,37 @@ unsafe extern "C" fn kmain() -> ! {
                         if left_down && !was_down {
                             let (bx, by, bw, bh) = searchui::back_rect(w);
                             if x >= bx && x < bx + bw && y >= by && y < by + bh {
-                                searching = false;
+                                view = screens::View::Home;
                                 dirty = true;
+                            } else if view == screens::View::Caps {
+                                // Live switches: revoke or grant after setup.
+                                if let Some(i) = screens::caps_hit(w, x, y) {
+                                    grants = screens::toggle(grants, i);
+                                    write_status(&mut status_buf, grants.footer_status());
+                                    dirty = true;
+                                }
                             }
                         }
                         if dirty {
                             cursor.hide(surface);
-                            if searching {
-                                searchui::draw(
+                            match view {
+                                screens::View::Search => searchui::draw(
                                     surface,
                                     &sview,
                                     query.as_str(),
                                     caret,
                                     bridge_note(&mail),
-                                );
-                            } else {
-                                ui::draw_home(
-                                    surface,
-                                    &mail,
-                                    &skill_peek,
-                                    status_str(&status_buf),
-                                );
+                                ),
+                                screens::View::Skills => screens::draw_skills(surface, &skill_peek),
+                                screens::View::Caps => screens::draw_caps(surface, grants),
+                                screens::View::Home => {
+                                    ui::draw_home(
+                                        surface,
+                                        &mail,
+                                        &skill_peek,
+                                        status_str(&status_buf),
+                                    )
+                                }
                             }
                             cursor.show_at(surface, x, y);
                             screen.present();
@@ -359,7 +368,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 }
                                 Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
                                     serial_port.write_str("ui: open search\n");
-                                    searching = true;
+                                    view = screens::View::Search;
                                     query.clear();
                                     sview = searchui::SearchView::new();
                                     cursor.hide(surface);

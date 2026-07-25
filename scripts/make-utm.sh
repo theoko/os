@@ -207,7 +207,10 @@ cfg["Display"] = [{
     "Hardware": "virtio-vga",
     "DynamicResolution": False,
     "NativeResolution": False,
-    "UpscalingFilter": "Nearest",
+    # Linear, not Nearest: the guest framebuffer is upscaled several times over
+    # on a Retina display, and nearest-neighbour turns every anti-aliased glyph
+    # back into blocks — undoing the whole point of the font atlas.
+    "UpscalingFilter": "Linear",
     "DownscalingFilter": "Linear",
 }]
 p.write_bytes(plistlib.dumps(cfg, fmt=plistlib.FMT_XML))

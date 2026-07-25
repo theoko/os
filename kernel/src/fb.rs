@@ -449,8 +449,8 @@ mod tests {
 
 /// Largest framebuffer we can double-buffer. Lives in `.bss`, so it costs
 /// nothing in the ISO — Limine zeroes it at load.
-pub const MAX_W: usize = 1280;
-pub const MAX_H: usize = 1024;
+pub const MAX_W: usize = 1920;
+pub const MAX_H: usize = 1200;
 
 static mut BACK: [u32; MAX_W * MAX_H] = [0; MAX_W * MAX_H];
 
