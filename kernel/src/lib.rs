@@ -3,6 +3,7 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod beep;
 pub mod caps;
 pub mod fb;
 pub mod font;

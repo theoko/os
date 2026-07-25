@@ -3,7 +3,7 @@
 
 use core::hint::black_box;
 
-use kernel::{caps, fb, hello_message, keyboard, mcp, mouse, screens, searchui, serial, setup, skills, ui, usb_tablet};
+use kernel::{beep, caps, fb, hello_message, keyboard, mcp, mouse, screens, searchui, serial, setup, skills, ui, usb_tablet};
 use limine::BaseRevision;
 use limine::request::{
     FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
@@ -204,6 +204,9 @@ unsafe extern "C" fn kmain() -> ! {
                 cursor.show_at(surface, x, y);
                 screen.present();
                 serial_port.write_str("ui: setup welcome\n");
+                // Chime after the first frame is up, so the screen is never
+                // waiting on the speaker.
+                beep::startup();
 
                 // Measure what a frame actually costs, rather than guessing.
                 {

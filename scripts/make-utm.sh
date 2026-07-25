@@ -202,6 +202,9 @@ if os.environ.get("UTM_BRIDGE", "0") == "1":
         "TcpPort": int(port or "7420"),
     })
 cfg["Serial"] = serial
+# The PC speaker needs an emulated sound card to reach the host. UTM creates
+# VMs with Sound: [] and the chime is silent without this.
+cfg["Sound"] = [{"Hardware": "intel-hda"}]
 cfg.setdefault("System", {})["MemorySize"] = 1024
 cfg["Display"] = [{
     "Hardware": "virtio-vga",
