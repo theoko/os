@@ -188,7 +188,10 @@ unsafe extern "C" fn kmain() -> ! {
                     serial_port.write_str("mouse: ps2 ready\n");
                 } else {
                     serial_port.write_str("mouse: ps2 init soft-fail\n");
-                    mice.present = true;
+                    #[cfg(target_arch = "x86_64")]
+                    {
+                        mice.present = true;
+                    }
                 }
 
                 ui::draw_home(surface, &mail, &skill_peek, "");
@@ -196,11 +199,14 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut x = cx;
                 let mut y = cy;
                 let mut prev_buttons = 0u8;
+                #[cfg(target_arch = "aarch64")]
+                let mut arm_cursor_refresh = 0u16;
                 // What actually came up. Under QEMU this is always fine; on
                 // real hardware it is the whole story, and a machine with no
                 // driveable pointer renders a perfect home screen with a
                 // cursor that never moves - indistinguishable from a hang.
                 let inputs = inputdiag::Inputs {
+                    ps2_controller: keyboard::Keyboard::present(),
                     ps2_keyboard: keyboard::Keyboard::present(),
                     ps2_mouse: mice.present,
                     usb_tablet: tablet.is_some(),
@@ -245,6 +251,20 @@ unsafe extern "C" fn kmain() -> ! {
                 setup.draw(surface, &mail, &skill_peek);
                 cursor.show_at(surface, x, y);
                 enter(&screen, animate);
+                // An ARM guest can have a framebuffer before it has a native
+                // pointer device. Keep the software cursor on the final frame
+                // so the screen never looks frozen while that driver is absent.
+                #[cfg(target_arch = "aarch64")]
+                {
+                    // Do not use the save/restore cursor here: QemuRamFB may
+                    // repaint after the transition and restore its saved page
+                    // over the arrow. A direct paint is persistent at rest.
+                    cursor.hide(surface);
+                    mouse::paint_pointer(surface, x, y);
+                }
+                #[cfg(not(target_arch = "aarch64"))]
+                cursor.show_at(surface, x, y);
+                screen.present();
                 serial_port.write_str("ui: setup welcome\n");
                 // Chime after the first frame is up, so the screen is never
                 // waiting on the speaker.
@@ -750,6 +770,18 @@ unsafe extern "C" fn kmain() -> ! {
                         }
                     }
                     prev_buttons = buttons;
+                    #[cfg(target_arch = "aarch64")]
+                    {
+                        // The ARM input driver arrives later than the
+                        // framebuffer. Re-present the software cursor at a
+                        // gentle cadence so a host redraw can never erase the
+                        // only visible pointer while the guest is idle.
+                        arm_cursor_refresh = arm_cursor_refresh.wrapping_add(1);
+                        if arm_cursor_refresh == 0 {
+                            mouse::paint_pointer(surface, x, y);
+                            screen.present();
+                        }
+                    }
                     if moved {
                         cursor.show_at(surface, x, y);
                         // hide()/show_at() marked both footprints; present()
@@ -806,12 +838,23 @@ fn enter(screen: &fb::Screen, animate: bool) {
 /// Measured rather than assumed: the same code should animate on hardware
 /// virtualisation and stay still under TCG, without a build flag.
 fn can_animate(screen: &fb::Screen) -> bool {
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = screen;
+        // No cycle counter is wired on ARM yet, so treating its zero value as
+        // a fast GPU would force an unjustified 60fps animation path.
+        return false;
+    }
+
+    #[cfg(target_arch = "x86_64")]
+    {
     let t0 = serial::rdtsc();
     screen.present_all();
     let cost = serial::rdtsc().wrapping_sub(t0);
     // A 10-frame entrance needs each blit well inside a 16ms frame. At the
     // ~1GHz the timing code assumes, that is a few million cycles.
     cost < 4_000_000
+    }
 }
 
 /// Decimal u64 to COM1, for the perf line.
