@@ -190,7 +190,7 @@ pub fn draw_home_full(
     let h = fb.height() as i32;
 
     fb.fill(theme::BG);
-    draw_nav(fb, w, mail);
+    draw_nav(fb, w, mail.status);
 
     let r = search_rect(w);
     let badge = match mail.status {
@@ -287,7 +287,7 @@ pub fn home_targets(w: i32) -> HomeTargets {
     HomeTargets { w }
 }
 
-fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
+fn draw_nav(fb: &Surface, w: i32, status: BridgeStatus) {
     let base = (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline();
     fb.draw_text(PAD_X, base, "os", &BRAND_FACE, 0, theme::INK);
 
@@ -297,7 +297,7 @@ fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
     fb.draw_text_centered(cr.x + cr.w / 2, cbase, "Connect", &BTN_FACE, 0, theme::SURFACE);
 
     let label = "Bridge";
-    let dot = match mail.status {
+    let dot = match status {
         BridgeStatus::Online => theme::ONLINE,
         BridgeStatus::Offline => theme::OFFLINE,
     };

@@ -193,7 +193,12 @@ pub fn result_hit(w: i32, count: usize, x: i32, y: i32) -> Option<usize> {
 }
 
 /// Draw the search screen.
-pub fn draw(fb: &Surface, view: &SearchView, query: &str, bridge_note: &str) {
+pub fn draw(
+    fb: &Surface,
+    view: &SearchView,
+    query: &str,
+    status: crate::mcp::BridgeStatus,
+) {
     let w = fb.width() as i32;
     screens::chrome(fb, w, "Search", Some("What do you want to know?"));
 
@@ -214,14 +219,13 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, bridge_note: &str) {
     // Results.
     let mut y = fy + fh + 26;
     if !view.searched {
-        fb.draw_text_centered(
-            w / 2,
-            y + 30,
-            bridge_note,
-            &SMALL_FACE,
-            0,
-            theme::MUTED,
-        );
+        let note = match status {
+            crate::mcp::BridgeStatus::Online => {
+                "Answers come from the local index and the host bridge."
+            }
+            crate::mcp::BridgeStatus::Offline => crate::mcp::BRIDGE_OFFLINE_HINT,
+        };
+        fb.draw_text_centered(w / 2, y + 30, note, &SMALL_FACE, 0, theme::MUTED);
         return;
     }
     if view.count == 0 {

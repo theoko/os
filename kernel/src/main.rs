@@ -427,14 +427,6 @@ fn handle_key(
     }
 }
 
-/// One line telling the user where answers come from right now.
-fn bridge_note(status: mcp::BridgeStatus) -> &'static str {
-    match status {
-        mcp::BridgeStatus::Online => "Answers come from the local index and the host bridge.",
-        mcp::BridgeStatus::Offline => mcp::BRIDGE_OFFLINE_HINT,
-    }
-}
-
 fn log_mail_status(port: &serial::Serial, status: mcp::BridgeStatus) {
     port.write_str(match status {
         mcp::BridgeStatus::Online => "mcp: email connected\n",
@@ -470,7 +462,7 @@ fn repaint(
     cursor.hide(surface);
     match view {
         screens::View::Search => {
-            searchui::draw(surface, sview, query, bridge_note(mail.status))
+            searchui::draw(surface, sview, query, mail.status)
         }
         screens::View::Skills => screens::draw_skills(surface, skills),
         screens::View::Caps => screens::draw_caps(surface, grants),
