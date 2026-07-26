@@ -304,7 +304,8 @@ fn forget_file(tool: &str, path: &std::path::Path) -> Vec<String> {
 fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
     match tool {
         "email.search" => {
-            email_search(arg_val(args, "q").unwrap_or("in:inbox"), arg_usize(args, "max", 5, 20))
+            // Default matches guest mail peek (`max=3`; guest always sends max=).
+            email_search(arg_val(args, "q").unwrap_or("in:inbox"), arg_usize(args, "max", 3, 20))
         }
         "email.send" => vec![format!("ERR {tool} disabled_until_cap_confirm")],
         "skills.list" => skills::list_response(),
@@ -345,7 +346,8 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
             let Some(url) = arg_val(args, "url") else {
                 return vec![format!("ERR {tool} missing_url")];
             };
-            let max = arg_usize(args, "lines", 24, 200);
+            // Default matches guest `DocPage::MAX` (guest always sends lines=).
+            let max = arg_usize(args, "lines", 18, 200);
             match read_doc(url, max, arg_flag(args, "files"), arg_flag(args, "audio")) {
                 Ok(lines) => text::framed_ok(format!("OK {tool}"), lines),
                 Err(e) => vec![format!("ERR {tool} {e}")],
