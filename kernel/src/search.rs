@@ -249,7 +249,10 @@ mod tests {
     fn never_returns_more_than_max_hits() {
         let mut out = [Hit { doc: 0, score: 0 }; MAX_HITS];
         // A term-heavy query that touches most of the corpus.
-        let n = query("os agent kernel search skills bridge capability docs", &mut out);
+        let n = query(
+            "os agent kernel search skills bridge capability docs",
+            &mut out,
+        );
         assert!(n <= MAX_HITS);
     }
 

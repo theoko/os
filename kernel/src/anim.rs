@@ -7,7 +7,7 @@
 //! Everything is fixed point. The kernel never enables the FPU, so a cubic
 //! curve is evaluated in Q16 integers rather than floats.
 
-use crate::serial::rdtsc;
+use crate::serial::{counter_hz, rdtsc};
 
 /// Fixed-point one.
 pub const ONE: i32 = 1 << 16;
@@ -40,17 +40,15 @@ pub fn lerp_color(a: u32, b: u32, t: i32) -> u32 {
     ch(16) | ch(8) | ch(0)
 }
 
-/// Assumed cycle rate for frame pacing.
-///
-/// TCG's clock is not the host's, so this paces frames approximately. It only
-/// has to stop an animation running faster than it can be seen.
-const ASSUMED_HZ: u64 = 1_000_000_000;
-
 /// Busy-wait until `us` microseconds after `since`, returning the new mark.
 ///
 /// Capped so a stuck or unavailable counter cannot hang an animation.
 pub fn pace(since: u64, us: u32) -> u64 {
-    let target = since.wrapping_add(ASSUMED_HZ / 1_000_000 * us as u64);
+    let hz = counter_hz();
+    if hz == 0 {
+        return since;
+    }
+    let target = since.wrapping_add(hz / 1_000_000 * us as u64);
     let mut guard: u64 = 0;
     while rdtsc() < target {
         guard += 1;
@@ -160,7 +158,10 @@ mod tests {
     #[test]
     fn entrance_is_brief() {
         let ms = SLIDE_IN.frames * SLIDE_IN.frame_us / 1000;
-        assert!(ms <= 200, "entrance takes {ms}ms — too slow to feel responsive");
+        assert!(
+            ms <= 200,
+            "entrance takes {ms}ms — too slow to feel responsive"
+        );
     }
 
     #[test]

@@ -61,10 +61,10 @@ pub struct Note {
 ///
 /// Kept under a second so it never delays the first frame noticeably.
 pub const STARTUP: [Note; 6] = [
-    Note { hz: 523, ms: 90 },  // C5
-    Note { hz: 659, ms: 90 },  // E5
-    Note { hz: 784, ms: 90 },  // G5
-    Note { hz: 0, ms: 40 },    // breath
+    Note { hz: 523, ms: 90 },   // C5
+    Note { hz: 659, ms: 90 },   // E5
+    Note { hz: 784, ms: 90 },   // G5
+    Note { hz: 0, ms: 40 },     // breath
     Note { hz: 1047, ms: 160 }, // C6
     Note { hz: 0, ms: 30 },
 ];

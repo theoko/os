@@ -10,12 +10,12 @@
 use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{self, BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
-use crate::searchui::back_rect;
 use crate::keyboard::TextField;
-use crate::setup::{cap_rows, N_CAPS};
-use crate::skills::{SkillPeek, Workflow};
+use crate::searchui::back_rect;
+use crate::setup::{N_CAPS, cap_rows};
 #[cfg(test)]
 use crate::skills::BUILTIN;
+use crate::skills::{SkillPeek, Workflow};
 use crate::ui::theme;
 
 /// Which full-screen view is showing.
@@ -62,7 +62,14 @@ pub fn caps_hit(w: i32, x: i32, y: i32) -> Option<usize> {
 fn chrome(fb: &Surface, w: i32, title: &str, heading: &str) {
     fb.fill(theme::BG);
     let (bx, by, _, _) = back_rect(w);
-    fb.draw_text(bx, by + BTN_FACE.baseline(), "Back", &BTN_FACE, 0, theme::ACCENT);
+    fb.draw_text(
+        bx,
+        by + BTN_FACE.baseline(),
+        "Back",
+        &BTN_FACE,
+        0,
+        theme::ACCENT,
+    );
     fb.draw_text_centered(
         w / 2,
         (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline(),
@@ -77,9 +84,20 @@ fn chrome(fb: &Surface, w: i32, title: &str, heading: &str) {
 }
 
 /// A bordered row with a title and a subtitle.
-fn row(fb: &Surface, w: i32, i: usize, title: &str, sub: &str, accent: bool) -> (i32, i32, i32, i32) {
+fn row(
+    fb: &Surface,
+    w: i32,
+    i: usize,
+    title: &str,
+    sub: &str,
+    accent: bool,
+) -> (i32, i32, i32, i32) {
     let (x, y, cw, h) = row_rect(w, i);
-    let border = if accent { theme::ACCENT } else { theme::CARD_BORDER };
+    let border = if accent {
+        theme::ACCENT
+    } else {
+        theme::CARD_BORDER
+    };
     fb.fill_round_rect(x, y, cw, h, 10, border);
     fb.fill_round_rect(x + 1, y + 1, cw - 2, h - 2, 9, theme::BG);
     fb.draw_text(x + 18, y + 26, title, &BRAND_FACE, 0, theme::INK);
@@ -151,7 +169,14 @@ pub fn draw_playbook(
     fb.fill_round_rect(x + 1, gy + 1, cw - 2, 42, 9, theme::BG);
     let base = gy + (44 - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
     if goal.is_empty() {
-        fb.draw_text(x + 14, base, "What do you want to do?", &SMALL_FACE, 0, theme::MUTED);
+        fb.draw_text(
+            x + 14,
+            base,
+            "What do you want to do?",
+            &SMALL_FACE,
+            0,
+            theme::MUTED,
+        );
     } else {
         fb.draw_text(x + 14, base, goal.as_str(), &SMALL_FACE, 0, theme::INK);
     }
@@ -162,23 +187,66 @@ pub fn draw_playbook(
     let active = step.min(flow.steps.len().saturating_sub(1));
     for (i, text) in flow.steps.iter().take(5).enumerate() {
         let y = 198 + i as i32 * (ROW_H + ROW_GAP);
-        let border = if i == active { theme::ACCENT } else { theme::CARD_BORDER };
+        let border = if i == active {
+            theme::ACCENT
+        } else {
+            theme::CARD_BORDER
+        };
         fb.fill_round_rect(x, y, cw, ROW_H, 10, border);
         fb.fill_round_rect(x + 1, y + 1, cw - 2, ROW_H - 2, 9, theme::BG);
         fb.draw_text_clipped(x + 18, y + 26, text, &BRAND_FACE, 0, theme::INK, cw - 36);
-        let state = if i < active { "Done" } else if i == active { "Next" } else { "Later" };
+        let state = if i < active {
+            "Done"
+        } else if i == active {
+            "Next"
+        } else {
+            "Later"
+        };
         fb.draw_text(x + 18, y + 46, state, &SMALL_FACE, 0, theme::MUTED);
     }
     let (x, y, bw, bh) = playbook_next_rect(w, step, flow.steps.len());
     let done = step + 1 >= flow.steps.len();
-    fb.fill_round_rect(x, y, bw, bh, bh / 2, if done { theme::TINT_BORDER } else { theme::ACCENT });
-    let action = if done { "Run approved plan" } else { "Next step" };
-    fb.draw_text_centered(x + bw / 2, y + (bh - BTN_FACE.px) / 2 + BTN_FACE.baseline(), action, &BTN_FACE, 0, if done { theme::ACCENT } else { theme::BG });
+    fb.fill_round_rect(
+        x,
+        y,
+        bw,
+        bh,
+        bh / 2,
+        if done {
+            theme::TINT_BORDER
+        } else {
+            theme::ACCENT
+        },
+    );
+    let action = if done {
+        "Run approved plan"
+    } else {
+        "Next step"
+    };
+    fb.draw_text_centered(
+        x + bw / 2,
+        y + (bh - BTN_FACE.px) / 2 + BTN_FACE.baseline(),
+        action,
+        &BTN_FACE,
+        0,
+        if done { theme::ACCENT } else { theme::BG },
+    );
     if let Some(cap) = flow.required {
-        let note = if grants.allows(cap) { "Permission granted. Run only after you review the plan." } else { "Permission needed before the approved action can run." };
+        let note = if grants.allows(cap) {
+            "Permission granted. Run only after you review the plan."
+        } else {
+            "Permission needed before the approved action can run."
+        };
         fb.draw_text(x, y + bh + 24, note, &SMALL_FACE, 0, theme::MUTED);
     } else {
-        fb.draw_text(x, y + bh + 24, "The final button sends this goal to the scoped agent.", &SMALL_FACE, 0, theme::MUTED);
+        fb.draw_text(
+            x,
+            y + bh + 24,
+            "The final button sends this goal to the scoped agent.",
+            &SMALL_FACE,
+            0,
+            theme::MUTED,
+        );
     }
 }
 
@@ -196,10 +264,7 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
     chrome(fb, w, "Capabilities", "What the agent may do");
 
     for (i, (name, blurb)) in cap_rows().enumerate() {
-        let on = Cap::ALL
-            .get(i)
-            .map(|c| grants.allows(*c))
-            .unwrap_or(false);
+        let on = Cap::ALL.get(i).map(|c| grants.allows(*c)).unwrap_or(false);
         let (x, y, cw, h) = row(fb, w, i, name, blurb, false);
 
         // Pill switch, filled when granted.
@@ -207,7 +272,14 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
         let th = 22;
         let tx = x + cw - 18 - tw;
         let ty = y + (h - th) / 2;
-        fb.fill_round_rect(tx, ty, tw, th, th / 2, if on { theme::ACCENT } else { theme::RULE });
+        fb.fill_round_rect(
+            tx,
+            ty,
+            tw,
+            th,
+            th / 2,
+            if on { theme::ACCENT } else { theme::RULE },
+        );
         let knob = th - 6;
         let kx = if on { tx + tw - knob - 3 } else { tx + 3 };
         fb.fill_round_rect(kx, ty + 3, knob, knob, knob / 2, theme::BG);
@@ -270,8 +342,14 @@ mod tests {
         let g = Caps::none();
         let after = toggle(g, 0);
         assert!(after.allows(Cap::ALL[0]));
-        assert!(!after.allows(Cap::ALL[1]), "toggling one must not affect another");
-        assert!(!toggle(after, 0).allows(Cap::ALL[0]), "must toggle back off");
+        assert!(
+            !after.allows(Cap::ALL[1]),
+            "toggling one must not affect another"
+        );
+        assert!(
+            !toggle(after, 0).allows(Cap::ALL[0]),
+            "must toggle back off"
+        );
     }
 
     #[test]
@@ -362,8 +440,14 @@ mod tests {
         let (_, _, cw, _) = row_rect(1024, 0);
         // Switch occupies the right 58px of the row.
         for (name, blurb) in cap_rows() {
-            assert!(BRAND_FACE.width(name, 0) < cw - 76, "name hits the switch: {name}");
-            assert!(SMALL_FACE.width(blurb, 0) < cw - 76, "blurb hits the switch: {blurb}");
+            assert!(
+                BRAND_FACE.width(name, 0) < cw - 76,
+                "name hits the switch: {name}"
+            );
+            assert!(
+                SMALL_FACE.width(blurb, 0) < cw - 76,
+                "blurb hits the switch: {blurb}"
+            );
         }
     }
 }
@@ -407,7 +491,11 @@ pub fn draw_status(
         fb,
         y,
         "This computer",
-        if bridge_up { "Connected" } else { "Not connected" },
+        if bridge_up {
+            "Connected"
+        } else {
+            "Not connected"
+        },
         bridge_up,
     );
     y += ROW_H + ROW_GAP;

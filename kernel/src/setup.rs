@@ -11,6 +11,7 @@
 use crate::caps::Caps;
 use crate::fb::Surface;
 use crate::font::{self, BODY_FACE, BRAND_FACE, BTN_FACE, HERO_FACE, SMALL_FACE, TITLE_FACE};
+use crate::keyboard::Key;
 use crate::mcp::{BridgeStatus, MailPeek};
 use crate::skills::SkillPeek;
 use crate::ui::theme;
@@ -58,13 +59,16 @@ pub const REGIONS: [&str; 4] = ["United States", "United Kingdom", "Greece", "Ja
 /// Screen rows come straight from `Cap::ALL`, so a label can never drift from
 /// the capability it grants — they used to be two lists kept in step by hand.
 pub fn cap_rows() -> impl Iterator<Item = (&'static str, &'static str)> {
-    crate::caps::Cap::ALL.iter().map(|c| (c.label(), c.detail()))
+    crate::caps::Cap::ALL
+        .iter()
+        .map(|c| (c.label(), c.detail()))
 }
 
 /// Number of capability rows.
 pub const N_CAPS: usize = crate::caps::Cap::ALL.len();
 
 const MAX_ZONES: usize = 12;
+const NO_FOCUS: usize = usize::MAX;
 
 pub struct Setup {
     pub step: Step,
@@ -72,6 +76,8 @@ pub struct Setup {
     pub caps: [bool; N_CAPS],
     zones: [Zone; MAX_ZONES],
     n_zones: usize,
+    focus: usize,
+    keyboard_focus: bool,
     /// Edge detection: a held button must not advance every frame.
     was_down: bool,
 }
@@ -95,6 +101,8 @@ impl Setup {
                 action: Action::Continue,
             }; MAX_ZONES],
             n_zones: 0,
+            focus: NO_FOCUS,
+            keyboard_focus: false,
             was_down: false,
         }
     }
@@ -137,9 +145,44 @@ impl Setup {
         if !pressed {
             return false;
         }
+        self.keyboard_focus = false;
         match self.hit(x, y) {
             Some(action) => self.apply(action),
             None => false,
+        }
+    }
+
+    /// Drive setup without a pointer.
+    ///
+    /// Tab/Down and Up move a visible focus ring, Enter activates it, and
+    /// Escape goes back. The default focus is Continue, so first boot can be
+    /// completed with Enter alone when the defaults are acceptable.
+    pub fn key(&mut self, key: Key) -> bool {
+        if self.n_zones == 0 {
+            return false;
+        }
+        match key {
+            Key::Tab | Key::Down => {
+                self.keyboard_focus = true;
+                self.focus = (self.focus + 1) % self.n_zones;
+                true
+            }
+            Key::Up => {
+                self.keyboard_focus = true;
+                self.focus = if self.focus == 0 {
+                    self.n_zones - 1
+                } else {
+                    self.focus - 1
+                };
+                true
+            }
+            Key::Enter | Key::Char(b' ') => {
+                self.keyboard_focus = true;
+                let action = self.zones[self.focus.min(self.n_zones - 1)].action;
+                self.apply(action)
+            }
+            Key::Escape => self.apply(Action::Back),
+            _ => false,
         }
     }
 
@@ -156,6 +199,7 @@ impl Setup {
                     Step::Done => Step::Finished,
                     Step::Finished => Step::Finished,
                 };
+                self.focus = NO_FOCUS;
                 true
             }
             Action::Back => {
@@ -167,6 +211,7 @@ impl Setup {
                     Step::Done => Step::Skills,
                     Step::Finished => Step::Finished,
                 };
+                self.focus = NO_FOCUS;
                 true
             }
             Action::Row(i) => match self.step {
@@ -205,6 +250,30 @@ impl Setup {
             Step::Done => self.draw_done(fb, w, h),
             Step::Finished => {}
         }
+        if self.n_zones > 0 {
+            if self.focus >= self.n_zones {
+                self.focus = self.zones[..self.n_zones]
+                    .iter()
+                    .position(|z| z.action == Action::Continue)
+                    .unwrap_or(0);
+            }
+            if self.keyboard_focus {
+                self.draw_focus(fb);
+            }
+        }
+    }
+
+    fn draw_focus(&self, fb: &Surface) {
+        let zone = self.zones[self.focus.min(self.n_zones - 1)];
+        let x = zone.x - 4;
+        let y = zone.y - 4;
+        let w = zone.w + 8;
+        let h = zone.h + 8;
+        let thickness = 2;
+        fb.fill_rect(x, y, w, thickness, theme::ACCENT);
+        fb.fill_rect(x, y + h - thickness, w, thickness, theme::ACCENT);
+        fb.fill_rect(x, y, thickness, h, theme::ACCENT);
+        fb.fill_rect(x + w - thickness, y, thickness, h, theme::ACCENT);
     }
 
     fn draw_welcome(&mut self, fb: &Surface, w: i32, h: i32) {
@@ -244,7 +313,11 @@ impl Setup {
         let (label, detail, tint) = if online {
             ("Host bridge", "Connected on COM2", theme::ONLINE)
         } else {
-            ("Host bridge", "Offline - start it with 'make bridge-run'", theme::OFFLINE)
+            (
+                "Host bridge",
+                "Offline - start it with 'make bridge-run'",
+                theme::OFFLINE,
+            )
         };
         self.status_card(fb, w, top, label, detail, tint);
         self.footer(fb, w, h, top + ROW_H + 8, true);
@@ -262,7 +335,17 @@ impl Setup {
         let pitch = row_pitch(top, h, cap_rows().count(), true);
         for (i, (name, blurb)) in cap_rows().enumerate() {
             let on = self.caps[i];
-            self.row(fb, w, y, pitch - ROW_GAP, name, Some(blurb), on, true, Action::Row(i));
+            self.row(
+                fb,
+                w,
+                y,
+                pitch - ROW_GAP,
+                name,
+                Some(blurb),
+                on,
+                true,
+                Action::Row(i),
+            );
             y += pitch;
         }
         self.footer(fb, w, h, y - pitch + ROW_H, true);
@@ -286,7 +369,17 @@ impl Setup {
         for i in 0..n {
             let desc = skills.desc_at(i);
             let blurb = if desc.is_empty() { None } else { Some(desc) };
-            self.row(fb, w, y, pitch - ROW_GAP, skills.name_at(i), blurb, true, false, Action::Row(i));
+            self.row(
+                fb,
+                w,
+                y,
+                pitch - ROW_GAP,
+                skills.name_at(i),
+                blurb,
+                true,
+                false,
+                Action::Row(i),
+            );
             y += pitch;
         }
         self.footer(fb, w, h, y - pitch.min(y) + ROW_H, true);
@@ -330,8 +423,21 @@ impl Setup {
         }
         let x = 32;
         let y = 28;
-        fb.draw_text(x, y + BTN_FACE.baseline(), "Back", &BTN_FACE, 0, theme::ACCENT);
-        self.push_zone(x - 12, y - 10, BTN_FACE.width("Back", 0) + 24, BTN_FACE.px + 20, Action::Back);
+        fb.draw_text(
+            x,
+            y + BTN_FACE.baseline(),
+            "Back",
+            &BTN_FACE,
+            0,
+            theme::ACCENT,
+        );
+        self.push_zone(
+            x - 12,
+            y - 10,
+            BTN_FACE.width("Back", 0) + 24,
+            BTN_FACE.px + 20,
+            Action::Back,
+        );
     }
 
     /// A selectable row. `toggle` draws a switch instead of a checkmark.
@@ -356,9 +462,17 @@ impl Setup {
         let cw = CONTENT_W.min(w - 80);
         let x = (w - cw) / 2;
 
-        let border = if on && !toggle { theme::ACCENT } else { theme::CARD_BORDER };
+        let border = if on && !toggle {
+            theme::ACCENT
+        } else {
+            theme::CARD_BORDER
+        };
         fb.fill_round_rect(x, y, cw, rh, 10, border);
-        let inner = if on && !toggle { theme::TINT_BG } else { theme::BG };
+        let inner = if on && !toggle {
+            theme::TINT_BG
+        } else {
+            theme::BG
+        };
         fb.fill_round_rect(x + 1, y + 1, cw - 2, rh - 2, 9, inner);
 
         // Single baseline: label left, consequence beside it in muted grey.
@@ -384,7 +498,14 @@ impl Setup {
             fb.fill_round_rect(kx, ty + 3, knob, knob, knob / 2, theme::BG);
         } else if on {
             let d = 9;
-            fb.fill_round_rect(x + cw - pad - d, y + (rh - d) / 2, d, d, d / 2, theme::ACCENT);
+            fb.fill_round_rect(
+                x + cw - pad - d,
+                y + (rh - d) / 2,
+                d,
+                d,
+                d / 2,
+                theme::ACCENT,
+            );
         }
 
         self.push_zone(x, y, cw, rh, action);
@@ -399,7 +520,14 @@ impl Setup {
         let d = 9;
         fb.fill_round_rect(x + pad, y + (ROW_H + 8 - d) / 2, d, d, d / 2, tint);
         fb.draw_text(x + pad + d + 12, y + 26, label, &BRAND_FACE, 0, theme::INK);
-        fb.draw_text(x + pad + d + 12, y + 46, detail, &SMALL_FACE, 0, theme::MUTED);
+        fb.draw_text(
+            x + pad + d + 12,
+            y + 46,
+            detail,
+            &SMALL_FACE,
+            0,
+            theme::MUTED,
+        );
     }
 
     /// Primary pill, centred, registering a Continue zone.
@@ -417,7 +545,14 @@ impl Setup {
         let label = "Go Back";
         let tw = BTN_FACE.width(label, 0);
         let x = w / 2 - tw / 2;
-        fb.draw_text(x, y + BTN_FACE.baseline(), label, &BTN_FACE, 0, theme::ACCENT);
+        fb.draw_text(
+            x,
+            y + BTN_FACE.baseline(),
+            label,
+            &BTN_FACE,
+            0,
+            theme::ACCENT,
+        );
         // Generous target: the text alone is a 15px-tall sliver.
         self.push_zone(x - 12, y - 8, tw + 24, BTN_FACE.px + 20, Action::Back);
     }
@@ -561,7 +696,10 @@ mod tests {
         // that ship with it. Reading mail, indexing files, transcribing audio,
         // writing to disk and talking to remote services are all deliberate.
         let g = setup().grants();
-        assert!(g.allows(Cap::SearchQuery), "built-in docs should be usable immediately");
+        assert!(
+            g.allows(Cap::SearchQuery),
+            "built-in docs should be usable immediately"
+        );
         for cap in [
             Cap::EmailSearch,
             Cap::WorkspaceIndex,
@@ -584,7 +722,12 @@ mod tests {
         let s = setup();
         let g = s.grants();
         for (i, cap) in Cap::ALL.iter().enumerate() {
-            assert_eq!(s.caps[i], g.allows(*cap), "row {i} ({}) drives the wrong cap", crate::caps::Cap::ALL[i].label());
+            assert_eq!(
+                s.caps[i],
+                g.allows(*cap),
+                "row {i} ({}) drives the wrong cap",
+                crate::caps::Cap::ALL[i].label()
+            );
         }
     }
 
@@ -601,7 +744,11 @@ mod tests {
             let after = s.grants();
             for (j, cap) in Cap::ALL.iter().enumerate() {
                 if i == j {
-                    assert_ne!(before.allows(*cap), after.allows(*cap), "row {i} did not toggle");
+                    assert_ne!(
+                        before.allows(*cap),
+                        after.allows(*cap),
+                        "row {i} did not toggle"
+                    );
                 } else {
                     assert_eq!(
                         before.allows(*cap),
@@ -634,6 +781,39 @@ mod tests {
         assert!(!s.pointer(10, 10, 0));
         assert!(s.pointer(10, 10, 1));
         assert_eq!(s.step, Step::Bridge);
+    }
+
+    #[test]
+    fn enter_can_complete_the_default_path_without_a_pointer() {
+        let mut s = setup();
+        for expected in [
+            Step::Region,
+            Step::Bridge,
+            Step::Capabilities,
+            Step::Skills,
+            Step::Done,
+            Step::Finished,
+        ] {
+            s.reset_zones();
+            s.push_zone(0, 0, 100, 40, Action::Continue);
+            s.focus = 0;
+            assert!(s.key(Key::Enter));
+            assert_eq!(s.step, expected);
+        }
+    }
+
+    #[test]
+    fn tab_moves_focus_and_enter_activates_the_selected_row() {
+        let mut s = setup();
+        s.step = Step::Region;
+        s.push_zone(0, 0, 100, 40, Action::Continue);
+        s.push_zone(0, 50, 100, 40, Action::Row(2));
+        s.focus = 0;
+        assert!(s.key(Key::Tab));
+        assert_eq!(s.focus, 1);
+        assert!(s.key(Key::Enter));
+        assert_eq!(s.region, 2);
+        assert!(s.keyboard_focus);
     }
 
     #[test]
@@ -691,11 +871,20 @@ mod tests {
     #[test]
     fn step_copy_fits_the_content_column() {
         for (n, b) in cap_rows() {
-            assert!(BRAND_FACE.width(n, 0) < CONTENT_W - 90, "cap name too wide: {n}");
-            assert!(SMALL_FACE.width(b, 0) < CONTENT_W - 90, "cap blurb too wide: {b}");
+            assert!(
+                BRAND_FACE.width(n, 0) < CONTENT_W - 90,
+                "cap name too wide: {n}"
+            );
+            assert!(
+                SMALL_FACE.width(b, 0) < CONTENT_W - 90,
+                "cap blurb too wide: {b}"
+            );
         }
         for r in REGIONS {
-            assert!(BRAND_FACE.width(r, 0) < CONTENT_W - 60, "region too wide: {r}");
+            assert!(
+                BRAND_FACE.width(r, 0) < CONTENT_W - 60,
+                "region too wide: {r}"
+            );
         }
     }
 }
@@ -785,7 +974,10 @@ mod layout_tests {
             // Label and consequence share one baseline, so they must fit
             // side by side without reaching the switch.
             let used = BRAND_FACE.width(name, 0) + 12 + SMALL_FACE.width(blurb, 0);
-            assert!(used < CONTENT_W - 80, "row {name:?} overruns the switch: {used}px");
+            assert!(
+                used < CONTENT_W - 80,
+                "row {name:?} overruns the switch: {used}px"
+            );
         }
     }
 }
@@ -842,7 +1034,9 @@ mod footer_visibility_tests {
                 .find(|(step, _)| *step == Step::Capabilities)
                 .expect("capabilities is in the journey");
             assert!(
-                zones.iter().any(|z| z.action == Action::Back && z.y >= 0 && z.y + z.h <= h),
+                zones
+                    .iter()
+                    .any(|z| z.action == Action::Back && z.y >= 0 && z.y + z.h <= h),
                 "no visible way back from Capabilities at {w}x{h}"
             );
         }

@@ -20,9 +20,39 @@ pub struct Ecam {
     pub end_bus: u8,
 }
 
+/// VirtualBox ARM's fixed 16-MiB PCI configuration window.
+///
+/// The platform advertises the same address through MCFG, but some current
+/// VirtualBox firmware builds contain table pointers outside the mappings
+/// Limine keeps. The RSDP OEM gate below makes this a platform quirk, not a
+/// blind MMIO guess on every ARM machine.
+pub const VBOX_ARM_ECAM: Ecam = Ecam {
+    base: 0xFEDD_C000,
+    segment: 0,
+    start_bus: 0,
+    end_bus: 15,
+};
+
 /// ACPI tables are summed to zero over their whole length.
 pub fn checksum_ok(bytes: &[u8]) -> bool {
     bytes.iter().fold(0u8, |a, b| a.wrapping_add(*b)) == 0
+}
+
+/// Does an already-readable RSDP belong to VirtualBox?
+///
+/// # Safety
+/// `rsdp` and `hhdm` must be the values supplied by Limine. Firmware/bootloader
+/// combinations disagree on whether the response pointer is already biased,
+/// so normalize it exactly as `find_ecam` does.
+pub unsafe fn rsdp_is_virtualbox(rsdp: usize, hhdm: u64) -> bool {
+    let root = if hhdm != 0 && (rsdp as u64) < hhdm {
+        rsdp + hhdm as usize
+    } else {
+        rsdp
+    };
+    let mut header = [0u8; 20];
+    unsafe { copy_from(root, &mut header) };
+    &header[..8] == b"RSD PTR " && checksum_ok(&header) && header[9..15].starts_with(b"VBOX")
 }
 
 /// Length field of a system description table header.
@@ -58,7 +88,12 @@ pub fn parse_mcfg(table: &[u8]) -> Option<Ecam> {
     if base == 0 || end_bus < start_bus {
         return None;
     }
-    Some(Ecam { base, segment, start_bus, end_bus })
+    Some(Ecam {
+        base,
+        segment,
+        start_bus,
+        end_bus,
+    })
 }
 
 /// Bytes the window occupies: one MiB per bus.
@@ -111,7 +146,9 @@ pub unsafe fn find_ecam(rsdp: usize, hhdm: u64) -> Option<Ecam> {
         let mut ext = [0u8; 12];
         unsafe { copy_from(root + 20, &mut ext) };
         (
-            u64::from_le_bytes([ext[4], ext[5], ext[6], ext[7], ext[8], ext[9], ext[10], ext[11]]),
+            u64::from_le_bytes([
+                ext[4], ext[5], ext[6], ext[7], ext[8], ext[9], ext[10], ext[11],
+            ]),
             8usize,
         )
     } else {
@@ -222,9 +259,19 @@ mod tests {
 
     #[test]
     fn a_span_is_one_megabyte_per_bus() {
-        let e = Ecam { base: 0, segment: 0, start_bus: 0, end_bus: 15 };
+        let e = Ecam {
+            base: 0,
+            segment: 0,
+            start_bus: 0,
+            end_bus: 15,
+        };
         assert_eq!(ecam_span(&e), 16 << 20);
-        let one = Ecam { base: 0, segment: 0, start_bus: 4, end_bus: 4 };
+        let one = Ecam {
+            base: 0,
+            segment: 0,
+            start_bus: 4,
+            end_bus: 4,
+        };
         assert_eq!(ecam_span(&one), 1 << 20);
     }
 
@@ -236,5 +283,11 @@ mod tests {
         // Byte 8 is the checksum field: make the whole thing sum to zero.
         rsdp[8] = 0u8.wrapping_sub(rsdp.iter().fold(0u8, |a, b| a.wrapping_add(*b)));
         assert!(checksum_ok(&rsdp));
+    }
+
+    #[test]
+    fn the_virtualbox_window_matches_the_logged_arm_platform_map() {
+        assert_eq!(VBOX_ARM_ECAM.base, 0xFEDD_C000);
+        assert_eq!(ecam_span(&VBOX_ARM_ECAM), 16 << 20);
     }
 }

@@ -108,10 +108,19 @@ pub fn act(goal: &str, grants: Grants, limit: usize) -> Answer {
     let say = narrate(intent, &subject, &found, grants);
     let steps = found
         .into_iter()
-        .map(|c| Step { label: c.label, url: c.url, why: c.why })
+        .map(|c| Step {
+            label: c.label,
+            url: c.url,
+            why: c.why,
+        })
         .collect();
 
-    Answer { say, intent, subject, steps }
+    Answer {
+        say,
+        intent,
+        subject,
+        steps,
+    }
 }
 
 /// A candidate answer with the score that ranked it.
@@ -130,16 +139,40 @@ struct Cand {
 
 /// Phrases that reveal intent. Longest first: "get back to" must beat "back".
 const RESUME: &[&str] = &[
-    "work on", "working on", "get back to", "back to", "continue", "carry on",
-    "keep going", "pick up", "finish", "resume",
+    "work on",
+    "working on",
+    "get back to",
+    "back to",
+    "continue",
+    "carry on",
+    "keep going",
+    "pick up",
+    "finish",
+    "resume",
 ];
-const FIND: &[&str] = &["where is", "where's", "find", "show me", "look for", "locate", "search for"];
+const FIND: &[&str] = &[
+    "where is",
+    "where's",
+    "find",
+    "show me",
+    "look for",
+    "locate",
+    "search for",
+];
 const READ: &[&str] = &["open", "read", "pull up"];
 const CATCHUP: &[&str] = &[
-    "what's new", "whats new", "catch me up", "catch up", "what happened",
-    "what did i miss", "brief me", "my day",
+    "what's new",
+    "whats new",
+    "catch me up",
+    "catch up",
+    "what happened",
+    "what did i miss",
+    "brief me",
+    "my day",
 ];
-const QUESTION: &[&str] = &["what ", "why ", "how ", "when ", "who ", "which ", "is ", "does ", "did "];
+const QUESTION: &[&str] = &[
+    "what ", "why ", "how ", "when ", "who ", "which ", "is ", "does ", "did ",
+];
 
 pub fn classify(goal: &str) -> Intent {
     let g = normalize(goal);
@@ -164,20 +197,19 @@ pub fn classify(goal: &str) -> Intent {
 
 /// Words that carry intent or politeness but never identify a document.
 const FILLER: &[&str] = &[
-    "i", "im", "ive", "id", "me", "my", "mine", "we", "our", "you", "your",
-    "wanna", "want", "wants", "wanted", "need", "needs", "gotta", "should",
-    "would", "could", "can", "will", "lets", "let", "please", "help", "hey",
-    "the", "a", "an", "some", "any", "that", "this", "those", "these",
-    "to", "of", "on", "in", "for", "with", "about", "from", "at", "it",
-    "and", "or", "but", "is", "are", "was", "were", "be", "been", "do", "does",
-    "did", "get", "got", "go", "going", "now", "today", "again", "up", "back",
-    "work", "working", "continue", "finish", "resume", "open", "read", "find",
-    "show", "where", "look", "search", "pull", "keep", "pick", "carry",
+    "i", "im", "ive", "id", "me", "my", "mine", "we", "our", "you", "your", "wanna", "want",
+    "wants", "wanted", "need", "needs", "gotta", "should", "would", "could", "can", "will", "lets",
+    "let", "please", "help", "hey", "the", "a", "an", "some", "any", "that", "this", "those",
+    "these", "to", "of", "on", "in", "for", "with", "about", "from", "at", "it", "and", "or",
+    "but", "is", "are", "was", "were", "be", "been", "do", "does", "did", "get", "got", "go",
+    "going", "now", "today", "again", "up", "back", "work", "working", "continue", "finish",
+    "resume", "open", "read", "find", "show", "where", "look", "search", "pull", "keep", "pick",
+    "carry",
     // Question and catch-up words. Without these, "what did i miss" searched
     // for the term "miss" and confidently returned month-old notes that
     // happened to contain "missing".
-    "what", "whats", "why", "how", "when", "who", "which", "miss", "missed",
-    "happened", "new", "anything", "else", "catch", "brief", "day", "days",
+    "what", "whats", "why", "how", "when", "who", "which", "miss", "missed", "happened", "new",
+    "anything", "else", "catch", "brief", "day", "days",
 ];
 
 /// What the goal is *about*, with the intent words stripped out.
@@ -206,14 +238,26 @@ fn normalize(s: &str) -> String {
 
 /// Extensions that mean "something a person writes", used when the subject is
 /// a document *kind* rather than a name.
-const WRITING: &[&str] = &[".md", ".txt", ".tex", ".doc", ".docx", ".odt", ".rtf", ".pages"];
+const WRITING: &[&str] = &[
+    ".md", ".txt", ".tex", ".doc", ".docx", ".odt", ".rtf", ".pages",
+];
 
 /// Files that are markdown but are not anybody's paper. Asking for "my paper"
 /// and getting CHANGELOG.md back is worse than getting nothing: it is a
 /// confident wrong answer, and every repo is full of these.
 const FURNITURE: &[&str] = &[
-    "readme", "changelog", "license", "licence", "contributing", "agents",
-    "claude", "todo", "notes.md", "index.md", "makefile", "codeowners",
+    "readme",
+    "changelog",
+    "license",
+    "licence",
+    "contributing",
+    "agents",
+    "claude",
+    "todo",
+    "notes.md",
+    "index.md",
+    "makefile",
+    "codeowners",
 ];
 
 fn is_furniture(path: &str) -> bool {
@@ -311,7 +355,9 @@ fn recent_files() -> Vec<Cand> {
 
 /// Days since the file was last written, if it can still be found on disk.
 fn age_days(roots: &[std::path::PathBuf], rel: &str) -> Option<i64> {
-    let meta = roots.iter().find_map(|root| std::fs::metadata(root.join(rel)).ok())?;
+    let meta = roots
+        .iter()
+        .find_map(|root| std::fs::metadata(root.join(rel)).ok())?;
     let secs = std::time::SystemTime::now()
         .duration_since(meta.modified().ok()?)
         .ok()?
@@ -406,13 +452,27 @@ fn narrate(intent: Intent, subject: &str, found: &[Cand], grants: Grants) -> Str
     }
 
     match intent {
-        Intent::Resume => format!("Picking {subj} back up. Freshest is {} ({}).", top.label, top.why),
-        Intent::Find => format!("Found {} for {subj} - closest is {}.", found.len(), top.label),
+        Intent::Resume => format!(
+            "Picking {subj} back up. Freshest is {} ({}).",
+            top.label, top.why
+        ),
+        Intent::Find => format!(
+            "Found {} for {subj} - closest is {}.",
+            found.len(),
+            top.label
+        ),
         Intent::Read => format!("Opening {}.", top.label),
         Intent::Catchup => {
-            format!("{} things worth a look, starting with {}.", found.len(), top.label)
+            format!(
+                "{} things worth a look, starting with {}.",
+                found.len(),
+                top.label
+            )
         }
-        Intent::Ask => format!("Here is what I have on {subj}; {} looks closest.", top.label),
+        Intent::Ask => format!(
+            "Here is what I have on {subj}; {} looks closest.",
+            top.label
+        ),
         Intent::Unknown => format!("{} matches for {subj}.", found.len()),
     }
 }
@@ -429,7 +489,12 @@ mod tests {
     use super::*;
 
     fn all() -> Grants {
-        Grants { files: true, email: true, audio: true, portal: true }
+        Grants {
+            files: true,
+            email: true,
+            audio: true,
+            portal: true,
+        }
     }
 
     #[test]
@@ -441,7 +506,10 @@ mod tests {
     #[test]
     fn the_subject_survives_and_the_filler_does_not() {
         assert_eq!(subject_of("i wanna work on my paper"), "paper");
-        assert_eq!(subject_of("can you find the q2 planning notes please"), "q2 planning notes");
+        assert_eq!(
+            subject_of("can you find the q2 planning notes please"),
+            "q2 planning notes"
+        );
     }
 
     #[test]
@@ -462,7 +530,10 @@ mod tests {
     #[test]
     fn nothing_is_read_from_a_source_that_was_not_granted() {
         let a = act("i wanna work on my paper", Grants::default(), 5);
-        assert!(a.steps.is_empty(), "ungranted sources must produce no steps");
+        assert!(
+            a.steps.is_empty(),
+            "ungranted sources must produce no steps"
+        );
         assert!(
             a.say.contains("switched on"),
             "the person should be told which switch to flip: {}",
@@ -472,7 +543,14 @@ mod tests {
 
     #[test]
     fn an_empty_result_says_so_rather_than_sounding_confident() {
-        let a = act("work on my zzzznonexistent", Grants { files: true, ..Grants::default() }, 5);
+        let a = act(
+            "work on my zzzznonexistent",
+            Grants {
+                files: true,
+                ..Grants::default()
+            },
+            5,
+        );
         assert!(a.steps.is_empty());
         assert!(a.say.starts_with("I could not find"), "{}", a.say);
     }
@@ -549,7 +627,12 @@ mod honesty_tests {
         // "5 matches for nvda." printed above three rows: the number was true
         // of the search and false of the screen, which is the only place
         // anybody reads it.
-        let grants = Grants { files: true, email: true, audio: true, portal: true };
+        let grants = Grants {
+            files: true,
+            email: true,
+            audio: true,
+            portal: true,
+        };
         for limit in 1..=5 {
             let a = act("planning", grants, limit);
             assert!(a.steps.len() <= limit, "returned more rows than asked for");
@@ -581,7 +664,10 @@ mod guess_tests {
 
     #[test]
     fn a_guess_is_labelled_as_one() {
-        let g = Grants { files: true, ..Grants::default() };
+        let g = Grants {
+            files: true,
+            ..Grants::default()
+        };
         let say = narrate(Intent::Resume, "paper", &[cand(true)], g);
         assert!(say.starts_with("Nothing of yours is named paper"), "{say}");
     }
@@ -590,7 +676,10 @@ mod guess_tests {
     fn a_real_match_is_not_hedged() {
         // Over-hedging is its own failure: if every answer says "maybe", the
         // warning stops carrying information.
-        let g = Grants { files: true, ..Grants::default() };
+        let g = Grants {
+            files: true,
+            ..Grants::default()
+        };
         let say = narrate(Intent::Resume, "changelog", &[cand(false)], g);
         assert!(say.starts_with("Picking changelog back up"), "{say}");
     }
@@ -599,7 +688,10 @@ mod guess_tests {
     fn catch_up_results_are_not_treated_as_guesses() {
         // Recency *is* the question there, so recent files are the answer,
         // not a hunch about one.
-        let g = Grants { files: true, ..Grants::default() };
+        let g = Grants {
+            files: true,
+            ..Grants::default()
+        };
         let say = narrate(Intent::Catchup, "", &[cand(false)], g);
         assert!(say.contains("worth a look"), "{say}");
     }

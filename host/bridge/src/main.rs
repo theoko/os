@@ -4,14 +4,14 @@
 //! Email backends: automatic Gmail discovery, `gog`, or the explicit demo
 //! `mock` backend. Skills: defaults + saved on host.
 
-mod graph;
 mod agent;
-mod workspace;
+mod graph;
 mod portals;
 mod search;
+mod skills;
 mod transcribe;
 mod tsearch;
-mod skills;
+mod workspace;
 
 use std::env;
 use std::fs;
@@ -61,7 +61,11 @@ fn main() {
     let where_ = connect.as_deref().unwrap_or(addr.as_str());
     eprintln!(
         "os-mcp-bridge {} on {where_} (email={}; search={}; skills defaults={} user={})",
-        if connect.is_some() { "connecting" } else { "listening" },
+        if connect.is_some() {
+            "connecting"
+        } else {
+            "listening"
+        },
         backends.email,
         backends.search,
         defaults.display(),
@@ -100,10 +104,16 @@ fn main() {
 /// returns the explicit `unconfigured` state instead. `mock` remains useful
 /// only for demos and tests when requested deliberately.
 fn email_backend() -> String {
-    match env::var("OS_MCP_EMAIL_BACKEND").as_deref().unwrap_or("auto") {
-        "auto" => {
-            if gog_has_account() { "gog" } else { "unconfigured" }.into()
+    match env::var("OS_MCP_EMAIL_BACKEND")
+        .as_deref()
+        .unwrap_or("auto")
+    {
+        "auto" => if gog_has_account() {
+            "gog"
+        } else {
+            "unconfigured"
         }
+        .into(),
         "gog" | "mock" => env::var("OS_MCP_EMAIL_BACKEND").unwrap(),
         _ => "unconfigured".into(),
     }
@@ -113,7 +123,9 @@ fn gog_has_account() -> bool {
     let Ok(out) = Command::new("gog")
         .args(["auth", "list", "--json", "--no-input"])
         .output()
-    else { return false };
+    else {
+        return false;
+    };
     if !out.status.success() {
         return false;
     }
@@ -363,7 +375,8 @@ fn parse_args(rest: &str) -> Vec<(String, String)> {
         let is_key = key.is_some_and(|k| {
             let mut ch = k.chars();
             ch.next().is_some_and(|c| c.is_ascii_lowercase())
-                && k.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                && k.chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
         });
         if is_key {
             let (k, v) = tok.split_once('=').unwrap();
@@ -414,7 +427,11 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                 .collect();
             let fell_back = rows.is_empty() || a.intent == agent::Intent::Unknown;
             if fell_back {
-                let query = if a.subject.is_empty() { goal } else { &a.subject };
+                let query = if a.subject.is_empty() {
+                    goal
+                } else {
+                    &a.subject
+                };
                 for line in search::query_scoped(
                     query,
                     k,
@@ -425,9 +442,10 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                     grants.audio,
                     grants.portal,
                 ) {
-                    let (Some(t), Some(u)) =
-                        (parse_row_field(&line, "title"), parse_row_field(&line, "url"))
-                    else {
+                    let (Some(t), Some(u)) = (
+                        parse_row_field(&line, "title"),
+                        parse_row_field(&line, "url"),
+                    ) else {
                         continue;
                     };
                     if rows.iter().any(|(_, have, _)| have == u) {
@@ -441,12 +459,24 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             // Say the true thing about the rows actually being shown, not the
             // one the planner wrote before the fallback filled them in.
             let say = if a.steps.is_empty() && !rows.is_empty() {
-                format!("{} matches for {}.", rows.len(), if a.subject.is_empty() { goal } else { &a.subject })
+                format!(
+                    "{} matches for {}.",
+                    rows.len(),
+                    if a.subject.is_empty() {
+                        goal
+                    } else {
+                        &a.subject
+                    }
+                )
             } else {
                 a.say
             };
 
-            let mut out = vec![format!("OK agent.act n={} intent={}", rows.len(), a.intent.name())];
+            let mut out = vec![format!(
+                "OK agent.act n={} intent={}",
+                rows.len(),
+                a.intent.name()
+            )];
             out.push(format!("SAY {say}"));
             for (title, url, why) in rows {
                 out.push(format!("ROW title={title}|url={url}|why={why}"));
@@ -471,7 +501,8 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             // skills.save in handle_client so it can read a LINE…END body.
             let name = arg_val(args, "name").unwrap_or("");
             let desc = arg_val(args, "desc").unwrap_or("User-saved skill.");
-            let body = format!("---\nname: {name}\ndescription: {desc}\n---\n\n# {name}\n\n(edit me)\n");
+            let body =
+                format!("---\nname: {name}\ndescription: {desc}\n---\n\n# {name}\n\n(edit me)\n");
             match skills::save_skill(name, &body) {
                 Ok(path) => vec![format!("OK skills.save path={}", path.display())],
                 Err(e) => vec![format!("ERR skills.save {e}")],
@@ -631,7 +662,16 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
             if q.is_empty() {
                 vec!["ERR search.query missing_q".into()]
             } else {
-                search::query_scoped(q, k, cat, &backends.search, with_email, with_files, with_audio, with_portal)
+                search::query_scoped(
+                    q,
+                    k,
+                    cat,
+                    &backends.search,
+                    with_email,
+                    with_files,
+                    with_audio,
+                    with_portal,
+                )
             }
         }
         _ => vec![format!("ERR {tool} not_found")],
@@ -762,9 +802,7 @@ fn wrap_lines(text: &str, width: usize, max: usize) -> Vec<String> {
 }
 
 fn arg_val<'a>(args: &'a [(String, String)], key: &str) -> Option<&'a str> {
-    args.iter()
-        .find(|(k, _)| k == key)
-        .map(|(_, v)| v.as_str())
+    args.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
 }
 
 fn email_search(args: &[(String, String)], backend: &str) -> Vec<String> {
@@ -911,7 +949,9 @@ mod tests {
     #[test]
     fn auto_email_detects_only_a_real_saved_account() {
         assert!(!gog_accounts_from_json(r#"{"accounts":[]}"#));
-        assert!(gog_accounts_from_json(r#"{"accounts":[{"email":"me@example.com"}]}"#));
+        assert!(gog_accounts_from_json(
+            r#"{"accounts":[{"email":"me@example.com"}]}"#
+        ));
         assert!(!gog_accounts_from_json("not json"));
     }
 
@@ -924,7 +964,10 @@ mod tests {
 
     #[test]
     fn dispatch_ping() {
-        assert_eq!(dispatch("PING", &test_backends()), vec!["OK pong".to_string()]);
+        assert_eq!(
+            dispatch("PING", &test_backends()),
+            vec!["OK pong".to_string()]
+        );
     }
 
     #[test]
@@ -964,7 +1007,10 @@ mod read_tests {
     use super::*;
 
     fn args(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+        pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
     }
 
     #[test]
@@ -977,13 +1023,20 @@ mod read_tests {
     #[test]
     fn reading_a_transcript_needs_the_audio_grant() {
         let e = read_doc("audio:///tmp/x.wav", 10, &args(&[("files", "1")])).unwrap_err();
-        assert_eq!(e, "needs_audio_cap", "the files grant must not unlock recordings");
+        assert_eq!(
+            e, "needs_audio_cap",
+            "the files grant must not unlock recordings"
+        );
     }
 
     #[test]
     fn traversal_outside_the_indexed_roots_is_refused() {
-        let e = read_doc("file://../../../../etc/passwd", 10, &args(&[("files", "1")]))
-            .unwrap_err();
+        let e = read_doc(
+            "file://../../../../etc/passwd",
+            10,
+            &args(&[("files", "1")]),
+        )
+        .unwrap_err();
         assert!(e.contains("outside the indexed roots"), "{e}");
     }
 
@@ -1001,7 +1054,10 @@ mod read_tests {
     #[test]
     fn blank_lines_survive_as_paragraph_breaks() {
         let rows = wrap_lines("one\n\ntwo", 40, 10);
-        assert!(rows.iter().any(|r| r == "ROW line="), "paragraph break lost");
+        assert!(
+            rows.iter().any(|r| r == "ROW line="),
+            "paragraph break lost"
+        );
     }
 
     #[test]
@@ -1017,7 +1073,10 @@ mod agent_dispatch_tests {
     use super::*;
 
     fn backends() -> Backends {
-        Backends { email: "mock".into(), search: "tfidf".into() }
+        Backends {
+            email: "mock".into(),
+            search: "tfidf".into(),
+        }
     }
 
     fn rows(reply: &[String]) -> usize {
@@ -1054,8 +1113,18 @@ mod agent_dispatch_tests {
                 &backends(),
             );
             let said = say(&reply);
-            if let Ok(n) = said.split_whitespace().next().unwrap_or("x").parse::<usize>() {
-                assert_eq!(n, rows(&reply), "said {n:?} but sent {}: {said}", rows(&reply));
+            if let Ok(n) = said
+                .split_whitespace()
+                .next()
+                .unwrap_or("x")
+                .parse::<usize>()
+            {
+                assert_eq!(
+                    n,
+                    rows(&reply),
+                    "said {n:?} but sent {}: {said}",
+                    rows(&reply)
+                );
             }
         }
     }

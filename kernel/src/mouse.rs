@@ -298,12 +298,12 @@ impl Cursor {
 
         #[cfg(not(target_arch = "aarch64"))]
         {
-        self.hide(fb);
-        self.x = x;
-        self.y = y;
-        save(fb, x, y, &mut self.saved);
-        self.has_saved = true;
-        draw_arrow(fb, x, y);
+            self.hide(fb);
+            self.x = x;
+            self.y = y;
+            save(fb, x, y, &mut self.saved);
+            self.has_saved = true;
+            draw_arrow(fb, x, y);
         }
     }
 }
@@ -320,7 +320,11 @@ fn restore(fb: &Surface, x: i32, y: i32, saved: &[u32; SAVE_LEN]) {
     fb.mark_dirty(x, y, SAVE_W as i32, SAVE_H as i32);
     for row in 0..SAVE_H {
         for col in 0..SAVE_W {
-            fb.put_pixel(x - 1 + col as i32, y - 1 + row as i32, saved[row * SAVE_W + col]);
+            fb.put_pixel(
+                x - 1 + col as i32,
+                y - 1 + row as i32,
+                saved[row * SAVE_W + col],
+            );
         }
     }
 }
@@ -364,7 +368,10 @@ fn ensure_mask() {
             }
         };
 
-        rasterise(&[(-8, 0), (8, 0), (0, -8), (0, 8)], &mut *(&raw mut MASK_KEY));
+        rasterise(
+            &[(-8, 0), (8, 0), (0, -8), (0, 8)],
+            &mut *(&raw mut MASK_KEY),
+        );
         rasterise(&[(0, 0)], &mut *(&raw mut MASK_INK));
         MASK_READY = true;
     }
@@ -419,8 +426,14 @@ mod tests {
         // The save/restore box must cover the silhouette plus the 1px keyline.
         let max_x = ARROW.iter().map(|p| p.0).max().unwrap();
         let max_y = ARROW.iter().map(|p| p.1).max().unwrap();
-        assert!((max_x / 8 + 2) as usize <= DRAW_W, "arrow wider than save box");
-        assert!((max_y / 8 + 2) as usize <= DRAW_H, "arrow taller than save box");
+        assert!(
+            (max_x / 8 + 2) as usize <= DRAW_W,
+            "arrow wider than save box"
+        );
+        assert!(
+            (max_y / 8 + 2) as usize <= DRAW_H,
+            "arrow taller than save box"
+        );
     }
 
     #[test]

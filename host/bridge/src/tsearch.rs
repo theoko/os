@@ -690,7 +690,13 @@ mod refresh_tests {
     use super::*;
 
     fn doc(u: &str, t: &str, b: &str) -> RawDoc {
-        RawDoc { t: t.into(), u: u.into(), c: String::new(), b: b.into(), pr: 0.0 }
+        RawDoc {
+            t: t.into(),
+            u: u.into(),
+            c: String::new(),
+            b: b.into(),
+            pr: 0.0,
+        }
     }
 
     #[test]

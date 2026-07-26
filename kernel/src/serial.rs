@@ -4,6 +4,15 @@
 //! PL011-compatible debug UART for COM1; COM2 stays deliberately disabled
 //! until the virtual-machine configuration supplies a second serial device.
 
+#[cfg(target_arch = "aarch64")]
+use core::sync::atomic::{AtomicUsize, Ordering};
+
+#[cfg(target_arch = "aarch64")]
+static ACTIVE_PL011: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(target_arch = "aarch64")]
+const VBOX_PL011: usize = 0xFFDD_E000;
+
 /// Line ending used after the hello banner.
 pub const LINE_ENDING: &str = "\n";
 
@@ -38,6 +47,67 @@ mod port {
     }
 }
 
+/// Which PL011 base this machine actually has.
+///
+/// Defaults to QEMU's so behaviour is unchanged until `detect_pl011` runs.
+#[cfg(target_arch = "aarch64")]
+static PL011_BASE: core::sync::atomic::AtomicUsize =
+    core::sync::atomic::AtomicUsize::new(Serial::PL011_COM1);
+
+#[cfg(target_arch = "aarch64")]
+pub fn pl011_base() -> usize {
+    PL011_BASE.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// Does a PL011 answer at `base`?
+///
+/// Identified by the PrimeCell peripheral ID registers, which are constant for
+/// the part. Reading a plausible-looking value out of unmapped space is how a
+/// probe talks itself into the wrong address, so check all four.
+#[cfg(target_arch = "aarch64")]
+fn is_pl011(base: usize) -> bool {
+    const PERIPH_ID: [(usize, u8); 4] = [(0xFE0, 0x11), (0xFE4, 0x10), (0xFE8, 0x14), (0xFEC, 0x00)];
+    PERIPH_ID.iter().all(|(off, want)| {
+        // SAFETY: device memory the firmware has already mapped; a read of a
+        // wrong-but-mapped address returns a value that fails this check.
+        let v = unsafe { core::ptr::read_volatile((base + off) as *const u32) };
+        (v & 0xFF) as u8 == *want
+    })
+}
+
+/// Find the UART before anything tries to log through it.
+///
+/// QEMU's `virt` and VirtualBox's `armv8virtual` put their PL011 at different
+/// addresses, and the kernel hardcoded QEMU's. On VirtualBox every log line
+/// went into unmapped space, so a guest that booted, rendered its home screen
+/// and drove its USB controller still produced a serial log containing nothing
+/// but firmware output - and its crashes had to be guessed at from
+/// screenshots.
+#[cfg(target_arch = "aarch64")]
+pub fn detect_pl011(hhdm: u64) -> Option<usize> {
+    // Try through the higher-half direct map first, then raw.
+    //
+    // Limine hands the kernel an MMU that maps physical memory at an offset,
+    // so a raw physical address is not a valid pointer. Writing to one is not
+    // a crash - it simply goes nowhere, which is why the ARM guest produced no
+    // serial output under either QEMU or VirtualBox while appearing to boot
+    // normally.
+    for base in Serial::PL011_CANDIDATES {
+        for candidate in [hhdm as usize + base, base] {
+            if is_pl011(candidate) {
+                PL011_BASE.store(candidate, core::sync::atomic::Ordering::Relaxed);
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+#[cfg(not(target_arch = "aarch64"))]
+pub fn detect_pl011(_hhdm: u64) -> Option<usize> {
+    None
+}
+
 /// Early debug or bridge serial device.
 pub struct Serial {
     #[cfg(target_arch = "x86_64")]
@@ -51,8 +121,24 @@ impl Serial {
     pub const COM1: u16 = 0x3F8;
     #[cfg(target_arch = "x86_64")]
     pub const COM2: u16 = 0x2F8;
+    /// Where QEMU's ARM `virt` machine puts its PL011.
     #[cfg(target_arch = "aarch64")]
     pub const PL011_COM1: usize = 0x0900_0000;
+
+    /// Where VirtualBox's `armv8virtual` machine puts its PL011.
+    ///
+    /// Taken from its own device map: `MMIO arm-pl011` at ffdde000. Hardcoding
+    /// QEMU's address meant the kernel wrote every log line into unmapped
+    /// space on VirtualBox, so an ARM guest that booted, rendered and drove its
+    /// USB controller still produced a serial log containing nothing but UEFI
+    /// firmware output - and every crash there had to be diagnosed from
+    /// screenshots.
+    #[cfg(target_arch = "aarch64")]
+    pub const PL011_VBOX: usize = 0xFFDD_E000;
+
+    /// PL011 bases to try, in order.
+    #[cfg(target_arch = "aarch64")]
+    pub const PL011_CANDIDATES: [usize; 2] = [Self::PL011_COM1, Self::PL011_VBOX];
 
     #[cfg(target_arch = "x86_64")]
     pub const fn new(base: u16) -> Self {
@@ -69,11 +155,11 @@ impl Serial {
         Self {}
     }
 
-    pub const fn com1() -> Self {
+    pub fn com1() -> Self {
         #[cfg(target_arch = "x86_64")]
         return Self::new(Self::COM1);
         #[cfg(target_arch = "aarch64")]
-        return Self::new(Some(Self::PL011_COM1));
+        return Self::new(Some(pl011_base()));
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         Self::new()
     }
@@ -85,6 +171,26 @@ impl Serial {
         return Self::new(None);
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         Self::new()
+    }
+
+    /// Whether this serial object names a device on this architecture.
+    ///
+    /// ARM COM2 is intentionally absent until a second UART is discovered.
+    /// Callers can use this to avoid a synthetic timeout loop when there is
+    /// no transport to wait for in the first place.
+    pub const fn available(&self) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        {
+            true
+        }
+        #[cfg(target_arch = "aarch64")]
+        {
+            self.base.is_some()
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        {
+            false
+        }
     }
 
     /// Initialize 115200 8N1. Best-effort; QEMU accepts this.
@@ -100,8 +206,20 @@ impl Serial {
             port::outb(self.base + 4, 0x0B);
         }
         #[cfg(target_arch = "aarch64")]
-        if let Some(base) = self.base {
-            // QEMU virt / VirtualBox armvirt PL011 at 24 MHz, 115200 8N1.
+        if let Some(preferred) = self.base {
+            // Do not infer a UART from an address alone. Both QEMU and
+            // VirtualBox expose standard PrimeCell IDs, but at different
+            // addresses. Remember the device that actually answers so every
+            // byte after this is a single MMIO path with no probing.
+            let base = [preferred, VBOX_PL011]
+                .into_iter()
+                .find(|base| pl011_present(*base))
+                .unwrap_or(0);
+            ACTIVE_PL011.store(base, Ordering::Release);
+            if base == 0 {
+                return;
+            }
+            // QEMU virt and VirtualBox armvirt use a 24 MHz PL011, 115200 8N1.
             unsafe {
                 core::ptr::write_volatile((base + 0x30) as *mut u32, 0);
                 core::ptr::write_volatile((base + 0x44) as *mut u32, 0x7ff);
@@ -126,17 +244,28 @@ impl Serial {
             port::outb(self.base, byte);
         }
         #[cfg(target_arch = "aarch64")]
-        if let Some(base) = self.base {
-            let mut spins = 0u32;
+        if self.base.is_some() {
+            let base = ACTIVE_PL011.load(Ordering::Acquire);
+            if base == 0 {
+                return;
+            }
+            // VirtualBox's ARM PL011 can leave TX full indefinitely after
+            // firmware hands it off. Even inspecting the full flag then makes
+            // boot timing nondeterministic, so the framebuffer is the sole
+            // diagnostic surface on that platform. QEMU retains serial logs.
+            if base == VBOX_PL011 {
+                return;
+            }
             unsafe {
-                while core::ptr::read_volatile((base + 0x18) as *const u32) & (1 << 5) != 0 {
-                    spins += 1;
-                    if spins > 1_000_000 {
-                        break;
-                    }
-                    core::hint::spin_loop();
+                // Debug output is never allowed to pace the guest. VirtualBox
+                // can leave the PL011 FIFO full after firmware hands it off;
+                // even a short spin loop then becomes thousands of emulated
+                // MMIO reads per message and stalls boot before USB starts.
+                // Send when there is room and otherwise drop this diagnostic
+                // byte. The framebuffer remains the authoritative UI.
+                if core::ptr::read_volatile((base + 0x18) as *const u32) & (1 << 5) == 0 {
+                    core::ptr::write_volatile(base as *mut u32, byte as u32);
                 }
-                core::ptr::write_volatile(base as *mut u32, byte as u32);
             }
         }
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
@@ -167,7 +296,11 @@ impl Serial {
             }
         }
         #[cfg(target_arch = "aarch64")]
-        if let Some(base) = self.base {
+        if self.base.is_some() {
+            let base = ACTIVE_PL011.load(Ordering::Acquire);
+            if base == 0 {
+                return None;
+            }
             unsafe {
                 if core::ptr::read_volatile((base + 0x18) as *const u32) & (1 << 4) == 0 {
                     Some(core::ptr::read_volatile(base as *const u32) as u8)
@@ -227,6 +360,28 @@ impl Serial {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
+fn pl011_present(base: usize) -> bool {
+    unsafe {
+        core::ptr::read_volatile((base + 0xFE0) as *const u32) & 0xFF == 0x11
+            && core::ptr::read_volatile((base + 0xFE4) as *const u32) & 0xFF == 0x10
+            && core::ptr::read_volatile((base + 0xFF0) as *const u32) & 0xFF == 0x0D
+            && core::ptr::read_volatile((base + 0xFF4) as *const u32) & 0xFF == 0xF0
+    }
+}
+
+/// True after COM1 initialization identified VirtualBox's ARM device map.
+pub fn is_virtualbox_arm() -> bool {
+    #[cfg(target_arch = "aarch64")]
+    {
+        ACTIVE_PL011.load(Ordering::Acquire) == VBOX_PL011
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        false
+    }
+}
+
 /// Ask QEMU's `isa-debug-exit` to quit. No-op on UTM / hosts without that device;
 /// caller may continue (e.g. interactive mouse loop).
 pub fn request_qemu_exit(success: bool) {
@@ -279,8 +434,8 @@ mod tests {
     }
 }
 
-/// Read the cycle counter. Used to measure frame cost honestly rather than
-/// asserting a frame rate.
+/// Read the architecture's monotonic performance counter. Used to measure
+/// frame cost honestly rather than asserting a frame rate.
 #[cfg(target_arch = "x86_64")]
 pub fn rdtsc() -> u64 {
     let lo: u32;
@@ -291,7 +446,46 @@ pub fn rdtsc() -> u64 {
     ((hi as u64) << 32) | lo as u64
 }
 
-#[cfg(not(target_arch = "x86_64"))]
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
 pub fn rdtsc() -> u64 {
+    let ticks: u64;
+    unsafe {
+        core::arch::asm!("isb", "mrs {}, cntvct_el0", out(reg) ticks, options(nomem, nostack));
+    }
+    ticks
+}
+
+#[cfg(not(any(
+    target_arch = "x86_64",
+    all(target_arch = "aarch64", target_os = "none")
+)))]
+pub fn rdtsc() -> u64 {
+    0
+}
+
+/// Frequency of [`rdtsc`] in ticks per second.
+///
+/// x86 keeps the historical 1 GHz pacing assumption because deriving the TSC
+/// frequency portably needs CPUID/ACPI calibration. ARM exposes CNTFRQ_EL0,
+/// so animation timing there is exact rather than guessed.
+#[cfg(target_arch = "x86_64")]
+pub fn counter_hz() -> u64 {
+    1_000_000_000
+}
+
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+pub fn counter_hz() -> u64 {
+    let hz: u64;
+    unsafe {
+        core::arch::asm!("mrs {}, cntfrq_el0", out(reg) hz, options(nomem, nostack));
+    }
+    hz
+}
+
+#[cfg(not(any(
+    target_arch = "x86_64",
+    all(target_arch = "aarch64", target_os = "none")
+)))]
+pub fn counter_hz() -> u64 {
     0
 }

@@ -341,6 +341,37 @@ pub fn find_ehci_mmio() -> Option<(u8, u8, u8, u64)> {
     None
 }
 
+/// OHCI = class 0x0C, subclass 0x03, prog-if 0x10. Returns its MMIO BAR.
+///
+/// VirtualBox's ARM platform exposes this controller for its emulated USB
+/// keyboard and tablet. OHCI uses 32-bit DMA pointers, but accepting a 64-bit
+/// BAR here costs nothing and keeps config-space parsing correct.
+pub fn find_ohci_mmio() -> Option<(u8, u8, u8, u64)> {
+    let mut found = None;
+    for_each_function(|bus, slot, func| {
+        let class = read32(bus, slot, func, 0x08);
+        if (class >> 24) & 0xFF != 0x0C
+            || (class >> 16) & 0xFF != 0x03
+            || (class >> 8) & 0xFF != PROG_IF_OHCI
+        {
+            return false;
+        }
+        let lo = read32(bus, slot, func, 0x10);
+        if lo & 1 != 0 {
+            return false;
+        }
+        let mut base = (lo & 0xFFFF_FFF0) as u64;
+        if (lo >> 1) & 0x3 == 0x2 {
+            base |= (read32(bus, slot, func, 0x14) as u64) << 32;
+        }
+        let command = read16(bus, slot, func, 0x04);
+        write16(bus, slot, func, 0x04, command | 0x0006);
+        found = Some((bus, slot, func, base));
+        true
+    });
+    found
+}
+
 /// xHCI = class 0x0C, subclass 0x03, prog-if 0x30. Returns its MMIO BAR.
 ///
 /// The controller is present on VirtualBox ARM when USB 3 is enabled. This
@@ -469,12 +500,11 @@ pub mod heapless_vec {
 #[cfg(target_arch = "x86_64")]
 pub use port::{inb, inw, outb, outw};
 
-
 /// What USB host controllers this machine actually has.
 ///
-/// The guest only drives UHCI, which is a QEMU-era controller. Real machines
-/// built in the last fifteen years expose xHCI instead, so booting this on
-/// hardware can leave the pointer dead with nothing on screen explaining why.
+/// The guest drives UHCI and OHCI. Real machines built in the last fifteen
+/// years expose xHCI instead, so booting this on hardware can still leave the
+/// pointer dead with nothing on screen explaining why.
 /// Counting the controllers lets the UI say "there is an xHCI here and I
 /// cannot speak to it" rather than showing a cursor that never moves.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -488,18 +518,23 @@ pub struct UsbSurvey {
 impl UsbSurvey {
     /// True when a controller exists that we have no driver for.
     ///
-    /// OHCI came off this list when `ohci.rs` landed. Leaving it on would have
-    /// the status line announce that the controller we just implemented cannot
-    /// be spoken to — on the one machine where it is the only USB there is.
+    /// OHCI is driven by `ohci.rs`; it must not be described as unsupported on
+    /// the VirtualBox ARM machine where it is the only USB controller.
     pub fn has_unsupported(&self) -> bool {
-        self.xhci > 0
+        self.xhci > 0 || self.ehci > 0
     }
 
     /// Name the controller we found and cannot drive, for the status line.
     /// A function rather than a literal in `inputdiag`, so the next driver is
     /// a one-line edit here instead of a message that quietly goes stale.
     pub fn unsupported_name(&self) -> Option<&'static str> {
-        (self.xhci > 0).then_some("xHCI")
+        if self.xhci > 0 {
+            Some("xHCI")
+        } else if self.ehci > 0 {
+            Some("EHCI")
+        } else {
+            None
+        }
     }
 
     pub fn none_at_all(&self) -> bool {
@@ -551,21 +586,37 @@ mod survey_tests {
 
     #[test]
     fn a_machine_with_only_xhci_is_flagged_as_undrivable() {
-        let s = UsbSurvey { xhci: 1, ..Default::default() };
+        let s = UsbSurvey {
+            xhci: 1,
+            ..Default::default()
+        };
         assert!(s.has_unsupported());
         assert!(!s.none_at_all());
     }
 
     #[test]
     fn the_controller_we_can_drive_is_not_flagged() {
-        let s = UsbSurvey { uhci: 1, ohci: 1, ehci: 1, ..Default::default() };
-        assert!(!s.has_unsupported(), "UHCI, OHCI and EHCI all have drivers");
-        assert_eq!(s.unsupported_name(), None);
+        for s in [
+            UsbSurvey {
+                uhci: 1,
+                ..Default::default()
+            },
+            UsbSurvey {
+                ohci: 1,
+                ..Default::default()
+            },
+        ] {
+            assert!(!s.has_unsupported(), "UHCI and OHCI have drivers");
+            assert_eq!(s.unsupported_name(), None);
+        }
     }
 
     #[test]
     fn an_unsupported_controller_says_which_one_it_is() {
-        let s = UsbSurvey { xhci: 1, ..Default::default() };
+        let s = UsbSurvey {
+            xhci: 1,
+            ..Default::default()
+        };
         assert_eq!(s.unsupported_name(), Some("xHCI"));
     }
 
@@ -595,9 +646,11 @@ mod ecam_tests {
         fn new() -> Self {
             let guard = SERIAL.lock().unwrap_or_else(|e| e.into_inner());
             clear_ecam();
-            let words: &'static mut [u32] =
-                std::vec![0xFFFF_FFFFu32; (BUSES << 20) / 4].leak();
-            Self { _guard: guard, words }
+            let words: &'static mut [u32] = std::vec![0xFFFF_FFFFu32; (BUSES << 20) / 4].leak();
+            Self {
+                _guard: guard,
+                words,
+            }
         }
 
         fn base(&self) -> usize {
@@ -691,8 +744,16 @@ mod ecam_tests {
         fake.words[idx] = 0xFFFF_0000;
         let cmd = read16(0, 1, 0, 0x04);
         write16(0, 1, 0, 0x04, cmd | 0x0406);
-        assert_eq!(read16(0, 1, 0, 0x04), 0x0406, "memory | bus master | intx off");
-        assert_eq!(read16(0, 1, 0, 0x06), 0, "status must not be written back as 1s");
+        assert_eq!(
+            read16(0, 1, 0, 0x04),
+            0x0406,
+            "memory | bus master | intx off"
+        );
+        assert_eq!(
+            read16(0, 1, 0, 0x06),
+            0,
+            "status must not be written back as 1s"
+        );
     }
 
     #[test]

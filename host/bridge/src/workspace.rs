@@ -38,22 +38,55 @@ pub struct Index {
 
 /// Directories that never contain anything worth searching.
 const SKIP_DIRS: &[&str] = &[
-    ".git", "node_modules", ".venv", "venv", "target", "dist", "build",
-    "__pycache__", ".pytest_cache", ".ruff_cache", ".hypothesis", ".next",
-    ".cargo", "Pods", ".terraform", "site-packages", ".mypy_cache",
+    ".git",
+    "node_modules",
+    ".venv",
+    "venv",
+    "target",
+    "dist",
+    "build",
+    "__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".hypothesis",
+    ".next",
+    ".cargo",
+    "Pods",
+    ".terraform",
+    "site-packages",
+    ".mypy_cache",
     // Third-party source: someone else's README is never the answer to a
     // question about *your* work.
-    "vendor", "third_party", "3rdparty", "deps", "Carthage",
+    "vendor",
+    "third_party",
+    "3rdparty",
+    "deps",
+    "Carthage",
     // Machine backups and inventories. A mac-backup tree is thousands of
     // plists that swamp real documents on any query mentioning a tool name.
-    "mac-backup", "inventory", "backups", "backup", "Library",
+    "mac-backup",
+    "inventory",
+    "backups",
+    "backup",
+    "Library",
 ];
 
 /// Files that may carry credentials. Skipped on name alone — we never read
 /// them to decide, because reading is the thing we are trying to avoid.
 const SKIP_FILE_PARTS: &[&str] = &[
-    ".env", "id_rsa", "id_ed25519", ".pem", ".key", ".p12", ".keychain",
-    "credential", "secret", "token", "password", ".netrc", ".htpasswd",
+    ".env",
+    "id_rsa",
+    "id_ed25519",
+    ".pem",
+    ".key",
+    ".p12",
+    ".keychain",
+    "credential",
+    "secret",
+    "token",
+    "password",
+    ".netrc",
+    ".htpasswd",
 ];
 
 /// Extensions worth indexing.
@@ -72,7 +105,9 @@ pub fn index_path() -> PathBuf {
 }
 
 fn home() -> PathBuf {
-    env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Roots to index. `OS_WORKSPACE_ROOTS` is a `:`-separated list.
@@ -209,7 +244,9 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<Entry>, depth: usize) {
             return;
         }
         let path = ent.path();
-        let Some(name) = path.file_name().and_then(|n| n.to_str()) else { continue };
+        let Some(name) = path.file_name().and_then(|n| n.to_str()) else {
+            continue;
+        };
         let Ok(ft) = ent.file_type() else { continue };
         if ft.is_dir() {
             if !skipped_dir(name) {
@@ -220,11 +257,20 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<Entry>, depth: usize) {
         if !ft.is_file() || skipped_file(name) || !is_text(&path) {
             continue;
         }
-        if fs::metadata(&path).map(|m| m.len() > MAX_BYTES).unwrap_or(true) {
+        if fs::metadata(&path)
+            .map(|m| m.len() > MAX_BYTES)
+            .unwrap_or(true)
+        {
             continue;
         }
-        let Ok(body) = fs::read_to_string(&path) else { continue };
-        let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().to_string();
+        let Ok(body) = fs::read_to_string(&path) else {
+            continue;
+        };
+        let rel = path
+            .strip_prefix(root)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
         let mtime = fs::metadata(&path)
             .and_then(|m| m.modified())
             .ok()
@@ -274,12 +320,19 @@ mod tests {
     #[test]
     fn indexes_markdown_with_heading_title() {
         let d = tmp("basic");
-        fs::write(d.join("notes.md"), "---\nkey: v\n---\n\n# Real Title\n\nSome prose here.\n").unwrap();
+        fs::write(
+            d.join("notes.md"),
+            "---\nkey: v\n---\n\n# Real Title\n\nSome prose here.\n",
+        )
+        .unwrap();
         let ix = build(&[d.clone()]);
         assert_eq!(ix.entries.len(), 1);
         assert_eq!(ix.entries[0].title, "Real Title");
         assert!(ix.entries[0].snippet.contains("Some prose"));
-        assert!(!ix.entries[0].snippet.contains("key: v"), "front matter leaked into the snippet");
+        assert!(
+            !ix.entries[0].snippet.contains("key: v"),
+            "front matter leaked into the snippet"
+        );
         let _ = fs::remove_dir_all(&d);
     }
 
@@ -301,7 +354,11 @@ mod tests {
         fs::write(d.join("ok.md"), "# Fine\n\ncontent\n").unwrap();
         let ix = build(&[d.clone()]);
         let titles: Vec<&str> = ix.entries.iter().map(|e| e.title.as_str()).collect();
-        assert_eq!(titles, vec!["Fine"], "a credential-looking file was indexed");
+        assert_eq!(
+            titles,
+            vec!["Fine"],
+            "a credential-looking file was indexed"
+        );
         let _ = fs::remove_dir_all(&d);
     }
 
@@ -347,24 +404,41 @@ mod tests {
     fn default_roots_exclude_personal_folders() {
         // Serialised: these tests mutate process env, which cargo's
         // parallel runner would otherwise leak between them.
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // "Search my machine" must not silently mean "index my paperwork".
         unsafe { env::remove_var("OS_WORKSPACE_ROOTS") };
         let r = roots();
-        let joined = r.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>().join(" ");
+        let joined = r
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
         for personal in ["life", "moia-forms", "notary-intake", "inbox"] {
-            assert!(!joined.contains(personal), "{personal} is indexed by default");
+            assert!(
+                !joined.contains(personal),
+                "{personal} is indexed by default"
+            );
         }
-        assert!(joined.contains("projects"), "projects should be a default root");
+        assert!(
+            joined.contains("projects"),
+            "projects should be a default root"
+        );
     }
 
     #[test]
     fn roots_are_configurable() {
         // Serialised: these tests mutate process env, which cargo's
         // parallel runner would otherwise leak between them.
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_WORKSPACE_ROOTS", "/tmp/a:/tmp/b") };
-        assert_eq!(roots(), vec![PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")]);
+        assert_eq!(
+            roots(),
+            vec![PathBuf::from("/tmp/a"), PathBuf::from("/tmp/b")]
+        );
         unsafe { env::remove_var("OS_WORKSPACE_ROOTS") };
     }
 
@@ -413,7 +487,10 @@ mod rank_tests {
         // A decade-old file should rank low, never zero — it may still be the
         // only match for a query.
         let ancient = rank("a.md", "a.md", 0, NOW);
-        assert!(ancient > 0.0, "old documents fell out of the index entirely");
+        assert!(
+            ancient > 0.0,
+            "old documents fell out of the index entirely"
+        );
     }
 
     #[test]
@@ -437,7 +514,13 @@ mod rank_tests {
 
     #[test]
     fn vendor_and_backup_trees_are_skipped() {
-        for d in ["vendor", "mac-backup", "inventory", "third_party", "Library"] {
+        for d in [
+            "vendor",
+            "mac-backup",
+            "inventory",
+            "third_party",
+            "Library",
+        ] {
             assert!(skipped_dir(d), "{d} should be skipped");
         }
         assert!(!skipped_dir("projects"));
@@ -451,7 +534,16 @@ mod ascii_tests {
     fn non_ascii_titles_are_stripped_for_the_guest() {
         // Real document titles contain emoji; the kernel atlas cannot render
         // them and would show '?' for each byte.
-        let out = crate::search::query_scoped("greek events engine", 3, None, "tfidf", false, true, false, false);
+        let out = crate::search::query_scoped(
+            "greek events engine",
+            3,
+            None,
+            "tfidf",
+            false,
+            true,
+            false,
+            false,
+        );
         for row in &out {
             assert!(row.is_ascii(), "non-ASCII reached the wire: {row}");
         }
@@ -466,18 +558,42 @@ mod consent_tests {
 
     #[test]
     fn personal_files_need_the_workspace_grant() {
-        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = env::temp_dir().join(format!("os-consent-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
-        fs::write(dir.join("private.md"), "# Zygote Notary Filing\n\npersonal matter\n").unwrap();
+        fs::write(
+            dir.join("private.md"),
+            "# Zygote Notary Filing\n\npersonal matter\n",
+        )
+        .unwrap();
 
         let ix_path = dir.join("index.json");
         unsafe { env::set_var("OS_WORKSPACE_INDEX", &ix_path) };
         build(&[dir.clone()]).save().expect("save index");
 
-        let without = crate::search::query_scoped("zygote notary", 5, None, "tfidf", false, false, false, false);
-        let with = crate::search::query_scoped("zygote notary", 5, None, "tfidf", false, true, false, false);
+        let without = crate::search::query_scoped(
+            "zygote notary",
+            5,
+            None,
+            "tfidf",
+            false,
+            false,
+            false,
+            false,
+        );
+        let with = crate::search::query_scoped(
+            "zygote notary",
+            5,
+            None,
+            "tfidf",
+            false,
+            true,
+            false,
+            false,
+        );
 
         assert!(
             !without.iter().any(|r| r.contains("Zygote Notary")),
@@ -500,7 +616,9 @@ mod revocation_tests {
     #[test]
     fn forgetting_removes_the_index_from_disk() {
         // "Off" must mean gone, not hidden — the switch does not say "pause".
-        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = env::temp_dir().join(format!("os-forget-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -513,7 +631,10 @@ mod revocation_tests {
 
         fs::remove_file(&ix).unwrap();
         assert!(!ix.is_file());
-        assert!(Index::load().entries.is_empty(), "purged index still returns entries");
+        assert!(
+            Index::load().entries.is_empty(),
+            "purged index still returns entries"
+        );
 
         let _ = fs::remove_dir_all(&dir);
         unsafe { env::remove_var("OS_WORKSPACE_INDEX") };

@@ -3,7 +3,9 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod acpi;
 pub mod anim;
+pub mod arm64_mmio;
 pub mod beep;
 pub mod caps;
 pub mod fault;
@@ -14,6 +16,7 @@ pub mod inputdiag;
 pub mod keyboard;
 pub mod mcp;
 pub mod mouse;
+pub mod ohci;
 pub mod pci;
 pub mod screens;
 pub mod search;
@@ -21,6 +24,7 @@ pub mod searchui;
 pub mod serial;
 pub mod setup;
 pub mod skills;
+pub mod time;
 pub mod ui;
 pub mod usb_tablet;
 pub mod xhci;

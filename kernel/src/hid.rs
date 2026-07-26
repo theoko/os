@@ -21,6 +21,16 @@ pub enum HidKind {
     Tablet,
 }
 
+/// Absolute-tablet packet format selected during USB enumeration.
+///
+/// QEMU and VirtualBox expose the same logical axes but put them at different
+/// byte offsets. VirtualBox inserts two wheel bytes and padding before X/Y.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum TabletFormat {
+    Qemu,
+    VirtualBox,
+}
+
 impl HidKind {
     /// SET_PROTOCOL argument. Boot protocol is what makes a keyboard knowable
     /// without a report-descriptor parser: the layout is fixed by the spec.
@@ -111,8 +121,13 @@ pub fn list_hid_ifaces(cfg: &[u8], out: &mut [HidIface]) -> usize {
 
 /// The first interface of the kind asked for.
 pub fn find_hid_iface(cfg: &[u8], want: HidKind) -> Option<HidIface> {
-    let mut found =
-        [HidIface { kind: HidKind::BootMouse, iface: 0, ep: 0, ep_mps: 0, interval: 0 }; 8];
+    let mut found = [HidIface {
+        kind: HidKind::BootMouse,
+        iface: 0,
+        ep: 0,
+        ep_mps: 0,
+        interval: 0,
+    }; 8];
     let n = list_hid_ifaces(cfg, &mut found);
     found[..n].iter().copied().find(|f| f.kind == want)
 }
@@ -139,7 +154,10 @@ pub struct AbsLayout {
 }
 
 impl AbsLayout {
-    pub const QEMU_TABLET: Self = Self { x_max: 32767, y_max: 32767 };
+    pub const QEMU_TABLET: Self = Self {
+        x_max: 32767,
+        y_max: 32767,
+    };
 }
 
 /// `[buttons, x_lo, x_hi, y_lo, y_hi, wheel]` in a fixed logical range.
@@ -150,14 +168,64 @@ pub fn decode_abs(report: &[u8], layout: AbsLayout, w: i32, h: i32) -> Option<Po
     if report.len() < 6 || layout.x_max <= 0 || layout.y_max <= 0 {
         return None;
     }
-    let ax = i32::from(u16::from_le_bytes([report[1], report[2]])).clamp(0, layout.x_max);
-    let ay = i32::from(u16::from_le_bytes([report[3], report[4]])).clamp(0, layout.y_max);
+    decode_abs_axes(
+        report[0],
+        u16::from_le_bytes([report[1], report[2]]),
+        u16::from_le_bytes([report[3], report[4]]),
+        layout,
+        w,
+        h,
+    )
+}
+
+/// Decode the packet layout advertised by the enumerated tablet.
+///
+/// VirtualBox's packed report is:
+/// `[buttons, wheel-y, wheel-x, padding, x_lo, x_hi, y_lo, y_hi]`.
+pub fn decode_tablet(
+    report: &[u8],
+    format: TabletFormat,
+    layout: AbsLayout,
+    w: i32,
+    h: i32,
+) -> Option<Pointer> {
+    match format {
+        TabletFormat::Qemu => decode_abs(report, layout, w, h),
+        TabletFormat::VirtualBox => {
+            if report.len() < 8 {
+                return None;
+            }
+            decode_abs_axes(
+                report[0],
+                u16::from_le_bytes([report[4], report[5]]),
+                u16::from_le_bytes([report[6], report[7]]),
+                layout,
+                w,
+                h,
+            )
+        }
+    }
+}
+
+fn decode_abs_axes(
+    buttons: u8,
+    x: u16,
+    y: u16,
+    layout: AbsLayout,
+    w: i32,
+    h: i32,
+) -> Option<Pointer> {
+    if layout.x_max <= 0 || layout.y_max <= 0 {
+        return None;
+    }
+    let ax = i32::from(x).clamp(0, layout.x_max);
+    let ay = i32::from(y).clamp(0, layout.y_max);
     let last_x = (w - 1).max(0);
     let last_y = (h - 1).max(0);
     Some(Pointer {
         x: (ax * last_x) / layout.x_max,
         y: (ay * last_y) / layout.y_max,
-        buttons: report[0] & 0x07,
+        buttons: buttons & 0x07,
     })
 }
 
@@ -204,18 +272,24 @@ impl Keyboard {
         }
     }
 
-    /// Queue every newly pressed usage. Returns the first, so the older
-    /// one-key-per-report call sites keep working unchanged.
-    pub fn feed(&mut self, report: &[u8]) -> Option<Key> {
+    /// Queue every newly pressed usage without consuming any of them.
+    ///
+    /// A host controller retires reports independently from the UI. Keeping
+    /// enqueue and dequeue separate lets its polling path accept a whole
+    /// report now and lets the view drain it later without losing the first
+    /// key.
+    pub fn feed_report(&mut self, report: &[u8]) {
         if report.len() < 8 {
-            return None;
+            return;
         }
-        let now: [u8; 6] = report[2..8].try_into().ok()?;
+        let Ok(now): Result<[u8; 6], _> = report[2..8].try_into() else {
+            return;
+        };
         // 0x01..=0x03 are rollover / POST-fail codes filling every slot, not
         // keys. Decoding them would type six characters nobody pressed.
         if now.iter().any(|u| (0x01..=0x03).contains(u)) {
             self.previous = now;
-            return self.next_key();
+            return;
         }
         let shift = report[0] & 0x22 != 0;
         for usage in now {
@@ -226,6 +300,13 @@ impl Keyboard {
             }
         }
         self.previous = now;
+    }
+
+    /// Queue every newly pressed usage and return the first.
+    ///
+    /// Kept for the existing one-key-per-report callers and tests.
+    pub fn feed(&mut self, report: &[u8]) -> Option<Key> {
+        self.feed_report(report);
         self.next_key()
     }
 
@@ -312,7 +393,10 @@ mod tests {
     #[test]
     fn holding_a_key_types_it_once_not_every_frame() {
         let mut k = Keyboard::new();
-        assert_eq!(k.feed(&kbd_report(0, [0x04, 0, 0, 0, 0, 0])), Some(Key::Char(b'a')));
+        assert_eq!(
+            k.feed(&kbd_report(0, [0x04, 0, 0, 0, 0, 0])),
+            Some(Key::Char(b'a'))
+        );
         assert_eq!(k.feed(&kbd_report(0, [0x04, 0, 0, 0, 0, 0])), None);
         assert_eq!(k.feed(&kbd_report(0, [0x04, 0, 0, 0, 0, 0])), None);
     }
@@ -322,7 +406,10 @@ mod tests {
         let mut k = Keyboard::new();
         k.feed(&kbd_report(0, [0x04, 0, 0, 0, 0, 0]));
         assert_eq!(k.feed(&kbd_report(0, [0; 6])), None);
-        assert_eq!(k.feed(&kbd_report(0, [0x04, 0, 0, 0, 0, 0])), Some(Key::Char(b'a')));
+        assert_eq!(
+            k.feed(&kbd_report(0, [0x04, 0, 0, 0, 0, 0])),
+            Some(Key::Char(b'a'))
+        );
     }
 
     #[test]
@@ -357,10 +444,16 @@ mod tests {
         let mut k = Keyboard::new();
         // The shift key itself never occupies a usage slot.
         assert_eq!(k.feed(&kbd_report(0x02, [0; 6])), None);
-        assert_eq!(k.feed(&kbd_report(0x02, [0x05, 0, 0, 0, 0, 0])), Some(Key::Char(b'B')));
+        assert_eq!(
+            k.feed(&kbd_report(0x02, [0x05, 0, 0, 0, 0, 0])),
+            Some(Key::Char(b'B'))
+        );
         // Right shift is a different bit and must work the same.
         k.feed(&kbd_report(0, [0; 6]));
-        assert_eq!(k.feed(&kbd_report(0x20, [0x1E, 0, 0, 0, 0, 0])), Some(Key::Char(b'!')));
+        assert_eq!(
+            k.feed(&kbd_report(0x20, [0x1E, 0, 0, 0, 0, 0])),
+            Some(Key::Char(b'!'))
+        );
     }
 
     #[test]
@@ -370,9 +463,10 @@ mod tests {
         // Twelve slots, so four six-key reports overrun it twice over.
         for round in 0..4u8 {
             let base = 0x04 + round * 6;
-            if let Some(Key::Char(c)) =
-                k.feed(&kbd_report(0, [base, base + 1, base + 2, base + 3, base + 4, base + 5]))
-            {
+            if let Some(Key::Char(c)) = k.feed(&kbd_report(
+                0,
+                [base, base + 1, base + 2, base + 3, base + 4, base + 5],
+            )) {
                 got.push(c);
             }
             k.feed(&kbd_report(0, [0; 6]));
@@ -380,8 +474,14 @@ mod tests {
         while let Some(Key::Char(c)) = k.next_key() {
             got.push(c);
         }
-        assert!(got.len() <= QUEUE + 1, "handed back more than it can hold: {got:?}");
-        assert!(got.windows(2).all(|w| w[0] < w[1]), "typing order must survive: {got:?}");
+        assert!(
+            got.len() <= QUEUE + 1,
+            "handed back more than it can hold: {got:?}"
+        );
+        assert!(
+            got.windows(2).all(|w| w[0] < w[1]),
+            "typing order must survive: {got:?}"
+        );
     }
 
     #[test]
@@ -439,7 +539,11 @@ mod tests {
     fn a_relative_mouse_moves_down_when_the_report_says_down() {
         // HID counts +y downward. PS/2 counts it upward, and mouse.rs
         // subtracts for that reason; copying its sign here inverts the mouse.
-        let prev = Pointer { x: 100, y: 100, buttons: 0 };
+        let prev = Pointer {
+            x: 100,
+            y: 100,
+            buttons: 0,
+        };
         let down = decode_rel(&[0, 0, 5, 0], prev, 640, 480).unwrap();
         assert_eq!(down.y, 105, "a positive dy must move toward the bottom");
         let up = decode_rel(&[0, 0, (-5i8) as u8, 0], prev, 640, 480).unwrap();
@@ -448,10 +552,18 @@ mod tests {
 
     #[test]
     fn a_relative_mouse_cannot_be_pushed_off_screen() {
-        let corner = Pointer { x: 0, y: 0, buttons: 0 };
+        let corner = Pointer {
+            x: 0,
+            y: 0,
+            buttons: 0,
+        };
         let p = decode_rel(&[0, (-100i8) as u8, (-100i8) as u8, 0], corner, 640, 480).unwrap();
         assert_eq!((p.x, p.y), (0, 0));
-        let far = Pointer { x: 639, y: 479, buttons: 0 };
+        let far = Pointer {
+            x: 639,
+            y: 479,
+            buttons: 0,
+        };
         let p = decode_rel(&[0, 100, 100, 0], far, 640, 480).unwrap();
         assert_eq!((p.x, p.y), (639, 479));
     }
@@ -476,8 +588,52 @@ mod tests {
     }
 
     #[test]
+    fn virtualbox_tablet_reads_xy_after_wheels_and_padding() {
+        // Oracle VirtualBox USBHIDT_REPORT:
+        // buttons, dz, dw, padding, x (LE), y (LE).
+        let report = [0x01, 0x7F, 0x81, 0, 0x00, 0x40, 0x00, 0x20];
+        let p = decode_tablet(
+            &report,
+            TabletFormat::VirtualBox,
+            AbsLayout::QEMU_TABLET,
+            1280,
+            800,
+        )
+        .unwrap();
+        assert_eq!(p.buttons, 1);
+        assert_eq!(p.x, 639);
+        assert_eq!(p.y, 199);
+    }
+
+    #[test]
+    fn virtualbox_wheel_bytes_cannot_move_the_pointer() {
+        let centered = [0, 0, 0, 0, 0x00, 0x40, 0x00, 0x40];
+        let wheels = [0, 127, 129, 0, 0x00, 0x40, 0x00, 0x40];
+        let a = decode_tablet(
+            &centered,
+            TabletFormat::VirtualBox,
+            AbsLayout::QEMU_TABLET,
+            1280,
+            800,
+        )
+        .unwrap();
+        let b = decode_tablet(
+            &wheels,
+            TabletFormat::VirtualBox,
+            AbsLayout::QEMU_TABLET,
+            1280,
+            800,
+        )
+        .unwrap();
+        assert_eq!(a, b);
+    }
+
+    #[test]
     fn an_absolute_report_out_of_range_is_clamped_not_wrapped() {
-        let l = AbsLayout { x_max: 4095, y_max: 4095 };
+        let l = AbsLayout {
+            x_max: 4095,
+            y_max: 4095,
+        };
         let mut r = [0u8; 6];
         r[1..3].copy_from_slice(&60000u16.to_le_bytes());
         r[3..5].copy_from_slice(&60000u16.to_le_bytes());
@@ -531,16 +687,26 @@ mod tests {
         // with nothing printed anywhere.
         let mut cfg = config(&[(1, 1, 1, 8)]);
         cfg[9] = 0;
-        let mut out =
-            [HidIface { kind: HidKind::Tablet, iface: 0, ep: 0, ep_mps: 0, interval: 0 }; 4];
+        let mut out = [HidIface {
+            kind: HidKind::Tablet,
+            iface: 0,
+            ep: 0,
+            ep_mps: 0,
+            interval: 0,
+        }; 4];
         assert_eq!(list_hid_ifaces(&cfg, &mut out), 0);
     }
 
     #[test]
     fn a_descriptor_running_past_the_buffer_is_not_read_past_it() {
         let cfg = config(&[(1, 1, 1, 8)]);
-        let mut out =
-            [HidIface { kind: HidKind::Tablet, iface: 0, ep: 0, ep_mps: 0, interval: 0 }; 4];
+        let mut out = [HidIface {
+            kind: HidKind::Tablet,
+            iface: 0,
+            ep: 0,
+            ep_mps: 0,
+            interval: 0,
+        }; 4];
         // Truncated mid-endpoint: we misread wTotalLength, so bail rather than
         // decode whatever happens to follow in the buffer.
         assert_eq!(list_hid_ifaces(&cfg[..cfg.len() - 3], &mut out), 0);

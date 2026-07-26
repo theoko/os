@@ -82,12 +82,15 @@ fn email_docs() -> Vec<Doc> {
 fn corpus_path() -> PathBuf {
     env::var("OS_SEARCH_CORPUS")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../search/corpus.json"))
+        .unwrap_or_else(|_| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../search/corpus.json")
+        })
 }
 
 fn load_docs() -> Result<Vec<Doc>, String> {
     let path = corpus_path();
-    let raw = fs::read_to_string(&path).map_err(|e| format!("corpus_missing {}: {e}", path.display()))?;
+    let raw =
+        fs::read_to_string(&path).map_err(|e| format!("corpus_missing {}: {e}", path.display()))?;
     let file: CorpusFile = serde_json::from_str(&raw).map_err(|e| format!("corpus_json: {e}"))?;
     Ok(file.docs)
 }
@@ -150,7 +153,11 @@ fn search_tfidf(docs: &[Doc], query: &str, k: usize, cat: Option<&str>) -> Vec<(
             continue;
         }
         // tSearch MCP blend: lexical * (1 + 8*pr) — we use milder 4× on 0..1 pr.
-        let pr = if d.pr.is_finite() { d.pr.clamp(0.0, 1.0) } else { 0.0 };
+        let pr = if d.pr.is_finite() {
+            d.pr.clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
         let mut score = tf_score * (1.0 + 4.0 * pr);
         if hit_all {
             score *= 1.35; // exact AND bonus (ladder)
@@ -252,7 +259,11 @@ pub fn query_all(
             docs.push(Doc {
                 t: tdocs[i].t.clone(),
                 u: tdocs[i].u.clone(),
-                c: if tdocs[i].c.is_empty() { "teddy".into() } else { tdocs[i].c.clone() },
+                c: if tdocs[i].c.is_empty() {
+                    "teddy".into()
+                } else {
+                    tdocs[i].c.clone()
+                },
                 b: tdocs[i].b.clone(),
                 pr: tdocs[i].pr,
             });
@@ -281,14 +292,28 @@ pub fn query_all(
 
 pub fn query_mock(q: &str, k: usize) -> Vec<String> {
     let samples = [
-        ("os identity", "docs", "Agent-centric OS with capability-based agents"),
-        ("MCP connectors", "docs", "Host bridge email skills search over COM2"),
-        ("tSearch revival inspiration", "web", &format!("Lexical search inspired hit for {q}")),
+        (
+            "os identity",
+            "docs",
+            "Agent-centric OS with capability-based agents",
+        ),
+        (
+            "MCP connectors",
+            "docs",
+            "Host bridge email skills search over COM2",
+        ),
+        (
+            "tSearch revival inspiration",
+            "web",
+            &format!("Lexical search inspired hit for {q}"),
+        ),
     ];
     let n = samples.len().min(k);
     let mut out = vec![format!("OK search.query n={n} backend=mock")];
     for (title, cat, snip) in samples.iter().take(n) {
-        out.push(format!("ROW title={title}|cat={cat}|score=1.0|snip={snip}|url=os://mock"));
+        out.push(format!(
+            "ROW title={title}|cat={cat}|score=1.0|snip={snip}|url=os://mock"
+        ));
     }
     out.push("END".into());
     out
@@ -324,7 +349,13 @@ print(json.dumps(hits))
         .map_err(|e| e.to_string())?;
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
-        return Err(err.lines().next().unwrap_or("tsearch_failed").chars().take(80).collect());
+        return Err(err
+            .lines()
+            .next()
+            .unwrap_or("tsearch_failed")
+            .chars()
+            .take(80)
+            .collect());
     }
     let stdout = String::from_utf8_lossy(&output.stdout);
     let val: serde_json::Value =
@@ -336,21 +367,32 @@ print(json.dumps(hits))
         .or_else(|| val.as_array().cloned())
         .or_else(|| val.get("results").and_then(|r| r.as_array().cloned()))
         .unwrap_or_default();
-    let mut out = vec![format!("OK search.query n={} backend=tsearch", items.len().min(k))];
+    let mut out = vec![format!(
+        "OK search.query n={} backend=tsearch",
+        items.len().min(k)
+    )];
     for item in items.into_iter().take(k) {
         let title = item
             .get("t")
             .or_else(|| item.get("title"))
             .and_then(|v| v.as_str())
             .unwrap_or("?");
-        let cat = item.get("c").or_else(|| item.get("cat")).and_then(|v| v.as_str()).unwrap_or("");
+        let cat = item
+            .get("c")
+            .or_else(|| item.get("cat"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let snip = item
             .get("snippet")
             .or_else(|| item.get("b"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
         let score = item.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-        let url = item.get("u").or_else(|| item.get("url")).and_then(|v| v.as_str()).unwrap_or("");
+        let url = item
+            .get("u")
+            .or_else(|| item.get("url"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         out.push(format!(
             "ROW title={}|cat={}|score={:.3}|snip={}|url={}",
             sanitize(title),
@@ -363,7 +405,6 @@ print(json.dumps(hits))
     out.push("END".into());
     Ok(out)
 }
-
 
 #[allow(clippy::too_many_arguments)]
 pub fn query_scoped(
@@ -379,8 +420,16 @@ pub fn query_scoped(
     match backend {
         "mock" => query_mock(q, k),
         "tsearch" => query_tsearch(q, k).unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
-        _ => query_all(q, k, cat, include_email, include_files, include_audio, include_portal)
-            .unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
+        _ => query_all(
+            q,
+            k,
+            cat,
+            include_email,
+            include_files,
+            include_audio,
+            include_portal,
+        )
+        .unwrap_or_else(|e| vec![format!("ERR search.query {e}")]),
     }
 }
 
@@ -395,7 +444,9 @@ mod tests {
         assert!(!hits.is_empty());
         let top = &docs[hits[0].1];
         assert!(
-            top.t.contains("Architecture") || top.b.contains("ambient") || top.t.contains("capability"),
+            top.t.contains("Architecture")
+                || top.b.contains("ambient")
+                || top.t.contains("capability"),
             "unexpected top hit {}",
             top.t
         );

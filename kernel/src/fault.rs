@@ -260,14 +260,38 @@ macro_rules! stubs {
 
 #[cfg(target_arch = "x86_64")]
 stubs![
-    (v0, 0, false), (v1, 1, false), (v2, 2, false), (v3, 3, false),
-    (v4, 4, false), (v5, 5, false), (v6, 6, false), (v7, 7, false),
-    (v8, 8, true), (v9, 9, false), (v10, 10, true), (v11, 11, true),
-    (v12, 12, true), (v13, 13, true), (v14, 14, true), (v15, 15, false),
-    (v16, 16, false), (v17, 17, true), (v18, 18, false), (v19, 19, false),
-    (v20, 20, false), (v21, 21, true), (v22, 22, false), (v23, 23, false),
-    (v24, 24, false), (v25, 25, false), (v26, 26, false), (v27, 27, false),
-    (v28, 28, false), (v29, 29, true), (v30, 30, true), (v31, 31, false),
+    (v0, 0, false),
+    (v1, 1, false),
+    (v2, 2, false),
+    (v3, 3, false),
+    (v4, 4, false),
+    (v5, 5, false),
+    (v6, 6, false),
+    (v7, 7, false),
+    (v8, 8, true),
+    (v9, 9, false),
+    (v10, 10, true),
+    (v11, 11, true),
+    (v12, 12, true),
+    (v13, 13, true),
+    (v14, 14, true),
+    (v15, 15, false),
+    (v16, 16, false),
+    (v17, 17, true),
+    (v18, 18, false),
+    (v19, 19, false),
+    (v20, 20, false),
+    (v21, 21, true),
+    (v22, 22, false),
+    (v23, 23, false),
+    (v24, 24, false),
+    (v25, 25, false),
+    (v26, 26, false),
+    (v27, 27, false),
+    (v28, 28, false),
+    (v29, 29, true),
+    (v30, 30, true),
+    (v31, 31, false),
 ];
 
 #[cfg(test)]
@@ -292,7 +316,11 @@ mod tests {
         let s = line(14, 0x2, 0xffff_8000_0010_1234, 0xdead_beef);
         assert!(s.as_str().contains("page fault"), "{}", s.as_str());
         assert!(s.as_str().contains("addr=0xdeadbeef"), "{}", s.as_str());
-        assert!(s.as_str().contains("rip=0xffff800000101234"), "{}", s.as_str());
+        assert!(
+            s.as_str().contains("rip=0xffff800000101234"),
+            "{}",
+            s.as_str()
+        );
     }
 
     #[test]
@@ -309,7 +337,11 @@ mod tests {
     fn every_vector_reports_something_readable() {
         for v in 0..VECTORS as u64 {
             let s = line(v, 0, 0, 0);
-            assert!(s.as_str().starts_with("os: FAULT "), "vector {v}: {}", s.as_str());
+            assert!(
+                s.as_str().starts_with("os: FAULT "),
+                "vector {v}: {}",
+                s.as_str()
+            );
             assert!(s.as_str().ends_with('\n'), "vector {v} has no line ending");
         }
     }

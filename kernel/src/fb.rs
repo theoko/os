@@ -133,7 +133,14 @@ impl Surface {
     /// # Safety
     /// `addr` must point to at least `width * height` u32s.
     pub unsafe fn in_memory(addr: *mut u32, width: usize, height: usize) -> Self {
-        Self { addr: addr.cast::<u8>(), width, height, pitch: width * 4, dirty: Cell::new(None), dirty2: Cell::new(None) }
+        Self {
+            addr: addr.cast::<u8>(),
+            width,
+            height,
+            pitch: width * 4,
+            dirty: Cell::new(None),
+            dirty2: Cell::new(None),
+        }
     }
 
     pub fn width(&self) -> usize {
@@ -449,7 +456,11 @@ mod tests {
 
     impl Canvas {
         fn new(w: usize, h: usize) -> Self {
-            Self { buf: vec![0x00FF_FFFF; w * h], w, h }
+            Self {
+                buf: vec![0x00FF_FFFF; w * h],
+                w,
+                h,
+            }
         }
         fn surface(&mut self) -> Surface {
             Surface {
@@ -458,7 +469,7 @@ mod tests {
                 height: self.h,
                 pitch: self.w * 4,
                 dirty: Cell::new(None),
-            dirty2: Cell::new(None),
+                dirty2: Cell::new(None),
             }
         }
         fn get(&self, x: usize, y: usize) -> u32 {
@@ -508,7 +519,10 @@ mod tests {
             s.fill_rect(10, 10, 20, 20, 0);
             s.fill_rect(20, 20, 20, 20, 0);
             assert_eq!(s.dirty_rect().unwrap(), (10, 10, 40, 40));
-            assert!(s.dirty_rect2().is_none(), "touching rects should not take a slot");
+            assert!(
+                s.dirty_rect2().is_none(),
+                "touching rects should not take a slot"
+            );
         }
     }
 
@@ -536,7 +550,8 @@ mod tests {
             let b = s.dirty_rect2().unwrap();
             // Every drawn pixel must sit inside one of the two regions.
             for (px, py) in [(2, 2), (52, 52), (92, 92)] {
-                let inside = |r: (i32, i32, i32, i32)| px >= r.0 && px < r.2 && py >= r.1 && py < r.3;
+                let inside =
+                    |r: (i32, i32, i32, i32)| px >= r.0 && px < r.2 && py >= r.1 && py < r.3;
                 assert!(inside(a) || inside(b), "({px},{py}) not covered");
             }
         }
@@ -560,7 +575,10 @@ mod tests {
         {
             let s = c.surface();
             s.fill_rect(-100, -100, 10, 10, 0);
-            assert!(s.dirty_rect().is_none(), "fully clipped draw marked a region");
+            assert!(
+                s.dirty_rect().is_none(),
+                "fully clipped draw marked a region"
+            );
         }
     }
 
@@ -641,7 +659,11 @@ mod tests {
             let s = c.surface();
             s.draw_text(10, 50, "Hello", &BODY_FACE, 0, 0x0000_0000);
         }
-        assert!(c.ink_count() > 40, "expected glyph ink, got {}", c.ink_count());
+        assert!(
+            c.ink_count() > 40,
+            "expected glyph ink, got {}",
+            c.ink_count()
+        );
     }
 
     #[test]
@@ -787,12 +809,26 @@ impl Screen {
                 height: h,
                 pitch: w * 4,
                 dirty: Cell::new(None),
-            dirty2: Cell::new(None),
+                dirty2: Cell::new(None),
             }
         } else {
-            Surface { addr, width: w, height: h, pitch: pitch as usize, dirty: Cell::new(None), dirty2: Cell::new(None) }
+            Surface {
+                addr,
+                width: w,
+                height: h,
+                pitch: pitch as usize,
+                dirty: Cell::new(None),
+                dirty2: Cell::new(None),
+            }
         };
-        Some(Self { back, fb: addr, fb_pitch: pitch as usize, w, h, buffered })
+        Some(Self {
+            back,
+            fb: addr,
+            fb_pitch: pitch as usize,
+            w,
+            h,
+            buffered,
+        })
     }
 
     /// The surface to draw on. Nothing is visible until [`Self::present`].
@@ -863,7 +899,10 @@ impl Screen {
                     bg
                 } else {
                     let src = unsafe {
-                        self.back.addr.add(sy as usize * self.back.pitch).cast::<u32>()
+                        self.back
+                            .addr
+                            .add(sy as usize * self.back.pitch)
+                            .cast::<u32>()
                     };
                     let c = unsafe { src.add(x).read() };
                     // Fade toward the page colour rather than to black.
@@ -896,6 +935,4 @@ impl Screen {
             }
         }
     }
-
 }
-

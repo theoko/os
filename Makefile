@@ -41,7 +41,7 @@ endif
 RUSTUP_BIN := $(patsubst %/,%,$(dir $(CARGO)))
 WITH_RUST := PATH="$(RUSTUP_BIN):$$PATH"
 
-.PHONY: all build kernel arm64-kernel iso arm64-iso iso-arm64 bridge bridge-run run run-bridged run-best utm utm-run utm-bridged usb usb-list drive linux-vm refresh refresh-install refresh-uninstall test test-host smoke smoke-bridge clean distclean
+.PHONY: all build kernel arm64-kernel iso arm64-iso iso-arm64 virtualbox-arm64 bridge bridge-run run run-bridged run-best utm utm-run utm-bridged usb usb-list drive linux-vm refresh refresh-install refresh-uninstall test test-host smoke smoke-bridge clean distclean
 
 all: build
 
@@ -97,6 +97,13 @@ arm64-iso: limine/limine arm64-kernel
 
 # Familiar word order for the artifact name: `make iso-arm64`.
 iso-arm64: arm64-iso
+
+# Native ARM64 VirtualBox path for Apple Silicon. The helper creates or
+# refreshes a correctly configured OHCI + QemuRamFB VM and reattaches the ISO
+# so VirtualBox never boots stale medium contents.
+virtualbox-arm64: iso-arm64
+	chmod +x scripts/make-virtualbox-arm64.sh
+	./scripts/make-virtualbox-arm64.sh
 
 run: iso
 	$(QEMU) -M q35 -cdrom $(IMAGE_NAME).iso -boot d $(QEMUFLAGS) $(QEMU_DEBUG_EXIT) || true

@@ -108,13 +108,26 @@ pub fn fetch(ep: &Endpoint, args: &[(String, String)]) -> Result<String, String>
     }
 
     let out = Command::new("curl")
-        .args(["-sS", "--fail", "--max-time", "20", "-H", "Accept: application/json"])
+        .args([
+            "-sS",
+            "--fail",
+            "--max-time",
+            "20",
+            "-H",
+            "Accept: application/json",
+        ])
         .arg(&url)
         .output()
         .map_err(|e| format!("curl: {e}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr);
-        return Err(err.lines().last().unwrap_or("request failed").chars().take(100).collect());
+        return Err(err
+            .lines()
+            .last()
+            .unwrap_or("request failed")
+            .chars()
+            .take(100)
+            .collect());
     }
     let body = String::from_utf8_lossy(&out.stdout).to_string();
     // Refuse HTML: a 200 from an SPA catch-all is not an API response.
@@ -136,7 +149,10 @@ pub fn rows_for(tool: &str, body: &str) -> Vec<String> {
     match tool {
         "market.health" => {
             let mut rows = Vec::new();
-            let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("unknown");
+            let status = v
+                .get("status")
+                .and_then(|s| s.as_str())
+                .unwrap_or("unknown");
             rows.push(format!("ROW field=status|value={status}"));
             if let Some(d) = v.get("degraded").and_then(|d| d.as_array()) {
                 let names: Vec<&str> = d.iter().filter_map(|x| x.as_str()).collect();
@@ -167,7 +183,10 @@ pub fn rows_for(tool: &str, body: &str) -> Vec<String> {
             if let Some(c) = v.get("components").and_then(|c| c.as_array()) {
                 for comp in c.iter().take(5) {
                     let name = comp.get("name").and_then(|n| n.as_str()).unwrap_or("?");
-                    let val = comp.get("value_fmt").and_then(|n| n.as_str()).unwrap_or("N/A");
+                    let val = comp
+                        .get("value_fmt")
+                        .and_then(|n| n.as_str())
+                        .unwrap_or("N/A");
                     rows.push(format!("ROW field={name}|value={val}"));
                 }
             }
@@ -225,7 +244,11 @@ mod tests {
         // /api/screen and /api/search 404 publicly; listing them would give the
         // guest tools that always fail.
         for e in ENDPOINTS {
-            assert!(e.url.starts_with("https://"), "portal must be TLS: {}", e.url);
+            assert!(
+                e.url.starts_with("https://"),
+                "portal must be TLS: {}",
+                e.url
+            );
             assert!(!e.url.contains("/api/screen"));
             assert!(!e.url.contains("/api/search"));
         }
@@ -247,9 +270,15 @@ mod tests {
         let body = r#"{"status":"degraded","degraded":["celery"],
             "services":{"celery":{"ok":false},"circuit_breaker":{"ok":true}}}"#;
         let rows = rows_for("market.health", body);
-        assert!(rows.iter().any(|r| r.contains("status") && r.contains("degraded")));
-        assert!(rows.iter().any(|r| r.contains("celery") && r.contains("down")));
-        assert!(rows.iter().any(|r| r.contains("circuit_breaker") && r.contains("ok")));
+        assert!(rows
+            .iter()
+            .any(|r| r.contains("status") && r.contains("degraded")));
+        assert!(rows
+            .iter()
+            .any(|r| r.contains("celery") && r.contains("down")));
+        assert!(rows
+            .iter()
+            .any(|r| r.contains("circuit_breaker") && r.contains("ok")));
     }
 
     #[test]
@@ -258,7 +287,9 @@ mod tests {
             "components":[{"name":"VIX Level","value_fmt":"18.57"},
                           {"name":"Put/Call Ratio","value_fmt":"1.762"}]}"#;
         let rows = rows_for("market.fear_greed", body);
-        assert!(rows.iter().any(|r| r.contains("VIX Level") && r.contains("18.57")));
+        assert!(rows
+            .iter()
+            .any(|r| r.contains("VIX Level") && r.contains("18.57")));
         assert!(rows.iter().any(|r| r.contains("Put/Call")));
         // Nulls must not render as the string "null".
         assert!(!rows.iter().any(|r| r.contains("cnn_fear_greed")));
@@ -284,9 +315,14 @@ mod tests {
     fn snapshot_lives_outside_the_repo() {
         // Serialised: these tests mutate process env, which cargo's
         // parallel runner would otherwise leak between them.
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { env::remove_var("OS_PORTAL_SNAPSHOT") };
         let p = snapshot_path().to_string_lossy().to_string();
-        assert!(!p.contains("/os/search"), "snapshot must not land in the repo: {p}");
+        assert!(
+            !p.contains("/os/search"),
+            "snapshot must not land in the repo: {p}"
+        );
     }
 }

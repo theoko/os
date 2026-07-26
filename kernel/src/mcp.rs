@@ -86,7 +86,10 @@ pub struct SearchPeek {
 
 impl SearchPeek {
     pub const fn empty(status: BridgeStatus, denied: bool) -> Self {
-        const EMPTY: SearchHit = SearchHit { title: [0; 48], url: [0; 72] };
+        const EMPTY: SearchHit = SearchHit {
+            title: [0; 48],
+            url: [0; 72],
+        };
         Self {
             status,
             denied,
@@ -228,7 +231,12 @@ impl DocPage {
     pub const MAX: usize = 120;
 
     pub const fn empty(status: BridgeStatus, denied: bool) -> Self {
-        Self { status, denied, count: 0, lines: [[0; 84]; Self::MAX] }
+        Self {
+            status,
+            denied,
+            count: 0,
+            lines: [[0; 84]; Self::MAX],
+        }
     }
 
     pub fn line_at(&self, i: usize) -> &str {
@@ -311,10 +319,20 @@ pub fn portal_status() -> PortalStatus {
     com2.init();
     let mut line = [0u8; LINE_BUF];
     if matches!(ping_bridge(&com2, &mut line), BridgeStatus::Offline) {
-        return PortalStatus { reachable: false, cached: false, syncing: false, docs: 0 };
+        return PortalStatus {
+            reachable: false,
+            cached: false,
+            syncing: false,
+            docs: 0,
+        };
     }
     com2.write_str("CALL portal.status\n");
-    let mut st = PortalStatus { reachable: true, cached: false, syncing: false, docs: 0 };
+    let mut st = PortalStatus {
+        reachable: true,
+        cached: false,
+        syncing: false,
+        docs: 0,
+    };
     for _ in 0..8 {
         let Some(n) = com2.read_line(&mut line, TIMEOUT_REPLY) else {
             break;
@@ -516,6 +534,9 @@ pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
 }
 
 fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
+    if !com2.available() {
+        return BridgeStatus::Offline;
+    }
     for _ in 0..64 {
         if com2.try_read_byte().is_none() {
             break;
@@ -612,7 +633,10 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
         if resp.starts_with("ROW ") && peek.count < peek.hits.len() {
             let title = parse_row_field(resp, "title").unwrap_or("?");
             copy_field(&mut peek.hits[peek.count].title, title);
-            copy_field(&mut peek.hits[peek.count].url, parse_row_field(resp, "url").unwrap_or(""));
+            copy_field(
+                &mut peek.hits[peek.count].url,
+                parse_row_field(resp, "url").unwrap_or(""),
+            );
             peek.count += 1;
         }
     }
@@ -645,7 +669,10 @@ fn search_offline() -> SearchPeek {
     let mut hits = [crate::search::Hit { doc: 0, score: 0 }; crate::search::MAX_HITS];
     let n = crate::search::query(OFFLINE_QUERY, &mut hits);
     for h in hits.iter().take(n.min(peek.hits.len())) {
-        copy_field(&mut peek.hits[peek.count].title, crate::search::DOCS[h.doc].title);
+        copy_field(
+            &mut peek.hits[peek.count].title,
+            crate::search::DOCS[h.doc].title,
+        );
         peek.count += 1;
     }
     peek
@@ -717,6 +744,9 @@ mod row_budget_tests {
         // buffer held 5, so two rows of every answer were discarded unseen.
         let asked: usize = max_rows_str().parse().expect("a number");
         assert_eq!(asked, crate::search::MAX_HITS);
-        assert_eq!(asked, SearchPeek::empty(BridgeStatus::Offline, false).hits.len());
+        assert_eq!(
+            asked,
+            SearchPeek::empty(BridgeStatus::Offline, false).hits.len()
+        );
     }
 }

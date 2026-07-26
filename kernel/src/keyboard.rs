@@ -42,11 +42,10 @@ pub enum Key {
 
 /// Scancode set 1, unshifted. Index = make code. 0 means "no character".
 const MAP: [u8; 0x40] = [
-    0, 0, b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'0', b'-', b'=', 0, 0,
-    b'q', b'w', b'e', b'r', b't', b'y', b'u', b'i', b'o', b'p', b'[', b']', 0, 0,
-    b'a', b's', b'd', b'f', b'g', b'h', b'j', b'k', b'l', b';', b'\'', b'`', 0, b'\\',
-    b'z', b'x', b'c', b'v', b'b', b'n', b'm', b',', b'.', b'/', 0, b'*', 0, b' ', 0, 0,
-    0, 0, 0, 0,
+    0, 0, b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'0', b'-', b'=', 0, 0, b'q', b'w',
+    b'e', b'r', b't', b'y', b'u', b'i', b'o', b'p', b'[', b']', 0, 0, b'a', b's', b'd', b'f', b'g',
+    b'h', b'j', b'k', b'l', b';', b'\'', b'`', 0, b'\\', b'z', b'x', b'c', b'v', b'b', b'n', b'm',
+    b',', b'.', b'/', 0, b'*', 0, b' ', 0, 0, 0, 0, 0, 0,
 ];
 
 /// Shifted forms for the printable keys we map.
@@ -91,7 +90,10 @@ pub struct Keyboard {
 
 impl Keyboard {
     pub const fn new() -> Self {
-        Self { shift: false, extended: false }
+        Self {
+            shift: false,
+            extended: false,
+        }
     }
 
     /// Decode one scancode byte. Returns a key on a *press*, never a release.
@@ -198,7 +200,9 @@ impl Keyboard {
             // the eventual USB HID driver. It makes the guest interactive in
             // QEMU/VirtualBox configurations that redirect COM1 to a host
             // terminal, without waiting for xHCI endpoint rings and GIC IRQs.
-            crate::serial::Serial::com1().try_read_byte().and_then(Self::from_serial)
+            crate::serial::Serial::com1()
+                .try_read_byte()
+                .and_then(Self::from_serial)
         }
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         None
@@ -213,7 +217,10 @@ pub struct TextField<const N: usize> {
 
 impl<const N: usize> TextField<N> {
     pub const fn new() -> Self {
-        Self { buf: [0; N], len: 0 }
+        Self {
+            buf: [0; N],
+            len: 0,
+        }
     }
 
     pub fn as_str(&self) -> &str {
@@ -414,7 +421,14 @@ mod nav_tests {
     fn navigation_keys_are_not_text() {
         // TextField must ignore them rather than inserting a stray character.
         let mut f = TextField::<8>::new();
-        for key in [Key::Up, Key::Down, Key::PageUp, Key::PageDown, Key::Home, Key::End] {
+        for key in [
+            Key::Up,
+            Key::Down,
+            Key::PageUp,
+            Key::PageDown,
+            Key::Home,
+            Key::End,
+        ] {
             assert!(!f.apply(key), "{key:?} was treated as text");
         }
         assert!(f.is_empty());

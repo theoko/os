@@ -16,7 +16,9 @@ pub struct SkillMeta {
 pub fn skills_dirs() -> (PathBuf, PathBuf) {
     let defaults = env::var("OS_SKILLS_DEFAULTS")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/defaults"));
+        .unwrap_or_else(|_| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/defaults")
+        });
     let user = env::var("OS_SKILLS_USER")
         .map(PathBuf::from)
         .unwrap_or_else(|_| dirs_home().join("Library/Application Support/os/skills"));

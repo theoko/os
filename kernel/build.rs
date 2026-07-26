@@ -22,14 +22,42 @@ struct Style {
 }
 
 const STYLES: &[Style] = &[
-    Style { name: "HERO", px: 44.0, weight: 600.0 },
+    Style {
+        name: "HERO",
+        px: 44.0,
+        weight: 600.0,
+    },
     // Setup-assistant step titles.
-    Style { name: "TITLE", px: 30.0, weight: 600.0 },
-    Style { name: "H2", px: 22.0, weight: 600.0 },
-    Style { name: "BRAND", px: 17.0, weight: 600.0 },
-    Style { name: "BODY", px: 17.0, weight: 400.0 },
-    Style { name: "BTN", px: 15.0, weight: 500.0 },
-    Style { name: "SMALL", px: 13.0, weight: 400.0 },
+    Style {
+        name: "TITLE",
+        px: 30.0,
+        weight: 600.0,
+    },
+    Style {
+        name: "H2",
+        px: 22.0,
+        weight: 600.0,
+    },
+    Style {
+        name: "BRAND",
+        px: 17.0,
+        weight: 600.0,
+    },
+    Style {
+        name: "BODY",
+        px: 17.0,
+        weight: 400.0,
+    },
+    Style {
+        name: "BTN",
+        px: 15.0,
+        weight: 500.0,
+    },
+    Style {
+        name: "SMALL",
+        px: 13.0,
+        weight: 400.0,
+    },
 ];
 
 /// Vendored default: Inter, SIL OFL 1.1 (see `assets/fonts/OFL.txt`).
@@ -162,7 +190,13 @@ fn rasterize(data: &[u8], style: &Style, out: &mut String) -> String {
                         bitmap[off + gy * w + gx] = (cov * 255.0 + 0.5).min(255.0) as u8;
                     }
                 });
-                (w, h, bounds.min.x.round() as i32, bounds.min.y.round() as i32, off)
+                (
+                    w,
+                    h,
+                    bounds.min.x.round() as i32,
+                    bounds.min.y.round() as i32,
+                    off,
+                )
             }
             // Space and other blank glyphs carry advance only.
             None => (0, 0, 0, 0, bitmap.len()),
@@ -225,8 +259,8 @@ fn build_corpus(manifest_dir: &Path) -> String {
 
     let path = manifest_dir.join("../search/corpus.json");
     println!("cargo:rerun-if-changed={}", path.display());
-    let raw = fs::read_to_string(&path)
-        .unwrap_or_else(|e| panic!("corpus {}: {e}", path.display()));
+    let raw =
+        fs::read_to_string(&path).unwrap_or_else(|e| panic!("corpus {}: {e}", path.display()));
     let val: serde_json::Value = serde_json::from_str(&raw).expect("corpus json");
     let docs = val["docs"].as_array().cloned().unwrap_or_default();
 
@@ -249,14 +283,20 @@ fn build_corpus(manifest_dir: &Path) -> String {
     out.push_str("pub static DOCS: [Doc; N_DOCS] = [\n");
     for (i, d) in docs.iter().enumerate() {
         let esc = |k: &str| -> String {
-            d[k].as_str().unwrap_or("").replace('\\', "\\\\").replace('"', "\\\"")
+            d[k].as_str()
+                .unwrap_or("")
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
         };
         // PageRank as 0..1024 fixed point.
         let pr = (d["pr"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0) * 1024.0).round() as i32;
         let _ = writeln!(
             out,
             "  Doc {{ title: \"{}\", cat: \"{}\", url: \"{}\", pr_q10: {pr}, n_tokens: {} }},",
-            esc("t"), esc("c"), esc("u"), doc_tokens[i].len().max(1)
+            esc("t"),
+            esc("c"),
+            esc("u"),
+            doc_tokens[i].len().max(1)
         );
     }
     out.push_str("];\n");
@@ -281,7 +321,8 @@ fn build_corpus(manifest_dir: &Path) -> String {
         let start = n_post;
         for (doc, tf) in docs_for_term {
             // tf normalised by document length, Q16.
-            let tfn = ((*tf as f64) / (doc_tokens[*doc].len().max(1) as f64) * 65536.0).round() as i64;
+            let tfn =
+                ((*tf as f64) / (doc_tokens[*doc].len().max(1) as f64) * 65536.0).round() as i64;
             let _ = writeln!(postings, "  Posting {{ doc: {doc}, tf_q16: {tfn} }},");
             n_post += 1;
         }
@@ -297,6 +338,9 @@ fn build_corpus(manifest_dir: &Path) -> String {
     let _ = writeln!(out, "pub const N_POSTINGS: usize = {n_post};");
     // Sorted by BTreeMap, so the runtime can binary-search.
     let _ = writeln!(out, "pub static TERMS: [Term; N_TERMS] = [\n{vocab}];");
-    let _ = writeln!(out, "pub static POSTINGS: [Posting; N_POSTINGS] = [\n{postings}];");
+    let _ = writeln!(
+        out,
+        "pub static POSTINGS: [Posting; N_POSTINGS] = [\n{postings}];"
+    );
     out
 }

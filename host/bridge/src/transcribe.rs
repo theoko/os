@@ -36,11 +36,15 @@ pub struct Store {
 pub fn store_path() -> PathBuf {
     env::var("OS_TRANSCRIPT_STORE")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| home().join("Library/Application Support/os/knowledge/transcripts.json"))
+        .unwrap_or_else(|_| {
+            home().join("Library/Application Support/os/knowledge/transcripts.json")
+        })
 }
 
 fn home() -> PathBuf {
-    env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("."))
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// Whisper model to use. `small` is the speed/quality compromise the
@@ -51,13 +55,16 @@ fn model_path() -> PathBuf {
     }
     let dir = home().join(".cache/whisper-models");
     let small = dir.join("ggml-small.bin");
-    if small.is_file() { small } else { dir.join("ggml-medium.bin") }
+    if small.is_file() {
+        small
+    } else {
+        dir.join("ggml-medium.bin")
+    }
 }
 
 /// Media extensions we will accept.
 const MEDIA_EXTS: &[&str] = &[
-    "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aiff",
-    "mp4", "mov", "mkv", "webm", "avi",
+    "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aiff", "mp4", "mov", "mkv", "webm", "avi",
 ];
 
 pub fn is_media(path: &Path) -> bool {
@@ -70,11 +77,21 @@ pub fn is_media(path: &Path) -> bool {
 /// Media duration in seconds, best effort.
 fn duration_secs(path: &Path) -> f64 {
     let out = Command::new("ffprobe")
-        .args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"])
+        .args([
+            "-v",
+            "error",
+            "-show_entries",
+            "format=duration",
+            "-of",
+            "csv=p=0",
+        ])
         .arg(path)
         .output();
     match out {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().parse().unwrap_or(0.0),
+        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout)
+            .trim()
+            .parse()
+            .unwrap_or(0.0),
         _ => 0.0,
     }
 }
@@ -114,7 +131,12 @@ pub fn transcribe(path: &Path) -> Result<Transcript, String> {
         let err = String::from_utf8_lossy(&conv.stderr);
         return Err(format!(
             "ffmpeg failed: {}",
-            err.lines().last().unwrap_or("unknown").chars().take(100).collect::<String>()
+            err.lines()
+                .last()
+                .unwrap_or("unknown")
+                .chars()
+                .take(100)
+                .collect::<String>()
         ));
     }
 
@@ -133,7 +155,12 @@ pub fn transcribe(path: &Path) -> Result<Transcript, String> {
         let err = String::from_utf8_lossy(&out.stderr);
         return Err(format!(
             "whisper failed: {}",
-            err.lines().last().unwrap_or("unknown").chars().take(100).collect::<String>()
+            err.lines()
+                .last()
+                .unwrap_or("unknown")
+                .chars()
+                .take(100)
+                .collect::<String>()
         ));
     }
     if text.is_empty() {
@@ -162,7 +189,10 @@ fn title_for(path: &Path, text: &str) -> String {
     if first.len() >= 12 {
         first
     } else {
-        path.file_stem().and_then(|s| s.to_str()).unwrap_or("transcript").to_string()
+        path.file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("transcript")
+            .to_string()
     }
 }
 
@@ -179,8 +209,11 @@ impl Store {
         if let Some(d) = path.parent() {
             fs::create_dir_all(d).map_err(|e| format!("mkdir {}: {e}", d.display()))?;
         }
-        fs::write(&path, serde_json::to_string(self).map_err(|e| e.to_string())?)
-            .map_err(|e| format!("write {}: {e}", path.display()))?;
+        fs::write(
+            &path,
+            serde_json::to_string(self).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| format!("write {}: {e}", path.display()))?;
         Ok(path)
     }
 
@@ -219,7 +252,10 @@ mod tests {
     #[test]
     fn recognises_audio_and_video_but_not_documents() {
         assert!(is_media(Path::new("a.wav")));
-        assert!(is_media(Path::new("a.MP4")), "extension match must be case-insensitive");
+        assert!(
+            is_media(Path::new("a.MP4")),
+            "extension match must be case-insensitive"
+        );
         assert!(is_media(Path::new("a.m4a")));
         assert!(!is_media(Path::new("a.md")));
         assert!(!is_media(Path::new("a")));
@@ -242,7 +278,10 @@ mod tests {
 
     #[test]
     fn title_prefers_speech_over_filename() {
-        let t = title_for(Path::new("/x/rec01.wav"), "the quarterly review meeting began with revenue");
+        let t = title_for(
+            Path::new("/x/rec01.wav"),
+            "the quarterly review meeting began with revenue",
+        );
         assert!(t.starts_with("the quarterly review"), "{t}");
     }
 
@@ -253,7 +292,8 @@ mod tests {
 
     #[test]
     fn summary_picks_substantial_sentences() {
-        let text = "Hi. This is a much longer sentence carrying the actual content of the recording. Bye.";
+        let text =
+            "Hi. This is a much longer sentence carrying the actual content of the recording. Bye.";
         let s = summarize(text, 2);
         assert_eq!(s.len(), 1, "short fragments should be dropped");
         assert!(s[0].contains("actual content"));
@@ -287,17 +327,24 @@ mod tests {
     fn store_lives_outside_the_repo() {
         // Serialised: these tests mutate process env, which cargo's
         // parallel runner would otherwise leak between them.
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { env::remove_var("OS_TRANSCRIPT_STORE") };
         let p = store_path().to_string_lossy().to_string();
-        assert!(!p.contains("/os/search"), "transcripts must not land in the repo: {p}");
+        assert!(
+            !p.contains("/os/search"),
+            "transcripts must not land in the repo: {p}"
+        );
     }
 
     #[test]
     fn model_resolves_to_an_existing_cache_entry_or_is_overridable() {
         // Serialised: these tests mutate process env, which cargo's
         // parallel runner would otherwise leak between them.
-        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_WHISPER_MODEL", "/tmp/custom.bin") };
         assert_eq!(model_path(), PathBuf::from("/tmp/custom.bin"));
         unsafe { env::remove_var("OS_WHISPER_MODEL") };
@@ -311,7 +358,9 @@ mod scope_tests {
 
     #[test]
     fn transcripts_need_their_own_grant_not_the_file_one() {
-        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let dir = env::temp_dir().join(format!("os-audio-scope-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -328,13 +377,31 @@ mod scope_tests {
         st.save().unwrap();
 
         // workspace.index granted, audio.transcribe not: must stay hidden.
-        let files_only = crate::search::query_scoped("xenon ledger", 5, None, "tfidf", false, true, false, false);
+        let files_only = crate::search::query_scoped(
+            "xenon ledger",
+            5,
+            None,
+            "tfidf",
+            false,
+            true,
+            false,
+            false,
+        );
         assert!(
             !files_only.iter().any(|r| r.contains("Xenon Ledger")),
             "a recording surfaced under the files grant: {files_only:?}"
         );
 
-        let with_audio = crate::search::query_scoped("xenon ledger", 5, None, "tfidf", false, false, true, false);
+        let with_audio = crate::search::query_scoped(
+            "xenon ledger",
+            5,
+            None,
+            "tfidf",
+            false,
+            false,
+            true,
+            false,
+        );
         assert!(
             with_audio.iter().any(|r| r.contains("Xenon Ledger")),
             "granted search should find the transcript: {with_audio:?}"

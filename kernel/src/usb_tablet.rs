@@ -93,7 +93,12 @@ enum Probe {
 impl UsbTablet {
     /// Probe every UHCI controller and every port, binding only a device that
     /// identifies as an absolute tablet. `err` gets a short ASCII reason.
-    pub unsafe fn init(hhdm: u64, phys_page0: u64, phys_page1: u64, err: &mut [u8]) -> Option<Self> {
+    pub unsafe fn init(
+        hhdm: u64,
+        phys_page0: u64,
+        phys_page1: u64,
+        err: &mut [u8],
+    ) -> Option<Self> {
         set_err(err, "start");
         let _ = disable_ehci_pci();
 
@@ -125,13 +130,7 @@ impl UsbTablet {
         None
     }
 
-    unsafe fn init_on(
-        io: u16,
-        port: u16,
-        hhdm: u64,
-        phys_page0: u64,
-        phys_page1: u64,
-    ) -> Probe {
+    unsafe fn init_on(io: u16, port: u16, hhdm: u64, phys_page0: u64, phys_page1: u64) -> Probe {
         let fl = (phys_page0 + hhdm) as *mut u32;
         let scratch = (phys_page1 + hhdm) as *mut u8;
         unsafe {
@@ -564,10 +563,7 @@ impl UsbTablet {
 
         // Stalled / babble / CRC / buffer error → drop, do not flip toggle.
         // NAK keeps Active set on UHCI, so we never reach here for a NAK.
-        if st & (1 << 22) != 0
-            || st & (1 << 20) != 0
-            || st & (1 << 18) != 0
-            || st & (1 << 21) != 0
+        if st & (1 << 22) != 0 || st & (1 << 20) != 0 || st & (1 << 18) != 0 || st & (1 << 21) != 0
         {
             return false;
         }

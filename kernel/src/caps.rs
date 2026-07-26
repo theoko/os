@@ -239,7 +239,12 @@ mod order_tests {
         let mut seen = 0u8;
         for cap in Cap::ALL {
             let bit = 1u8 << cap.index();
-            assert_eq!(seen & bit, 0, "{} shares a bit with another cap", cap.name());
+            assert_eq!(
+                seen & bit,
+                0,
+                "{} shares a bit with another cap",
+                cap.name()
+            );
             seen |= bit;
         }
     }

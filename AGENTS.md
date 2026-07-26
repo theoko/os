@@ -6,9 +6,10 @@ status: active
 
 # os
 
-Agent-centric hobby operating system in Rust (`no_std` kernel), targeting **x86_64**,
-booted with **Limine**. Headless runs use **QEMU**; the desktop GUI front-end is **UTM**
-(Parallels cannot run x86_64 guests on Apple Silicon).
+Agent-centric hobby operating system in Rust (`no_std` kernel), targeting
+**x86_64 and ARM64**, booted with **Limine**. Headless x86 runs use **QEMU**;
+desktop runs use **UTM** for x86 emulation or **VirtualBox** for native ARM64
+virtualization on Apple Silicon.
 
 ## Shape
 
@@ -41,6 +42,8 @@ make build           # ISO
 make run             # QEMU (MCP offline unless COM2 wired)
 make bridge-run      # host bridge on :7420 (EMAIL_BACKEND=mock|gog)
 make run-bridged     # QEMU COM2 → bridge
+make iso-arm64       # build the native ARM64 ISO
+make virtualbox-arm64 # build + configure + open VirtualBox ARM VM
 make test
 ```
 

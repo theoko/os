@@ -162,17 +162,24 @@ mod tests {
 
     #[test]
     fn an_absurd_wait_does_not_wrap_into_a_short_one() {
-        // u32::MAX ms at 1 GHz overflows u64 multiplication; wrapping would
-        // turn "wait forever" into "wait a moment" and report a live
-        // controller as dead.
         let tb = Timebase::fixed(1_000_000_000);
-        assert_eq!(tb.ms_to_ticks(u32::MAX), u64::MAX / 1000);
+        assert_eq!(
+            tb.ms_to_ticks(u32::MAX),
+            1_000_000_000u64 * u32::MAX as u64 / 1000
+        );
+
+        let saturating_tb = Timebase::fixed(u64::MAX);
+        assert_eq!(saturating_tb.ms_to_ticks(u32::MAX), u64::MAX / 1000);
     }
 
     #[test]
     fn a_wait_without_a_clock_ends_instead_of_hanging() {
         let tb = Timebase::fixed(0);
-        let mut d = Deadline { tb, end: 0, spins: 3 };
+        let mut d = Deadline {
+            tb,
+            end: 0,
+            spins: 3,
+        };
         assert!(!d.expired());
         assert!(!d.expired());
         assert!(!d.expired());
@@ -184,14 +191,22 @@ mod tests {
         // The budget is a fallback, not a second deadline: on a fast machine
         // it would otherwise expire while the real deadline is far away.
         let tb = Timebase::fixed(24_000_000);
-        let mut d = Deadline { tb, end: u64::MAX, spins: 0 };
+        let mut d = Deadline {
+            tb,
+            end: u64::MAX,
+            spins: 0,
+        };
         assert!(!d.expired(), "the clock says the wait is not over");
     }
 
     #[test]
     fn a_deadline_that_has_passed_is_over_immediately() {
         let tb = Timebase::fixed(24_000_000);
-        let mut d = Deadline { tb, end: 0, spins: u32::MAX };
+        let mut d = Deadline {
+            tb,
+            end: 0,
+            spins: u32::MAX,
+        };
         assert!(d.expired());
     }
 }

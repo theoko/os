@@ -29,7 +29,11 @@ pub struct Row {
 
 impl Row {
     pub const fn empty() -> Self {
-        Self { title: [0; 56], url: [0; 72], cat: "" }
+        Self {
+            title: [0; 56],
+            url: [0; 72],
+            cat: "",
+        }
     }
 
     fn set(&mut self, title: &str, url: &str, cat: &'static str) {
@@ -81,7 +85,12 @@ pub struct Source {
 
 impl Source {
     pub const fn offline() -> Self {
-        Self { bridge_online: false, errored: false, files_in_scope: false, mail_in_scope: false }
+        Self {
+            bridge_online: false,
+            errored: false,
+            files_in_scope: false,
+            mail_in_scope: false,
+        }
     }
 
     /// Shown when something actually broke, as opposed to simply finding
@@ -153,7 +162,10 @@ impl SearchView {
         self.searched = true;
         self.count = 0;
         self.source = Source::offline();
-        set_say(&mut self.say, "Answered from the built-in guide - the bridge is offline.");
+        set_say(
+            &mut self.say,
+            "Answered from the built-in guide - the bridge is offline.",
+        );
         if q.trim().is_empty() {
             return;
         }
@@ -285,13 +297,34 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
 
     // Nav: a way back, and the brand.
     let (bx, by, bw, bh) = back_rect(w);
-    fb.draw_text(bx, by + BTN_FACE.baseline(), "Back", &BTN_FACE, 0, theme::ACCENT);
+    fb.draw_text(
+        bx,
+        by + BTN_FACE.baseline(),
+        "Back",
+        &BTN_FACE,
+        0,
+        theme::ACCENT,
+    );
     let _ = (bw, bh);
-    fb.draw_text_centered(w / 2, (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline(), "Search", &BRAND_FACE, 0, theme::INK);
+    fb.draw_text_centered(
+        w / 2,
+        (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline(),
+        "Search",
+        &BRAND_FACE,
+        0,
+        theme::INK,
+    );
     fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
 
     let track = font::tracking_pct(TITLE_FACE.px, -20);
-    fb.draw_text_centered(w / 2, 112, "What do you want to know?", &TITLE_FACE, track, theme::INK);
+    fb.draw_text_centered(
+        w / 2,
+        112,
+        "What do you want to know?",
+        &TITLE_FACE,
+        track,
+        theme::INK,
+    );
 
     // Input field.
     let (fx, fy, fw, fh) = field_rect(w, h);
@@ -301,12 +334,24 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
     let tx = fx + 18;
     let base = fy + (fh - BODY_FACE.px) / 2 + BODY_FACE.baseline();
     if query.is_empty() {
-        fb.draw_text(tx, base, "Type a query, then press Enter", &BODY_FACE, 0, theme::MUTED);
+        fb.draw_text(
+            tx,
+            base,
+            "Type a query, then press Enter",
+            &BODY_FACE,
+            0,
+            theme::MUTED,
+        );
     } else {
         fb.draw_text(tx, base, query, &BODY_FACE, 0, theme::INK);
     }
     if caret {
-        let cx = tx + if query.is_empty() { 0 } else { BODY_FACE.width(query, 0) } + 2;
+        let cx =
+            tx + if query.is_empty() {
+                0
+            } else {
+                BODY_FACE.width(query, 0)
+            } + 2;
         fb.fill_rect(cx, fy + 14, 2, fh - 28, theme::INK);
     }
 
@@ -314,21 +359,22 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
     // answer to "did you get what I meant?" - the rows are the evidence.
     let say_y = fy + fh + 26;
     if view.searched && !view.say().is_empty() {
-        fb.draw_text_clipped(fx, say_y + BODY_FACE.baseline(), view.say(), &BODY_FACE, 0, theme::INK, fw);
+        fb.draw_text_clipped(
+            fx,
+            say_y + BODY_FACE.baseline(),
+            view.say(),
+            &BODY_FACE,
+            0,
+            theme::INK,
+            fw,
+        );
     }
 
     // Results.
     let mut y = results_top(w, h);
     if !view.searched {
         y = say_y;
-        fb.draw_text_centered(
-            w / 2,
-            y + 30,
-            bridge_note,
-            &SMALL_FACE,
-            0,
-            theme::MUTED,
-        );
+        fb.draw_text_centered(w / 2, y + 30, bridge_note, &SMALL_FACE, 0, theme::MUTED);
         return;
     }
     if view.count == 0 {
@@ -336,7 +382,14 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
         // both rendered, so an offline search said "the bridge is offline"
         // twice in two different wordings.
         if view.say().is_empty() {
-            fb.draw_text_centered(w / 2, y + 30, view.source.empty_reason(), &BODY_FACE, 0, theme::MUTED);
+            fb.draw_text_centered(
+                w / 2,
+                y + 30,
+                view.source.empty_reason(),
+                &BODY_FACE,
+                0,
+                theme::MUTED,
+            );
         }
         return;
     }
@@ -348,7 +401,14 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
         fb.draw_text(fx + 18, y + 26, r.title(), &BRAND_FACE, 0, theme::INK);
         // Category chip, right-aligned.
         let cw = SMALL_FACE.width(r.cat(), 0);
-        fb.draw_text(fx + fw - 18 - cw, y + 26, r.cat(), &SMALL_FACE, 0, theme::ACCENT);
+        fb.draw_text(
+            fx + fw - 18 - cw,
+            y + 26,
+            r.cat(),
+            &SMALL_FACE,
+            0,
+            theme::ACCENT,
+        );
         fb.draw_text(fx + 18, y + 48, r.url(), &SMALL_FACE, 0, theme::MUTED);
         y += ROW_H + 10;
     }
@@ -378,7 +438,10 @@ mod tests {
     fn empty_query_searches_nothing_but_marks_searched() {
         let mut v = SearchView::new();
         v.run("   ");
-        assert!(v.searched, "must distinguish 'ran and found nothing' from idle");
+        assert!(
+            v.searched,
+            "must distinguish 'ran and found nothing' from idle"
+        );
         assert_eq!(v.count, 0);
     }
 
@@ -435,7 +498,12 @@ mod source_tests {
     fn an_online_bridge_is_never_reported_as_offline() {
         // The bug this replaces: a bridge that answered "n=0" was rendered as
         // "Bridge offline", sending the user to debug a working connection.
-        let s = Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: true };
+        let s = Source {
+            bridge_online: true,
+            errored: false,
+            files_in_scope: true,
+            mail_in_scope: true,
+        };
         assert!(!s.empty_reason().contains("offline"));
     }
 
@@ -446,7 +514,12 @@ mod source_tests {
 
     #[test]
     fn missing_file_grant_names_the_fix() {
-        let s = Source { bridge_online: true, errored: false, files_in_scope: false, mail_in_scope: true };
+        let s = Source {
+            bridge_online: true,
+            errored: false,
+            files_in_scope: false,
+            mail_in_scope: true,
+        };
         let m = s.empty_reason();
         assert!(m.contains("workspace.index"), "{m}");
         assert!(!m.contains("offline"), "{m}");
@@ -454,7 +527,12 @@ mod source_tests {
 
     #[test]
     fn missing_mail_grant_names_the_fix() {
-        let s = Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: false };
+        let s = Source {
+            bridge_online: true,
+            errored: false,
+            files_in_scope: true,
+            mail_in_scope: false,
+        };
         assert!(s.empty_reason().contains("email.search"));
     }
 
@@ -462,13 +540,31 @@ mod source_tests {
     fn every_reason_is_renderable_ascii() {
         for s in [
             Source::offline(),
-            Source { bridge_online: true, errored: false, files_in_scope: false, mail_in_scope: false },
-            Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: false },
-            Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: true },
+            Source {
+                bridge_online: true,
+                errored: false,
+                files_in_scope: false,
+                mail_in_scope: false,
+            },
+            Source {
+                bridge_online: true,
+                errored: false,
+                files_in_scope: true,
+                mail_in_scope: false,
+            },
+            Source {
+                bridge_online: true,
+                errored: false,
+                files_in_scope: true,
+                mail_in_scope: true,
+            },
         ] {
             let m = s.empty_reason();
             assert!(m.bytes().all(|b| (0x20..=0x7E).contains(&b)), "{m}");
-            assert!(BODY_FACE.width(m, 0) < 980, "empty-state line overflows: {m}");
+            assert!(
+                BODY_FACE.width(m, 0) < 980,
+                "empty-state line overflows: {m}"
+            );
         }
     }
 }
@@ -479,7 +575,12 @@ mod teddy_tests {
 
     #[test]
     fn a_real_failure_gets_the_friendly_line() {
-        let s = Source { bridge_online: true, errored: true, files_in_scope: true, mail_in_scope: true };
+        let s = Source {
+            bridge_online: true,
+            errored: true,
+            files_in_scope: true,
+            mail_in_scope: true,
+        };
         assert_eq!(s.empty_reason(), Source::TEDDY);
     }
 
@@ -487,7 +588,12 @@ mod teddy_tests {
     fn an_empty_result_is_not_a_failure() {
         // Finding nothing is a legitimate answer and must stay actionable
         // rather than being papered over with a mascot.
-        let s = Source { bridge_online: true, errored: false, files_in_scope: false, mail_in_scope: true };
+        let s = Source {
+            bridge_online: true,
+            errored: false,
+            files_in_scope: false,
+            mail_in_scope: true,
+        };
         assert_ne!(s.empty_reason(), Source::TEDDY);
         assert!(s.empty_reason().contains("workspace.index"));
     }
@@ -520,11 +626,25 @@ pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage, scroll
     fb.fill(theme::BG);
 
     let (bx, by, _, _) = back_rect(w);
-    fb.draw_text(bx, by + BTN_FACE.baseline(), "Back", &BTN_FACE, 0, theme::ACCENT);
+    fb.draw_text(
+        bx,
+        by + BTN_FACE.baseline(),
+        "Back",
+        &BTN_FACE,
+        0,
+        theme::ACCENT,
+    );
     fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
 
     let (fx, _, fw, _) = field_rect(w, h);
-    fb.draw_text(fx, 108, title, &TITLE_FACE, font::tracking_pct(TITLE_FACE.px, -20), theme::INK);
+    fb.draw_text(
+        fx,
+        108,
+        title,
+        &TITLE_FACE,
+        font::tracking_pct(TITLE_FACE.px, -20),
+        theme::INK,
+    );
 
     if page.denied {
         fb.draw_text(fx, 160, Source::TEDDY, &BODY_FACE, 0, theme::MUTED);
@@ -570,14 +690,20 @@ mod reader_tests {
     fn result_rows_are_clickable_at_their_centre() {
         for i in 0..search::MAX_HITS {
             let (x, y, w, h) = row_rect(1024, 768, i);
-            assert_eq!(result_hit(1024, 768, search::MAX_HITS, x + w / 2, y + h / 2), Some(i));
+            assert_eq!(
+                result_hit(1024, 768, search::MAX_HITS, x + w / 2, y + h / 2),
+                Some(i)
+            );
         }
     }
 
     #[test]
     fn clicks_below_the_last_result_open_nothing() {
         let (_, y, _, h) = row_rect(1024, 768, search::MAX_HITS - 1);
-        assert_eq!(result_hit(1024, 768, search::MAX_HITS, 512, y + h + 40), None);
+        assert_eq!(
+            result_hit(1024, 768, search::MAX_HITS, 512, y + h + 40),
+            None
+        );
     }
 
     #[test]
@@ -599,7 +725,10 @@ mod reader_tests {
         let mut v = SearchView::new();
         v.run("capability agent");
         assert!(v.count > 0);
-        assert!(!v.rows[0].url().is_empty(), "offline results must be openable too");
+        assert!(
+            !v.rows[0].url().is_empty(),
+            "offline results must be openable too"
+        );
     }
 }
 
@@ -618,7 +747,10 @@ mod honesty_tests {
             mail_in_scope: true,
         };
         let m = s.empty_reason();
-        assert!(!m.contains("searched"), "claims knowledge it does not have: {m}");
+        assert!(
+            !m.contains("searched"),
+            "claims knowledge it does not have: {m}"
+        );
         assert!(m.contains("No matches"));
     }
 

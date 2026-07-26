@@ -17,10 +17,11 @@ use crate::pci::UsbSurvey;
 pub struct Inputs {
     /// Does this machine even have an i8042 to talk to? On aarch64 the answer
     /// is always no - QEMU's ARM `virt` has no such device and neither does
-    /// VirtualBox's - so "no keyboard" there is not a fault to chase.
+    /// VirtualBox's - so input there has to arrive through OHCI.
     pub ps2_controller: bool,
     pub ps2_keyboard: bool,
     pub ps2_mouse: bool,
+    pub usb_keyboard: bool,
     pub usb_tablet: bool,
     pub usb: UsbSurvey,
 }
@@ -31,7 +32,7 @@ impl Inputs {
     }
 
     pub fn can_type(&self) -> bool {
-        self.ps2_keyboard
+        self.ps2_keyboard || self.usb_keyboard
     }
 
     /// True when the machine is usable at all.
@@ -49,14 +50,12 @@ impl Inputs {
             (true, true) => None,
             (false, false) => Some(if !self.ps2_controller {
                 // No i8042 at all, which is every arm64 machine. Not a fault
-                // to diagnose: input here has to come from virtio-input or
-                // xHCI, and this OS has neither. Telling someone to "try a USB
-                // keyboard" would send them chasing a driver nobody wrote.
+                // to diagnose: input here has to come from USB or virtio.
                 //
                 // Keyed off the controller rather than cfg!(target_arch),
                 // which describes the machine running the *tests* - on an
                 // arm64 Mac that made every host test take the arm64 branch.
-                "No input yet on this machine: it has no PS/2 controller, and virtio-input is not implemented."
+                "No input detected. This machine has no PS/2 controller; enable VirtualBox USB 1.1 (OHCI)."
             } else if self.usb.has_unsupported() {
                 "No usable keyboard or mouse. This machine's USB is xHCI, which this OS cannot drive yet."
             } else {
@@ -77,25 +76,55 @@ mod tests {
     use super::*;
 
     fn inputs(ps2_kbd: bool, ps2_mouse: bool, tablet: bool, usb: UsbSurvey) -> Inputs {
-        Inputs { ps2_controller: true, ps2_keyboard: ps2_kbd, ps2_mouse, usb_tablet: tablet, usb }
+        Inputs {
+            ps2_controller: true,
+            ps2_keyboard: ps2_kbd,
+            ps2_mouse,
+            usb_keyboard: false,
+            usb_tablet: tablet,
+            usb,
+        }
     }
 
     /// A machine with no i8042 anywhere: every arm64 target.
     fn no_ps2_bus(usb: UsbSurvey) -> Inputs {
-        Inputs { ps2_controller: false, ps2_keyboard: false, ps2_mouse: false, usb_tablet: false, usb }
+        Inputs {
+            ps2_controller: false,
+            ps2_keyboard: false,
+            ps2_mouse: false,
+            usb_keyboard: false,
+            usb_tablet: false,
+            usb,
+        }
     }
 
     #[test]
     fn a_working_machine_says_nothing() {
         // A banner on every boot would be noise, and noise gets ignored
         // exactly when it finally matters.
-        let good = inputs(true, false, true, UsbSurvey { uhci: 1, ..Default::default() });
+        let good = inputs(
+            true,
+            false,
+            true,
+            UsbSurvey {
+                uhci: 1,
+                ..Default::default()
+            },
+        );
         assert_eq!(good.note(), None);
     }
 
     #[test]
     fn a_modern_laptop_is_told_why_nothing_responds() {
-        let laptop = inputs(false, false, false, UsbSurvey { xhci: 2, ..Default::default() });
+        let laptop = inputs(
+            false,
+            false,
+            false,
+            UsbSurvey {
+                xhci: 2,
+                ..Default::default()
+            },
+        );
         assert!(!laptop.usable());
         let note = laptop.note().expect("an unusable machine must say so");
         assert!(note.contains("xHCI"), "{note}");
@@ -112,13 +141,15 @@ mod tests {
     fn a_machine_without_an_i8042_is_told_that_is_the_reason() {
         let note = no_ps2_bus(UsbSurvey::default()).note().unwrap();
         assert!(note.contains("no PS/2 controller"), "{note}");
-        assert!(note.contains("virtio-input"), "name what is missing: {note}");
+        assert!(note.contains("USB 1.1"), "name what is missing: {note}");
     }
 
     #[test]
     fn a_machine_that_has_an_i8042_is_not_told_it_lacks_one() {
         // The x86 case: the controller is there, the devices are not.
-        let note = inputs(false, false, false, UsbSurvey::default()).note().unwrap();
+        let note = inputs(false, false, false, UsbSurvey::default())
+            .note()
+            .unwrap();
         assert!(!note.contains("no PS/2 controller"), "{note}");
     }
 
@@ -136,5 +167,23 @@ mod tests {
         assert!(inputs(true, false, false, UsbSurvey::default()).usable());
         assert!(inputs(false, true, false, UsbSurvey::default()).usable());
         assert!(!inputs(false, false, false, UsbSurvey::default()).usable());
+    }
+
+    #[test]
+    fn an_ohci_keyboard_counts_even_without_ps2() {
+        let arm = Inputs {
+            ps2_controller: false,
+            ps2_keyboard: false,
+            ps2_mouse: false,
+            usb_keyboard: true,
+            usb_tablet: false,
+            usb: UsbSurvey {
+                ohci: 1,
+                ..Default::default()
+            },
+        };
+        assert!(arm.can_type());
+        assert!(arm.usable());
+        assert!(arm.note().unwrap().contains("Keyboard only"));
     }
 }

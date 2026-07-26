@@ -12,7 +12,12 @@ use crate::skills::SkillPeek;
 /// Where the status dot sits, for drawing and hit-testing.
 pub fn status_dot_rect(w: i32) -> Rect {
     let d = 10;
-    Rect { x: w - PAD_X - d, y: NAV_H / 2 - d / 2, w: d, h: d }
+    Rect {
+        x: w - PAD_X - d,
+        y: NAV_H / 2 - d / 2,
+        w: d,
+        h: d,
+    }
 }
 
 fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
@@ -57,7 +62,6 @@ pub mod theme {
 const NAV_H: i32 = 56;
 const PAD_X: i32 = 28;
 const CONTENT_MAX: i32 = 920;
-
 
 /// Axis-aligned hit region (inclusive origin, exclusive of `x+w` / `y+h`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -158,7 +162,6 @@ impl HomeTargets {
     }
 }
 
-
 /// Draw the home composition on `fb`.
 ///
 /// `status` is a short footer line (ASCII); empty falls back to the version bar.
@@ -194,7 +197,14 @@ pub fn draw_home_full(
     fb.fill_round_rect(fx + 1, fy + 1, fw - 2, fh - 2, 11, theme::BG);
     let base = fy + (fh - BODY_FACE.px) / 2 + BODY_FACE.baseline();
     if query.is_empty() {
-        fb.draw_text(fx + 18, base, "Search the knowledge base", &BODY_FACE, 0, theme::MUTED);
+        fb.draw_text(
+            fx + 18,
+            base,
+            "Search the knowledge base",
+            &BODY_FACE,
+            0,
+            theme::MUTED,
+        );
     } else {
         fb.draw_text(fx + 18, base, query, &BODY_FACE, 0, theme::INK);
     }
@@ -215,7 +225,14 @@ pub fn draw_home_full(
     // feel like it has forgotten the user. Keep that route beside search,
     // rather than burying it behind a generic settings label.
     let portal = portal_rect(w, h);
-    fb.fill_round_rect(portal.x, portal.y, portal.w, portal.h, portal.h / 2, theme::TINT_BORDER);
+    fb.fill_round_rect(
+        portal.x,
+        portal.y,
+        portal.w,
+        portal.h,
+        portal.h / 2,
+        theme::TINT_BORDER,
+    );
     fb.fill_round_rect(
         portal.x + 1,
         portal.y + 1,
@@ -264,7 +281,14 @@ pub fn draw_home_full(
         for i in 0..mail.count.min(3) {
             fb.draw_text(x0, y, mail.row_subj(i), &BODY_FACE, 0, theme::INK);
             let from = mail.row_from(i);
-            fb.draw_text(x0 + cw - SMALL_FACE.width(from, 0), y, from, &SMALL_FACE, 0, theme::MUTED);
+            fb.draw_text(
+                x0 + cw - SMALL_FACE.width(from, 0),
+                y,
+                from,
+                &SMALL_FACE,
+                0,
+                theme::MUTED,
+            );
             y += 12;
             fb.fill_rect(x0, y, cw, 1, theme::CARD_BORDER);
             y += 26;
@@ -288,7 +312,12 @@ pub fn draw_home_full(
 }
 
 /// Render "3 messages" / "1 message" / "none" into a caller-owned buffer.
-fn fmt_count<'a>(buf: &'a mut [u8; 16], n: usize, one: &'static str, many: &'static str) -> &'a str {
+fn fmt_count<'a>(
+    buf: &'a mut [u8; 16],
+    n: usize,
+    one: &'static str,
+    many: &'static str,
+) -> &'a str {
     if n == 0 {
         return "none";
     }
@@ -323,7 +352,12 @@ pub fn mail_row_rect(w: i32, h: i32, i: usize) -> Rect {
     let (x0, cw) = home_column(w);
     let ry = tile_top(h) + TILE_H + 40;
     // Header at ry, first row 30px below, 38px apart (text + rule + gap).
-    Rect { x: x0, y: ry + 12 + i as i32 * 38, w: cw, h: 32 }
+    Rect {
+        x: x0,
+        y: ry + 12 + i as i32 * 38,
+        w: cw,
+        h: 32,
+    }
 }
 
 /// Which recent-mail row was clicked, if any.
@@ -352,7 +386,12 @@ pub fn cta_targets(w: i32, h: i32, _skills: &SkillPeek) -> CtaTargets {
     // The search field is now the primary action; Skills keeps its tile.
     let (fx, fy, fw, fh) = search_rect(w, h);
     CtaTargets {
-        ready: Rect { x: fx, y: fy, w: fw, h: fh },
+        ready: Rect {
+            x: fx,
+            y: fy,
+            w: fw,
+            h: fh,
+        },
         portal: portal_rect(w, h),
         skills: tile_rect(w, h, 2),
     }
@@ -364,7 +403,12 @@ pub fn portal_rect(w: i32, h: i32) -> Rect {
     let (fx, fy, fw, fh) = search_rect(w, h);
     let pw = 238.min(fw);
     let ph = 28;
-    Rect { x: fx + fw - pw, y: fy + fh + 38, w: pw, h: ph }
+    Rect {
+        x: fx + fw - pw,
+        y: fy + fh + 38,
+        w: pw,
+        h: ph,
+    }
 }
 
 /// Bounding box of home tile `i` (0 = Search, 1 = Capabilities, 2 = Skills).
@@ -372,7 +416,12 @@ pub fn tile_rect(w: i32, h: i32, i: i32) -> Rect {
     let (x0, cw) = home_column(w);
     let gap = 16;
     let tw = (cw - gap * 2) / 3;
-    Rect { x: x0 + (tw + gap) * i, y: tile_top(h), w: tw, h: TILE_H }
+    Rect {
+        x: x0 + (tw + gap) * i,
+        y: tile_top(h),
+        w: tw,
+        h: TILE_H,
+    }
 }
 
 pub fn card_targets(w: i32, h: i32) -> CardTargets {
@@ -390,9 +439,6 @@ pub fn home_targets(w: i32, h: i32, skills: &SkillPeek) -> HomeTargets {
     }
 }
 
-
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -408,7 +454,15 @@ mod tests {
         // Typing must be reachable without hunting for a card.
         let t = home_targets(1024, 768, &peek());
         let (fx, fy, fw, fh) = search_rect(1024, 768);
-        assert_eq!(t.ctas.ready, Rect { x: fx, y: fy, w: fw, h: fh });
+        assert_eq!(
+            t.ctas.ready,
+            Rect {
+                x: fx,
+                y: fy,
+                w: fw,
+                h: fh
+            }
+        );
     }
 
     #[test]
@@ -416,7 +470,10 @@ mod tests {
         let t = home_targets(1024, 768, &peek());
         let r = portal_rect(1024, 768);
         assert!(r.y > search_rect(1024, 768).1);
-        assert_eq!(t.ctas.hit(r.x + r.w / 2, r.y + r.h / 2), Some(CtaId::Portal));
+        assert_eq!(
+            t.ctas.hit(r.x + r.w / 2, r.y + r.h / 2),
+            Some(CtaId::Portal)
+        );
     }
 
     #[test]
@@ -505,7 +562,10 @@ mod tests {
         let mut buf = [0u8; 96];
         let n = Caps::default_grants().describe(&mut buf);
         let status = core::str::from_utf8(&buf[..n]).unwrap();
-        assert!(SMALL_FACE.width(status, 0) < r.w - 36, "status overruns the tile: {status}");
+        assert!(
+            SMALL_FACE.width(status, 0) < r.w - 36,
+            "status overruns the tile: {status}"
+        );
     }
 
     #[test]
@@ -525,7 +585,10 @@ mod mail_click_tests {
     fn mail_rows_are_clickable_at_their_centre() {
         for i in 0..3 {
             let r = mail_row_rect(1024, 768, i);
-            assert_eq!(mail_hit(1024, 768, 3, r.x + r.w / 2, r.y + r.h / 2), Some(i));
+            assert_eq!(
+                mail_hit(1024, 768, 3, r.x + r.w / 2, r.y + r.h / 2),
+                Some(i)
+            );
         }
     }
 
@@ -534,7 +597,10 @@ mod mail_click_tests {
         for i in 1..3 {
             let prev = mail_row_rect(1024, 768, i - 1);
             let cur = mail_row_rect(1024, 768, i);
-            assert!(cur.y >= prev.y + prev.h, "mail row {i} overlaps its predecessor");
+            assert!(
+                cur.y >= prev.y + prev.h,
+                "mail row {i} overlaps its predecessor"
+            );
         }
     }
 
@@ -589,7 +655,10 @@ mod portal_link_tests {
     fn the_portal_link_clears_the_search_field() {
         for (w, h) in [(1024, 768), (1280, 800)] {
             let (_, fy, _, fh) = search_rect(w, h);
-            assert!(portal_rect(w, h).y >= fy + fh, "pill overlaps the field at {w}x{h}");
+            assert!(
+                portal_rect(w, h).y >= fy + fh,
+                "pill overlaps the field at {w}x{h}"
+            );
         }
     }
 
@@ -609,7 +678,10 @@ mod portal_link_tests {
         for (w, h) in [(1024, 768), (1280, 800), (1600, 1000)] {
             let (fx, _, fw, _) = search_rect(w, h);
             let p = portal_rect(w, h);
-            assert!(p.x >= fx && p.x + p.w <= fx + fw, "pill escapes the column at {w}x{h}");
+            assert!(
+                p.x >= fx && p.x + p.w <= fx + fw,
+                "pill escapes the column at {w}x{h}"
+            );
         }
     }
 }

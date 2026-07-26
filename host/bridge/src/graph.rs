@@ -59,7 +59,11 @@ fn home() -> PathBuf {
 /// Cheap stable id. Not cryptographic — only needs to dedupe re-ingests.
 pub fn id_for(from: &str, subject: &str) -> String {
     let mut h: u64 = 0xcbf29ce484222325;
-    for b in from.bytes().chain(b"\x00".iter().copied()).chain(subject.bytes()) {
+    for b in from
+        .bytes()
+        .chain(b"\x00".iter().copied())
+        .chain(subject.bytes())
+    {
         h ^= b as u64;
         h = h.wrapping_mul(0x100000001b3);
     }
@@ -83,7 +87,10 @@ impl Graph {
             Err(e) => {
                 let quarantine = path.with_extension("corrupt");
                 let _ = fs::rename(&path, &quarantine);
-                Err(format!("graph corrupt ({e}); moved to {}", quarantine.display()))
+                Err(format!(
+                    "graph corrupt ({e}); moved to {}",
+                    quarantine.display()
+                ))
             }
         }
     }
@@ -139,8 +146,10 @@ impl Graph {
         }
         self.rank();
         if self.messages.len() > Self::MAX_MESSAGES {
-            self.messages
-                .sort_by(|a, b| b.pr.partial_cmp(&a.pr).unwrap_or(core::cmp::Ordering::Equal));
+            self.messages.sort_by(|a, b| {
+                b.pr.partial_cmp(&a.pr)
+                    .unwrap_or(core::cmp::Ordering::Equal)
+            });
             self.messages.truncate(Self::MAX_MESSAGES);
             self.rank();
         }
@@ -266,7 +275,10 @@ mod tests {
         ]);
         let a1 = g.messages.iter().find(|m| m.subject == "1").unwrap().pr;
         let b = g.messages.iter().find(|m| m.subject == "only").unwrap().pr;
-        assert!(b > a1, "expected the singleton to outrank a bulk sender: {b} vs {a1}");
+        assert!(
+            b > a1,
+            "expected the singleton to outrank a bulk sender: {b} vs {a1}"
+        );
     }
 
     #[test]
@@ -320,7 +332,10 @@ mod tests {
     fn missing_file_loads_empty_not_error() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_GRAPH_PATH", "/nonexistent/os-graph/none.json") };
-        assert!(Graph::load().expect("missing is not corrupt").messages.is_empty());
+        assert!(Graph::load()
+            .expect("missing is not corrupt")
+            .messages
+            .is_empty());
         unsafe { env::remove_var("OS_GRAPH_PATH") };
     }
 }
@@ -345,8 +360,26 @@ mod gate_tests {
         )]);
         g.save().expect("save");
 
-        let without = crate::search::query_scoped("confidential merger", 5, None, "tfidf", false, false, false, false);
-        let with = crate::search::query_scoped("confidential merger", 5, None, "tfidf", true, false, false, false);
+        let without = crate::search::query_scoped(
+            "confidential merger",
+            5,
+            None,
+            "tfidf",
+            false,
+            false,
+            false,
+            false,
+        );
+        let with = crate::search::query_scoped(
+            "confidential merger",
+            5,
+            None,
+            "tfidf",
+            true,
+            false,
+            false,
+            false,
+        );
 
         assert!(
             !without.iter().any(|r| r.contains("Confidential merger")),
@@ -391,7 +424,11 @@ mod hardening_tests {
             .map(|i| (format!("s{i}@x"), format!("subject {i}"), String::new()))
             .collect();
         g.ingest(&batch);
-        assert_eq!(g.messages.len(), Graph::MAX_MESSAGES, "index grew past the cap");
+        assert_eq!(
+            g.messages.len(),
+            Graph::MAX_MESSAGES,
+            "index grew past the cap"
+        );
         assert!(g.messages.iter().all(|m| m.pr >= 0.0 && m.pr <= 1.0));
     }
 }

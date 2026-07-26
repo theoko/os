@@ -3,11 +3,14 @@
 
 use core::hint::black_box;
 
-use kernel::{anim, beep, caps, fault, fb, hello_message, inputdiag, keyboard, mcp, mouse, pci, screens, searchui, serial, setup, skills, ui, usb_tablet};
+use kernel::{
+    acpi, anim, arm64_mmio, beep, caps, fault, fb, hello_message, inputdiag, keyboard, mcp, mouse,
+    ohci, pci, screens, searchui, serial, setup, skills, time, ui, usb_tablet,
+};
 use limine::BaseRevision;
 use limine::request::{
     FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
-    StackSizeRequest,
+    RsdpRequest, StackSizeRequest,
 };
 
 const STACK_SIZE: u64 = 128 * 1024;
@@ -33,6 +36,10 @@ static MEMORY_MAP_REQUEST: MemoryMapRequest = MemoryMapRequest::new();
 static FRAMEBUFFER_REQUEST: FramebufferRequest = FramebufferRequest::new();
 
 #[used]
+#[unsafe(link_section = ".requests")]
+static RSDP_REQUEST: RsdpRequest = RsdpRequest::new();
+
+#[used]
 #[unsafe(link_section = ".requests_start_marker")]
 static _START_MARKER: RequestsStartMarker = RequestsStartMarker::new();
 
@@ -47,10 +54,21 @@ unsafe extern "C" fn kmain() -> ! {
     black_box(&HHDM_REQUEST);
     black_box(&MEMORY_MAP_REQUEST);
     black_box(&FRAMEBUFFER_REQUEST);
+    black_box(&RSDP_REQUEST);
 
     if !BASE_REVISION.is_supported() {
         serial::exit_qemu(false);
     }
+
+    // Find the UART before anything logs through it. QEMU and VirtualBox put
+    // their PL011 at different addresses; assuming QEMU's meant every line the
+    // ARM guest wrote went into unmapped space.
+    serial::detect_pl011(
+        HHDM_REQUEST
+            .get_response()
+            .map(|r| r.offset())
+            .unwrap_or(0),
+    );
 
     let serial_port = serial::Serial::com1();
     serial_port.init();
@@ -65,7 +83,7 @@ unsafe extern "C" fn kmain() -> ! {
 
     // Paint UI immediately (don't block on MCP). Bridge is optional.
     let mut mail = mcp::MailPeek::empty(mcp::BridgeStatus::Offline);
-                let mut skill_peek = skills::SkillPeek::from_builtin();
+    let mut skill_peek = skills::SkillPeek::from_builtin();
     if let Some(resp) = FRAMEBUFFER_REQUEST.get_response() {
         if let Some(fb_info) = resp.framebuffers().next() {
             // Always log geometry so UTM/QEMU serial shows why the window may be blank.
@@ -140,7 +158,9 @@ unsafe extern "C" fn kmain() -> ! {
                 // here would fetch — and, because the bridge indexes results,
                 // persist to disk — mail before anyone agreed to it.
                 let mut grants = caps::Caps::none();
+                serial_port.write_str("mcp: probing bridge\n");
                 mail = mcp::MailPeek::empty(mcp::probe_bridge());
+                serial_port.write_str("mcp: probe returned\n");
                 match mail.status {
                     mcp::BridgeStatus::Online => serial_port.write_str("mcp: email connected\n"),
                     mcp::BridgeStatus::Offline => serial_port.write_str("mcp: email offline\n"),
@@ -156,23 +176,85 @@ unsafe extern "C" fn kmain() -> ! {
 
                 serial::request_qemu_exit(true);
 
-                let hhdm = HHDM_REQUEST
-                    .get_response()
-                    .map(|r| r.offset())
-                    .unwrap_or(0);
-                serial_port.write_str("mouse: probing usb\n");
+                let hhdm = HHDM_REQUEST.get_response().map(|r| r.offset()).unwrap_or(0);
+                #[cfg(target_arch = "aarch64")]
+                if let (Some(rsdp), Some(mmap)) = (
+                    RSDP_REQUEST.get_response(),
+                    MEMORY_MAP_REQUEST.get_response(),
+                ) {
+                    let vbox = serial::is_virtualbox_arm();
+                    let mmio_ready = !vbox || arm64_mmio::install_low_device_window();
+                    let ecam = if !mmio_ready {
+                        None
+                    } else if vbox {
+                        Some(acpi::VBOX_ARM_ECAM)
+                    } else {
+                        unsafe { acpi::find_ecam(rsdp.address(), hhdm) }
+                    };
+                    if let Some(ecam) = ecam {
+                        // VirtualBox's ARM platform exposes device MMIO in the
+                        // identity map (the PL011 uses the same arrangement).
+                        // Limine's HHDM is for RAM; biasing ECAM through it
+                        // addresses unrelated memory and stalls the PCI probe.
+                        let ecam_virt = if serial::is_virtualbox_arm() {
+                            ecam.base as usize
+                        } else {
+                            hhdm.saturating_add(ecam.base) as usize
+                        };
+                        if ecam.segment == 0
+                            && acpi::mmap_covers(mmap, ecam.base, acpi::ecam_span(&ecam))
+                            && pci::use_ecam(ecam_virt, ecam.start_bus, ecam.end_bus)
+                        {
+                            serial_port.write_str("pci: ACPI ECAM ready\n");
+                        } else {
+                            serial_port.write_str("pci: ECAM unavailable\n");
+                        }
+                    } else {
+                        serial_port.write_str("pci: ACPI MCFG missing\n");
+                    }
+                }
+                serial_port.write_str("input: probing usb\n");
+                let mut ohci_input = None;
                 let mut tablet = None;
                 let mut why = [0u8; 24];
+                let mut ohci_why = [0u8; 24];
                 if let Some(mmap) = MEMORY_MAP_REQUEST.get_response() {
                     if let Some((p0, p1)) = usb_tablet::alloc_dma_pages(mmap) {
-                        tablet = unsafe { usb_tablet::UsbTablet::init(hhdm, p0, p1, &mut why) };
+                        ohci_input = unsafe { ohci::OhciInput::init(hhdm, p0, &mut ohci_why) };
+                        // The two drivers use the same small DMA reservation.
+                        // VirtualBox ARM presents OHCI; UTM/QEMU presents
+                        // UHCI. Only try the second path when the first did not
+                        // claim a device.
+                        if ohci_input.is_none() {
+                            tablet = unsafe { usb_tablet::UsbTablet::init(hhdm, p0, p1, &mut why) };
+                        }
                     } else {
                         let m = b"no-dma";
                         why[..m.len()].copy_from_slice(m);
+                        ohci_why[..m.len()].copy_from_slice(m);
                     }
                 } else {
                     let m = b"no-mmap";
                     why[..m.len()].copy_from_slice(m);
+                    ohci_why[..m.len()].copy_from_slice(m);
+                }
+                if let Some(ref input) = ohci_input {
+                    serial_port.write_str("input: OHCI ready");
+                    if input.has_keyboard() {
+                        serial_port.write_str(" keyboard");
+                    }
+                    if input.has_pointer() {
+                        serial_port.write_str(" pointer");
+                    }
+                    serial_port.write_str("\n");
+                } else {
+                    serial_port.write_str("input: OHCI missing ");
+                    let n = ohci_why
+                        .iter()
+                        .position(|&b| b == 0)
+                        .unwrap_or(ohci_why.len());
+                    serial_port.write_bytes(&ohci_why[..n]);
+                    serial_port.write_str("\n");
                 }
                 if tablet.is_some() {
                     serial_port.write_str("mouse: usb-tablet ready\n");
@@ -201,6 +283,8 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut prev_buttons = 0u8;
                 #[cfg(target_arch = "aarch64")]
                 let mut arm_cursor_refresh = 0u16;
+                #[cfg(target_arch = "aarch64")]
+                let ui_clock = time::Timebase::probe();
                 // What actually came up. Under QEMU this is always fine; on
                 // real hardware it is the whole story, and a machine with no
                 // driveable pointer renders a perfect home screen with a
@@ -209,7 +293,11 @@ unsafe extern "C" fn kmain() -> ! {
                     ps2_controller: keyboard::Keyboard::present(),
                     ps2_keyboard: keyboard::Keyboard::present(),
                     ps2_mouse: mice.present,
-                    usb_tablet: tablet.is_some(),
+                    usb_keyboard: ohci_input
+                        .as_ref()
+                        .is_some_and(|input| input.has_keyboard()),
+                    usb_tablet: tablet.is_some()
+                        || ohci_input.as_ref().is_some_and(|input| input.has_pointer()),
                     usb: pci::usb_survey(),
                 };
                 if let Some(note) = inputs.note() {
@@ -259,8 +347,12 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut sview = searchui::SearchView::new();
                 let mut page = mcp::DocPage::empty(mcp::BridgeStatus::Offline, false);
-                let mut portal =
-                    mcp::PortalStatus { reachable: false, cached: false, syncing: false, docs: 0 };
+                let mut portal = mcp::PortalStatus {
+                    reachable: false,
+                    cached: false,
+                    syncing: false,
+                    docs: 0,
+                };
                 let mut scroll = 0usize;
                 let mut open_title = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut playbook = skills::workflow_for("agent-plan-act");
@@ -312,26 +404,46 @@ unsafe extern "C" fn kmain() -> ! {
                     let h = surface.height() as i32;
                     let mut buttons = prev_buttons;
                     let mut moved = false;
-                    if let Some(ref mut t) = tablet {
-                        if t.poll(w, h) {
-                            x = t.x;
-                            y = t.y;
-                            buttons = t.buttons;
+                    let mut ohci_pointer = false;
+                    if let Some(ref mut input) = ohci_input {
+                        ohci_pointer = input.has_pointer();
+                        if input.poll(w, h) && ohci_pointer {
+                            let point = input.pointer();
+                            x = point.x;
+                            y = point.y;
+                            buttons = point.buttons;
                             mice.x = x;
                             mice.y = y;
                             mice.buttons = buttons;
                             moved = true;
                         }
-                    } else if mice.poll(w, h) {
-                        x = mice.x;
-                        y = mice.y;
-                        buttons = mice.buttons;
-                        moved = true;
+                    }
+                    if !ohci_pointer {
+                        if let Some(ref mut t) = tablet {
+                            if t.poll(w, h) {
+                                x = t.x;
+                                y = t.y;
+                                buttons = t.buttons;
+                                mice.x = x;
+                                mice.y = y;
+                                mice.buttons = buttons;
+                                moved = true;
+                            }
+                        } else if mice.poll(w, h) {
+                            x = mice.x;
+                            y = mice.y;
+                            buttons = mice.buttons;
+                            moved = true;
+                        }
                     }
 
                     if !setup.is_finished() {
                         let before = setup.step;
-                        if setup.pointer(x, y, buttons) {
+                        let mut setup_changed = setup.pointer(x, y, buttons);
+                        while let Some(key) = poll_key(&mut ohci_input, &mut kb) {
+                            setup_changed |= setup.key(key);
+                        }
+                        if setup_changed {
                             // Entering the Bridge step: re-probe COM2 so the
                             // status card reflects a bridge that came up after boot.
                             if setup.step == setup::Step::Bridge && before != setup::Step::Bridge {
@@ -425,12 +537,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 view = screens::View::Reader;
                                 serial_port.write_str("ui: open mail\n");
                                 cursor.hide(surface);
-                                searchui::draw_reader(
-                                    surface,
-                                    open_title.as_str(),
-                                    &page,
-                                    scroll,
-                                );
+                                searchui::draw_reader(surface, open_title.as_str(), &page, scroll);
                                 cursor.show_at(surface, x, y);
                                 enter(&screen, animate);
                                 moved = false;
@@ -439,7 +546,7 @@ unsafe extern "C" fn kmain() -> ! {
 
                         // Type straight into the home field - no click first.
                         let mut dirty = false;
-                        while let Some(key) = kb.poll() {
+                        while let Some(key) = poll_key(&mut ohci_input, &mut kb) {
                             match key {
                                 keyboard::Key::Enter => {
                                     if !query.is_empty() {
@@ -490,7 +597,7 @@ unsafe extern "C" fn kmain() -> ! {
                     if view != screens::View::Home {
                         // --- search screen: keyboard drives it ---
                         let mut dirty = false;
-                        while let Some(key) = kb.poll() {
+                        while let Some(key) = poll_key(&mut ohci_input, &mut kb) {
                             match key {
                                 keyboard::Key::Enter => {
                                     if view == screens::View::Search {
@@ -502,7 +609,9 @@ unsafe extern "C" fn kmain() -> ! {
                                             playbook_step += 1;
                                             dirty = true;
                                         } else if !playbook_goal.is_empty()
-                                            && playbook.required.map_or(true, |cap| grants.allows(cap))
+                                            && playbook
+                                                .required
+                                                .map_or(true, |cap| grants.allows(cap))
                                         {
                                             sview.run_via(playbook_goal.as_str(), grants);
                                             view = screens::View::Search;
@@ -522,9 +631,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     scroll = match k {
                                         keyboard::Key::Down => scroll + 1,
                                         keyboard::Key::Up => scroll.saturating_sub(1),
-                                        keyboard::Key::PageDown => {
-                                            scroll + searchui::READER_ROWS
-                                        }
+                                        keyboard::Key::PageDown => scroll + searchui::READER_ROWS,
                                         keyboard::Key::PageUp => {
                                             scroll.saturating_sub(searchui::READER_ROWS)
                                         }
@@ -567,9 +674,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 dirty = true;
                             } else if view == screens::View::Search {
                                 // Open a result.
-                                if let Some(i) =
-                                    searchui::result_hit(w, h, sview.count, x, y)
-                                {
+                                if let Some(i) = searchui::result_hit(w, h, sview.count, x, y) {
                                     let row = &sview.rows[i];
                                     open_title.clear();
                                     for b in row.title().bytes() {
@@ -668,31 +773,30 @@ unsafe extern "C" fn kmain() -> ! {
                                     bridge_note(&mail),
                                 ),
                                 screens::View::Skills => screens::draw_skills(surface, &skill_peek),
-                                screens::View::Playbook => {
-                                    screens::draw_playbook(
-                                        surface,
-                                        playbook,
-                                        playbook_step,
-                                        &playbook_goal,
-                                        caret,
-                                        grants,
-                                    )
-                                }
+                                screens::View::Playbook => screens::draw_playbook(
+                                    surface,
+                                    playbook,
+                                    playbook_step,
+                                    &playbook_goal,
+                                    caret,
+                                    grants,
+                                ),
                                 screens::View::Caps => screens::draw_caps(surface, grants),
-                                screens::View::Reader => {
-                                    searchui::draw_reader(surface, open_title.as_str(), &page, scroll)
-                                }
+                                screens::View::Reader => searchui::draw_reader(
+                                    surface,
+                                    open_title.as_str(),
+                                    &page,
+                                    scroll,
+                                ),
                                 screens::View::Status => {
                                     screens::draw_status(surface, &mail, &portal, grants)
                                 }
-                                screens::View::Home => {
-                                    ui::draw_home(
-                                        surface,
-                                        &mail,
-                                        &skill_peek,
-                                        status_str(&status_buf, status_len),
-                                    )
-                                }
+                                screens::View::Home => ui::draw_home(
+                                    surface,
+                                    &mail,
+                                    &skill_peek,
+                                    status_str(&status_buf, status_len),
+                                ),
                             }
                             cursor.show_at(surface, x, y);
                             enter(&screen, animate);
@@ -719,144 +823,148 @@ unsafe extern "C" fn kmain() -> ! {
                                 enter(&screen, animate);
                                 moved = false;
                             } else {
-                            let targets = ui::home_targets(w, h, &skill_peek);
-                            let mut clicked = false;
-                            match targets.hit(x, y) {
-                                Some(ui::HomeHit::Cta(ui::CtaId::Ready)) => {
-                                    // Clicking the search field means "I want to
-                                    // type here". It used to restart the whole
-                                    // first-boot wizard: the target is the field's
-                                    // own rect, and this arm still did what it did
-                                    // back when the primary action was a "Get
-                                    // started" button. Clicking the most obvious
-                                    // thing on the screen threw the capability
-                                    // choices away and started setup over.
-                                    serial_port.write_str("ui: focus search\n");
+                                let targets = ui::home_targets(w, h, &skill_peek);
+                                let mut clicked = false;
+                                match targets.hit(x, y) {
+                                    Some(ui::HomeHit::Cta(ui::CtaId::Ready)) => {
+                                        // Clicking the search field means "I want to
+                                        // type here". It used to restart the whole
+                                        // first-boot wizard: the target is the field's
+                                        // own rect, and this arm still did what it did
+                                        // back when the primary action was a "Get
+                                        // started" button. Clicking the most obvious
+                                        // thing on the screen threw the capability
+                                        // choices away and started setup over.
+                                        serial_port.write_str("ui: focus search\n");
+                                        cursor.hide(surface);
+                                        ui::draw_home_full(
+                                            surface,
+                                            &mail,
+                                            &skill_peek,
+                                            status_str(&status_buf, status_len),
+                                            query.as_str(),
+                                            true,
+                                        );
+                                        cursor.show_at(surface, x, y);
+                                        screen.present_all();
+                                        clicked = true;
+                                        moved = false;
+                                    }
+                                    Some(ui::HomeHit::Cta(ui::CtaId::Portal)) => {
+                                        // Credentials stay with the host's Keychain. This
+                                        // guest only requests consent to use that account;
+                                        // it never receives or paints a password.
+                                        serial_port.write_str("ui: connect tsearch account\n");
+                                        view = screens::View::Caps;
+                                        cursor.hide(surface);
+                                        screens::draw_caps(surface, grants);
+                                        cursor.show_at(surface, x, y);
+                                        enter(&screen, animate);
+                                        clicked = false;
+                                        moved = false;
+                                    }
+                                    Some(ui::HomeHit::Cta(ui::CtaId::Skills))
+                                    | Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
+                                        serial_port.write_str("ui: click Skills\n");
+                                        skill_peek = mcp::fetch_skill_peek();
+                                        serial_port.write_str(if skill_peek.from_bridge {
+                                            "skills: listed from bridge\n"
+                                        } else {
+                                            "skills: builtins (bridge offline)\n"
+                                        });
+                                        view = screens::View::Skills;
+                                        cursor.hide(surface);
+                                        screens::draw_skills(surface, &skill_peek);
+                                        cursor.show_at(surface, x, y);
+                                        enter(&screen, animate);
+                                        // Don't fall through to the home redraw below.
+                                        clicked = false;
+                                        moved = false;
+                                    }
+                                    Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
+                                        serial_port.write_str("ui: open search\n");
+                                        view = screens::View::Search;
+                                        query.clear();
+                                        sview = searchui::SearchView::new();
+                                        cursor.hide(surface);
+                                        searchui::draw(
+                                            surface,
+                                            &sview,
+                                            query.as_str(),
+                                            caret,
+                                            bridge_note(&mail),
+                                        );
+                                        cursor.show_at(surface, x, y);
+                                        enter(&screen, animate);
+                                        clicked = true;
+                                        moved = false;
+                                    }
+                                    #[allow(unreachable_patterns)]
+                                    Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
+                                        serial_port.write_str("ui: click Connectors\n");
+                                        mail = mcp::fetch_mail_peek(grants);
+                                        let search = mcp::fetch_search_peek(grants, "capability");
+                                        if search.denied {
+                                            write_status(
+                                                &mut status_buf,
+                                                "search.query denied by caps",
+                                            );
+                                            serial_port.write_str("search: denied\n");
+                                        } else if search.status == mcp::BridgeStatus::Offline {
+                                            write_status(
+                                                &mut status_buf,
+                                                "bridge offline - no search",
+                                            );
+                                            serial_port.write_str("search: offline\n");
+                                        } else if search.count == 0 {
+                                            write_status(&mut status_buf, "search: no hits");
+                                            serial_port.write_str("search: n=0\n");
+                                        } else {
+                                            // "search: <title>" into the footer buffer.
+                                            let title = search.title_at(0);
+                                            let mut msg = [0u8; 72];
+                                            let prefix = b"search: ";
+                                            msg[..prefix.len()].copy_from_slice(prefix);
+                                            let tn = title.len().min(72 - prefix.len() - 1);
+                                            msg[prefix.len()..prefix.len() + tn]
+                                                .copy_from_slice(&title.as_bytes()[..tn]);
+                                            let n = prefix.len() + tn;
+                                            write_status(
+                                                &mut status_buf,
+                                                core::str::from_utf8(&msg[..n])
+                                                    .unwrap_or("search: ok"),
+                                            );
+                                            serial_port.write_str("search: n=");
+                                            let d = b'0' + (search.count.min(9) as u8);
+                                            serial_port.write_bytes(&[d, b'\n']);
+                                        }
+                                        clicked = true;
+                                    }
+                                    Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
+                                        serial_port.write_str("ui: click Capabilities\n");
+                                        status_len = grants.describe(&mut status_buf);
+                                        view = screens::View::Caps;
+                                        cursor.hide(surface);
+                                        screens::draw_caps(surface, grants);
+                                        cursor.show_at(surface, x, y);
+                                        enter(&screen, animate);
+                                        clicked = false;
+                                        moved = false;
+                                    }
+                                    None => {}
+                                }
+                                if clicked && setup.is_finished() {
                                     cursor.hide(surface);
-                                    ui::draw_home_full(
+                                    ui::draw_home(
                                         surface,
                                         &mail,
                                         &skill_peek,
                                         status_str(&status_buf, status_len),
-                                        query.as_str(),
-                                        true,
-                                    );
-                                    cursor.show_at(surface, x, y);
-                                    screen.present_all();
-                                    clicked = true;
-                                    moved = false;
-                                }
-                                Some(ui::HomeHit::Cta(ui::CtaId::Portal)) => {
-                                    // Credentials stay with the host's Keychain. This
-                                    // guest only requests consent to use that account;
-                                    // it never receives or paints a password.
-                                    serial_port.write_str("ui: connect tsearch account\n");
-                                    view = screens::View::Caps;
-                                    cursor.hide(surface);
-                                    screens::draw_caps(surface, grants);
-                                    cursor.show_at(surface, x, y);
-                                    enter(&screen, animate);
-                                    clicked = false;
-                                    moved = false;
-                                }
-                                Some(ui::HomeHit::Cta(ui::CtaId::Skills))
-                                | Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
-                                    serial_port.write_str("ui: click Skills\n");
-                                    skill_peek = mcp::fetch_skill_peek();
-                                    serial_port.write_str(if skill_peek.from_bridge {
-                                        "skills: listed from bridge\n"
-                                    } else {
-                                        "skills: builtins (bridge offline)\n"
-                                    });
-                                    view = screens::View::Skills;
-                                    cursor.hide(surface);
-                                    screens::draw_skills(surface, &skill_peek);
-                                    cursor.show_at(surface, x, y);
-                                    enter(&screen, animate);
-                                    // Don't fall through to the home redraw below.
-                                    clicked = false;
-                                    moved = false;
-                                }
-                                Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
-                                    serial_port.write_str("ui: open search\n");
-                                    view = screens::View::Search;
-                                    query.clear();
-                                    sview = searchui::SearchView::new();
-                                    cursor.hide(surface);
-                                    searchui::draw(
-                                        surface,
-                                        &sview,
-                                        query.as_str(),
-                                        caret,
-                                        bridge_note(&mail),
                                     );
                                     cursor.show_at(surface, x, y);
                                     enter(&screen, animate);
-                                    clicked = true;
                                     moved = false;
                                 }
-                                #[allow(unreachable_patterns)]
-                                Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
-                                    serial_port.write_str("ui: click Connectors\n");
-                                    mail = mcp::fetch_mail_peek(grants);
-                                    let search = mcp::fetch_search_peek(grants, "capability");
-                                    if search.denied {
-                                        write_status(
-                                            &mut status_buf,
-                                            "search.query denied by caps",
-                                        );
-                                        serial_port.write_str("search: denied\n");
-                                    } else if search.status == mcp::BridgeStatus::Offline {
-                                        write_status(&mut status_buf, "bridge offline - no search");
-                                        serial_port.write_str("search: offline\n");
-                                    } else if search.count == 0 {
-                                        write_status(&mut status_buf, "search: no hits");
-                                        serial_port.write_str("search: n=0\n");
-                                    } else {
-                                        // "search: <title>" into the footer buffer.
-                                        let title = search.title_at(0);
-                                        let mut msg = [0u8; 72];
-                                        let prefix = b"search: ";
-                                        msg[..prefix.len()].copy_from_slice(prefix);
-                                        let tn = title.len().min(72 - prefix.len() - 1);
-                                        msg[prefix.len()..prefix.len() + tn]
-                                            .copy_from_slice(&title.as_bytes()[..tn]);
-                                        let n = prefix.len() + tn;
-                                        write_status(
-                                            &mut status_buf,
-                                            core::str::from_utf8(&msg[..n]).unwrap_or("search: ok"),
-                                        );
-                                        serial_port.write_str("search: n=");
-                                        let d = b'0' + (search.count.min(9) as u8);
-                                        serial_port.write_bytes(&[d, b'\n']);
-                                    }
-                                    clicked = true;
-                                }
-                                Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
-                                    serial_port.write_str("ui: click Capabilities\n");
-                                    status_len = grants.describe(&mut status_buf);
-                                    view = screens::View::Caps;
-                                    cursor.hide(surface);
-                                    screens::draw_caps(surface, grants);
-                                    cursor.show_at(surface, x, y);
-                                    enter(&screen, animate);
-                                    clicked = false;
-                                    moved = false;
-                                }
-                                None => {}
-                            }
-                            if clicked && setup.is_finished() {
-                                cursor.hide(surface);
-                                ui::draw_home(
-                                    surface,
-                                    &mail,
-                                    &skill_peek,
-                                    status_str(&status_buf, status_len),
-                                );
-                                cursor.show_at(surface, x, y);
-                                enter(&screen, animate);
-                                moved = false;
-                            }
                             }
                         }
                     }
@@ -879,6 +987,9 @@ unsafe extern "C" fn kmain() -> ! {
                         // blits exactly that union and nothing else.
                         screen.present();
                     }
+                    #[cfg(target_arch = "aarch64")]
+                    time::delay_ms(&ui_clock, 1);
+                    #[cfg(not(target_arch = "aarch64"))]
                     core::hint::spin_loop();
                 }
             } else {
@@ -896,11 +1007,26 @@ unsafe extern "C" fn kmain() -> ! {
     serial::exit_qemu(false);
 }
 
+/// Drain the native USB keyboard before falling back to PS/2/serial.
+///
+/// Both sources produce the same `Key`, so the UI does not care which
+/// controller delivered it and ARM does not need a parallel event path.
+fn poll_key(
+    usb: &mut Option<ohci::OhciInput>,
+    fallback: &mut keyboard::Keyboard,
+) -> Option<keyboard::Key> {
+    usb.as_mut()
+        .and_then(ohci::OhciInput::next_key)
+        .or_else(|| fallback.poll())
+}
+
 /// One line telling the user where answers come from right now.
 fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
     match mail.status {
         mcp::BridgeStatus::Online => "Answers come from the local index and the host bridge.",
-        mcp::BridgeStatus::Offline => "Bridge offline - answering from the index baked into the kernel.",
+        mcp::BridgeStatus::Offline => {
+            "Bridge offline - answering from the index baked into the kernel."
+        }
     }
 }
 
@@ -929,22 +1055,28 @@ fn enter(screen: &fb::Screen, animate: bool) {
 /// Measured rather than assumed: the same code should animate on hardware
 /// virtualisation and stay still under TCG, without a build flag.
 fn can_animate(screen: &fb::Screen) -> bool {
-    #[cfg(not(target_arch = "x86_64"))]
+    #[cfg(target_arch = "aarch64")]
     {
-        let _ = screen;
-        // No cycle counter is wired on ARM yet, so treating its zero value as
-        // a fast GPU would force an unjustified 60fps animation path.
-        return false;
+        let hz = serial::counter_hz();
+        if hz == 0 || !screen.is_buffered() {
+            return false;
+        }
+        let t0 = serial::rdtsc();
+        screen.present_all();
+        let ticks = serial::rdtsc().wrapping_sub(t0);
+        // Leave half of a 16.7 ms frame for composition and input. A slower
+        // RamFB still gets instant dirty-rect screen changes, not stutter.
+        return ticks.saturating_mul(1_000_000) / hz < 8_000;
     }
 
     #[cfg(target_arch = "x86_64")]
     {
-    let t0 = serial::rdtsc();
-    screen.present_all();
-    let cost = serial::rdtsc().wrapping_sub(t0);
-    // A 10-frame entrance needs each blit well inside a 16ms frame. At the
-    // ~1GHz the timing code assumes, that is a few million cycles.
-    cost < 4_000_000
+        let t0 = serial::rdtsc();
+        screen.present_all();
+        let cost = serial::rdtsc().wrapping_sub(t0);
+        // A 10-frame entrance needs each blit well inside a 16ms frame. At the
+        // ~1GHz the timing code assumes, that is a few million cycles.
+        cost < 4_000_000
     }
 }
 

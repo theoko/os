@@ -1,8 +1,30 @@
 ---
-version: 0.10.0
+version: 0.11.0
 ---
 
 # Changelog
+
+## 0.11.0 — 2026-07-25
+
+### Native ARM64 VirtualBox desktop
+
+- Added an ARM64 low-device page-table window for VirtualBox's PCI ECAM and
+  MMIO BARs, while keeping RAM and framebuffer access in Limine's higher-half
+  map.
+- Added a polled OHCI host driver with USB enumeration and HID keyboard,
+  relative mouse, and absolute tablet report handling. VirtualBox's optional
+  `SET_PROTOCOL` stall is tolerated when the descriptor-defined report format
+  is already usable.
+- ARM animation and wait timing use the architectural counter. Input polling
+  runs at a bounded 1 ms cadence; rendering continues to use cached
+  composition and dirty-rectangle presentation.
+- VirtualBox's post-firmware PL011 output is muted so a full debug FIFO can
+  never stall PCI/input initialization.
+- `make virtualbox-arm64` now builds the ARM ISO, creates or refreshes the VM
+  with QemuRamFB plus OHCI USB keyboard/tablet, reattaches the rebuilt ISO, and
+  launches it.
+- Verified in the real VirtualBox VM: first-boot setup advances via the
+  emulated USB keyboard and the home search field receives `nvda`.
 
 ## 0.10.0 — 2026-07-25
 

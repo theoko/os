@@ -142,7 +142,11 @@ mod tests {
     #[test]
     fn width_excludes_trailing_tracking() {
         let one = BODY_FACE.width64("A", -64);
-        assert_eq!(one, BODY_FACE.glyph_for(b'A').adv64, "single glyph gets no tracking");
+        assert_eq!(
+            one,
+            BODY_FACE.glyph_for(b'A').adv64,
+            "single glyph gets no tracking"
+        );
     }
 
     #[test]
