@@ -28,7 +28,7 @@ pub enum View {
 }
 
 /// Column width cap for Skills / Caps / Search (home uses a wider max).
-pub const CONTENT_MAX: i32 = 720;
+const CONTENT_MAX: i32 = 720;
 const ROW_H: i32 = 62;
 const ROW_GAP: i32 = 8;
 const TOP: i32 = 150;
@@ -43,7 +43,7 @@ pub(crate) fn column(w: i32) -> (i32, i32) {
 }
 
 /// Bounding box of row `i`, for both drawing and hit-testing.
-pub fn row_rect(w: i32, i: usize) -> ui::Rect {
+fn row_rect(w: i32, i: usize) -> ui::Rect {
     let (x, cw) = column(w);
     ui::Rect::new(x, TOP + i as i32 * (ROW_H + ROW_GAP), cw, ROW_H)
 }

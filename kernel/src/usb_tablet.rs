@@ -55,8 +55,8 @@ pub struct UsbTablet {
     pub y: i32,
     pub buttons: u8,
     ready: bool,
-    /// Successful interrupt reports since bind (for serial diagnostics).
-    pub hits: u32,
+    screen_w: i32,
+    screen_h: i32,
     /// Interrupt IN TD is armed in the frame list; poll only checks completion.
     outstanding: bool,
 }
@@ -160,7 +160,8 @@ impl UsbTablet {
             y: -1,
             buttons: 0,
             ready: false,
-            hits: 0,
+            screen_w: 0,
+            screen_h: 0,
             outstanding: false,
         };
 
@@ -527,7 +528,13 @@ impl UsbTablet {
         self.control(0x21, 0x0B, protocol, 0, &mut empty)
     }
 
-    pub fn poll(&mut self, screen_w: i32, screen_h: i32) -> bool {
+    /// Record framebuffer size used to scale absolute reports.
+    pub fn bind_screen(&mut self, w: i32, h: i32) {
+        self.screen_w = w;
+        self.screen_h = h;
+    }
+
+    pub fn poll(&mut self) -> bool {
         if !self.ready {
             return false;
         }
@@ -589,15 +596,12 @@ impl UsbTablet {
         let ay = u16::from_le_bytes([report[3], report[4]]) as i32;
         let ax = ax.clamp(0, 32767);
         let ay = ay.clamp(0, 32767);
-        let nx = (ax * (screen_w - 1)) / 32767;
-        let ny = (ay * (screen_h - 1)) / 32767;
+        let nx = (ax * (self.screen_w - 1)) / 32767;
+        let ny = (ay * (self.screen_h - 1)) / 32767;
         let moved = nx != self.x || ny != self.y || buttons != self.buttons;
-        self.x = nx.clamp(0, screen_w.saturating_sub(1));
-        self.y = ny.clamp(0, screen_h.saturating_sub(1));
+        self.x = nx.clamp(0, self.screen_w.saturating_sub(1));
+        self.y = ny.clamp(0, self.screen_h.saturating_sub(1));
         self.buttons = buttons;
-        if moved {
-            self.hits = self.hits.saturating_add(1);
-        }
         moved
     }
 

@@ -17,7 +17,7 @@ pub const ONE: i32 = 1 << 16;
 /// `t` and the result are Q16 in 0..=ONE. This is the curve most system UIs
 /// use for entrances — the deceleration is what makes it read as physical
 /// rather than mechanical.
-pub fn ease_out_cubic(t: i32) -> i32 {
+fn ease_out_cubic(t: i32) -> i32 {
     let t = t.clamp(0, ONE);
     // 1 - (1-t)^3, all in Q16.
     let inv = (ONE - t) as i64;
@@ -26,7 +26,7 @@ pub fn ease_out_cubic(t: i32) -> i32 {
 }
 
 /// Interpolate `a`..`b` by Q16 `t`.
-pub fn lerp(a: i32, b: i32, t: i32) -> i32 {
+fn lerp(a: i32, b: i32, t: i32) -> i32 {
     a + (((b - a) as i64 * t.clamp(0, ONE) as i64) / ONE as i64) as i32
 }
 

@@ -13,7 +13,7 @@ fn cfg_addr(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
         | ((offset as u32) & 0xFC)
 }
 
-pub fn read32(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
+fn read32(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         port::outl(CONFIG_ADDR, cfg_addr(bus, slot, func, offset));
@@ -26,7 +26,7 @@ pub fn read32(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
     }
 }
 
-pub fn write32(bus: u8, slot: u8, func: u8, offset: u8, val: u32) {
+fn write32(bus: u8, slot: u8, func: u8, offset: u8, val: u32) {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         port::outl(CONFIG_ADDR, cfg_addr(bus, slot, func, offset));

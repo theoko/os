@@ -90,13 +90,13 @@ pub fn hit_among(
 }
 
 /// Hairline card border + white fill rounded rect (search field, tiles, rows).
-pub fn outlined_round_rect(fb: &Surface, x: i32, y: i32, w: i32, h: i32, radius: i32) {
-    fb.fill_round_rect(x, y, w, h, radius, theme::CARD_BORDER);
+pub fn outlined_round_rect(fb: &Surface, r: Rect, radius: i32) {
+    fb.fill_round_rect(r.x, r.y, r.w, r.h, radius, theme::CARD_BORDER);
     fb.fill_round_rect(
-        x + 1,
-        y + 1,
-        w - 2,
-        h - 2,
+        r.x + 1,
+        r.y + 1,
+        r.w - 2,
+        r.h - 2,
         radius.saturating_sub(1),
         theme::SURFACE,
     );
@@ -104,7 +104,7 @@ pub fn outlined_round_rect(fb: &Surface, x: i32, y: i32, w: i32, h: i32, radius:
 
 /// Bordered list row: title + muted subtitle (Skills / Caps chrome).
 pub fn draw_titled_row(fb: &Surface, r: Rect, title: &str, sub: &str) {
-    outlined_round_rect(fb, r.x, r.y, r.w, r.h, 10);
+    outlined_round_rect(fb, r, 10);
     fb.draw_text(r.x + 18, r.y + 26, title, &BRAND_FACE, 0, theme::INK);
     fb.draw_text(r.x + 18, r.y + 46, sub, &SMALL_FACE, 0, theme::MUTED);
 }
@@ -121,7 +121,7 @@ pub fn draw_query_field(
     badge: Option<&str>,
 ) {
     let Rect { x, y, w, h } = r;
-    outlined_round_rect(fb, x, y, w, h, 12);
+    outlined_round_rect(fb, r, 12);
     let tx = x + 18;
     let base = y + (h - BODY_FACE.px) / 2 + BODY_FACE.baseline();
     let badge_w = badge.map(|b| SMALL_FACE.width(b, 0) + 18).unwrap_or(0);
@@ -164,6 +164,10 @@ pub struct HomeTargets {
 }
 
 impl HomeTargets {
+    pub const fn new(w: i32) -> Self {
+        Self { w }
+    }
+
     pub fn hit(self, px: i32, py: i32) -> Option<HomeHit> {
         if search_rect(self.w).contains(px, py) {
             return Some(HomeHit::SearchField);
@@ -207,7 +211,7 @@ pub fn draw_home_full(
     ];
     for (i, (title, sub)) in tiles.iter().enumerate() {
         let r = tile_rect(w, i as i32);
-        outlined_round_rect(fb, r.x, r.y, r.w, r.h, 16);
+        outlined_round_rect(fb, r, 16);
         fb.draw_text(r.x + 18, r.y + 34, title, &H2_FACE, 0, theme::INK);
         fb.draw_text(r.x + 18, r.y + 58, sub, &SMALL_FACE, 0, theme::MUTED);
     }
@@ -242,7 +246,7 @@ pub(crate) fn content_column(w: i32, max: i32) -> (i32, i32) {
 }
 
 /// The home search field, shared by drawing and hit-testing.
-pub fn search_rect(w: i32) -> Rect {
+fn search_rect(w: i32) -> Rect {
     let (x, cw) = content_column(w, CONTENT_MAX);
     Rect::new(x, 120, cw, 52)
 }
@@ -251,7 +255,7 @@ const TILE_TOP: i32 = 200;
 const TILE_H: i32 = 88;
 
 /// Bounding box of home tile `i` (0 = Search, 1 = Capabilities, 2 = Skills).
-pub fn tile_rect(w: i32, i: i32) -> Rect {
+fn tile_rect(w: i32, i: i32) -> Rect {
     let (x0, cw) = content_column(w, CONTENT_MAX);
     let gap = 16;
     let tw = (cw - gap * 2) / 3;
@@ -259,16 +263,12 @@ pub fn tile_rect(w: i32, i: i32) -> Rect {
 }
 
 /// Top-right Connect pill — primary bridge action beside the status dot.
-pub fn connect_rect(w: i32) -> Rect {
+fn connect_rect(w: i32) -> Rect {
     let label = "Connect";
     let pad = 14;
     let bw = (BTN_FACE.width(label, 0) + pad * 2).max(88);
     let bh = 28;
     Rect::new(w - PAD_X - bw, (NAV_H - bh) / 2, bw, bh)
-}
-
-pub fn home_targets(w: i32) -> HomeTargets {
-    HomeTargets { w }
 }
 
 fn draw_nav(fb: &Surface, status: BridgeStatus) {
@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn search_field_is_the_primary_target() {
-        let t = home_targets(1024);
+        let t = HomeTargets::new(1024);
         let r = search_rect(1024);
         assert_eq!(
             t.hit(r.x + r.w / 2, r.y + r.h / 2),
@@ -370,7 +370,7 @@ mod tests {
 
     #[test]
     fn connect_sits_in_the_nav_bar() {
-        let t = home_targets(1024);
+        let t = HomeTargets::new(1024);
         let c = connect_rect(1024);
         assert!(c.y + c.h <= NAV_H);
         assert_eq!(
@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn each_tile_hit_tests_to_its_own_id() {
-        let t = home_targets(1024);
+        let t = HomeTargets::new(1024);
         for (i, want) in [CardId::Search, CardId::Capabilities, CardId::Skills]
             .iter()
             .enumerate()
@@ -468,7 +468,7 @@ mod tests {
     #[test]
     fn drawing_the_home_screen_does_not_panic() {
         let mail = MailPeek::empty(BridgeStatus::Offline);
-        let _ = home_targets(1024);
+        let _ = HomeTargets::new(1024);
         assert_eq!(mail.count, 0);
         assert_eq!(Caps::default_grants().granted_count(), 2);
     }

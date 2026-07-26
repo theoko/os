@@ -48,7 +48,7 @@ impl Row {
         str_at(&self.url)
     }
 
-    pub fn cat(&self) -> &str {
+    fn cat(&self) -> &str {
         self.cat
     }
 }
@@ -100,10 +100,10 @@ impl Source {
 
 pub struct SearchView {
     pub rows: [Row; search::MAX_HITS],
-    pub count: usize,
+    count: usize,
     /// True once a query has been run, so we can tell "no results" from "idle".
-    pub searched: bool,
-    pub source: Source,
+    searched: bool,
+    source: Source,
 }
 
 impl SearchView {
@@ -173,7 +173,7 @@ impl SearchView {
 
     /// Which drawn result contains `(x, y)`, if any.
     pub fn hit(&self, w: i32, x: i32, y: i32) -> Option<usize> {
-        crate::ui::hit_among(self.count.min(search::MAX_HITS), x, y, |i| row_rect(w, i))
+        crate::ui::hit_among(self.count, x, y, |i| row_rect(w, i))
     }
 }
 
@@ -181,13 +181,13 @@ const FIELD_H: i32 = 52;
 const ROW_H: i32 = 64;
 
 /// Geometry shared by the renderer and hit-testing.
-pub fn field_rect(w: i32) -> crate::ui::Rect {
+fn field_rect(w: i32) -> crate::ui::Rect {
     let (x, cw) = screens::column(w);
     crate::ui::Rect::new(x, 150, cw, FIELD_H)
 }
 
 /// Bounding box of result row `i`, shared by drawing and hit-testing.
-pub fn row_rect(w: i32, i: usize) -> crate::ui::Rect {
+fn row_rect(w: i32, i: usize) -> crate::ui::Rect {
     let f = field_rect(w);
     crate::ui::Rect::new(f.x, f.y + f.h + 26 + i as i32 * (ROW_H + 10), f.w, ROW_H)
 }
@@ -225,7 +225,7 @@ pub fn draw(
 
     for i in 0..view.count {
         let r = &view.rows[i];
-        crate::ui::outlined_round_rect(fb, f.x, y, f.w, ROW_H, 10);
+        crate::ui::outlined_round_rect(fb, crate::ui::Rect::new(f.x, y, f.w, ROW_H), 10);
         fb.draw_text(f.x + 18, y + 26, r.title(), &BRAND_FACE, 0, theme::INK);
         // Category chip, right-aligned.
         let cw = SMALL_FACE.width(r.cat(), 0);

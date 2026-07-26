@@ -107,6 +107,8 @@ pub struct Mouse {
     pub y: i32,
     pub buttons: u8,
     pub present: bool,
+    screen_w: i32,
+    screen_h: i32,
     packet: [u8; 3],
     packet_i: usize,
     /// The controller has produced at least one byte with the AUX flag set —
@@ -121,6 +123,8 @@ impl Mouse {
             y: screen_h / 2,
             buttons: 0,
             present: false,
+            screen_w,
+            screen_h,
             packet: [0; 3],
             packet_i: 0,
             aux_seen: false,
@@ -161,8 +165,8 @@ impl Mouse {
         true
     }
 
-    /// Drain available bytes; update position. `w`/`h` clamp.
-    pub fn poll(&mut self, w: i32, h: i32) -> bool {
+    /// Drain available bytes; update position (clamped to the screen).
+    pub fn poll(&mut self) -> bool {
         let mut moved = false;
         #[cfg(target_arch = "x86_64")]
         {
@@ -202,17 +206,15 @@ impl Mouse {
                 // dx/dy. `as i8` alone misreads deltas outside -128..127.
                 let dx = self.packet[1] as i32 - (((flags as i32) << 4) & 0x100);
                 let dy = self.packet[2] as i32 - (((flags as i32) << 3) & 0x100);
-                self.x = (self.x + dx).clamp(0, w.saturating_sub(1));
-                self.y = (self.y - dy).clamp(0, h.saturating_sub(1));
+                self.x = (self.x + dx).clamp(0, self.screen_w.saturating_sub(1));
+                self.y = (self.y - dy).clamp(0, self.screen_h.saturating_sub(1));
                 self.buttons = flags & 0x07;
                 self.present = true;
                 moved = true;
             }
         }
         #[cfg(not(target_arch = "x86_64"))]
-        {
-            let _ = (w, h);
-        }
+        {}
         moved
     }
 }

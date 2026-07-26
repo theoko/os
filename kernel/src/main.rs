@@ -118,7 +118,8 @@ unsafe extern "C" fn kmain() -> ! {
                     let m = b"no-mmap";
                     why[..m.len()].copy_from_slice(m);
                 }
-                if tablet.is_some() {
+                if let Some(ref mut t) = tablet {
+                    t.bind_screen(surface.width() as i32, surface.height() as i32);
                     serial_port.write_str("mouse: usb-tablet ready\n");
                 } else {
                     serial_port.write_str("mouse: usb-tablet missing ");
@@ -171,25 +172,21 @@ unsafe extern "C" fn kmain() -> ! {
 
                 loop {
                     let w = surface.width() as i32;
-                    let h = surface.height() as i32;
-                    let mut buttons = prev_buttons;
                     let mut moved = false;
                     if let Some(ref mut t) = tablet {
-                        if t.poll(w, h) {
+                        if t.poll() {
                             mice.x = t.x;
                             mice.y = t.y;
                             mice.buttons = t.buttons;
-                            buttons = t.buttons;
                             moved = true;
                         }
-                    } else if mice.poll(w, h) {
-                        buttons = mice.buttons;
+                    } else if mice.poll() {
                         moved = true;
                     }
 
                     if !setup.is_finished() {
                         let before = setup.step;
-                        if setup.pointer(mice.x, mice.y, buttons) {
+                        if setup.pointer(mice.x, mice.y, mice.buttons) {
                             // Entering the Bridge step: re-probe COM2 so the
                             // status card reflects a bridge that came up after boot.
                             if setup.step == setup::Step::Bridge && before != setup::Step::Bridge {
@@ -253,9 +250,9 @@ unsafe extern "C" fn kmain() -> ! {
                                 dirty = true;
                             }
                         }
-                        if click_edge(buttons, prev_buttons) {
+                        if click_edge(mice.buttons, prev_buttons) {
                             if on_home {
-                                let targets = ui::home_targets(w);
+                                let targets = ui::HomeTargets::new(w);
                                 match targets.hit(mice.x, mice.y) {
                                     Some(ui::HomeHit::SearchField)
                                     | Some(ui::HomeHit::Card(ui::CardId::Search)) => {
@@ -340,7 +337,7 @@ unsafe extern "C" fn kmain() -> ! {
                             );
                         }
                     }
-                    prev_buttons = buttons;
+                    prev_buttons = mice.buttons;
                     if moved {
                         cursor.show_at(surface, mice.x, mice.y);
                         // hide()/show_at() marked both footprints; present()

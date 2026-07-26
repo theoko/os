@@ -69,7 +69,7 @@ impl Keyboard {
     }
 
     /// Decode one scancode byte. Returns a key on a *press*, never a release.
-    pub fn feed(&mut self, code: u8) -> Option<Key> {
+    fn feed(&mut self, code: u8) -> Option<Key> {
         if code == 0xE0 {
             self.extended = true;
             return None;

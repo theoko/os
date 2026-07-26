@@ -210,7 +210,7 @@ pub struct DocPage {
     pub status: BridgeStatus,
     pub denied: bool,
     pub count: usize,
-    pub lines: [[u8; 84]; Self::MAX],
+    lines: [[u8; 84]; Self::MAX],
 }
 
 impl DocPage {

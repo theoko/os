@@ -35,8 +35,8 @@ pub struct SkillPeek {
     pub count: usize,
     /// True when the last fill came from the host bridge.
     pub from_bridge: bool,
-    pub names: [[u8; 28]; 8],
-    pub descs: [[u8; 40]; 8],
+    names: [[u8; 28]; 8],
+    descs: [[u8; 40]; 8],
 }
 
 impl SkillPeek {

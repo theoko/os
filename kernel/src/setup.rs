@@ -86,12 +86,9 @@ impl Setup {
         self.n_zones = 0;
     }
 
-    fn push_zone(&mut self, x: i32, y: i32, w: i32, h: i32, action: Action) {
+    fn push_zone(&mut self, rect: ui::Rect, action: Action) {
         if self.n_zones < MAX_ZONES {
-            self.zones[self.n_zones] = Zone {
-                rect: ui::Rect::new(x, y, w, h),
-                action,
-            };
+            self.zones[self.n_zones] = Zone { rect, action };
             self.n_zones += 1;
         }
     }
@@ -121,7 +118,7 @@ impl Setup {
     }
 
     /// Apply an action. Returns true when the screen changed.
-    pub fn apply(&mut self, action: Action) -> bool {
+    fn apply(&mut self, action: Action) -> bool {
         match action {
             Action::Continue => {
                 self.step = match self.step {
@@ -147,11 +144,9 @@ impl Setup {
             }
             Action::Row(i) => match self.step {
                 Step::Capabilities => {
-                    if let Some(&cap) = Cap::ALL.get(i) {
-                        self.caps.set(cap, !self.caps.allows(cap));
-                        return true;
-                    }
-                    false
+                    let before = self.caps;
+                    self.caps.toggle(i);
+                    self.caps != before
                 }
                 _ => false,
             },
@@ -160,59 +155,56 @@ impl Setup {
 
     /// Paint the current step. Records hit zones as a side effect.
     pub fn draw(&mut self, fb: &Surface, status: BridgeStatus, skills: &SkillPeek) {
-        let w = fb.width() as i32;
-        let h = fb.height() as i32;
         fb.fill(theme::BG);
         self.reset_zones();
 
         match self.step {
-            Step::Welcome => self.draw_welcome(fb, w, h),
-            Step::Bridge => self.draw_bridge(fb, w, h, status),
-            Step::Capabilities => self.draw_caps(fb, w, h),
-            Step::Skills => self.draw_skills(fb, w, h, skills),
-            Step::Done => self.draw_done(fb, w, h),
+            Step::Welcome => self.draw_welcome(fb),
+            Step::Bridge => self.draw_bridge(fb, status),
+            Step::Capabilities => self.draw_caps(fb),
+            Step::Skills => self.draw_skills(fb, skills),
+            Step::Done => self.draw_done(fb),
             Step::Finished => {}
         }
     }
 
-    fn draw_welcome(&mut self, fb: &Surface, w: i32, h: i32) {
+    fn draw_welcome(&mut self, fb: &Surface) {
         // Apple opens on a single word and nothing else.
+        let w = fb.width() as i32;
         let track = font::tracking_pct(HERO_FACE.px, -30);
-        let cy = h / 2 - 40;
+        let cy = fb.height() as i32 / 2 - 40;
         fb.draw_text_centered(w / 2, cy, "hello", &HERO_FACE, track, theme::INK);
-        self.primary(fb, w, cy + 90, "Continue");
+        self.primary(fb, cy + 90, "Continue");
     }
 
-    fn draw_bridge(&mut self, fb: &Surface, w: i32, h: i32, status: BridgeStatus) {
+    fn draw_bridge(&mut self, fb: &Surface, status: BridgeStatus) {
         let top = self.header(
             fb,
-            w,
             "Connect the Bridge",
             "Connectors run on the host, never in the kernel.",
         );
-        self.status_card(fb, w, top, status);
-        self.footer(fb, w, h, top + ROW_H + 8);
+        self.status_card(fb, top, status);
+        self.footer(fb, top + ROW_H + 8);
     }
 
-    fn draw_caps(&mut self, fb: &Surface, w: i32, h: i32) {
+    fn draw_caps(&mut self, fb: &Surface) {
         let top = self.header(
             fb,
-            w,
             "Capabilities",
             "Every tool sits behind a grant. Turn on only what you need.",
         );
         let mut y = top;
         for i in 0..Cap::ALL.len() {
-            self.cap_row(fb, w, y, i);
+            self.cap_row(fb, y, i);
             y += ROW_H + 8;
         }
-        self.footer(fb, w, h, y);
+        self.footer(fb, y);
     }
 
-    fn draw_skills(&mut self, fb: &Surface, w: i32, h: i32, skills: &SkillPeek) {
+    fn draw_skills(&mut self, fb: &Surface, skills: &SkillPeek) {
+        let w = fb.width() as i32;
         let top = self.header(
             fb,
-            w,
             "Default Skills",
             if skills.from_bridge {
                 "Live from the host bridge. Tap Continue when ready."
@@ -237,12 +229,13 @@ impl Setup {
             ui::draw_titled_row(fb, ui::Rect::new(x, y, cw, ROW_H), skills.name_at(i), sub);
             y += ROW_H + 8;
         }
-        self.footer(fb, w, h, y);
+        self.footer(fb, y);
     }
 
-    fn draw_done(&mut self, fb: &Surface, w: i32, h: i32) {
+    fn draw_done(&mut self, fb: &Surface) {
+        let w = fb.width() as i32;
         let track = font::tracking_pct(TITLE_FACE.px, -20);
-        let cy = h / 2 - 40;
+        let cy = fb.height() as i32 / 2 - 40;
         fb.draw_text_centered(w / 2, cy, "You're all set.", &TITLE_FACE, track, theme::INK);
         fb.draw_text_centered(
             w / 2,
@@ -252,14 +245,15 @@ impl Setup {
             0,
             theme::MUTED,
         );
-        self.primary(fb, w, cy + 90, "Start");
-        self.back_link(fb, w, cy + 90 + CTA_H + 30);
+        self.primary(fb, cy + 90, "Start");
+        self.back_link(fb, cy + 90 + CTA_H + 30);
     }
 
     // --- shared chrome -----------------------------------------------------
 
     /// Title + subtitle. Returns the y where content should start.
-    fn header(&mut self, fb: &Surface, w: i32, title: &str, sub: &str) -> i32 {
+    fn header(&mut self, fb: &Surface, title: &str, sub: &str) -> i32 {
+        let w = fb.width() as i32;
         let track = font::tracking_pct(TITLE_FACE.px, -20);
         let y = 132;
         fb.draw_text_centered(w / 2, y, title, &TITLE_FACE, track, theme::INK);
@@ -268,15 +262,12 @@ impl Setup {
     }
 
     /// Capability toggle at index `i`: titled row + switch + hit zone.
-    fn cap_row(&mut self, fb: &Surface, w: i32, y: i32, i: usize) {
+    fn cap_row(&mut self, fb: &Surface, y: i32, i: usize) {
+        let w = fb.width() as i32;
         let cw = CONTENT_W.min(w - 80);
         let x = (w - cw) / 2;
-        ui::draw_titled_row(
-            fb,
-            ui::Rect::new(x, y, cw, ROW_H),
-            Cap::ALL[i].name(),
-            CAP_BLURBS[i],
-        );
+        let r = ui::Rect::new(x, y, cw, ROW_H);
+        ui::draw_titled_row(fb, r, Cap::ALL[i].name(), CAP_BLURBS[i]);
         let pad = 18;
         ui::draw_switch(
             fb,
@@ -284,17 +275,19 @@ impl Setup {
             y + (ROW_H - ui::SWITCH_H) / 2,
             self.caps.allows(Cap::ALL[i]),
         );
-        self.push_zone(x, y, cw, ROW_H, Action::Row(i));
+        self.push_zone(r, Action::Row(i));
     }
 
-    fn status_card(&mut self, fb: &Surface, w: i32, y: i32, status: BridgeStatus) {
+    fn status_card(&mut self, fb: &Surface, y: i32, status: BridgeStatus) {
+        let w = fb.width() as i32;
         let (detail, tint) = match status {
             BridgeStatus::Online => ("Connected on COM2", theme::ONLINE),
             BridgeStatus::Offline => (crate::mcp::BRIDGE_OFFLINE_HINT, theme::OFFLINE),
         };
         let cw = CONTENT_W.min(w - 80);
         let x = (w - cw) / 2;
-        ui::outlined_round_rect(fb, x, y, cw, ROW_H + 8, 10);
+        let r = ui::Rect::new(x, y, cw, ROW_H + 8);
+        ui::outlined_round_rect(fb, r, 10);
         let pad = 18;
         let d = 9;
         fb.fill_round_rect(x + pad, y + (ROW_H + 8 - d) / 2, d, d, d / 2, tint);
@@ -303,32 +296,37 @@ impl Setup {
     }
 
     /// Primary pill, centred, registering a Continue zone.
-    fn primary(&mut self, fb: &Surface, w: i32, y: i32, label: &str) {
+    fn primary(&mut self, fb: &Surface, y: i32, label: &str) {
+        let w = fb.width() as i32;
         let pad = 40;
         let bw = (BTN_FACE.width(label, 0) + pad * 2).max(180);
         let x = w / 2 - bw / 2;
         fb.fill_round_rect(x, y, bw, CTA_H, CTA_H / 2, theme::ACCENT);
         let base = y + (CTA_H - BTN_FACE.px) / 2 + BTN_FACE.baseline() - 2;
         fb.draw_text_centered(w / 2, base, label, &BTN_FACE, 0, theme::SURFACE);
-        self.push_zone(x, y, bw, CTA_H, Action::Continue);
+        self.push_zone(ui::Rect::new(x, y, bw, CTA_H), Action::Continue);
     }
 
-    fn back_link(&mut self, fb: &Surface, w: i32, y: i32) {
+    fn back_link(&mut self, fb: &Surface, y: i32) {
+        let w = fb.width() as i32;
         let label = "Go Back";
         let tw = BTN_FACE.width(label, 0);
         let x = w / 2 - tw / 2;
         fb.draw_text(x, y + BTN_FACE.baseline(), label, &BTN_FACE, 0, theme::ACCENT);
         // Generous target: the text alone is a 15px-tall sliver.
-        self.push_zone(x - 12, y - 8, tw + 24, BTN_FACE.px + 20, Action::Back);
+        self.push_zone(
+            ui::Rect::new(x - 12, y - 8, tw + 24, BTN_FACE.px + 20),
+            Action::Back,
+        );
     }
 
     /// `content_bottom` = y just below the last row/card: on short
     /// framebuffers the pill moves down rather than overlapping the rows
     /// (zones are hit first-match, so an overlap misroutes clicks).
-    fn footer(&mut self, fb: &Surface, w: i32, h: i32, content_bottom: i32) {
-        let y = (h - 150).max(content_bottom + 24);
-        self.primary(fb, w, y, "Continue");
-        self.back_link(fb, w, y + CTA_H + 26);
+    fn footer(&mut self, fb: &Surface, content_bottom: i32) {
+        let y = (fb.height() as i32 - 150).max(content_bottom + 24);
+        self.primary(fb, y, "Continue");
+        self.back_link(fb, y + CTA_H + 26);
     }
 }
 
@@ -422,7 +420,7 @@ mod tests {
     #[test]
     fn held_button_advances_only_once() {
         let mut s = setup();
-        s.push_zone(0, 0, 100, 100, Action::Continue);
+        s.push_zone(ui::Rect::new(0, 0, 100, 100), Action::Continue);
         assert!(s.pointer(10, 10, 1), "press should act");
         assert_eq!(s.step, Step::Bridge);
         // Still held: must not keep advancing.
@@ -437,7 +435,7 @@ mod tests {
     #[test]
     fn clicks_outside_any_zone_are_ignored() {
         let mut s = setup();
-        s.push_zone(0, 0, 50, 50, Action::Continue);
+        s.push_zone(ui::Rect::new(0, 0, 50, 50), Action::Continue);
         assert!(!s.pointer(400, 400, 1));
         assert_eq!(s.step, Step::Welcome);
     }
@@ -446,7 +444,7 @@ mod tests {
     fn zone_table_cannot_overflow() {
         let mut s = setup();
         for _ in 0..MAX_ZONES * 3 {
-            s.push_zone(0, 0, 10, 10, Action::Continue);
+            s.push_zone(ui::Rect::new(0, 0, 10, 10), Action::Continue);
         }
         assert_eq!(s.n_zones, MAX_ZONES);
     }
