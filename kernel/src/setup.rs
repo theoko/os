@@ -159,9 +159,8 @@ impl Setup {
     fn draw_welcome(&mut self, fb: &Surface) {
         // Apple opens on a single word and nothing else.
         let w = fb.width() as i32;
-        let track = font::tracking_pct(HERO_FACE.px, -30);
         let cy = fb.height() as i32 / 2 - 40;
-        fb.draw_text_centered(w / 2, cy, "hello", &HERO_FACE, track, theme::INK);
+        fb.draw_text_centered(w / 2, cy, "hello", &HERO_FACE, font::HERO_TRACK, theme::INK);
         self.primary(fb, cy + 90, "Continue");
     }
 

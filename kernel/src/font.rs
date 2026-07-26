@@ -80,6 +80,9 @@ pub(crate) const fn tracking_pct(px: i32, pct_tenths: i32) -> i32 {
 /// Display title tracking used by setup, chrome, and the reader.
 pub(crate) const TITLE_TRACK: i32 = tracking_pct(TITLE_FACE.px, -20);
 
+/// Welcome hero tracking (`hello` on the first setup screen).
+pub(crate) const HERO_TRACK: i32 = tracking_pct(HERO_FACE.px, -30);
+
 #[cfg(test)]
 mod tests {
     use super::*;

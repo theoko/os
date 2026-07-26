@@ -100,7 +100,10 @@ impl Graph {
     ///
     /// When the cap is exceeded the lowest-ranked messages are dropped, so what
     /// survives is what the graph considers most connected.
-    pub fn ingest(&mut self, incoming: &[(String, String)]) -> usize {
+    pub fn ingest<'a, I>(&mut self, incoming: I) -> usize
+    where
+        I: IntoIterator<Item = (&'a str, &'a str)>,
+    {
         let mut added = 0;
         for (from, subject) in incoming {
             let id = id_for(from, subject);
@@ -109,8 +112,8 @@ impl Graph {
             }
             self.messages.push(Message {
                 id,
-                from: from.clone(),
-                subject: subject.clone(),
+                from: from.to_string(),
+                subject: subject.to_string(),
                 pr: 0.0,
             });
             added += 1;
@@ -198,16 +201,12 @@ mod tests {
     use super::*;
     use std::env;
 
-    fn msg(from: &str, subj: &str) -> (String, String) {
-        (from.into(), subj.into())
-    }
-
     #[test]
     fn ingest_adds_and_dedupes() {
         let mut g = Graph::default();
-        assert_eq!(g.ingest(&[msg("alice@x", "Q2"), msg("bob@y", "Hi")]), 2);
+        assert_eq!(g.ingest([("alice@x", "Q2"), ("bob@y", "Hi")]), 2);
         // Same sender+subject is the same message.
-        assert_eq!(g.ingest(&[msg("alice@x", "Q2")]), 0);
+        assert_eq!(g.ingest([("alice@x", "Q2")]), 0);
         assert_eq!(g.messages.len(), 2);
     }
 
@@ -227,7 +226,7 @@ mod tests {
     #[test]
     fn rank_is_normalised() {
         let mut g = Graph::default();
-        g.ingest(&[msg("a@x", "1"), msg("a@x", "2"), msg("b@y", "3")]);
+        g.ingest([("a@x", "1"), ("a@x", "2"), ("b@y", "3")]);
         assert!(g.messages.iter().all(|m| m.pr >= 0.0 && m.pr <= 1.0));
         assert!(g.messages.iter().any(|m| m.pr > 0.0), "all ranks zero");
     }
@@ -237,12 +236,7 @@ mod tests {
         // b@y sent once; a@x sent three times, so each of a's messages should
         // carry less individual weight than b's single message.
         let mut g = Graph::default();
-        g.ingest(&[
-            msg("a@x", "1"),
-            msg("a@x", "2"),
-            msg("a@x", "3"),
-            msg("b@y", "only"),
-        ]);
+        g.ingest([("a@x", "1"), ("a@x", "2"), ("a@x", "3"), ("b@y", "only")]);
         let a1 = g.messages.iter().find(|m| m.subject == "1").unwrap().pr;
         let b = g.messages.iter().find(|m| m.subject == "only").unwrap().pr;
         assert!(b > a1, "expected the singleton to outrank a bulk sender: {b} vs {a1}");
@@ -268,7 +262,7 @@ mod tests {
         unsafe { env::set_var("OS_GRAPH_PATH", &path) };
 
         let mut g = Graph::default();
-        g.ingest(&[msg("a@x", "Q2")]);
+        g.ingest([("a@x", "Q2")]);
         g.save().expect("save");
 
         let back = Graph::load().expect("valid graph");
@@ -301,7 +295,7 @@ mod gate_tests {
         unsafe { std::env::set_var("OS_GRAPH_PATH", &path) };
 
         let mut g = super::Graph::default();
-        g.ingest(&[("ceo@example.com".into(), "Confidential merger".into())]);
+        g.ingest([("ceo@example.com", "Confidential merger")]);
         g.save().expect("save");
 
         let without =
@@ -352,7 +346,7 @@ mod hardening_tests {
         let batch: Vec<(String, String)> = (0..Graph::MAX_MESSAGES + 50)
             .map(|i| (format!("s{i}@x"), format!("subject {i}")))
             .collect();
-        g.ingest(&batch);
+        g.ingest(batch.iter().map(|(a, b)| (a.as_str(), b.as_str())));
         assert_eq!(g.messages.len(), Graph::MAX_MESSAGES, "index grew past the cap");
     }
 }

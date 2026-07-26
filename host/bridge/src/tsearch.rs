@@ -175,21 +175,21 @@ pub fn index() -> &'static Index {
                 *acc.entry(w).or_default().entry(i).or_insert(0.0) += 1.0;
             }
         }
-        let mut words: Vec<String> = acc.keys().cloned().collect();
-        words.sort();
-        let mut terms = Vec::with_capacity(words.len());
+        let mut entries: Vec<_> = acc.into_iter().collect();
+        entries.sort_by(|a, b| a.0.cmp(&b.0));
+        let mut terms = Vec::with_capacity(entries.len());
         let mut postings = Vec::new();
-        for w in words {
-            let per_doc = &acc[&w];
+        for (w, per_doc) in entries {
             let df = per_doc.len() as f64;
             let idf = crate::search::idf(n, df);
             let start = postings.len();
-            let mut ids: Vec<usize> = per_doc.keys().copied().collect();
-            ids.sort_unstable();
-            for id in ids {
-                postings.push((id, per_doc[&id] / lens[id] as f64));
+            let len = per_doc.len();
+            let mut ids: Vec<_> = per_doc.into_iter().collect();
+            ids.sort_unstable_by_key(|(id, _)| *id);
+            for (id, tf) in ids {
+                postings.push((id, tf / lens[id] as f64));
             }
-            terms.push(Term { word: w, idf, start, len: per_doc.len() });
+            terms.push(Term { word: w, idf, start, len });
         }
         Index { terms, postings }
     })

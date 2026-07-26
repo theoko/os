@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]
 struct SkillMeta {
-    name: String,
     description: String,
     path: PathBuf,
 }
@@ -22,12 +21,12 @@ pub fn skills_dirs() -> (PathBuf, PathBuf) {
     (defaults, user)
 }
 
-/// Merged skill list (saved overrides default by name).
-fn list_skills(defaults: &Path, user: &Path) -> Vec<SkillMeta> {
-    let mut map: BTreeMap<String, SkillMeta> = BTreeMap::new();
+/// Merged skill map (saved overrides default by name).
+fn list_skills(defaults: &Path, user: &Path) -> BTreeMap<String, SkillMeta> {
+    let mut map = BTreeMap::new();
     collect_dir(defaults, &mut map);
     collect_dir(user, &mut map);
-    map.into_values().collect()
+    map
 }
 
 fn collect_dir(dir: &Path, map: &mut BTreeMap<String, SkillMeta>) {
@@ -39,20 +38,22 @@ fn collect_dir(dir: &Path, map: &mut BTreeMap<String, SkillMeta>) {
         if !path.is_file() {
             continue;
         }
-        if let Some(meta) = parse_skill(&path) {
-            map.insert(meta.name.clone(), meta);
+        if let Some((name, meta)) = parse_skill(&path) {
+            map.insert(name, meta);
         }
     }
 }
 
-fn parse_skill(path: &Path) -> Option<SkillMeta> {
+fn parse_skill(path: &Path) -> Option<(String, SkillMeta)> {
     let text = fs::read_to_string(path).ok()?;
     let (name, description) = parse_frontmatter(&text)?;
-    Some(SkillMeta {
+    Some((
         name,
-        description,
-        path: path.to_path_buf(),
-    })
+        SkillMeta {
+            description,
+            path: path.to_path_buf(),
+        },
+    ))
 }
 
 fn parse_frontmatter(text: &str) -> Option<(String, String)> {
@@ -98,12 +99,15 @@ pub fn save_skill(name: &str, body: &str) -> Result<PathBuf, String> {
     let dir = user.join(name);
     fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let path = dir.join("SKILL.md");
-    let body = if body.starts_with("---") {
-        body.to_string()
+    if body.starts_with("---") {
+        fs::write(&path, body).map_err(|e| e.to_string())?;
     } else {
-        format!("---\nname: {name}\ndescription: User-saved skill.\n---\n\n{body}")
-    };
-    fs::write(&path, body).map_err(|e| e.to_string())?;
+        fs::write(
+            &path,
+            format!("---\nname: {name}\ndescription: User-saved skill.\n---\n\n{body}"),
+        )
+        .map_err(|e| e.to_string())?;
+    }
     Ok(path)
 }
 
@@ -111,10 +115,10 @@ pub fn list_response() -> Vec<String> {
     let (defaults, user) = skills_dirs();
     let skills = list_skills(&defaults, &user);
     let n = skills.len();
-    let rows = skills.iter().map(|s| {
+    let rows = skills.iter().map(|(name, s)| {
         // Frontmatter names are untrusted text: sanitize like desc so a '|'
         // in a name cannot inject ROW fields.
-        let name = sanitize(&s.name);
+        let name = sanitize(name);
         let desc = sanitize(&s.description);
         let src = if s.path.starts_with(&defaults) {
             "default"
@@ -129,9 +133,8 @@ pub fn list_response() -> Vec<String> {
 pub fn get_response(name: &str) -> Vec<String> {
     let (defaults, user) = skills_dirs();
     let Some(body) = list_skills(&defaults, &user)
-        .into_iter()
-        .find(|s| s.name == name)
-        .and_then(|s| fs::read_to_string(s.path).ok())
+        .get(name)
+        .and_then(|s| fs::read_to_string(&s.path).ok())
     else {
         return vec!["ERR skills.get not_found".into()];
     };
@@ -175,7 +178,7 @@ mod tests {
             defaults.display()
         );
         let list = list_skills(&defaults, &user);
-        assert!(list.iter().any(|s| s.name == "email-triage"));
-        assert!(list.iter().any(|s| s.name == "agent-plan-act"));
+        assert!(list.contains_key("email-triage"));
+        assert!(list.contains_key("agent-plan-act"));
     }
 }

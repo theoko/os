@@ -234,12 +234,16 @@ fn scrub_protocol_line(s: &str) -> String {
         out.push(c);
     }
     // Firmware may leave prose before the guest command on the same "line".
-    for prefix in ["CALL ", "PING", "LIST"] {
-        if let Some(i) = out.find(prefix) {
-            return out[i..].trim().to_string();
-        }
+    if let Some(i) = ["CALL ", "PING", "LIST"].iter().find_map(|p| out.find(p)) {
+        out.drain(..i);
     }
-    out.trim().to_string()
+    let end = out.trim_end().len();
+    out.truncate(end);
+    let lead = out.len() - out.trim_start().len();
+    if lead > 0 {
+        out.drain(..lead);
+    }
+    out
 }
 
 fn dispatch(line: &str) -> Vec<String> {
@@ -414,19 +418,19 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
 ///
 /// Only sender and subject are kept — never the body.
 fn ingest_rows(rows: &[String]) {
-    let msgs: Vec<(String, String)> = rows
+    let msgs: Vec<(&str, &str)> = rows
         .iter()
         .filter_map(|r| {
             let from = parse_row_field(r, "from")?;
             let subj = parse_row_field(r, "subj").unwrap_or("");
-            Some((from.to_string(), subj.to_string()))
+            Some((from, subj))
         })
         .collect();
     if msgs.is_empty() {
         return;
     }
     let mut g = graph::Graph::load_or_empty();
-    if g.ingest(&msgs) > 0 {
+    if g.ingest(msgs) > 0 {
         if let Err(e) = g.save() {
             eprintln!("graph: save failed: {e}");
         }
@@ -451,7 +455,9 @@ fn read_doc(
     with_files: bool,
     with_audio: bool,
 ) -> Result<Vec<String>, String> {
-    let body = if let Some(rel) = url.strip_prefix("file://") {
+    use std::borrow::Cow;
+
+    let body: Cow<'_, str> = if let Some(rel) = url.strip_prefix("file://") {
         if !with_files {
             return Err("needs_workspace_cap".into());
         }
@@ -470,21 +476,22 @@ fn read_doc(
             }
         }
         let path = found.ok_or("outside the indexed roots")?;
-        std::fs::read_to_string(&path).map_err(|e| format!("read: {e}"))?
+        Cow::Owned(std::fs::read_to_string(&path).map_err(|e| format!("read: {e}"))?)
     } else if let Some(src) = url.strip_prefix("audio://") {
         if !with_audio {
             return Err("needs_audio_cap".into());
         }
-        transcribe::Store::load()
-            .items
-            .into_iter()
-            .find(|t| t.source == src)
-            .map(|t| t.text)
-            .ok_or("no such transcript")?
+        Cow::Owned(
+            transcribe::Store::load()
+                .items
+                .into_iter()
+                .find(|t| t.source == src)
+                .map(|t| t.text)
+                .ok_or("no such transcript")?,
+        )
     } else {
         // Corpus and teddysearch documents carry their body in the index.
-        let body = search::body_for(url).ok_or("no readable body")?;
-        return Ok(search::wrap_lines(body, 78, max));
+        Cow::Borrowed(search::body_for(url).ok_or("no readable body")?)
     };
 
     Ok(search::wrap_lines(&body, 78, max))
@@ -564,14 +571,14 @@ fn email_search_gog(tool: &str, query: &str, max: usize) -> Vec<String> {
     let mut rows = Vec::new();
 
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&stdout) {
-        let items = val
+        let items: &[serde_json::Value] = val
             .as_array()
-            .cloned()
-            .or_else(|| val.get("threads").and_then(|t| t.as_array().cloned()))
-            .or_else(|| val.get("messages").and_then(|t| t.as_array().cloned()))
-            .unwrap_or_default();
+            .map(|a| a.as_slice())
+            .or_else(|| val.get("threads").and_then(|t| t.as_array()).map(|a| a.as_slice()))
+            .or_else(|| val.get("messages").and_then(|t| t.as_array()).map(|a| a.as_slice()))
+            .unwrap_or(&[]);
 
-        for item in items.into_iter().take(max) {
+        for item in items.iter().take(max) {
             let from = item
                 .pointer("/from")
                 .or_else(|| item.pointer("/sender"))
