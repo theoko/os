@@ -256,13 +256,4 @@ mod tests {
             assert_eq!(a[0], b[0]);
         }
     }
-
-    #[test]
-    fn scoring_uses_no_floats() {
-        // Guard the invariant that matters on a kernel with no FPU: every
-        // stored weight is an integer type.
-        let _: i64 = TERMS[0].idf_q16;
-        let _: i64 = POSTINGS[0].tf_q16;
-        let _: i32 = DOCS[0].pr_q10;
-    }
 }

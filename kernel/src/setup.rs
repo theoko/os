@@ -316,13 +316,9 @@ fn content_rect(w: i32, y: i32, h: i32) -> ui::Rect {
 mod tests {
     use super::*;
 
-    fn setup() -> Setup {
-        Setup::new()
-    }
-
     #[test]
     fn journey_runs_forward_to_finished() {
-        let mut s = setup();
+        let mut s = Setup::new();
         let order = [
             Step::Welcome,
             Step::Bridge,
@@ -340,7 +336,7 @@ mod tests {
 
     #[test]
     fn back_walks_the_journey_in_reverse() {
-        let mut s = setup();
+        let mut s = Setup::new();
         for _ in 0..3 {
             s.apply(Action::Continue);
         }
@@ -357,7 +353,7 @@ mod tests {
 
     #[test]
     fn finished_is_terminal() {
-        let mut s = setup();
+        let mut s = Setup::new();
         s.step = Step::Finished;
         s.apply(Action::Continue);
         s.apply(Action::Back);
@@ -366,14 +362,14 @@ mod tests {
 
     #[test]
     fn rows_do_nothing_on_steps_without_rows() {
-        let mut s = setup();
+        let mut s = Setup::new();
         s.step = Step::Welcome;
         assert!(!s.apply(Action::Row(0)));
     }
 
     #[test]
     fn click_on_a_zone_applies_its_action() {
-        let mut s = setup();
+        let mut s = Setup::new();
         s.push_zone(ui::Rect::new(0, 0, 100, 100), Action::Continue);
         assert!(s.click(10, 10), "press should act");
         assert_eq!(s.step, Step::Bridge);
@@ -381,7 +377,7 @@ mod tests {
 
     #[test]
     fn clicks_outside_any_zone_are_ignored() {
-        let mut s = setup();
+        let mut s = Setup::new();
         s.push_zone(ui::Rect::new(0, 0, 50, 50), Action::Continue);
         assert!(!s.click(400, 400));
         assert_eq!(s.step, Step::Welcome);
@@ -389,7 +385,7 @@ mod tests {
 
     #[test]
     fn zone_table_cannot_overflow() {
-        let mut s = setup();
+        let mut s = Setup::new();
         for _ in 0..MAX_ZONES * 3 {
             s.push_zone(ui::Rect::new(0, 0, 10, 10), Action::Continue);
         }

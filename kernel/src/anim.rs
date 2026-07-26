@@ -12,6 +12,11 @@ use crate::serial::{rdtsc, ASSUMED_HZ};
 /// Fixed-point one.
 const ONE: i32 = 1 << 16;
 
+/// Default entrance. Short and small — soften the cut, don't make the user wait.
+const SLIDE_FRAMES: u32 = 10;
+const SLIDE_TRAVEL_PX: i32 = 18;
+const SLIDE_FRAME_US: u32 = 12_000;
+
 /// Cubic ease-out: fast departure, gentle arrival.
 ///
 /// `t` and the result are Q16 in 0..=ONE. This is the curve most system UIs
@@ -46,39 +51,22 @@ pub(crate) fn pace(since: u64, us: u32) -> u64 {
     rdtsc()
 }
 
-/// A screen entrance: how far it slides and over how many frames.
-pub struct Entrance {
-    frames: u32,
-    travel_px: i32,
-    frame_us: u32,
+/// Offset and opacity for entrance frame `i`, as (dy px, alpha Q16).
+fn slide_at(i: u32) -> (i32, i32) {
+    let denom = SLIDE_FRAMES.max(1) as i64;
+    let t = ((i.min(SLIDE_FRAMES) as i64 * ONE as i64) / denom) as i32;
+    let e = ease_out_cubic(t);
+    let dy = lerp(SLIDE_TRAVEL_PX, 0, e);
+    (dy, e)
 }
 
-/// Default entrance. Short and small — the point is to soften the cut, not to
-/// make the user wait for the interface.
-pub const SLIDE_IN: Entrance = Entrance {
-    frames: 10,
-    travel_px: 18,
-    frame_us: 12_000,
-};
-
-impl Entrance {
-    /// Offset and opacity for frame `i`, as (dy px, alpha Q16).
-    fn at(&self, i: u32) -> (i32, i32) {
-        let denom = self.frames.max(1) as i64;
-        let t = ((i.min(self.frames) as i64 * ONE as i64) / denom) as i32;
-        let e = ease_out_cubic(t);
-        let dy = lerp(self.travel_px, 0, e);
-        (dy, e)
-    }
-
-    /// Play every frame, calling `frame(dy, alpha)` then pacing.
-    pub fn play(&self, mut frame: impl FnMut(i32, i32)) {
-        let mut mark = rdtsc();
-        for i in 0..=self.frames {
-            let (dy, a) = self.at(i);
-            frame(dy, a);
-            mark = pace(mark, self.frame_us);
-        }
+/// Play the default screen entrance, calling `frame(dy, alpha)` then pacing.
+pub fn slide_in(mut frame: impl FnMut(i32, i32)) {
+    let mut mark = rdtsc();
+    for i in 0..=SLIDE_FRAMES {
+        let (dy, a) = slide_at(i);
+        frame(dy, a);
+        mark = pace(mark, SLIDE_FRAME_US);
     }
 }
 
@@ -116,11 +104,11 @@ mod tests {
 
     #[test]
     fn entrance_starts_offset_and_lands_flush() {
-        let (dy0, a0) = SLIDE_IN.at(0);
-        assert_eq!(dy0, SLIDE_IN.travel_px, "should start displaced");
+        let (dy0, a0) = slide_at(0);
+        assert_eq!(dy0, SLIDE_TRAVEL_PX, "should start displaced");
         assert_eq!(a0, 0, "should start transparent");
 
-        let (dy_end, a_end) = SLIDE_IN.at(SLIDE_IN.frames);
+        let (dy_end, a_end) = slide_at(SLIDE_FRAMES);
         assert_eq!(dy_end, 0, "must land exactly flush, not near it");
         assert_eq!(a_end, ONE, "must land fully opaque");
     }
@@ -128,8 +116,8 @@ mod tests {
     #[test]
     fn entrance_never_moves_backwards() {
         let mut prev = i32::MAX;
-        for i in 0..=SLIDE_IN.frames {
-            let (dy, _) = SLIDE_IN.at(i);
+        for i in 0..=SLIDE_FRAMES {
+            let (dy, _) = slide_at(i);
             assert!(dy <= prev, "slid backwards at frame {i}");
             prev = dy;
         }

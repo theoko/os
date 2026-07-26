@@ -180,26 +180,22 @@ impl<const N: usize> TextField<N> {
 mod tests {
     use super::*;
 
-    fn kb() -> Keyboard {
-        Keyboard::new()
-    }
-
     #[test]
     fn decodes_letters() {
-        let mut k = kb();
+        let mut k = Keyboard::new();
         assert_eq!(k.feed(0x1E), Some(Key::Char(b'a')));
         assert_eq!(k.feed(0x20), Some(Key::Char(b'd')));
     }
 
     #[test]
     fn release_codes_produce_nothing() {
-        let mut k = kb();
+        let mut k = Keyboard::new();
         assert_eq!(k.feed(0x1E | 0x80), None, "key release must not type");
     }
 
     #[test]
     fn shift_capitalises_and_releases() {
-        let mut k = kb();
+        let mut k = Keyboard::new();
         assert_eq!(k.feed(0x2A), None, "shift itself types nothing");
         assert_eq!(k.feed(0x1E), Some(Key::Char(b'A')));
         assert_eq!(k.feed(0x2A | 0x80), None);
@@ -208,14 +204,14 @@ mod tests {
 
     #[test]
     fn shifted_digits_are_symbols() {
-        let mut k = kb();
+        let mut k = Keyboard::new();
         k.feed(0x36); // right shift
         assert_eq!(k.feed(0x02), Some(Key::Char(b'!')));
     }
 
     #[test]
     fn control_keys() {
-        let mut k = kb();
+        let mut k = Keyboard::new();
         assert_eq!(k.feed(0x0E), Some(Key::Backspace));
         assert_eq!(k.feed(0x1C), Some(Key::Enter));
         assert_eq!(k.feed(0x01), Some(Key::Escape));
@@ -224,7 +220,7 @@ mod tests {
 
     #[test]
     fn extended_keys_are_ignored_not_mistyped() {
-        let mut k = kb();
+        let mut k = Keyboard::new();
         assert_eq!(k.feed(0xE0), None);
         // 0x4B would be keypad '4' unshifted; as an E0 prefix it's Left Arrow.
         assert_eq!(k.feed(0x4B), None, "arrow key must not insert a character");
@@ -234,7 +230,7 @@ mod tests {
 
     #[test]
     fn out_of_range_scancodes_are_safe() {
-        let mut k = kb();
+        let mut k = Keyboard::new();
         assert_eq!(k.feed(0x7F), None, "must not index past the map");
     }
 
