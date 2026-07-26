@@ -12,7 +12,6 @@
 //! * It is ~64 MB and ~12k documents, far too large to re-read per query, so
 //!   it is parsed once per process and held behind a `OnceLock`.
 
-use std::env;
 use std::fs;
 use std::path::PathBuf;
 use std::collections::HashMap;
@@ -58,6 +57,7 @@ pub fn docs() -> &'static [Doc] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
 
     #[test]
     fn corpus_url_is_https() {
