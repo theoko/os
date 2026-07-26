@@ -291,7 +291,7 @@ pub(crate) fn fetch_search_rows(
     q: &str,
     mut on_hit: impl FnMut(&str, &str, &str) -> bool,
 ) -> DocOutcome {
-    // Offline: SearchView::fill_if_offline may pad the baked index.
+    // Offline: SearchView may pad the baked index.
     when_online(DocOutcome::Offline, |com2, line| {
         // CALL search.query q=… [files=1] [audio=1]
         // Bridge default k= matches MAX_HITS. Mail is peek-only (no search hits).

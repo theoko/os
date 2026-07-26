@@ -149,7 +149,7 @@ def _stop_bridge(pid_file: Path) -> None:
 
 def run_bridge_smoke() -> None:
     root, iso = _root_and_iso()
-    addr = os.environ.get("OS_SMOKE_ADDR", os.environ.get("OS_MCP_BRIDGE_ADDR", "127.0.0.1:7420"))
+    addr = os.environ.get("OS_MCP_BRIDGE_ADDR", "127.0.0.1:7420")
     serial_path = Path(tempfile.mkstemp(prefix="os-bridge-serial.")[1])
     pid_file = _ensure_bridge(root, addr)
     try:

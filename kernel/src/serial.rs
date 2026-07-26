@@ -154,10 +154,6 @@ pub fn debug_exit(code: u8) {
 /// Fail the QEMU smoke run (`0x11`) and halt.
 pub fn exit_qemu() -> ! {
     debug_exit(0x11);
-    halt()
-}
-
-pub(crate) fn halt() -> ! {
     loop {
         #[cfg(target_arch = "x86_64")]
         unsafe {
@@ -176,7 +172,7 @@ pub(crate) const ASSUMED_HZ: u64 = 1_000_000_000;
 
 /// Read the cycle counter (anim pacing / beep timing).
 #[cfg(target_arch = "x86_64")]
-pub fn rdtsc() -> u64 {
+pub(crate) fn rdtsc() -> u64 {
     let lo: u32;
     let hi: u32;
     unsafe {
@@ -186,6 +182,6 @@ pub fn rdtsc() -> u64 {
 }
 
 #[cfg(not(target_arch = "x86_64"))]
-pub fn rdtsc() -> u64 {
+pub(crate) fn rdtsc() -> u64 {
     0
 }

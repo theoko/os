@@ -45,7 +45,7 @@ impl Surface {
     /// Called by the shape and text entry points with their bounding box, not
     /// per pixel — a Cell update inside `blend_pixel` would cost more than the
     /// blend it guards.
-    pub fn mark_dirty(&self, x: i32, y: i32, w: i32, h: i32) {
+    pub(crate) fn mark_dirty(&self, x: i32, y: i32, w: i32, h: i32) {
         if w <= 0 || h <= 0 {
             return;
         }

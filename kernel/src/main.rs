@@ -62,7 +62,11 @@ unsafe extern "C" fn kmain() -> ! {
     // Caps::none(): PING only until the user consents (default_grants would
     // CALL email.search against the host mailbox).
     let mut mail = mcp::fetch_mail_peek(caps::Caps::none());
-    log_bridge_status(&serial_port, mail.online());
+    serial_port.write_str(if mail.online() {
+        "mcp: bridge live\n"
+    } else {
+        "mcp: bridge still offline\n"
+    });
     let mut skill_peek = skills::SkillPeek::from_builtins();
     if let Some(resp) = FRAMEBUFFER_REQUEST.get_response() {
         if let Some(fb_info) = resp.framebuffers().next() {
@@ -174,7 +178,11 @@ unsafe extern "C" fn kmain() -> ! {
                                 // Still pre-consent: Caps::none() PINGs only
                                 // (setup.caps already has default_grants).
                                 mail = mcp::fetch_mail_peek(caps::Caps::none());
-                                log_bridge_status(&serial_port, mail.online());
+                                serial_port.write_str(if mail.online() {
+                                    "mcp: bridge live\n"
+                                } else {
+                                    "mcp: bridge still offline\n"
+                                });
                             }
                             if setup.step == setup::Step::Skills && before != setup::Step::Skills {
                                 skill_peek = mcp::fetch_skill_peek();
@@ -231,7 +239,11 @@ unsafe extern "C" fn kmain() -> ! {
                                     }
                                     Some(ui::HomeHit::Connect) => {
                                         mail = mcp::fetch_mail_peek(setup.caps);
-                                        log_bridge_status(&serial_port, mail.online());
+                                        serial_port.write_str(if mail.online() {
+                                            "mcp: bridge live\n"
+                                        } else {
+                                            "mcp: bridge still offline\n"
+                                        });
                                         dirty = true;
                                     }
                                     Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
@@ -363,14 +375,6 @@ fn handle_key(
         }
         _ => false,
     }
-}
-
-fn log_bridge_status(port: &serial::Serial, online: bool) {
-    port.write_str(if online {
-        "mcp: bridge live\n"
-    } else {
-        "mcp: bridge still offline\n"
-    });
 }
 
 /// Hide cursor, paint the active view, show cursor, play entrance.

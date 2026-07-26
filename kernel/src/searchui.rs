@@ -134,11 +134,7 @@ impl SearchView {
             DocOutcome::Err => SearchDone::Err,
             DocOutcome::Ok => SearchDone::Framed,
         });
-        self.fill_if_offline(q);
-    }
-
-    /// Pad baked hits only after a COM2 outage (not after framed / local).
-    fn fill_if_offline(&mut self, q: &str) {
+        // Pad baked hits only after a COM2 outage (not after framed / local).
         if self.count == 0 && matches!(self.outcome, Some(SearchDone::Offline)) {
             self.fill_local(q);
         }
@@ -263,20 +259,12 @@ mod tests {
     }
 
     #[test]
-    fn online_empty_does_not_pad_baked_hits() {
+    fn local_empty_does_not_pad_baked_hits() {
+        // Grant-miss empty stays empty — ISO pad is Offline-only in run_via.
         let mut v = SearchView::new();
-        v.outcome = Some(SearchDone::Framed);
-        v.fill_if_offline("capability agent");
-        assert_eq!(v.count, 0, "framed Ok must not invent ISO hits");
-        v.outcome = Some(SearchDone::Local);
-        v.fill_if_offline("capability agent");
-        assert_eq!(v.count, 0, "Local empty must not double-fill");
-        v.outcome = Some(SearchDone::Err);
-        v.fill_if_offline("capability agent");
-        assert_eq!(v.count, 0, "framed Err must keep TEDDY empty state");
-        v.outcome = Some(SearchDone::Offline);
-        v.fill_if_offline("capability agent");
-        assert!(v.count > 0, "Offline still uses the baked index");
+        v.run_via("zzzz qqqq", crate::caps::Caps::none());
+        assert_eq!(v.outcome, Some(SearchDone::Local));
+        assert_eq!(v.count, 0, "Local empty must not invent ISO hits");
     }
 
     #[test]
