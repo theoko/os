@@ -346,47 +346,78 @@ pub struct Cursor {
     y: i32,
     saved: [u32; SAVE_LEN],
     has_saved: bool,
+    /// `Surface::draw_count` when `saved` was captured.
+    ///
+    /// The saved pixels only describe the surface while nothing else draws.
+    /// A repaint under a visible cursor invalidates them, and painting them
+    /// back then punches a cursor-shaped hole in the new frame — the nav
+    /// "os" losing its 's', a switch knob smearing, letters vanishing from a
+    /// heading the pointer happened to cross.
+    saved_at: u32,
+    /// Paint the arrow without keeping a copy of what is underneath.
+    ///
+    /// A runtime flag rather than a `cfg`, because `cargo test` runs on an
+    /// arm64 Mac: compiled out, the save/restore path would be untestable on
+    /// the only machine that runs the tests, and the bug this file exists to
+    /// prevent would go unnoticed exactly there.
+    persistent: bool,
 }
 
 impl Cursor {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             x: 0,
             y: 0,
             saved: [0; SAVE_LEN],
             has_saved: false,
+            saved_at: 0,
+            // QemuRamFB can refresh independently of our dirty-rectangle
+            // bookkeeping, so the ARM virtual display paints persistently.
+            persistent: cfg!(target_arch = "aarch64"),
+        }
+    }
+
+    /// A cursor that keeps an under-cursor copy whatever the host is.
+    #[cfg(test)]
+    fn with_backing() -> Self {
+        Self {
+            persistent: false,
+            ..Self::new()
         }
     }
 
     pub fn hide(&mut self, fb: &Surface) {
-        if self.has_saved {
-            restore(fb, self.x, self.y, &self.saved);
-            self.has_saved = false;
+        if !self.has_saved {
+            return;
         }
+        self.has_saved = false;
+        // Someone drew since the copy was taken, so it describes a frame that
+        // no longer exists. Whatever they drew is already correct underneath —
+        // dropping the copy is right, restoring it would corrupt them.
+        if fb.draw_count() != self.saved_at {
+            return;
+        }
+        restore(fb, self.x, self.y, &self.saved);
     }
 
     pub fn show_at(&mut self, fb: &Surface, x: i32, y: i32) {
-        #[cfg(target_arch = "aarch64")]
-        {
-            // QemuRamFB may refresh independently of our dirty-rectangle
-            // bookkeeping. A persistent paint is more reliable than keeping
-            // an under-cursor save buffer on the ARM virtual display.
+        if self.persistent {
             self.x = x;
             self.y = y;
             self.has_saved = false;
             draw_arrow(fb, x, y);
             return;
         }
-
-        #[cfg(not(target_arch = "aarch64"))]
-        {
         self.hide(fb);
         self.x = x;
         self.y = y;
         save(fb, x, y, &mut self.saved);
         self.has_saved = true;
         draw_arrow(fb, x, y);
-        }
+        // Stamped after the arrow: drawing it is the last legitimate change to
+        // this footprint, so anything counted beyond here came from a repaint
+        // and means the copy is stale.
+        self.saved_at = fb.draw_count();
     }
 }
 
@@ -399,7 +430,11 @@ fn save(fb: &Surface, x: i32, y: i32, out: &mut [u32; SAVE_LEN]) {
 }
 
 fn restore(fb: &Surface, x: i32, y: i32, saved: &[u32; SAVE_LEN]) {
-    fb.mark_dirty(x, y, SAVE_W as i32, SAVE_H as i32);
+    // Mark where the pixels are actually written, not where the hotspot is:
+    // the box starts one pixel up and left of (x, y) to cover the keyline.
+    // Marking (x, y) left that column and row repaired in the back buffer but
+    // never blitted, so the old keyline stayed on screen as a 1px trail.
+    fb.mark_dirty(x - 1, y - 1, SAVE_W as i32, SAVE_H as i32);
     for row in 0..SAVE_H {
         for col in 0..SAVE_W {
             fb.put_pixel(x - 1 + col as i32, y - 1 + row as i32, saved[row * SAVE_W + col]);
@@ -535,5 +570,65 @@ mod tests {
         motion.snap(100, 100);
         assert!(!motion.active());
         assert_eq!(motion.step(), None);
+    }
+
+    /// A repaint under a visible cursor must not be damaged when it moves.
+    ///
+    /// Observed as the pointer eating holes in whatever it crossed: the nav
+    /// "os" losing its 's', letters disappearing from a heading. The cursor
+    /// had copied the pixels beneath it, the screen repainted underneath, and
+    /// moving away stamped that stale copy back over the new frame.
+    #[test]
+    fn moving_off_a_repainted_screen_does_not_erase_it() {
+        const W: usize = 96;
+        const H: usize = 64;
+        let mut buf = vec![0x00FF_FFFFu32; W * H];
+        let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), W, H) };
+
+        let mut cursor = Cursor::with_backing();
+        cursor.show_at(&fb, 20, 20);
+
+        // Something repaints the whole screen while the cursor is visible —
+        // exactly what a screen transition or a live toggle does.
+        const INK: u32 = 0x001D_1D1F;
+        fb.fill_rect(0, 0, W as i32, H as i32, INK);
+
+        // Now the pointer moves away.
+        cursor.show_at(&fb, 60, 40);
+
+        // Every pixel the old cursor covered must still be the repaint, not
+        // the page colour it copied beforehand.
+        for row in 0..SAVE_H {
+            for col in 0..SAVE_W {
+                let (x, y) = (20 - 1 + col as i32, 20 - 1 + row as i32);
+                assert_eq!(
+                    fb.get_pixel(x, y),
+                    INK,
+                    "({x},{y}) was restored from a stale copy — the cursor ate the repaint"
+                );
+            }
+        }
+    }
+
+    /// The restored footprint has to be advertised where it is actually
+    /// written, or `present` never blits the edge and a 1px trail survives.
+    #[test]
+    fn restoring_marks_the_pixels_it_writes() {
+        const W: usize = 96;
+        const H: usize = 64;
+        let mut buf = vec![0x00FF_FFFFu32; W * H];
+        let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), W, H) };
+
+        let mut cursor = Cursor::with_backing();
+        cursor.show_at(&fb, 30, 30);
+        fb.clear_dirty();
+        cursor.hide(&fb);
+
+        let (x0, y0, x1, y1) = fb.dirty_rect().expect("hiding the cursor dirties the screen");
+        assert!(x0 <= 29 && y0 <= 29, "dirty rect starts at ({x0},{y0}), misses the keyline");
+        assert!(
+            x1 >= 30 + SAVE_W as i32 - 1 && y1 >= 30 + SAVE_H as i32 - 1,
+            "dirty rect ends at ({x1},{y1}), short of the restored box"
+        );
     }
 }

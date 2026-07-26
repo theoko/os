@@ -25,6 +25,16 @@ pub struct Surface {
     /// distance travelled and turns a 600-pixel update into a full-screen one.
     dirty: Cell<Option<(i32, i32, i32, i32)>>,
     dirty2: Cell<Option<(i32, i32, i32, i32)>>,
+    /// Bumped by every drawing operation.
+    ///
+    /// The software cursor keeps a copy of the pixels beneath it and paints
+    /// them back when it moves. That copy is only valid while nothing else
+    /// draws: if a screen repaints *underneath* a visible cursor, restoring
+    /// the old copy stamps stale pixels over the new frame — which is how a
+    /// cursor ends up eating holes in whatever text it passes over. Comparing
+    /// this counter tells the cursor whether its copy still describes the
+    /// surface, without every repaint having to remember to hide it first.
+    draws: Cell<u32>,
 }
 
 impl Surface {
@@ -34,6 +44,10 @@ impl Surface {
     /// per pixel — a Cell update inside `blend_pixel` would cost more than the
     /// blend it guards.
     pub fn mark_dirty(&self, x: i32, y: i32, w: i32, h: i32) {
+        // Counted before the clipping early-returns: an off-screen draw still
+        // means "something ran", and the cursor's copy is judged by whether
+        // any drawing happened at all, not by where it landed.
+        self.draws.set(self.draws.get().wrapping_add(1));
         if w <= 0 || h <= 0 {
             return;
         }
@@ -72,6 +86,13 @@ impl Surface {
     /// The second disjoint region, if any.
     pub fn dirty_rect2(&self) -> Option<(i32, i32, i32, i32)> {
         self.dirty2.get()
+    }
+
+    /// How many drawing operations this surface has seen.
+    ///
+    /// Only equality across two points in time is meaningful; it wraps.
+    pub fn draw_count(&self) -> u32 {
+        self.draws.get()
     }
 
     pub fn clear_dirty(&self) {
@@ -125,6 +146,7 @@ impl Surface {
             pitch: pitch as usize,
             dirty: Cell::new(None),
             dirty2: Cell::new(None),
+            draws: Cell::new(0),
         })
     }
 
@@ -133,7 +155,7 @@ impl Surface {
     /// # Safety
     /// `addr` must point to at least `width * height` u32s.
     pub unsafe fn in_memory(addr: *mut u32, width: usize, height: usize) -> Self {
-        Self { addr: addr.cast::<u8>(), width, height, pitch: width * 4, dirty: Cell::new(None), dirty2: Cell::new(None) }
+        Self { addr: addr.cast::<u8>(), width, height, pitch: width * 4, dirty: Cell::new(None), dirty2: Cell::new(None), draws: Cell::new(0) }
     }
 
     pub fn width(&self) -> usize {
@@ -459,6 +481,7 @@ mod tests {
                 pitch: self.w * 4,
                 dirty: Cell::new(None),
             dirty2: Cell::new(None),
+            draws: Cell::new(0),
             }
         }
         fn get(&self, x: usize, y: usize) -> u32 {
@@ -788,9 +811,10 @@ impl Screen {
                 pitch: w * 4,
                 dirty: Cell::new(None),
             dirty2: Cell::new(None),
+            draws: Cell::new(0),
             }
         } else {
-            Surface { addr, width: w, height: h, pitch: pitch as usize, dirty: Cell::new(None), dirty2: Cell::new(None) }
+            Surface { addr, width: w, height: h, pitch: pitch as usize, dirty: Cell::new(None), dirty2: Cell::new(None), draws: Cell::new(0) }
         };
         Some(Self { back, fb: addr, fb_pitch: pitch as usize, w, h, buffered })
     }
