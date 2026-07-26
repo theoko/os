@@ -34,10 +34,11 @@ body `b`, optional PageRank-ish boost `pr`.
 
 | Call | Result |
 |------|--------|
-| `CALL search.query q=… k=5` | `OK search.query` + `ROW title=…\|cat=…\|url=…` + `END` |
+| `CALL search.query q=… [k=n]` | `OK search.query` + `ROW title=…\|cat=…\|url=…` + `END` |
 
-In-bridge ranking is tf-idf × (1+4·pr) with an exact-AND bonus. Override corpus
-path with `OS_SEARCH_CORPUS`.
+Guest omits `k=` (host default 3 = guest `MAX_HITS`; wire max 20). In-bridge
+ranking is tf-idf × (1+4·pr) with an exact-AND bonus. Override corpus path with
+`OS_SEARCH_CORPUS`.
 
 ## Skill
 

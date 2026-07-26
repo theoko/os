@@ -13,14 +13,15 @@ ranking over `{t,u,c,b,pr}` docs, exact-first ladder, no crawler in v1.
 
 ## Rules
 
-1. Call `search.query` with a short keyword query (`q=`). Optional `k=` (1–20).
+1. Call `search.query` with a short keyword query (`q=`). Optional `k=` (1–20;
+   omit for the guest default of 3).
 2. Cite `title` + `url` from each ROW.
 3. Prefer corpus hits over guessing architecture/caps policy.
 4. Offline corpus is baked into the guest; the host bridge merges teddy + files + audio when those caps are granted.
 
 ## Flow
 
-1. `CALL search.query q=capability ambient k=5`
+1. `CALL search.query q=capability ambient`
 2. Skim ROW title/cat/url
 3. If thin, refine the query keywords
 4. Act using the cited source (plan, etc.)
