@@ -403,6 +403,9 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut playbook_name = [0u8; 28];
                 let mut playbook_name_len = 0usize;
                 let mut view = screens::View::Home;
+                // The hidden portal screen. Nothing on Home points at it; the
+                // Ctrl+Shift+P chord is the whole entrance.
+                let mut portal_cfg = screens::PortalConfig::new();
                 let mut tick: u32 = 0;
                 let mut caret = true;
                 // First boot: run the setup journey before the home screen.
@@ -623,6 +626,19 @@ unsafe extern "C" fn kmain() -> ! {
                                         dirty = true;
                                     }
                                 }
+                                // The only door into the portal screen. There
+                                // is deliberately no visible affordance for
+                                // this — the machine ships handed to a friend,
+                                // and this is the setter-upper's way back in.
+                                keyboard::Key::Chord(b'P') => {
+                                    // Unlock is per-connection on the host, so
+                                    // read the real state rather than trusting
+                                    // whatever this screen believed last time.
+                                    portal_cfg.refresh(mcp::config_status());
+                                    view = screens::View::PortalConfig;
+                                    serial_port.write_str("ui: config screen\n");
+                                    dirty = true;
+                                }
                                 other => {
                                     if query.apply(other) {
                                         dirty = true;
@@ -642,6 +658,9 @@ unsafe extern "C" fn kmain() -> ! {
                                     level,
                                 ),
                                 screens::View::Brief => screens::draw_brief(surface, &brief),
+                                screens::View::PortalConfig => {
+                                    screens::draw_portal_config(surface, &portal_cfg, caret)
+                                }
                                 screens::View::Reader => {
                                     searchui::draw_reader(
                                         surface,
@@ -715,9 +734,38 @@ unsafe extern "C" fn kmain() -> ! {
                                             }
                                             dirty = true;
                                         }
+                                    } else if view == screens::View::PortalConfig
+                                        && portal_cfg.status.locked
+                                    {
+                                        // The secret goes to COM2 and nowhere
+                                        // else: `submit` borrows it for the
+                                        // call, so it never reaches a variable
+                                        // here that could end up in the log.
+                                        serial_port.write_str("ui: config unlock attempt\n");
+                                        let reply = portal_cfg.submit();
+                                        serial_port.write_str(match reply {
+                                            mcp::UnlockStatus::Ok => "config: unlocked\n",
+                                            mcp::UnlockStatus::BadPass => "config: unlock refused\n",
+                                            mcp::UnlockStatus::NotConfigured => {
+                                                "config: no password set on the host\n"
+                                            }
+                                            mcp::UnlockStatus::TooMany => {
+                                                "config: unlock rate limited\n"
+                                            }
+                                            mcp::UnlockStatus::Offline => "config: bridge offline\n",
+                                            // Refused before COM2 was opened.
+                                            mcp::UnlockStatus::Unsendable => {
+                                                "config: password not frameable - not sent\n"
+                                            }
+                                        });
+                                        dirty = true;
                                     }
                                 }
                                 keyboard::Key::Escape => {
+                                    if view == screens::View::PortalConfig {
+                                        // Leaving drops anything half-typed.
+                                        portal_cfg.refresh(mcp::ConfigStatus::offline());
+                                    }
                                     view = if view == screens::View::Brief {
                                         screens::View::Home
                                     } else if view == screens::View::Reader {
@@ -758,6 +806,13 @@ unsafe extern "C" fn kmain() -> ! {
                                         && playbook_goal.apply(other)
                                     {
                                         dirty = true;
+                                    } else if view == screens::View::PortalConfig
+                                        && portal_cfg.status.locked
+                                        && portal_cfg.type_key(other)
+                                    {
+                                        // Keystrokes land in the field, never
+                                        // in the serial log.
+                                        dirty = true;
                                     }
                                 }
                             }
@@ -768,6 +823,10 @@ unsafe extern "C" fn kmain() -> ! {
                         if left_down && !was_down {
                             let (bx, by, bw, bh) = searchui::back_rect(w);
                             if x >= bx && x < bx + bw && y >= by && y < by + bh {
+                                if view == screens::View::PortalConfig {
+                                    // Leaving drops anything half-typed.
+                                    portal_cfg.refresh(mcp::ConfigStatus::offline());
+                                }
                                 // Back from the reader returns to results.
                                 view = if view == screens::View::Reader {
                                     screens::View::Search
@@ -775,6 +834,40 @@ unsafe extern "C" fn kmain() -> ! {
                                     screens::View::Home
                                 };
                                 dirty = true;
+                            } else if view == screens::View::PortalConfig {
+                                // Only the unlocked picker has rows to click.
+                                if !portal_cfg.status.locked {
+                                    if let Some(i) = screens::portal_family_hit(w, x, y) {
+                                        if let Some(family) =
+                                            mcp::PortalFamily::ALL.get(i).copied()
+                                        {
+                                            serial_port.write_str("ui: config portal ");
+                                            serial_port.write_str(family.wire());
+                                            serial_port.write_str("\n");
+                                            let reply = mcp::config_portal(family);
+                                            portal_cfg.apply_portal(reply);
+                                            serial_port.write_str(match reply {
+                                                mcp::PortalSetStatus::Ok(_) => "config: saved\n",
+                                                // Per-connection unlock lost;
+                                                // the screen has already fallen
+                                                // back to the password.
+                                                mcp::PortalSetStatus::Locked => {
+                                                    "config: session relocked\n"
+                                                }
+                                                mcp::PortalSetStatus::UnknownFamily => {
+                                                    "config: host rejected the family\n"
+                                                }
+                                                mcp::PortalSetStatus::Offline => {
+                                                    "config: bridge offline\n"
+                                                }
+                                                mcp::PortalSetStatus::Failed => {
+                                                    "config: portal set failed\n"
+                                                }
+                                            });
+                                            dirty = true;
+                                        }
+                                    }
+                                }
                             } else if view == screens::View::Search {
                                 // Open a result.
                                 if let Some(i) = searchui::result_hit(w, h, sview.count, x, y) {
@@ -1052,6 +1145,9 @@ unsafe extern "C" fn kmain() -> ! {
                                 }
                                 screens::View::Caps => screens::draw_caps(surface, grants, level),
                                 screens::View::Brief => screens::draw_brief(surface, &brief),
+                                screens::View::PortalConfig => {
+                                    screens::draw_portal_config(surface, &portal_cfg, caret)
+                                }
                                 screens::View::Reader => {
                                     searchui::draw_reader(surface, open_title.as_str(), &page, scroll)
                                 }
@@ -1278,6 +1374,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 | screens::View::Caps
                                 | screens::View::Brief
                                 | screens::View::Reader
+                                | screens::View::PortalConfig
                         )
                     {
                         ui::paint_chill_rule(surface, w, tick);
@@ -1309,6 +1406,13 @@ unsafe extern "C" fn kmain() -> ! {
                                     bridge_note(&mail),
                                     level,
                                 );
+                                ui::paint_chill_rule(surface, w, tick);
+                            }
+                            // The password field has a caret too; without this
+                            // it would sit frozen while every other field
+                            // blinks.
+                            screens::View::PortalConfig if portal_cfg.status.locked => {
+                                screens::draw_portal_config(surface, &portal_cfg, caret);
                                 ui::paint_chill_rule(surface, w, tick);
                             }
                             _ => {}
