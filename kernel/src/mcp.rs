@@ -254,7 +254,7 @@ pub fn forget(cap: crate::caps::Cap) -> bool {
 
 /// List playbooks via `CALL skills.list`. Offline / ERR → ISO builtins.
 pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
-    when_online(crate::skills::SkillPeek::from_builtin(), |com2, line| {
+    when_online(crate::skills::SkillPeek::Builtin, |com2, line| {
         com2.write_str("CALL skills.list\n");
 
         let mut peek = crate::skills::SkillPeek::empty();
@@ -266,8 +266,8 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
             peek.push(name, desc.unwrap_or(""))
         });
         if saw_err {
-            // Failed CALL — show ISO defaults; from_bridge stays false.
-            crate::skills::SkillPeek::from_builtin()
+            // Failed CALL — show ISO defaults.
+            crate::skills::SkillPeek::Builtin
         } else {
             // Framed OK: keep Listed even at count==0 (do not pretend offline).
             peek

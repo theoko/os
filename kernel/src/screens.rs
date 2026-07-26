@@ -87,14 +87,10 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
     }
 
     let (x, _) = ui::content_column(w, ui::LIST_CONTENT_MAX);
-    let note = if peek.from_bridge() {
-        if n == 0 {
-            "Bridge listed no skills."
-        } else {
-            "Listed live from the host bridge (skills.list)."
-        }
-    } else {
-        "Compiled into the ISO. Saved skills live on the host."
+    let note = match peek {
+        SkillPeek::Listed { count: 0, .. } => "Bridge listed no skills.",
+        SkillPeek::Listed { .. } => "Listed live from the host bridge (skills.list).",
+        SkillPeek::Builtin => "Compiled into the ISO. Saved skills live on the host.",
     };
     fb.draw_text(
         x,
@@ -208,7 +204,7 @@ mod tests {
     #[test]
     fn skill_text_fits_its_row() {
         let cw = row_rect(1024, 0).w;
-        let peek = SkillPeek::from_builtin();
+        let peek = SkillPeek::Builtin;
         for i in 0..peek.count() {
             assert!(
                 BRAND_FACE.width(peek.name_at(i), 0) < cw - 36,

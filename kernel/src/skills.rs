@@ -68,15 +68,6 @@ impl SkillPeek {
         }
     }
 
-    pub fn from_builtin() -> Self {
-        Self::Builtin
-    }
-
-    /// True when the last fill came from the host bridge.
-    pub fn from_bridge(&self) -> bool {
-        matches!(self, Self::Listed { .. })
-    }
-
     pub(crate) fn count(&self) -> usize {
         match self {
             Self::Builtin => BUILTIN.len(),
@@ -164,10 +155,10 @@ mod tests {
 
     #[test]
     fn builtins_present() {
-        let p = SkillPeek::from_builtin();
+        let p = SkillPeek::Builtin;
         assert!(p.count() >= 5);
         assert_eq!(p.name_at(0), "agent-plan-act");
-        assert!(!p.from_bridge());
+        assert!(matches!(p, SkillPeek::Builtin));
     }
 
     #[test]
@@ -178,13 +169,16 @@ mod tests {
         }
         assert!(!p.push("overflow", "no"));
         assert_eq!(p.count(), MAX_LISTED);
-        assert!(p.from_bridge());
+        assert!(matches!(p, SkillPeek::Listed { .. }));
     }
 
     #[test]
     fn empty_listed_is_still_from_bridge() {
         let p = SkillPeek::empty();
         assert_eq!(p.count(), 0);
-        assert!(p.from_bridge(), "framed empty list is not ISO builtins");
+        assert!(
+            matches!(p, SkillPeek::Listed { .. }),
+            "framed empty list is not ISO builtins"
+        );
     }
 }
