@@ -239,7 +239,7 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str, title: &str) -> DocPage {
 /// Turning a switch off should remove the index it built, not just stop
 /// answering from it — otherwise "off" means "hidden", which is not what the
 /// switch says.
-/// Returns `true` when a purge CALL was issued on a live bridge.
+/// Returns `true` when a purge CALL got a framed OK (not `ERR` / offline).
 pub fn forget(cap: crate::caps::Cap) -> bool {
     let Some(tool) = cap.forget_tool() else {
         return false;
@@ -249,8 +249,7 @@ pub fn forget(cap: crate::caps::Cap) -> bool {
         com2.write_str(tool);
         com2.write_str("\n");
         // Drain OK/ROW/END (stop on ERR) so the next call starts clean.
-        let _ = for_each_ok_rows(com2, line, 8, |_| true);
-        true
+        !for_each_ok_rows(com2, line, 8, |_| true)
     })
 }
 
