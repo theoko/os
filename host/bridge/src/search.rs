@@ -12,12 +12,11 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 /// On-disk / HTTP corpus shell around `{t,u,c,b,pr}` documents.
+/// Extra JSON keys (e.g. historical `crawled_at`) are ignored.
 #[derive(Deserialize)]
 pub(crate) struct CorpusFile {
     #[serde(default)]
     pub docs: Vec<Doc>,
-    #[serde(default)]
-    pub crawled_at: String,
 }
 
 /// Curated / teddy / projected corpus document (`{t,u,c,b,pr}`).
