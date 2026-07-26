@@ -329,14 +329,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     }
                                     dirty = true;
                                 }
-                            } else if view == screens::View::Skills {
-                                if let Some(i) =
-                                    screens::skills_hit(w, skill_peek.count, x, y)
-                                {
-                                    serial_port.write_str("skills: ");
-                                    serial_port.write_str(skill_peek.name_at(i));
-                                    serial_port.write_str("\n");
-                                }
                             }
                         }
                         if dirty {

@@ -105,13 +105,13 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
         row(fb, w, i, peek.name_at(i), sub);
     }
 
-    let (x, cw) = column(w);
+    let (x, _) = column(w);
+    // Boot / fetch always leave at least the ISO builtins, so the empty case
+    // never reaches the screen.
     let note = if peek.from_bridge {
         "Listed live from the host bridge (skills.list)."
-    } else if peek.count > 0 {
-        "Compiled into the ISO. Saved skills live on the host."
     } else {
-        "No skills loaded."
+        "Compiled into the ISO. Saved skills live on the host."
     };
     fb.draw_text(
         x,
@@ -121,12 +121,6 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
         0,
         theme::MUTED,
     );
-    let _ = cw;
-}
-
-/// Which skill row contains this point, if any.
-pub fn skills_hit(w: i32, count: usize, x: i32, y: i32) -> Option<usize> {
-    row_hit(w, count.min(6), x, y)
 }
 
 /// Live capability switches. Clicking a row toggles the grant.
@@ -234,7 +228,6 @@ mod tests {
             "Compiled into the ISO. Saved skills live on the host.",
             "Listed live from the host bridge (skills.list).",
             "Tap a row to grant or revoke. Takes effect immediately.",
-            "No skills loaded.",
             "Skills",
             "Capabilities",
             "Back",
@@ -269,14 +262,6 @@ mod tests {
                 peek.desc_at(i)
             );
         }
-    }
-
-    #[test]
-    fn skills_hit_finds_first_row() {
-        let r = row_rect(1024, 0);
-        let (x, y) = (r.x, r.y);
-        assert_eq!(skills_hit(1024, 3, x + 4, y + 4), Some(0));
-        assert_eq!(skills_hit(1024, 0, x + 4, y + 4), None);
     }
 
     #[test]

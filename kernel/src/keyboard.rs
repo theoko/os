@@ -144,10 +144,6 @@ impl<const N: usize> TextField<N> {
         core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
     }
 
-    pub fn len(&self) -> usize {
-        self.len
-    }
-
     pub fn is_empty(&self) -> bool {
         self.len == 0
     }
