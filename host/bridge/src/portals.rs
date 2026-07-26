@@ -12,7 +12,12 @@
 //! `market.*` tools hit superintelmarkets.com (same response shapes). Both
 //! families are plain HTTPS JSON with a short TTL cache — probing without a
 //! TTL rate-limited the caller into `000` responses.
+//!
+//! Exactly one family is live at a time. Which one is the operator's choice,
+//! held in [`crate::config`] behind the admin password, so a guest cannot pick
+//! its own portal by naming a tool from the other family.
 
+use crate::config::{self, Family};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
@@ -62,13 +67,38 @@ pub const ENDPOINTS: &[Endpoint] = &[
     },
 ];
 
+/// The family a portal tool belongs to, taken from its prefix. `None` for a
+/// tool that is not a portal tool at all.
+pub fn family_of(tool: &str) -> Option<Family> {
+    match tool.split_once('.') {
+        Some(("teddy", _)) => Some(Family::Teddy),
+        Some(("market", _)) => Some(Family::Market),
+        _ => None,
+    }
+}
+
+/// Registry lookup that ignores the operator's choice.
+///
+/// Only the dispatcher uses this, and only to tell "a real portal tool whose
+/// family is switched off" from "no such tool" — the two need different
+/// answers on the wire. Everything that actually *calls* a portal goes through
+/// `find`, which honours the choice.
+pub fn find_any(tool: &str) -> Option<&'static Endpoint> {
+    ENDPOINTS.iter().find(|e| e.tool == tool)
+}
+
 /// Tools that leave the machine and therefore need `portal=1`.
+///
+/// Family-aware: with `family=teddy` a `market.*` tool is not a portal tool
+/// here, it is nothing, and with `family=none` neither family is.
 pub fn is_portal_tool(tool: &str) -> bool {
     find(tool).is_some()
 }
 
+/// The endpoint for `tool`, if it exists *and* its family is the active one.
 pub fn find(tool: &str) -> Option<&'static Endpoint> {
-    ENDPOINTS.iter().find(|e| e.tool == tool)
+    let ep = find_any(tool)?;
+    (family_of(tool) == Some(config::family())).then_some(ep)
 }
 
 /// How long a response stays fresh. Market sentiment does not move in seconds,
@@ -302,25 +332,62 @@ mod tests {
             assert!(!e.url.contains("/api/screen"));
             assert!(!e.url.contains("/api/search"));
         }
-        assert!(find("teddy.health").is_some());
-        assert!(find("teddy.fear_greed").is_some());
-        assert!(find("teddy.gex").is_some());
-        assert!(find("market.health").is_some());
-        assert!(find("market.fear_greed").is_some());
-        assert!(find("market.nope").is_none());
-        assert!(is_portal_tool("teddy.health"));
+        // Registry membership is family-independent: `find_any` is the lookup
+        // that ignores the operator's choice.
+        assert!(find_any("teddy.health").is_some());
+        assert!(find_any("teddy.fear_greed").is_some());
+        assert!(find_any("teddy.gex").is_some());
+        assert!(find_any("market.health").is_some());
+        assert!(find_any("market.fear_greed").is_some());
+        assert!(find_any("market.nope").is_none());
         assert!(!is_portal_tool("search.query"));
     }
 
     #[test]
     fn teddy_and_market_portals_are_distinct_origins() {
-        let teddy = find("teddy.health").unwrap().url;
-        let market = find("market.health").unwrap().url;
+        let teddy = find_any("teddy.health").unwrap().url;
+        let market = find_any("market.health").unwrap().url;
         assert!(teddy.contains("teddysearch.com"), "{teddy}");
         assert!(market.contains("superintelmarkets.com"), "{market}");
         // Corpus dump is the teddy *API*, not a portal tool.
-        assert!(find("tsearch.sync").is_none());
+        assert!(find_any("tsearch.sync").is_none());
         assert!(!ENDPOINTS.iter().any(|e| e.url.contains("corpus.json")));
+    }
+
+    #[test]
+    fn only_the_active_family_resolves() {
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = env::temp_dir().join(format!("os-portal-family-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        unsafe { env::set_var("OS_CONFIG_PATH", dir.join("config.json")) };
+
+        config::set_family(Family::Teddy).expect("write");
+        assert!(is_portal_tool("teddy.health"));
+        assert!(find("teddy.gex").is_some());
+        assert!(!is_portal_tool("market.health"), "market is off with family=teddy");
+        assert!(find("market.fear_greed").is_none());
+
+        config::set_family(Family::Market).expect("write");
+        assert!(is_portal_tool("market.health"));
+        assert!(!is_portal_tool("teddy.health"));
+
+        config::set_family(Family::None).expect("write");
+        assert!(!is_portal_tool("teddy.health"), "none disables everything");
+        assert!(!is_portal_tool("market.health"));
+        // Still in the registry either way — that is what tells the dispatcher
+        // to answer "family off" rather than "no such tool".
+        assert!(find_any("market.health").is_some());
+
+        unsafe { env::remove_var("OS_CONFIG_PATH") };
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn family_of_reads_the_tool_prefix() {
+        assert_eq!(family_of("teddy.gex"), Some(Family::Teddy));
+        assert_eq!(family_of("market.health"), Some(Family::Market));
+        assert_eq!(family_of("search.query"), None);
+        assert_eq!(family_of("tsearch.sync"), None);
     }
 
     #[test]

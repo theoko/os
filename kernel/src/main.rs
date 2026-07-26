@@ -1006,20 +1006,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     // Don't fall through to the home redraw below.
                                     clicked = false;
                                 }
-                                Some(ui::HomeHit::Cta(ui::CtaId::Portal)) => {
-                                    // Credentials stay with the host's Keychain. This
-                                    // guest only requests consent to use that account;
-                                    // it never receives or paints a password.
-                                    serial_port.write_str("ui: connect tsearch account\n");
-                                    status_len = grants.describe(&mut status_buf);
-                                    view = screens::View::Caps;
-                                    cursor.hide(surface);
-                                    screens::draw_caps(surface, grants, level);
-                                    cursor.show_at(surface, x, y);
-                                    enter(&screen, animate, &mut motion, x, y);
-                                    moved = false;
-                                    clicked = false;
-                                }
                                 Some(ui::HomeHit::Card(ui::CardId::Connectors)) => {
                                     serial_port.write_str("ui: open search\n");
                                     view = screens::View::Search;

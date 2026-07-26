@@ -38,6 +38,11 @@ pub enum Key {
     PageDown,
     Home,
     End,
+    /// Ctrl+Shift+letter, carrying the uppercase ASCII letter.
+    ///
+    /// The payload is deliberately not a `Char`: a chord is a command, and
+    /// `TextField` must never treat it as something to insert.
+    Chord(u8),
 }
 
 /// Scancode set 1, unshifted. Index = make code. 0 means "no character".
@@ -83,6 +88,10 @@ pub(crate) fn shift_char(c: u8) -> u8 {
 
 pub struct Keyboard {
     shift: bool,
+    /// Left Ctrl is make `0x1D` / break `0x9D`; right Ctrl is the same pair
+    /// behind an `0xE0` prefix. Tracked so a chord can be told apart from
+    /// typing — a Ctrl'd letter is a command and must never reach a field.
+    ctrl: bool,
     /// Set by the 0xE0 prefix. Navigation keys arrive this way, and the same
     /// make codes mean digits on the keypad without it — so the prefix has to
     /// be tracked, not just swallowed.
@@ -91,7 +100,17 @@ pub struct Keyboard {
 
 impl Keyboard {
     pub const fn new() -> Self {
-        Self { shift: false, extended: false }
+        Self { shift: false, ctrl: false, extended: false }
+    }
+
+    /// Is Ctrl held right now?
+    pub fn ctrl_held(&self) -> bool {
+        self.ctrl
+    }
+
+    /// Is Shift held right now?
+    pub fn shift_held(&self) -> bool {
+        self.shift
     }
 
     /// Decode one scancode byte. Returns a key on a *press*, never a release.
@@ -102,11 +121,15 @@ impl Keyboard {
         }
         let extended = core::mem::replace(&mut self.extended, false);
 
-        // Break codes have bit 7 set; only shift needs its release tracked.
+        // Break codes have bit 7 set; only the modifiers need their release
+        // tracked. Ctrl's break is the same make code either side of the 0xE0
+        // prefix, so the left and right keys are handled by one arm.
         if code & 0x80 != 0 {
             let make = code & 0x7F;
             if make == 0x2A || make == 0x36 {
                 self.shift = false;
+            } else if make == 0x1D {
+                self.ctrl = false;
             }
             return None;
         }
@@ -114,6 +137,11 @@ impl Keyboard {
         match code {
             0x2A | 0x36 => {
                 self.shift = true;
+                None
+            }
+            // Left Ctrl bare, right Ctrl behind 0xE0. Both set the same flag.
+            0x1D => {
+                self.ctrl = true;
                 None
             }
             0x0E => Some(Key::Backspace),
@@ -133,6 +161,14 @@ impl Keyboard {
                 if c == 0 {
                     return None;
                 }
+                if self.ctrl {
+                    // Ctrl never types. With Shift it is a command chord;
+                    // alone (or on a non-letter) it produces nothing at all.
+                    return match (self.shift, c) {
+                        (true, b'a'..=b'z') => Some(Key::Chord(c - 32)),
+                        _ => None,
+                    };
+                }
                 Some(Key::Char(if self.shift { shift_char(c) } else { c }))
             }
         }
@@ -148,6 +184,11 @@ impl Keyboard {
             b'\r' | b'\n' => Some(Key::Enter),
             0x08 | 0x7f => Some(Key::Backspace),
             0x1b => Some(Key::Escape),
+            // A terminal collapses Ctrl+Shift+P and Ctrl+P into the same
+            // control byte, so this is the only faithful mapping. Without it
+            // the chord would be unreachable on aarch64, where `poll` has no
+            // PS/2 controller to read scan codes from.
+            0x10 => Some(Key::Chord(b'P')),
             0x20..=0x7e => Some(Key::Char(byte)),
             _ => None,
         }
@@ -371,6 +412,112 @@ mod tests {
         assert!(!f.apply(Key::Char(0x07)));
         assert!(!f.apply(Key::Char(0xC3)));
         assert!(f.is_empty());
+    }
+}
+
+/// Ctrl tracking and the Ctrl+Shift+letter chord.
+///
+/// The chord is the only way into the portal config screen, and nothing in the
+/// UI hints at it — so these have to hold exactly, in both directions: the
+/// chord must fire, and Ctrl must never put a character anywhere.
+#[cfg(test)]
+mod chord_tests {
+    use super::*;
+
+    /// Left Ctrl, left Shift, 'p'.
+    const CTRL: u8 = 0x1D;
+    const SHIFT: u8 = 0x2A;
+    const P: u8 = 0x19;
+
+    #[test]
+    fn ctrl_shift_p_produces_the_chord() {
+        let mut k = Keyboard::new();
+        assert_eq!(k.feed(CTRL), None, "Ctrl itself types nothing");
+        assert_eq!(k.feed(SHIFT), None, "Shift itself types nothing");
+        assert_eq!(k.feed(P), Some(Key::Chord(b'P')));
+    }
+
+    #[test]
+    fn the_chord_does_not_care_which_modifier_came_first() {
+        let mut k = Keyboard::new();
+        k.feed(SHIFT);
+        k.feed(CTRL);
+        assert_eq!(k.feed(P), Some(Key::Chord(b'P')));
+    }
+
+    #[test]
+    fn right_ctrl_arrives_behind_the_extended_prefix() {
+        // E0 1D is right Ctrl; E0 9D releases it. Missing this would leave the
+        // chord working on only one half of the keyboard.
+        let mut k = Keyboard::new();
+        assert_eq!(k.feed(0xE0), None);
+        assert_eq!(k.feed(0x1D), None);
+        assert!(k.ctrl_held(), "right Ctrl did not register");
+        k.feed(SHIFT);
+        assert_eq!(k.feed(P), Some(Key::Chord(b'P')));
+        assert_eq!(k.feed(0xE0), None);
+        assert_eq!(k.feed(0x9D), None);
+        assert!(!k.ctrl_held(), "right Ctrl stuck down after its break code");
+    }
+
+    #[test]
+    fn plain_p_still_types_a_p() {
+        let mut k = Keyboard::new();
+        assert_eq!(k.feed(P), Some(Key::Char(b'p')));
+    }
+
+    #[test]
+    fn shift_p_still_types_a_capital_p() {
+        let mut k = Keyboard::new();
+        k.feed(SHIFT);
+        assert_eq!(k.feed(P), Some(Key::Char(b'P')));
+    }
+
+    #[test]
+    fn ctrl_alone_types_nothing() {
+        let mut k = Keyboard::new();
+        k.feed(CTRL);
+        for code in [P, 0x1E, 0x02, 0x39] {
+            assert_eq!(k.feed(code), None, "Ctrl+{code:#x} produced a key");
+        }
+    }
+
+    #[test]
+    fn ctrl_shift_on_a_non_letter_is_not_a_chord() {
+        // Only letters carry a chord; Ctrl+Shift+1 must not type '!' either.
+        let mut k = Keyboard::new();
+        k.feed(CTRL);
+        k.feed(SHIFT);
+        assert_eq!(k.feed(0x02), None, "Ctrl+Shift+1 leaked a character");
+        assert_eq!(k.feed(0x39), None, "Ctrl+Shift+space leaked a character");
+    }
+
+    #[test]
+    fn releasing_ctrl_restores_typing() {
+        // A Ctrl that stuck down would make the keyboard silently stop working.
+        let mut k = Keyboard::new();
+        k.feed(CTRL);
+        assert_eq!(k.feed(P), None);
+        assert_eq!(k.feed(CTRL | 0x80), None);
+        assert!(!k.ctrl_held());
+        assert_eq!(k.feed(P), Some(Key::Char(b'p')), "Ctrl stuck after release");
+    }
+
+    #[test]
+    fn a_chord_is_never_text() {
+        let mut f = TextField::<8>::new();
+        assert!(!f.apply(Key::Chord(b'P')), "the chord was treated as text");
+        assert!(f.is_empty());
+    }
+
+    #[test]
+    fn the_serial_console_can_reach_the_chord_too() {
+        // aarch64 polls a PL011 console, not an i8042 — without this the
+        // screen would be unreachable on one of the two shipped targets.
+        assert_eq!(Keyboard::from_serial(0x10), Some(Key::Chord(b'P')));
+        // And the existing terminal subset is untouched.
+        assert_eq!(Keyboard::from_serial(b'p'), Some(Key::Char(b'p')));
+        assert_eq!(Keyboard::from_serial(b'P'), Some(Key::Char(b'P')));
     }
 }
 

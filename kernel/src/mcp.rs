@@ -672,6 +672,245 @@ pub fn portal_status() -> PortalStatus {
     st
 }
 
+// --- portal config (hidden screen) -----------------------------------------
+//
+// Three calls behind the Ctrl+Shift+P screen. Nothing here writes to COM1: the
+// password must never reach the serial log, so it is never handed to anything
+// that logs, and the reply lines carry no secret to leak back.
+
+/// Which portal family the host talks to.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PortalFamily {
+    Teddy,
+    Market,
+    /// Configured to reach nothing at all.
+    None,
+}
+
+impl PortalFamily {
+    pub const ALL: [PortalFamily; 3] =
+        [PortalFamily::Teddy, PortalFamily::Market, PortalFamily::None];
+
+    /// The `family=` token on the wire. Always one of three literals, so it is
+    /// always safe to splice into a CALL line.
+    pub fn wire(self) -> &'static str {
+        match self {
+            PortalFamily::Teddy => "teddy",
+            PortalFamily::Market => "market",
+            PortalFamily::None => "none",
+        }
+    }
+
+    /// What the person choosing it reads on screen.
+    pub fn label(self) -> &'static str {
+        match self {
+            PortalFamily::Teddy => "teddysearch.com",
+            PortalFamily::Market => "superintelmarkets.com",
+            PortalFamily::None => "None (offline)",
+        }
+    }
+
+    pub fn from_wire(s: &str) -> Option<Self> {
+        PortalFamily::ALL.into_iter().find(|f| f.wire() == s)
+    }
+}
+
+/// Reply to `CALL config.status`.
+///
+/// Unlock is per-connection on the host, so `locked` is session state that can
+/// come back at any time. Re-read this rather than remembering an old answer.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ConfigStatus {
+    pub reachable: bool,
+    pub family: PortalFamily,
+    pub locked: bool,
+    pub configured: bool,
+}
+
+impl ConfigStatus {
+    /// What to believe when the bridge never answered: locked, nothing set.
+    /// Failing closed matters more here than anywhere else on the machine.
+    pub const fn offline() -> Self {
+        Self {
+            reachable: false,
+            family: PortalFamily::None,
+            locked: true,
+            configured: false,
+        }
+    }
+}
+
+/// `CALL config.status` -> `OK config.status portal=… locked=… configured=…`.
+pub fn config_status() -> ConfigStatus {
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+    if matches!(ping_bridge(&com2, &mut line), BridgeStatus::Offline) {
+        return ConfigStatus::offline();
+    }
+    com2.write_str("CALL config.status\n");
+
+    let mut st = ConfigStatus {
+        reachable: true,
+        ..ConfigStatus::offline()
+    };
+    for _ in 0..8 {
+        let Some(n) = com2.read_line(&mut line, TIMEOUT_REPLY) else {
+            break;
+        };
+        let resp = str_prefix(&line[..n]);
+        if resp == "END" || resp.starts_with("ERR ") {
+            break;
+        }
+        if let Some(rest) = resp.strip_prefix("OK config.status ") {
+            for field in rest.split_whitespace() {
+                if let Some(v) = field.strip_prefix("portal=") {
+                    st.family = PortalFamily::from_wire(v).unwrap_or(PortalFamily::None);
+                } else if let Some(v) = field.strip_prefix("locked=") {
+                    st.locked = v == "1";
+                } else if let Some(v) = field.strip_prefix("configured=") {
+                    st.configured = v == "1";
+                }
+            }
+        }
+    }
+    st
+}
+
+/// Longest secret the guest will frame into a CALL line.
+pub const PASS_MAX: usize = 32;
+
+/// Can this secret be spliced into a whitespace-delimited CALL line at all?
+///
+/// The request builders in this module concatenate raw values into one line
+/// and the wire has no escape syntax. A space would split the secret into a
+/// second argument; a newline would end the request and let the tail arrive as
+/// a forged one. Neither can be encoded, so the only safe answer is to refuse
+/// to send — the caller says so on screen and COM2 is never opened.
+pub fn pass_frameable(pass: &str) -> bool {
+    !pass.is_empty()
+        && pass.len() <= PASS_MAX
+        // Printable ASCII with space excluded: no separator, no control byte
+        // (\n, \r, \t), nothing outside what the font can mask.
+        && pass.bytes().all(|b| (0x21..=0x7E).contains(&b) && b != b'|')
+}
+
+/// Outcome of `CALL config.unlock`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum UnlockStatus {
+    Ok,
+    BadPass,
+    /// The host has no password set; there is nothing to unlock.
+    NotConfigured,
+    TooMany,
+    Offline,
+    /// The secret could not be framed onto the wire. Never sent.
+    Unsendable,
+}
+
+/// `CALL config.unlock pass=<secret>`.
+///
+/// The secret is written to COM2 and nowhere else — never to COM1, never into
+/// a status buffer, never into a reply this function returns.
+pub fn config_unlock(pass: &str) -> UnlockStatus {
+    // Checked before any serial I/O: an unframeable secret must not reach the
+    // wire even partially.
+    if !pass_frameable(pass) {
+        return UnlockStatus::Unsendable;
+    }
+
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+    if matches!(ping_bridge(&com2, &mut line), BridgeStatus::Offline) {
+        return UnlockStatus::Offline;
+    }
+
+    com2.write_str("CALL config.unlock pass=");
+    com2.write_str(pass);
+    com2.write_str("\n");
+
+    let mut status = UnlockStatus::Offline;
+    for _ in 0..8 {
+        let Some(n) = com2.read_line(&mut line, TIMEOUT_REPLY) else {
+            break;
+        };
+        let resp = str_prefix(&line[..n]);
+        if resp.starts_with("OK config.unlock") {
+            status = UnlockStatus::Ok;
+        } else if resp.starts_with("ERR config.unlock") {
+            status = if resp.contains("not_configured") {
+                UnlockStatus::NotConfigured
+            } else if resp.contains("too_many") {
+                UnlockStatus::TooMany
+            } else {
+                UnlockStatus::BadPass
+            };
+            break;
+        }
+        if resp == "END" {
+            break;
+        }
+    }
+    status
+}
+
+/// Outcome of `CALL config.portal`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum PortalSetStatus {
+    /// Accepted; carries the family the host echoed back.
+    Ok(PortalFamily),
+    /// The session lost its unlock. Ask for the password again.
+    Locked,
+    UnknownFamily,
+    Offline,
+    Failed,
+}
+
+/// `CALL config.portal family=<teddy|market|none>`.
+pub fn config_portal(family: PortalFamily) -> PortalSetStatus {
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+    if matches!(ping_bridge(&com2, &mut line), BridgeStatus::Offline) {
+        return PortalSetStatus::Offline;
+    }
+
+    com2.write_str("CALL config.portal family=");
+    com2.write_str(family.wire());
+    com2.write_str("\n");
+
+    let mut status = PortalSetStatus::Offline;
+    for _ in 0..8 {
+        let Some(n) = com2.read_line(&mut line, TIMEOUT_REPLY) else {
+            break;
+        };
+        let resp = str_prefix(&line[..n]);
+        if let Some(rest) = resp.strip_prefix("OK config.portal") {
+            // Trust the echo over the request: the host is the authority on
+            // what it actually stored.
+            let echoed = rest
+                .split_whitespace()
+                .find_map(|f| f.strip_prefix("family="))
+                .and_then(PortalFamily::from_wire);
+            status = PortalSetStatus::Ok(echoed.unwrap_or(family));
+        } else if resp.starts_with("ERR config.portal") {
+            status = if resp.contains("locked") {
+                PortalSetStatus::Locked
+            } else if resp.contains("unknown_family") {
+                PortalSetStatus::UnknownFamily
+            } else {
+                PortalSetStatus::Failed
+            };
+            break;
+        }
+        if resp == "END" {
+            break;
+        }
+    }
+    status
+}
+
 /// Ask the bridge to build what a newly granted capability needs.
 ///
 /// Granting a capability should make it work, not merely permit it. Without
@@ -1551,6 +1790,104 @@ mod tests {
         assert!(MARKET_PORTALS.contains(&"market.fear_greed"));
         // No loose prefix: unknown market.* must not sneak through.
         assert!(!MARKET_PORTALS.contains(&"market.nope"));
+    }
+}
+
+/// The portal config wire: framing safety first.
+///
+/// COM2 is inert in host tests (`Serial::com2()` has no base on this target),
+/// so every call here degrades to the offline answer instead of hanging — which
+/// is exactly the behaviour the screen depends on.
+#[cfg(test)]
+mod config_tests {
+    use super::*;
+
+    #[test]
+    fn a_password_with_a_space_is_refused_rather_than_framed() {
+        // "hunter 2" spliced into `CALL config.unlock pass=hunter 2` would send
+        // "hunter" as the secret and "2" as a second argument. There is no way
+        // to escape it on this wire, so it must not be sent at all.
+        assert!(!pass_frameable("hunter 2"));
+        assert_eq!(config_unlock("hunter 2"), UnlockStatus::Unsendable);
+        assert!(!pass_frameable(" leading"));
+        assert!(!pass_frameable("trailing "));
+        assert_eq!(config_unlock("trailing "), UnlockStatus::Unsendable);
+    }
+
+    #[test]
+    fn a_password_with_a_newline_is_refused_rather_than_framed() {
+        // The worst case: everything after the newline arrives as its own
+        // forged CALL line.
+        assert!(!pass_frameable("pass\nCALL config.portal family=teddy"));
+        assert_eq!(
+            config_unlock("pass\nCALL config.portal family=teddy"),
+            UnlockStatus::Unsendable
+        );
+        assert!(!pass_frameable("pass\r"));
+        assert!(!pass_frameable("pass\t"));
+        assert_eq!(config_unlock("pass\r"), UnlockStatus::Unsendable);
+    }
+
+    #[test]
+    fn other_unframeable_secrets_are_refused_too() {
+        assert!(!pass_frameable(""), "an empty secret is not a password");
+        assert!(!pass_frameable("has|pipe"), "the row separator must not pass");
+        assert!(!pass_frameable("nul\0byte"));
+        // Longer than the guest will frame.
+        let long = "x".repeat(PASS_MAX + 1);
+        assert!(!pass_frameable(&long));
+        assert_eq!(config_unlock(&long), UnlockStatus::Unsendable);
+    }
+
+    #[test]
+    fn ordinary_secrets_are_framed() {
+        // The refusal must be narrow: real passwords still have to work.
+        for ok in ["hunter2", "s3cr3t!", "a", "Tr0ub4dor&3", "~`{}[]<>,.?/"] {
+            assert!(pass_frameable(ok), "refused a usable password: {ok:?}");
+        }
+        assert!(pass_frameable(&"x".repeat(PASS_MAX)));
+    }
+
+    #[test]
+    fn an_offline_bridge_answers_instead_of_hanging() {
+        // No host: every call must come back with something the screen can
+        // say out loud.
+        assert_eq!(config_unlock("hunter2"), UnlockStatus::Offline);
+        assert_eq!(config_portal(PortalFamily::Teddy), PortalSetStatus::Offline);
+        let st = config_status();
+        assert!(!st.reachable);
+        assert!(st.locked, "an unreachable bridge must never read as unlocked");
+        assert!(!st.configured);
+        assert_eq!(st.family, PortalFamily::None);
+    }
+
+    #[test]
+    fn the_wire_tokens_match_the_agreed_protocol() {
+        assert_eq!(PortalFamily::Teddy.wire(), "teddy");
+        assert_eq!(PortalFamily::Market.wire(), "market");
+        assert_eq!(PortalFamily::None.wire(), "none");
+        for f in PortalFamily::ALL {
+            assert_eq!(PortalFamily::from_wire(f.wire()), Some(f));
+            // A family token is spliced into a CALL line unchecked, so it must
+            // itself be frameable.
+            assert!(pass_frameable(f.wire()), "{:?} is not wire-safe", f);
+        }
+        assert_eq!(PortalFamily::from_wire("nope"), None);
+        assert_eq!(PortalFamily::from_wire(""), None);
+    }
+
+    #[test]
+    fn the_three_choices_are_named_and_renderable() {
+        assert_eq!(PortalFamily::Teddy.label(), "teddysearch.com");
+        assert_eq!(PortalFamily::Market.label(), "superintelmarkets.com");
+        assert_eq!(PortalFamily::None.label(), "None (offline)");
+        for f in PortalFamily::ALL {
+            let l = f.label();
+            assert!(
+                l.bytes().all(|b| (0x20..=0x7E).contains(&b)),
+                "non-ASCII renders as '?': {l:?}"
+            );
+        }
     }
 }
 

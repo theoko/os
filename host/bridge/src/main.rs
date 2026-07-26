@@ -6,6 +6,7 @@
 
 mod graph;
 mod agent;
+mod config;
 mod intent;
 mod workspace;
 mod portals;
@@ -226,6 +227,10 @@ fn handle_client<R: Read, W: Write>(
     mut writer: W,
     backends: &Backends,
 ) -> std::io::Result<()> {
+    // Operator unlock is per connection and lives here: never a global, never
+    // written down. A new connection starts locked however many others are
+    // unlocked, and closing the socket is what re-locks it.
+    let mut session = config::Session::new();
     let mut raw = String::new();
     loop {
         if read_line_bounded(&mut reader, &mut raw)?.is_none() {
@@ -237,7 +242,7 @@ fn handle_client<R: Read, W: Write>(
         if line.is_empty() {
             continue;
         }
-        eprintln!("← {line}");
+        eprintln!("← {}", redact_line(&line));
 
         // Multi-line save: CALL skills.save name=foo  then LINE… END.
         // A one-line form with desc= creates a starter skill with no body read,
@@ -313,7 +318,7 @@ fn handle_client<R: Read, W: Write>(
             continue;
         }
 
-        let reply = dispatch(&line, backends);
+        let reply = dispatch_session(&line, backends, &mut session);
         if reply.is_empty() {
             continue;
         }
@@ -359,7 +364,34 @@ fn scrub_protocol_line(s: &str) -> String {
     out.trim().to_string()
 }
 
+/// The log form of a request line: a secret must never reach `.bridge.log`.
+///
+/// Redaction is by *key*, not by tool name, so a mistyped tool
+/// (`CALL config.unlok pass=…`) still gets scrubbed. Everything from `pass=` to
+/// end of line goes, because `parse_args` lets a value contain spaces — a
+/// password with a space in it would otherwise survive as trailing tokens.
+fn redact_line(line: &str) -> String {
+    match line.find("pass=") {
+        Some(i) => format!("{}pass=***", &line[..i]),
+        None => line.to_string(),
+    }
+}
+
+/// Dispatch with no operator session — a fresh, locked one per call.
+///
+/// Live connections use `dispatch_session` so unlock state survives between
+/// their requests; this is the entry point for callers that have no connection
+/// (tests), and being locked is the correct default for them.
+#[cfg(test)]
 fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
+    dispatch_session(line, backends, &mut config::Session::new())
+}
+
+fn dispatch_session(
+    line: &str,
+    backends: &Backends,
+    session: &mut config::Session,
+) -> Vec<String> {
     let (cmd, rest) = split_word(line);
     match cmd {
         "PING" => vec!["OK pong".into()],
@@ -368,12 +400,15 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
             // and the portal pair (portal.status + portal.forget) are all
             // dispatchable, so all of them are advertised. `agent.plan` is not
             // listed — the implemented tool is `agent.act`.
-            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,skills.forget,search.query,agent.act,intent.resolve,workspace.index,workspace.recent,tsearch.sync,teddy.health,teddy.fear_greed,teddy.gex,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,portal.forget,portal.status,email.forget,doc.read".into()]
+            // Portal tools stay listed whichever family is active: the list is
+            // what the bridge implements, and a tool that is off answers with
+            // its own reason rather than vanishing.
+            vec!["OK tools=email.search,email.send,calendar.list,skills.list,skills.get,skills.save,skills.forget,search.query,agent.act,intent.resolve,workspace.index,workspace.recent,tsearch.sync,teddy.health,teddy.fear_greed,teddy.gex,market.health,market.fear_greed,audio.transcribe,workspace.forget,audio.forget,portal.forget,portal.status,email.forget,doc.read,config.status,config.unlock,config.portal".into()]
         }
         "CALL" => {
             let (tool, rest) = split_word(rest);
             let args = parse_args(rest);
-            call_tool(tool, &args, backends)
+            call_tool(tool, &args, backends, session)
         }
         _ => {
             // Ignore UEFI/Limine console noise on the same COM2 pipe.
@@ -417,7 +452,12 @@ fn parse_args(rest: &str) -> Vec<(String, String)> {
     out
 }
 
-fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<String> {
+fn call_tool(
+    tool: &str,
+    args: &[(String, String)],
+    backends: &Backends,
+    session: &mut config::Session,
+) -> Vec<String> {
     match tool {
         // The old agent.plan returned prose. agent.act returns prose *plus*
         // steps you can click, because a plan you cannot act on is a note.
@@ -549,9 +589,26 @@ fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<
                 Err(e) => vec![format!("ERR skills.save {e}")],
             }
         }
-        // Portal connectors leave the machine — same consent bit as tsearch.sync.
-        tool if portals::is_portal_tool(tool) && !matches!(arg_val(args, "portal"), Some("1")) => {
+        // Operator configuration. `config.status` answers while locked — it
+        // names no secret and the guest needs it to draw the panel.
+        "config.status" => config::status(session),
+        "config.unlock" => config::unlock(session, arg_val(args, "pass").unwrap_or("")),
+        "config.portal" => config::set_portal(session, arg_val(args, "family")),
+        // Portal connectors leave the machine — same consent bit as
+        // tsearch.sync. The guest's consent bit is checked before the
+        // operator's family choice so that a tool the guest never asked for
+        // reports the missing grant it always did; sending `portal=1` is what
+        // then surfaces the family policy.
+        tool if portals::find_any(tool).is_some()
+            && !matches!(arg_val(args, "portal"), Some("1")) =>
+        {
             vec![format!("ERR {tool} needs_portal_cap")]
+        }
+        // A real portal tool from the family this machine is not configured
+        // for. Distinct from `not_found`: the tool exists, the operator has it
+        // switched off, and no request leaves the host.
+        tool if portals::find_any(tool).is_some() && !portals::is_portal_tool(tool) => {
+            vec![format!("ERR {tool} portal_family_disabled")]
         }
         tool if portals::is_portal_tool(tool) => {
             let ep = portals::find(tool).expect("checked");
@@ -1447,6 +1504,72 @@ mod tests {
         assert_eq!(lines[2], "OK pong", "desync after denied body: {lines:?}");
     }
 
+    /// Everything `LIST` advertises must reach a real arm of `call_tool`.
+    /// A tool listed but not dispatchable is a guest button that always fails.
+    #[test]
+    fn every_listed_tool_is_dispatchable() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // The list includes the *.forget tools, which delete real host state.
+        // Point every one of them at a scratch dir before calling anything.
+        let dir = std::env::temp_dir().join(format!("os-listable-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        unsafe {
+            std::env::set_var("OS_TSEARCH_CACHE", dir.join("teddy.json"));
+            std::env::set_var("OS_PORTAL_SNAPSHOT", dir.join("portals.json"));
+            std::env::set_var("OS_GRAPH_PATH", dir.join("emails.json"));
+            std::env::set_var("OS_WORKSPACE_INDEX", dir.join("workspace.json"));
+            std::env::set_var("OS_TRANSCRIPT_STORE", dir.join("transcripts.json"));
+            std::env::set_var("OS_SKILLS_USER", dir.join("skills"));
+            std::env::set_var("OS_CONFIG_PATH", dir.join("config.json"));
+            std::env::set_var("OS_CONFIG_PASSWORD", "");
+        }
+        tsearch::clear_memory();
+
+        let listing = dispatch("LIST", &test_backends());
+        let tools: Vec<String> = listing[0]
+            .trim_start_matches("OK tools=")
+            .split(',')
+            .map(String::from)
+            .collect();
+        assert!(tools.len() > 20, "{listing:?}");
+        for tool in &tools {
+            // Args only where a missing one would produce the tool's *own*
+            // not_found and hide the real answer; no live portal call is made
+            // because none of these carry portal=1.
+            let call = match tool.as_str() {
+                "skills.get" => "CALL skills.get name=email-triage".to_string(),
+                t => format!("CALL {t}"),
+            };
+            let reply = dispatch(&call, &test_backends());
+            assert!(!reply.is_empty(), "{tool} answered nothing");
+            assert_ne!(
+                reply[0],
+                format!("ERR {tool} not_found"),
+                "{tool} is listed but not dispatchable"
+            );
+        }
+        assert!(tools.iter().any(|t| t == "config.status"), "{listing:?}");
+        assert!(tools.iter().any(|t| t == "config.unlock"), "{listing:?}");
+        assert!(tools.iter().any(|t| t == "config.portal"), "{listing:?}");
+
+        unsafe {
+            for k in [
+                "OS_TSEARCH_CACHE",
+                "OS_PORTAL_SNAPSHOT",
+                "OS_GRAPH_PATH",
+                "OS_WORKSPACE_INDEX",
+                "OS_TRANSCRIPT_STORE",
+                "OS_SKILLS_USER",
+                "OS_CONFIG_PATH",
+                "OS_CONFIG_PASSWORD",
+            ] {
+                std::env::remove_var(k);
+            }
+        }
+        tsearch::clear_memory();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn portal_forget_is_idempotent() {
         let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
@@ -1468,6 +1591,258 @@ mod tests {
         }
         tsearch::clear_memory();
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Operator config over the wire: unlock is per connection, the family choice
+/// is host state, and neither the log nor a disabled family leaks.
+#[cfg(test)]
+mod config_wire_tests {
+    use super::*;
+
+    const PASS: &str = "correct horse battery staple";
+
+    fn backends() -> Backends {
+        Backends { email: "mock".into(), search: "tfidf".into() }
+    }
+
+    /// Point config at a scratch dir and set the admin password from the
+    /// environment, so no test reads the real Keychain or the real
+    /// Application Support config. Caller holds `graph::ENV_LOCK`.
+    fn scratch(tag: &str, pass: Option<&str>) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("os-cfgwire-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("scratch");
+        unsafe {
+            std::env::set_var("OS_CONFIG_PATH", dir.join("config.json"));
+            std::env::set_var("OS_CONFIG_PASSWORD", pass.unwrap_or(""));
+        }
+        dir
+    }
+
+    fn cleanup(dir: std::path::PathBuf) {
+        unsafe {
+            std::env::remove_var("OS_CONFIG_PATH");
+            std::env::remove_var("OS_CONFIG_PASSWORD");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Run one whole connection over `input`, as the socket path would.
+    fn connection(input: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        handle_client(BufReader::new(input.as_bytes()), &mut out, &backends())
+            .expect("handle_client");
+        String::from_utf8(out)
+            .expect("utf8")
+            .lines()
+            .map(String::from)
+            .collect()
+    }
+
+    #[test]
+    fn status_is_answered_while_locked_and_names_no_secret() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = scratch("status", Some(PASS));
+        let r = dispatch("CALL config.status", &backends());
+        assert_eq!(r.len(), 1, "single line, no END: {r:?}");
+        assert_eq!(r[0], "OK config.status portal=none locked=1 configured=1");
+        assert!(!r[0].contains(PASS));
+        // No password on the host: configured=0. `locked` still describes this
+        // connection only — an unconfigured host is one nobody can unlock, so
+        // it reads as locked and `config.portal` stays refused.
+        unsafe { std::env::set_var("OS_CONFIG_PASSWORD", "") };
+        let r = dispatch("CALL config.status", &backends());
+        assert_eq!(r[0], "OK config.status portal=none locked=1 configured=0", "{r:?}");
+        cleanup(dir);
+    }
+
+    #[test]
+    fn unlock_accepts_the_secret_and_rejects_everything_else() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = scratch("unlock", Some(PASS));
+
+        let mut s = config::Session::new();
+        assert_eq!(
+            call_tool("config.unlock", &args(&[("pass", "wrong")]), &backends(), &mut s),
+            vec!["ERR config.unlock bad_pass".to_string()]
+        );
+        assert!(s.locked(), "a wrong guess must not unlock");
+        // A prefix of the real secret is not the real secret.
+        assert_eq!(
+            call_tool("config.unlock", &args(&[("pass", "correct horse")]), &backends(), &mut s),
+            vec!["ERR config.unlock bad_pass".to_string()]
+        );
+        assert_eq!(
+            call_tool("config.unlock", &args(&[("pass", PASS)]), &backends(), &mut s),
+            vec!["OK config.unlock".to_string()]
+        );
+        assert!(!s.locked());
+
+        // Status now reports this connection as unlocked.
+        let st = call_tool("config.status", &[], &backends(), &mut s);
+        assert!(st[0].contains("locked=0"), "{st:?}");
+        cleanup(dir);
+    }
+
+    #[test]
+    fn unlock_on_a_host_with_no_password_says_so() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        // No password at all — and OS_CONFIG_PASSWORD="" keeps this off the
+        // real Keychain rather than merely off a real password.
+        let dir = scratch("nopass", None);
+        let r = dispatch("CALL config.unlock pass=anything", &backends());
+        assert_eq!(r, vec!["ERR config.unlock not_configured".to_string()]);
+        // And an unconfigured host still cannot be configured by a guest.
+        let r = dispatch("CALL config.portal family=teddy", &backends());
+        assert_eq!(r, vec!["ERR config.portal locked".to_string()]);
+        cleanup(dir);
+    }
+
+    #[test]
+    fn repeated_failures_cut_the_connection_off_entirely() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = scratch("toomany", Some(PASS));
+        let mut s = config::Session::new();
+        for i in 1..=config::MAX_UNLOCK_ATTEMPTS {
+            let r = call_tool("config.unlock", &args(&[("pass", "nope")]), &backends(), &mut s);
+            assert_eq!(r, vec!["ERR config.unlock bad_pass".to_string()], "attempt {i}");
+        }
+        let capped = call_tool("config.unlock", &args(&[("pass", "nope")]), &backends(), &mut s);
+        assert_eq!(capped, vec!["ERR config.unlock too_many".to_string()]);
+        // Past the cap even the right password is refused: grinding for it and
+        // then using it on the same connection must not work.
+        let right = call_tool("config.unlock", &args(&[("pass", PASS)]), &backends(), &mut s);
+        assert_eq!(right, vec!["ERR config.unlock too_many".to_string()]);
+        assert!(s.locked());
+        cleanup(dir);
+    }
+
+    #[test]
+    fn a_second_connection_does_not_inherit_the_first_unlock() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = scratch("perconn", Some(PASS));
+
+        let first = connection(&format!(
+            "CALL config.unlock pass={PASS}\nCALL config.portal family=market\n"
+        ));
+        assert_eq!(first[0], "OK config.unlock", "{first:?}");
+        assert_eq!(first[1], "OK config.portal family=market", "{first:?}");
+
+        // New connection: locked again, though the family it set persists.
+        let second = connection("CALL config.status\nCALL config.portal family=teddy\n");
+        assert_eq!(second[0], "OK config.status portal=market locked=1 configured=1", "{second:?}");
+        assert_eq!(second[1], "ERR config.portal locked", "{second:?}");
+        assert_eq!(config::family(), config::Family::Market, "guest must not have changed it");
+        cleanup(dir);
+    }
+
+    #[test]
+    fn the_family_choice_survives_a_reload() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = scratch("persist", Some(PASS));
+
+        let locked = dispatch("CALL config.portal family=teddy", &backends());
+        assert_eq!(locked, vec!["ERR config.portal locked".to_string()]);
+        assert_eq!(config::family(), config::Family::None, "refused write must not land");
+
+        let mut s = config::Session::new();
+        call_tool("config.unlock", &args(&[("pass", PASS)]), &backends(), &mut s);
+        let ok = call_tool("config.portal", &args(&[("family", "teddy")]), &backends(), &mut s);
+        assert_eq!(ok, vec!["OK config.portal family=teddy".to_string()]);
+
+        // "Reload" = read it back through a path that holds no state.
+        assert_eq!(config::family(), config::Family::Teddy);
+        let raw = std::fs::read_to_string(config::config_path()).expect("config written");
+        assert!(raw.contains("teddy"), "{raw}");
+        assert!(!raw.contains(PASS), "the password must never be persisted: {raw}");
+        let fresh = connection("CALL config.status\n");
+        assert_eq!(fresh[0], "OK config.status portal=teddy locked=1 configured=1");
+
+        // Unknown spellings are rejected rather than silently becoming none.
+        for bad in ["", "family=teddysearch", "family=TEDDY", "family=all"] {
+            let r = call_tool(
+                "config.portal",
+                &parse_args(bad),
+                &backends(),
+                &mut s,
+            );
+            assert_eq!(r, vec!["ERR config.portal unknown_family".to_string()], "{bad:?}");
+        }
+        assert_eq!(config::family(), config::Family::Teddy, "a bad value must not clear it");
+        cleanup(dir);
+    }
+
+    #[test]
+    fn a_disabled_family_cannot_be_called_by_the_guest() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = scratch("enforce", Some(PASS));
+
+        config::set_family(config::Family::Teddy).expect("write");
+        // portal=1 is present: this is the operator's policy refusing, not the
+        // guest's missing consent bit, and no request leaves the host.
+        for tool in ["market.health", "market.fear_greed"] {
+            let r = dispatch(&format!("CALL {tool} portal=1"), &backends());
+            assert_eq!(r, vec![format!("ERR {tool} portal_family_disabled")], "{tool}");
+            // Distinct from an unknown tool — the guest must be able to tell
+            // "switched off here" from "no such tool".
+            assert!(!r[0].contains("not_found"), "{r:?}");
+        }
+        assert!(portals::is_portal_tool("teddy.gex"), "the chosen family stays live");
+
+        config::set_family(config::Family::None).expect("write");
+        for tool in ["market.health", "teddy.health", "teddy.gex"] {
+            let r = dispatch(&format!("CALL {tool} portal=1"), &backends());
+            assert_eq!(r, vec![format!("ERR {tool} portal_family_disabled")], "{tool}");
+        }
+        // An actually unknown tool still reports not_found.
+        let unknown = dispatch("CALL market.nope portal=1", &backends());
+        assert_eq!(unknown, vec!["ERR market.nope not_found".to_string()]);
+        cleanup(dir);
+    }
+
+    #[test]
+    fn the_password_is_redacted_wherever_a_request_is_logged() {
+        assert_eq!(
+            redact_line(&format!("CALL config.unlock pass={PASS}")),
+            "CALL config.unlock pass=***"
+        );
+        // Redaction is by key, so a mistyped tool name still scrubs.
+        assert_eq!(redact_line("CALL config.unlok pass=s3cret"), "CALL config.unlok pass=***");
+        // Trailing args go too: a value may contain spaces, so anything after
+        // `pass=` could still be part of the secret.
+        assert_eq!(
+            redact_line("CALL config.unlock pass=s3cret k=1"),
+            "CALL config.unlock pass=***"
+        );
+        assert_eq!(redact_line("PING"), "PING");
+        assert_eq!(redact_line("CALL search.query q=pass"), "CALL search.query q=pass");
+
+        // Every request-log call site must go through it. This is the one place
+        // a secret would otherwise land in .bridge.log verbatim. The needles
+        // are assembled at runtime so this test cannot match its own source.
+        let src = include_str!("main.rs");
+        let arrow = '\u{2190}';
+        let redacted = format!("eprintln!(\"{arrow} {{}}\", redact_line(&line));");
+        let raw = format!("eprintln!(\"{arrow} {{line}}\")");
+        assert!(src.contains(&redacted), "the request log must be redacted");
+        assert!(!src.contains(&raw), "a raw request log came back");
+    }
+
+    #[test]
+    fn unlock_over_a_socket_never_echoes_the_secret_back() {
+        let _env = graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = scratch("echo", Some(PASS));
+        let out = connection(&format!("CALL config.unlock pass={PASS}\nCALL config.status\n"));
+        for line in &out {
+            assert!(!line.contains(PASS), "secret echoed on the wire: {line}");
+        }
+        assert_eq!(out[0], "OK config.unlock");
+        cleanup(dir);
+    }
+
+    fn args(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
 }
 

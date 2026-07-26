@@ -107,8 +107,6 @@ impl Rect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CtaId {
     Ready,
-    /// Opens the consent screen where a person can connect their own sources.
-    Portal,
     Skills,
 }
 
@@ -137,7 +135,6 @@ pub enum HomeHit {
 #[derive(Clone, Copy, Debug)]
 pub struct CtaTargets {
     pub ready: Rect,
-    pub portal: Rect,
     pub skills: Rect,
 }
 
@@ -147,8 +144,6 @@ impl CtaTargets {
         // (that used to restart setup whenever you clicked the query box).
         if self.ready.w > 0 && self.ready.contains(px, py) {
             Some(CtaId::Ready)
-        } else if self.portal.w > 0 && self.portal.contains(px, py) {
-            Some(CtaId::Portal)
         } else if self.skills.w > 0 && self.skills.contains(px, py) {
             Some(CtaId::Skills)
         } else {
@@ -286,29 +281,6 @@ pub fn draw_home_full(
         &SMALL_FACE,
         0,
         theme::MUTED,
-    );
-
-    // A search box with no obvious route to personal sources makes the OS
-    // feel like it has forgotten the user. Keep that route beside search,
-    // rather than burying it behind a generic settings label.
-    let portal = portal_rect(w, h);
-    fb.fill_round_rect(portal.x, portal.y, portal.w, portal.h, portal.h / 2, theme::TINT_BORDER);
-    fb.fill_round_rect(
-        portal.x + 1,
-        portal.y + 1,
-        portal.w - 2,
-        portal.h - 2,
-        (portal.h - 2) / 2,
-        theme::TINT_BG,
-    );
-    let portal_base = portal.y + (portal.h - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
-    fb.draw_text_centered(
-        portal.x + portal.w / 2,
-        portal_base,
-        "Connect tSearch account",
-        &SMALL_FACE,
-        0,
-        theme::ACCENT,
     );
 
     // Destinations, each showing a real number rather than a slogan.
@@ -602,13 +574,13 @@ pub fn search_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
     (x, 132, cw, 52)
 }
 
-pub(crate) fn tile_top(_h: i32) -> i32 {
-    // Below the portal pill, not through it. The pill spans 222..250 and the
-    // tiles used to start at 242, so its bottom 8px were drawn over the tile
-    // row - and because CtaTargets::hit checks the portal before the cards,
-    // clicking the top edge of the Search tile opened the portal instead.
-    let p = portal_rect(0, 0);
-    p.y + p.h + 16
+pub(crate) fn tile_top(h: i32) -> i32 {
+    // Clear of the search field and of the hint drawn 22px under it. This used
+    // to be derived from the "Connect tSearch account" pill that sat between
+    // the two; with the pill gone the tiles take the space it occupied rather
+    // than leaving a band of nothing behind.
+    let (_, fy, _, fh) = search_rect(0, h);
+    fy + fh + 38
 }
 
 pub(crate) const TILE_H: i32 = 78;
@@ -625,8 +597,6 @@ pub fn cta_targets(w: i32, h: i32, _skills: &SkillPeek) -> CtaTargets {
             w: sw,
             h: sh,
         },
-        // The route to personal sources still has its own pill beside search.
-        portal: portal_rect(w, h),
         skills: Rect {
             x: 0,
             y: 0,
@@ -634,15 +604,6 @@ pub fn cta_targets(w: i32, h: i32, _skills: &SkillPeek) -> CtaTargets {
             h: 0,
         },
     }
-}
-
-/// The personal-sources action sits directly below the search guidance.
-/// Keeping it above the tiles makes it visible on a 768px guest display.
-pub fn portal_rect(w: i32, h: i32) -> Rect {
-    let (fx, fy, fw, fh) = search_rect(w, h);
-    let pw = 238.min(fw);
-    let ph = 28;
-    Rect { x: fx + fw - pw, y: fy + fh + 38, w: pw, h: ph }
 }
 
 /// Bounding box of home tile `i` (0 = Search, 1 = Capabilities, 2 = Skills).
@@ -811,16 +772,6 @@ mod tests {
     }
 
     #[test]
-    fn personal_portal_action_is_visible_and_clickable() {
-        let mail = MailPeek::empty(BridgeStatus::Offline);
-        let files = FilePeek::empty(BridgeStatus::Offline, false);
-        let t = home_targets(1024, 768, &peek(), &empty_brief(), &mail, &files);
-        let r = portal_rect(1024, 768);
-        assert!(r.y > search_rect(1024, 768).1);
-        assert_eq!(t.ctas.hit(r.x + r.w / 2, r.y + r.h / 2), Some(CtaId::Portal));
-    }
-
-    #[test]
     fn tiles_do_not_overlap_the_search_field() {
         let (_, fy, _, fh) = search_rect(1024, 768);
         assert!(tile_top(768) >= fy + fh, "tiles collide with the field");
@@ -878,7 +829,6 @@ mod tests {
     #[test]
     fn copy_is_ascii_only() {
         let mut all = vec![
-            "Connect tSearch account",
             "Search",
             "Capabilities",
             "Skills",
@@ -1127,62 +1077,111 @@ mod mail_click_tests {
     }
 }
 
+/// The "Connect tSearch account" pill is gone for good.
+///
+/// It said "connect" and only opened Capabilities — it connected nothing — so
+/// these guard the removal from being quietly undone: no hit region anywhere on
+/// home may report a portal CTA, and the render must not paint the pill.
 #[cfg(test)]
-mod portal_link_tests {
+mod no_portal_cta_tests {
     use super::*;
+    use crate::agent::Brief;
+    use crate::fb::Surface;
+    use crate::mcp::{FilePeek, MailPeek};
 
     fn skills() -> SkillPeek {
         SkillPeek::from_builtin()
     }
 
-    fn overlaps(a: Rect, b: Rect) -> bool {
-        a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    /// Every hit region the finished home screen reports, at a real size.
+    fn sweep(w: i32, h: i32) -> Vec<(i32, i32, HomeHit)> {
+        let mail = MailPeek::empty(BridgeStatus::Offline);
+        let files = FilePeek::empty(BridgeStatus::Offline, false);
+        let brief = Brief::empty();
+        let t = home_targets(w, h, &skills(), &brief, &mail, &files);
+        let mut out = Vec::new();
+        let mut y = 0;
+        while y < h {
+            let mut x = 0;
+            while x < w {
+                if let Some(hit) = t.hit(x, y) {
+                    out.push((x, y, hit));
+                }
+                x += 4;
+            }
+            y += 4;
+        }
+        out
     }
 
     #[test]
-    fn the_portal_link_does_not_sit_on_top_of_any_tile() {
-        // It did: the pill's lower 8px overlapped the tile row, and since the
-        // portal is hit-tested before the cards, the top edge of the Search
-        // tile opened the portal instead of Search.
+    fn no_hit_region_on_home_opens_a_portal_cta() {
+        // Ready (nav "setup") is the only CTA left; the tiles carry everything
+        // else. A swept probe is the honest check: it cannot miss a rect that
+        // some future layout puts back.
         for (w, h) in [(1024, 768), (1280, 800), (1600, 1000)] {
-            let p = portal_rect(w, h);
-            for i in 0..3 {
-                assert!(
-                    !overlaps(p, tile_rect(w, h, i)),
-                    "portal pill overlaps tile {i} at {w}x{h}"
-                );
+            for (x, y, hit) in sweep(w, h) {
+                if let HomeHit::Cta(c) = hit {
+                    assert_eq!(c, CtaId::Ready, "unexpected CTA at ({x},{y}) at {w}x{h}");
+                }
             }
         }
     }
 
     #[test]
-    fn the_portal_link_clears_the_search_field() {
-        for (w, h) in [(1024, 768), (1280, 800)] {
-            let (_, fy, _, fh) = search_rect(w, h);
-            assert!(portal_rect(w, h).y >= fy + fh, "pill overlaps the field at {w}x{h}");
+    fn the_band_under_the_search_field_is_dead_space() {
+        // Where the pill used to live. Nothing may be clickable there now.
+        for (w, h) in [(1024, 768), (1280, 800), (1600, 1000)] {
+            let mail = MailPeek::empty(BridgeStatus::Offline);
+            let files = FilePeek::empty(BridgeStatus::Offline, false);
+            let brief = Brief::empty();
+            let t = home_targets(w, h, &skills(), &brief, &mail, &files);
+            let (fx, fy, fw, fh) = search_rect(w, h);
+            let mut y = fy + fh;
+            while y < tile_top(h) {
+                for x in [fx, fx + fw / 2, fx + fw - 1] {
+                    assert_eq!(t.hit(x, y), None, "clickable at ({x},{y}) at {w}x{h}");
+                }
+                y += 2;
+            }
         }
     }
 
     #[test]
-    fn clicking_the_portal_link_reports_the_portal_and_nothing_else() {
-        let (w, h) = (1280, 800);
-        let p = portal_rect(w, h);
-        let mail = crate::mcp::MailPeek::empty(BridgeStatus::Offline);
-        let files = crate::mcp::FilePeek::empty(BridgeStatus::Offline, false);
-        let brief = crate::agent::Brief::empty();
-        let t = home_targets(w, h, &skills(), &brief, &mail, &files);
-        assert_eq!(
-            t.hit(p.x + p.w / 2, p.y + p.h / 2),
-            Some(HomeHit::Cta(CtaId::Portal))
+    fn the_home_render_paints_no_tinted_pill() {
+        // The pill was the only thing on home drawn in the tint palette, so a
+        // tinted pixel anywhere in this frame means it came back.
+        let (w, h) = (1024i32, 768i32);
+        let mut buf = vec![0u32; (w * h) as usize];
+        let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), w as usize, h as usize) };
+        let mail = MailPeek::empty(BridgeStatus::Offline);
+        let files = FilePeek::empty(BridgeStatus::Offline, false);
+        draw_home(
+            &fb,
+            &mail,
+            &files,
+            &skills(),
+            "3 on",
+            Caps::default_grants(),
+            &Brief::empty(),
+            crate::level::Level::ALL[0],
         );
+        for px in &buf {
+            assert_ne!(*px, theme::TINT_BG, "the tinted pill is back on home");
+            assert_ne!(*px, theme::TINT_BORDER, "the tinted pill border is back");
+        }
     }
 
     #[test]
-    fn the_portal_link_stays_inside_the_content_column() {
+    fn the_tiles_still_clear_the_search_hint() {
+        // Reclaiming the pill's space must not run the tiles into the hint
+        // line drawn 22px under the field.
         for (w, h) in [(1024, 768), (1280, 800), (1600, 1000)] {
-            let (fx, _, fw, _) = search_rect(w, h);
-            let p = portal_rect(w, h);
-            assert!(p.x >= fx && p.x + p.w <= fx + fw, "pill escapes the column at {w}x{h}");
+            let (_, fy, _, fh) = search_rect(w, h);
+            assert!(
+                tile_top(h) > fy + fh + 22,
+                "tiles collide with the search hint at {w}x{h}"
+            );
         }
     }
 }
