@@ -17,7 +17,7 @@ use crate::skills::BUILTIN;
 use crate::ui::{self, theme, NAV_H, PAD_X};
 
 /// Which full-screen view is showing.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub enum View {
     Home,
     Search,

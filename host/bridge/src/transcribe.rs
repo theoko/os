@@ -14,7 +14,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Transcript {
     /// Source media path.
     pub source: String,
@@ -24,7 +24,7 @@ pub struct Transcript {
     pub text: String,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct Store {
     #[serde(default)]
     pub items: Vec<Transcript>,

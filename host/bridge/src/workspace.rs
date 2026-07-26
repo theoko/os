@@ -20,7 +20,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Serialize, Deserialize)]
 pub(crate) struct Entry {
     pub title: String,
     /// Path relative to the root it was found under.
@@ -30,7 +30,7 @@ pub(crate) struct Entry {
     pub pr: f64,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Default, Serialize, Deserialize)]
 pub struct Index {
     #[serde(default)]
     pub(crate) entries: Vec<Entry>,

@@ -63,7 +63,7 @@ pub(crate) fn draw_switch_in_row(fb: &Surface, row: Rect, on: bool) {
 
 
 /// Axis-aligned hit region (inclusive origin, exclusive of `x+w` / `y+h`).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 pub(crate) struct Rect {
     pub(crate) x: i32,
     pub(crate) y: i32,
@@ -164,26 +164,15 @@ pub enum HomeHit {
 }
 
 /// Combined home hit-test (search field preferred over tiles).
-#[derive(Clone, Copy, Debug)]
-pub struct HomeTargets {
-    w: i32,
-}
-
-impl HomeTargets {
-    pub const fn new(w: i32) -> Self {
-        Self { w }
+pub fn home_hit(w: i32, px: i32, py: i32) -> Option<HomeHit> {
+    if search_rect(w).contains(px, py) {
+        return Some(HomeHit::SearchField);
     }
-
-    pub fn hit(self, px: i32, py: i32) -> Option<HomeHit> {
-        if search_rect(self.w).contains(px, py) {
-            return Some(HomeHit::SearchField);
-        }
-        if connect_rect(self.w).contains(px, py) {
-            return Some(HomeHit::Connect);
-        }
-        const IDS: [CardId; 3] = [CardId::Search, CardId::Capabilities, CardId::Skills];
-        hit_among(3, px, py, |i| tile_rect(self.w, i as i32)).map(|i| HomeHit::Card(IDS[i]))
+    if connect_rect(w).contains(px, py) {
+        return Some(HomeHit::Connect);
     }
+    const IDS: [CardId; 3] = [CardId::Search, CardId::Capabilities, CardId::Skills];
+    hit_among(3, px, py, |i| tile_rect(w, i as i32)).map(|i| HomeHit::Card(IDS[i]))
 }
 
 /// The home screen: one focal search field, three equal cards, locked footer.
@@ -366,21 +355,19 @@ mod tests {
 
     #[test]
     fn search_field_is_the_primary_target() {
-        let t = HomeTargets::new(1024);
         let r = search_rect(1024);
         assert_eq!(
-            t.hit(r.x + r.w / 2, r.y + r.h / 2),
+            home_hit(1024, r.x + r.w / 2, r.y + r.h / 2),
             Some(HomeHit::SearchField)
         );
     }
 
     #[test]
     fn connect_sits_in_the_nav_bar() {
-        let t = HomeTargets::new(1024);
         let c = connect_rect(1024);
         assert!(c.y + c.h <= NAV_H);
         assert_eq!(
-            t.hit(c.x + c.w / 2, c.y + c.h / 2),
+            home_hit(1024, c.x + c.w / 2, c.y + c.h / 2),
             Some(HomeHit::Connect)
         );
     }
@@ -393,14 +380,13 @@ mod tests {
 
     #[test]
     fn each_tile_hit_tests_to_its_own_id() {
-        let t = HomeTargets::new(1024);
         for (i, want) in [CardId::Search, CardId::Capabilities, CardId::Skills]
             .iter()
             .enumerate()
         {
             let r = tile_rect(1024, i as i32);
             assert_eq!(
-                t.hit(r.x + r.w / 2, r.y + r.h / 2),
+                home_hit(1024, r.x + r.w / 2, r.y + r.h / 2),
                 Some(HomeHit::Card(*want))
             );
         }

@@ -16,7 +16,7 @@ use crate::skills::SkillPeek;
 use crate::ui::{self, theme};
 
 /// Where a click landed.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy)]
 enum Action {
     Continue,
     Back,

@@ -246,8 +246,7 @@ unsafe extern "C" fn kmain() -> ! {
                         }
                         if clicked {
                             if on_home {
-                                let targets = ui::HomeTargets::new(w);
-                                match targets.hit(mice.x, mice.y) {
+                                match ui::home_hit(w, mice.x, mice.y) {
                                     Some(ui::HomeHit::SearchField)
                                     | Some(ui::HomeHit::Card(ui::CardId::Search)) => {
                                         serial_port.write_str("ui: open search\n");

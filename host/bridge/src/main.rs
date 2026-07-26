@@ -675,16 +675,14 @@ mod read_tests {
     use super::*;
 
     #[test]
-    fn reading_a_file_needs_the_workspace_grant() {
+    fn reading_needs_the_matching_grant() {
         // Guessing a URL must not bypass the grant that would have found it.
-        let e = read_doc("file://a/b.md", 10, false, false).unwrap_err();
-        assert_eq!(e, "needs_workspace_cap");
-    }
-
-    #[test]
-    fn reading_a_transcript_needs_the_audio_grant() {
-        let e = read_doc("audio:///tmp/x.wav", 10, true, false).unwrap_err();
-        assert_eq!(e, "needs_audio_cap", "the files grant must not unlock recordings");
+        for (url, files, audio, err) in [
+            ("file://a/b.md", false, false, "needs_workspace_cap"),
+            ("audio:///tmp/x.wav", true, false, "needs_audio_cap"),
+        ] {
+            assert_eq!(read_doc(url, 10, files, audio).unwrap_err(), err, "{url}");
+        }
     }
 
     #[test]

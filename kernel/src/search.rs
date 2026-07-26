@@ -46,11 +46,10 @@ pub const MAX_HITS: usize = 3;
 #[derive(Clone, Copy)]
 pub struct Hit {
     pub doc: usize,
-    score: i64,
 }
 
 impl Hit {
-    pub(crate) const EMPTY: Self = Self { doc: 0, score: 0 };
+    pub(crate) const EMPTY: Self = Self { doc: 0 };
 }
 
 /// Tokenizer. Must stay identical to `fold_tok` in `build.rs`, or query terms
@@ -123,7 +122,21 @@ fn find_term(tok: &str) -> Option<&'static Term> {
 ///
 /// Mirrors the host scorer: tf-idf, blended with PageRank, with a bonus for
 /// documents containing every query term.
+///
+/// Scores stay local — callers only need document indices.
 pub fn query(q: &str, out: &mut [Hit; MAX_HITS]) -> usize {
+    let mut ranked = [(0i64, 0usize); N_DOCS];
+    let n = rank(q, &mut ranked);
+    let take = n.min(MAX_HITS);
+    for i in 0..take {
+        out[i] = Hit { doc: ranked[i].1 };
+    }
+    take
+}
+
+/// Fill `ranked` with `(score, doc)` pairs and selection-sort the top
+/// [`MAX_HITS`] into place. Returns the number of scored documents.
+fn rank(q: &str, ranked: &mut [(i64, usize); N_DOCS]) -> usize {
     let mut scores = [0i64; N_DOCS];
     let mut hit_count = [0u32; N_DOCS];
     let mut n_terms = 0u32;
@@ -139,7 +152,6 @@ pub fn query(q: &str, out: &mut [Hit; MAX_HITS]) -> usize {
     }
 
     let mut n = 0usize;
-    let mut ranked = [Hit::EMPTY; N_DOCS];
     for (i, &raw) in scores.iter().enumerate() {
         if raw <= 0 {
             continue;
@@ -150,7 +162,7 @@ pub fn query(q: &str, out: &mut [Hit; MAX_HITS]) -> usize {
         if n_terms > 0 && hit_count[i] >= n_terms {
             score = score * 135 / 100;
         }
-        ranked[n] = Hit { doc: i, score };
+        ranked[n] = (score, i);
         n += 1;
     }
 
@@ -158,14 +170,13 @@ pub fn query(q: &str, out: &mut [Hit; MAX_HITS]) -> usize {
     for i in 0..n.min(MAX_HITS) {
         let mut best = i;
         for j in (i + 1)..n {
-            if ranked[j].score > ranked[best].score {
+            if ranked[j].0 > ranked[best].0 {
                 best = j;
             }
         }
         ranked.swap(i, best);
-        out[i] = ranked[i];
     }
-    n.min(MAX_HITS)
+    n
 }
 
 #[cfg(test)]
@@ -222,23 +233,19 @@ mod tests {
     }
 
     #[test]
-    fn unknown_terms_return_nothing() {
-        let mut out = [Hit::EMPTY; MAX_HITS];
-        assert_eq!(query("zzzz qqqq wwww", &mut out), 0);
-    }
-
-    #[test]
-    fn empty_query_returns_nothing() {
-        let mut out = [Hit::EMPTY; MAX_HITS];
-        assert_eq!(query("", &mut out), 0);
+    fn empty_or_unknown_queries_return_nothing() {
+        for q in ["", "zzzz qqqq wwww"] {
+            let mut out = [Hit::EMPTY; MAX_HITS];
+            assert_eq!(query(q, &mut out), 0, "q={q:?}");
+        }
     }
 
     #[test]
     fn results_are_descending() {
-        let mut out = [Hit::EMPTY; MAX_HITS];
-        let n = query("os agent search skills", &mut out);
+        let mut ranked = [(0i64, 0usize); N_DOCS];
+        let n = rank("os agent search skills", &mut ranked).min(MAX_HITS);
         for i in 1..n {
-            assert!(out[i - 1].score >= out[i].score, "not sorted at {i}");
+            assert!(ranked[i - 1].0 >= ranked[i].0, "not sorted at {i}");
         }
     }
 

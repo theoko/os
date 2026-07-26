@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::OnceLock;
 
 /// On-disk / HTTP corpus shell around `{t,u,c,b,pr}` documents.
-#[derive(Debug, Deserialize)]
+#[derive(Deserialize)]
 pub(crate) struct CorpusFile {
     #[serde(default)]
     pub docs: Vec<Doc>,
@@ -21,7 +21,7 @@ pub(crate) struct CorpusFile {
 }
 
 /// Curated / teddy / projected corpus document (`{t,u,c,b,pr}`).
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 pub struct Doc {
     pub t: String,
     #[serde(default)]
@@ -196,25 +196,19 @@ fn search_tfidf(
     scored
 }
 
-/// Byte offset of `needle` (already lowercase ASCII) in ASCII `hay`, ignoring case.
-fn find_ascii_ignore_case(hay: &[u8], needle: &[u8]) -> Option<usize> {
-    if needle.is_empty() || needle.len() > hay.len() {
-        return None;
-    }
-    hay.windows(needle.len()).position(|w| {
-        w.iter()
-            .zip(needle.iter())
-            .all(|(&a, &b)| a.to_ascii_lowercase() == b)
-    })
-}
-
 fn snip<'a>(body: &'a str, q_terms: &[String]) -> &'a str {
     // Query terms are already lowercased by `tokenize`. Prefer a no-alloc scan
     // on ASCII bodies (the common guest path) over cloning a large teddy body.
     let mut best = 0usize;
     if body.is_ascii() {
+        let hay = body.as_bytes();
         for term in q_terms {
-            if let Some(i) = find_ascii_ignore_case(body.as_bytes(), term.as_bytes()) {
+            let needle = term.as_bytes();
+            if needle.is_empty() || needle.len() > hay.len() {
+                continue;
+            }
+            if let Some(i) = hay.windows(needle.len()).position(|w| w.eq_ignore_ascii_case(needle))
+            {
                 best = i;
                 break;
             }

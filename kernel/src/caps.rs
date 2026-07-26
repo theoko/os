@@ -5,7 +5,7 @@
 //! No ambient root: a missing grant is a hard deny, not a soft skip-with-try.
 
 /// Named capabilities that mirror bridge tools / setup rows.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy)]
 pub enum Cap {
     EmailSearch = 0,
     SearchQuery = 1,
