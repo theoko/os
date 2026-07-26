@@ -202,7 +202,7 @@ impl Setup {
             ("Host bridge", crate::mcp::BRIDGE_OFFLINE_HINT, theme::OFFLINE)
         };
         self.status_card(fb, w, top, label, detail, tint);
-        self.footer(fb, w, h, top + ROW_H + 8, true);
+        self.footer(fb, w, h, top + ROW_H + 8);
     }
 
     fn draw_caps(&mut self, fb: &Surface, w: i32, h: i32) {
@@ -217,7 +217,7 @@ impl Setup {
             self.cap_row(fb, w, y, cap.name(), CAP_BLURBS[i], self.caps[i], Action::Row(i));
             y += ROW_H + 8;
         }
-        self.footer(fb, w, h, y, true);
+        self.footer(fb, w, h, y);
     }
 
     fn draw_skills(&mut self, fb: &Surface, w: i32, h: i32, skills: &SkillPeek) {
@@ -254,7 +254,7 @@ impl Setup {
             );
             y += ROW_H + 8;
         }
-        self.footer(fb, w, h, y, true);
+        self.footer(fb, w, h, y);
     }
 
     fn draw_done(&mut self, fb: &Surface, w: i32, h: i32) {
@@ -348,12 +348,10 @@ impl Setup {
     /// `content_bottom` = y just below the last row/card: on short
     /// framebuffers the pill moves down rather than overlapping the rows
     /// (zones are hit first-match, so an overlap misroutes clicks).
-    fn footer(&mut self, fb: &Surface, w: i32, h: i32, content_bottom: i32, back: bool) {
+    fn footer(&mut self, fb: &Surface, w: i32, h: i32, content_bottom: i32) {
         let y = (h - 150).max(content_bottom + 24);
         self.primary(fb, w, y, "Continue");
-        if back {
-            self.back_link(fb, w, y + CTA_H + 26);
-        }
+        self.back_link(fb, w, y + CTA_H + 26);
     }
 }
 
