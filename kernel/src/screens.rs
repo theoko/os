@@ -64,7 +64,7 @@ pub(crate) fn chrome(fb: &Surface, label: Option<(&str, &str)>) {
     fb.fill(theme::BG);
     let back = back_rect();
     fb.draw_text(back.x, back.y + BTN_FACE.ascent, "Back", &BTN_FACE, 0, theme::ACCENT);
-    match label {
+    let heading = match label {
         Some((title, heading)) => {
             fb.draw_text_centered(
                 w / 2,
@@ -74,10 +74,13 @@ pub(crate) fn chrome(fb: &Surface, label: Option<(&str, &str)>) {
                 0,
                 theme::INK,
             );
-            fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
-            fb.draw_text_centered(w / 2, 112, heading, &TITLE_FACE, font::TITLE_TRACK, theme::INK);
+            Some(heading)
         }
-        None => fb.fill_rect(0, NAV_H, w, 1, theme::RULE),
+        None => None,
+    };
+    fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
+    if let Some(heading) = heading {
+        fb.draw_text_centered(w / 2, 112, heading, &TITLE_FACE, font::TITLE_TRACK, theme::INK);
     }
 }
 

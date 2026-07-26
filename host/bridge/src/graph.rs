@@ -23,7 +23,7 @@ use std::fs;
 use std::path::PathBuf;
 
 /// One indexed message.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Serialize, Deserialize, PartialEq)]
 pub(crate) struct Message {
     /// Stable identity: sender + subject, hashed. Re-ingesting is idempotent.
     pub id: String,
