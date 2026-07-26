@@ -7,7 +7,7 @@
 //!
 //! * **Never baked.** `kernel/build.rs` compiles the static corpus into the
 //!   ISO; putting personal documents there would ship them inside a build
-//!   artifact in a pub(crate)lic repo. This index lives under Application Support.
+//!   artifact in a public repo. This index lives under Application Support.
 //! * **Roots are opt-in.** The default is the user's project directories, not
 //!   all of `~`. Personal folders (immigration paperwork, notes) are only
 //!   indexed if they are named explicitly via `OS_WORKSPACE_ROOTS`.
@@ -195,7 +195,7 @@ fn rank(rel: &str, name: &str, mtime: u64, now: u64) -> f64 {
     // old-but-relevant documents never drop out entirely.
     let age_days = now.saturating_sub(mtime) as f64 / 86_400.0;
     let recency = 0.25 + 0.75 / (1.0 + age_days / 365.0);
-    (pr * recency).clamp(0.0, 1.0)
+    pr * recency
 }
 
 fn walk(root: &Path, dir: &Path, out: &mut Vec<Entry>, depth: usize, now: u64) {

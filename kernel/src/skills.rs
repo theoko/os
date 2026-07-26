@@ -80,7 +80,7 @@ impl SkillPeek {
     }
 
     /// True after a framed `skills.list` (empty list stays live).
-    pub fn is_live(&self) -> bool {
+    pub(crate) fn is_live(&self) -> bool {
         self.live
     }
 

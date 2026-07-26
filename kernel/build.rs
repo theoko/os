@@ -240,8 +240,8 @@ fn build_corpus(manifest_dir: &Path) -> String {
     }
 
     let n = docs.len();
-    let _ = writeln!(out, "pub const N_DOCS: usize = {n};");
-    out.push_str("pub static DOCS: [Doc; N_DOCS] = [\n");
+    let _ = writeln!(out, "pub(crate) const N_DOCS: usize = {n};");
+    out.push_str("pub(crate) static DOCS: [Doc; N_DOCS] = [\n");
     for d in docs {
         let esc = |k: &str| -> String {
             d[k].as_str().unwrap_or("").replace('\\', "\\\\").replace('"', "\\\"")

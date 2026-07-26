@@ -11,7 +11,7 @@ use crate::mcp::MailPeek;
 use crate::skills::SkillPeek;
 
 /// Apple-inspired light palette (SURFACE / ACCENT live on [`crate::fb`]).
-pub mod theme {
+pub(crate) mod theme {
     /// Primary text — Apple's near-black, never pure #000.
     pub(crate) const INK: u32 = 0x001D_1D1F;
     /// Secondary copy.

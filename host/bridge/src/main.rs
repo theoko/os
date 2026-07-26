@@ -282,14 +282,14 @@ const GUEST_DOC_LINES: usize = 18;
 fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
     match tool {
         "email.search" => {
-            // Guest mail peek omits args; defaults are the peek budget.
-            let query = arg_val(args, "q").unwrap_or("in:inbox");
-            let max = arg_usize(args, "max", GUEST_MAIL_MAX, 20);
+            // Guest mail peek omits args; mock is a fixed peek count.
             let backend = env::var("OS_MCP_EMAIL_BACKEND").unwrap_or_else(|_| "mock".into());
             match backend.as_str() {
-                "gog" => email_search_gog(query, max),
-                // Deterministic peek count for CI (no per-message payloads).
-                _ => email_count_ok(GUEST_MAIL_MAX.min(max)),
+                "gog" => email_search_gog(
+                    arg_val(args, "q").unwrap_or("in:inbox"),
+                    arg_usize(args, "max", GUEST_MAIL_MAX, 20),
+                ),
+                _ => email_count_ok(GUEST_MAIL_MAX),
             }
         }
         "email.send" => vec![format!("ERR {tool} disabled_until_cap_confirm")],

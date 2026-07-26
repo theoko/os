@@ -417,11 +417,6 @@ impl UsbTablet {
         true
     }
 
-    /// GET_DESCRIPTOR(type, index 0) into `buf`, requesting exactly `buf.len()`.
-    fn get_descriptor(&mut self, desc_type: u8, buf: &mut [u8]) -> bool {
-        self.control(0x80, 0x06, (desc_type as u16) << 8, buf)
-    }
-
     /// Is the device on this port an absolute pointer we can drive?
     ///
     /// UTM populates the bus with keyboards and usb-redir stubs, so binding the
@@ -433,7 +428,8 @@ impl UsbTablet {
     ///   usb-tablet  subclass 0,        protocol 0  <- absolute, what we want
     fn identify(&mut self) -> Result<(), &'static str> {
         let mut dev = [0u8; 18];
-        if !self.get_descriptor(1, &mut dev) {
+        // GET_DESCRIPTOR(DEVICE).
+        if !self.control(0x80, 0x06, 0x0100, &mut dev) {
             return Err("dev-desc");
         }
         // bDescriptorType must be DEVICE, and the device class must be 0 so the
@@ -444,7 +440,7 @@ impl UsbTablet {
 
         // Config descriptor header first, to learn wTotalLength.
         let mut head = [0u8; 9];
-        if !self.get_descriptor(2, &mut head) || head[1] != 0x02 {
+        if !self.control(0x80, 0x06, 0x0200, &mut head) || head[1] != 0x02 {
             return Err("cfg-hdr");
         }
         let total = u16::from_le_bytes([head[2], head[3]]) as usize;
@@ -452,7 +448,7 @@ impl UsbTablet {
             return Err("cfg-len");
         }
         let mut cfg = [0u8; 128];
-        if !self.get_descriptor(2, &mut cfg[..total]) {
+        if !self.control(0x80, 0x06, 0x0200, &mut cfg[..total]) {
             return Err("cfg-body");
         }
 

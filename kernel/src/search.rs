@@ -14,10 +14,10 @@
 //! pure integer arithmetic.
 
 /// One indexed document.
-pub struct Doc {
-    pub title: &'static str,
-    pub cat: &'static str,
-    pub url: &'static str,
+pub(crate) struct Doc {
+    pub(crate) title: &'static str,
+    pub(crate) cat: &'static str,
+    pub(crate) url: &'static str,
     /// PageRank, 0..1024.
     pr_q10: i32,
 }
@@ -41,7 +41,7 @@ struct Posting {
 include!(concat!(env!("OUT_DIR"), "/corpus.rs"));
 
 /// Cap on search hits (offline index, SearchView rows; bridge default `k=`).
-pub const MAX_HITS: usize = 3;
+pub(crate) const MAX_HITS: usize = 3;
 
 /// Guest `SearchView::Row` / `DocPage` / bridge `guest_slot` budgets.
 pub(crate) const TITLE_CHARS: usize = 56;
@@ -121,7 +121,7 @@ fn find_term(tok: &str) -> Option<&'static Term> {
 ///
 /// Mirrors the host scorer: tf-idf, blended with PageRank, with a bonus for
 /// documents containing every query term. Scores stay local.
-pub fn query(q: &str, out: &mut [usize; MAX_HITS]) -> usize {
+pub(crate) fn query(q: &str, out: &mut [usize; MAX_HITS]) -> usize {
     let mut scores = [0i64; N_DOCS];
     score_docs(q, &mut scores);
     pick_top(&mut scores, out)
