@@ -119,8 +119,7 @@ unsafe extern "C" fn kmain() -> ! {
                     let m = b"no-mmap";
                     why[..m.len()].copy_from_slice(m);
                 }
-                if let Some(ref mut t) = tablet {
-                    t.bind_screen(surface.width() as i32, surface.height() as i32);
+                if tablet.is_some() {
                     serial_port.write_str("mouse: usb-tablet ready\n");
                 } else {
                     serial_port.write_str("mouse: usb-tablet missing ");
@@ -137,7 +136,6 @@ unsafe extern "C" fn kmain() -> ! {
                     mice.present = true;
                 }
 
-                let mut prev_buttons = 0u8;
                 let mut setup = setup::Setup::new();
                 let mut kb = keyboard::Keyboard::new();
                 let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
@@ -180,11 +178,10 @@ unsafe extern "C" fn kmain() -> ! {
                         moved = true;
                     }
 
+                    let clicked = mice.take_click_edge();
                     if !setup.is_finished() {
                         let before = setup.step;
-                        if mouse::click_edge(mice.buttons, prev_buttons)
-                            && setup.click(mice.x, mice.y)
-                        {
+                        if clicked && setup.click(mice.x, mice.y) {
                             // Entering the Bridge step: re-probe COM2 so the
                             // status card reflects a bridge that came up after boot.
                             if setup.step == setup::Step::Bridge && before != setup::Step::Bridge {
@@ -247,7 +244,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 dirty = true;
                             }
                         }
-                        if mouse::click_edge(mice.buttons, prev_buttons) {
+                        if clicked {
                             if on_home {
                                 let targets = ui::HomeTargets::new(w);
                                 match targets.hit(mice.x, mice.y) {
@@ -335,7 +332,6 @@ unsafe extern "C" fn kmain() -> ! {
                             );
                         }
                     }
-                    prev_buttons = mice.buttons;
                     if moved {
                         cursor.show_at(surface, mice.x, mice.y);
                         // hide()/show_at() marked both footprints; present()

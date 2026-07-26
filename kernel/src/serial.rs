@@ -9,10 +9,10 @@ pub struct Serial {
 }
 
 impl Serial {
-    pub const COM1: u16 = 0x3F8;
-    pub const COM2: u16 = 0x2F8;
+    const COM1: u16 = 0x3F8;
+    const COM2: u16 = 0x2F8;
 
-    pub const fn new(base: u16) -> Self {
+    const fn new(base: u16) -> Self {
         Self { base }
     }
 
@@ -162,7 +162,7 @@ pub fn exit_qemu(success: bool) -> ! {
     halt()
 }
 
-pub fn halt() -> ! {
+pub(crate) fn halt() -> ! {
     loop {
         #[cfg(target_arch = "x86_64")]
         unsafe {

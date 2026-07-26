@@ -32,8 +32,8 @@ pub struct Face {
 }
 
 /// Codepoint range covered by every face.
-pub const FIRST: u8 = 0x20;
-pub const LAST: u8 = 0x7E;
+const FIRST: u8 = 0x20;
+const LAST: u8 = 0x7E;
 
 include!(concat!(env!("OUT_DIR"), "/font_atlas.rs"));
 

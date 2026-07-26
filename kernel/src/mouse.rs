@@ -109,6 +109,7 @@ pub struct Mouse {
     pub present: bool,
     screen_w: i32,
     screen_h: i32,
+    prev_buttons: u8,
     packet: [u8; 3],
     packet_i: usize,
     /// The controller has produced at least one byte with the AUX flag set —
@@ -125,10 +126,31 @@ impl Mouse {
             present: false,
             screen_w,
             screen_h,
+            prev_buttons: 0,
             packet: [0; 3],
             packet_i: 0,
             aux_seen: false,
         }
+    }
+
+    /// Rising edge on the primary button. Call once per frame.
+    pub fn take_click_edge(&mut self) -> bool {
+        let edge = self.buttons & 1 != 0 && self.prev_buttons & 1 == 0;
+        self.prev_buttons = self.buttons;
+        edge
+    }
+
+    /// Absolute tablet report in 0..=32767 → screen pixels on this mouse.
+    pub fn apply_abs(&mut self, ax: i32, ay: i32, buttons: u8) -> bool {
+        let ax = ax.clamp(0, 32767);
+        let ay = ay.clamp(0, 32767);
+        let nx = ((ax * (self.screen_w - 1)) / 32767).clamp(0, self.screen_w.saturating_sub(1));
+        let ny = ((ay * (self.screen_h - 1)) / 32767).clamp(0, self.screen_h.saturating_sub(1));
+        let moved = nx != self.x || ny != self.y || buttons != self.buttons;
+        self.x = nx;
+        self.y = ny;
+        self.buttons = buttons;
+        moved
     }
 
     /// Best-effort PS/2 enable. Returns whether streaming was enabled.
@@ -217,11 +239,6 @@ impl Mouse {
         {}
         moved
     }
-}
-
-/// Rising edge on the primary mouse button.
-pub fn click_edge(buttons: u8, prev: u8) -> bool {
-    buttons & 1 != 0 && prev & 1 == 0
 }
 
 /// Arrow outline in 1/8-px units, tip at (0,0) — a real polygon so the cursor
@@ -380,10 +397,16 @@ mod tests {
 
     #[test]
     fn click_edge_is_rising_primary_only() {
-        assert!(click_edge(1, 0));
-        assert!(!click_edge(1, 1), "held must not retrigger");
-        assert!(!click_edge(0, 1));
-        assert!(!click_edge(2, 0), "secondary alone is not a click");
+        let mut m = Mouse::new(100, 100);
+        m.buttons = 1;
+        assert!(m.take_click_edge());
+        assert!(!m.take_click_edge(), "held must not retrigger");
+        m.buttons = 0;
+        assert!(!m.take_click_edge());
+        m.buttons = 1;
+        assert!(m.take_click_edge());
+        m.buttons = 2;
+        assert!(!m.take_click_edge(), "secondary alone is not a click");
     }
 
     #[test]

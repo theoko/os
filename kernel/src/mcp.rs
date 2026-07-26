@@ -63,11 +63,11 @@ impl SearchPeek {
         }
     }
 
-    pub fn title_at(&self, i: usize) -> &str {
+    pub(crate) fn title_at(&self, i: usize) -> &str {
         str_at(&self.hits[i].title)
     }
 
-    pub fn url_at(&self, i: usize) -> &str {
+    pub(crate) fn url_at(&self, i: usize) -> &str {
         str_at(&self.hits[i].url)
     }
 }
@@ -247,7 +247,8 @@ pub fn fetch_doc(caps: crate::caps::Caps, title: &str, url: &str) -> DocPage {
     when_online(offline, |com2, line| {
         com2.write_str("CALL doc.read url=");
         com2.write_str(url);
-        com2.write_str(" lines=18");
+        com2.write_str(" lines=");
+        com2.write_u64(DocPage::MAX as u64);
         write_scope_flags(com2, caps);
         com2.write_str("\n");
 
@@ -342,14 +343,15 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
 
     // Offline: UI falls back to the baked index via SearchView::run(q).
     when_online(SearchPeek::empty(BridgeStatus::Offline, false), |com2, line| {
-        // CALL search.query q=… k=3 [email=1]
+        // CALL search.query q=… k=N [email=1]
         //
         // The email graph is opt-in per call on the bridge. Ask for it only when
         // the user granted email.search at setup: holding search.query alone must
         // not reach mail content.
         com2.write_str("CALL search.query q=");
         com2.write_str(q);
-        com2.write_str(" k=3");
+        com2.write_str(" k=");
+        com2.write_u64(crate::search::MAX_HITS as u64);
         if caps.allows(crate::caps::Cap::EmailSearch) {
             com2.write_str(" email=1");
         }

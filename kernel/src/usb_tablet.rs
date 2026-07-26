@@ -51,12 +51,7 @@ pub struct UsbTablet {
     /// Max packet size for the interrupt endpoint (minus one goes in the TD).
     max_packet: u8,
     data_toggle: bool,
-    x: i32,
-    y: i32,
-    buttons: u8,
     ready: bool,
-    screen_w: i32,
-    screen_h: i32,
     /// Interrupt IN TD is armed in the frame list; poll only checks completion.
     outstanding: bool,
 }
@@ -155,13 +150,7 @@ impl UsbTablet {
             ep: 1,
             max_packet: 8,
             data_toggle: false,
-            // -1 so the first absolute report always counts as motion.
-            x: -1,
-            y: -1,
-            buttons: 0,
             ready: false,
-            screen_w: 0,
-            screen_h: 0,
             outstanding: false,
         };
 
@@ -191,7 +180,7 @@ impl UsbTablet {
     fn outw(&self, off: u16, val: u16) {
         #[cfg(target_arch = "x86_64")]
         unsafe {
-            pci::outw(self.io + off, val);
+            crate::port::outw(self.io + off, val);
         }
         #[cfg(not(target_arch = "x86_64"))]
         let _ = (off, val);
@@ -200,7 +189,7 @@ impl UsbTablet {
     fn inw(&self, off: u16) -> u16 {
         #[cfg(target_arch = "x86_64")]
         unsafe {
-            pci::inw(self.io + off)
+            crate::port::inw(self.io + off)
         }
         #[cfg(not(target_arch = "x86_64"))]
         {
@@ -528,12 +517,6 @@ impl UsbTablet {
         self.control(0x21, 0x0B, protocol, 0, &mut empty)
     }
 
-    /// Record framebuffer size used to scale absolute reports.
-    pub fn bind_screen(&mut self, w: i32, h: i32) {
-        self.screen_w = w;
-        self.screen_h = h;
-    }
-
     pub fn poll(&mut self, mice: &mut crate::mouse::Mouse) -> bool {
         if !self.ready {
             return false;
@@ -594,22 +577,7 @@ impl UsbTablet {
         let buttons = report[0] & 0x07;
         let ax = u16::from_le_bytes([report[1], report[2]]) as i32;
         let ay = u16::from_le_bytes([report[3], report[4]]) as i32;
-        let ax = ax.clamp(0, 32767);
-        let ay = ay.clamp(0, 32767);
-        let nx = ((ax * (self.screen_w - 1)) / 32767)
-            .clamp(0, self.screen_w.saturating_sub(1));
-        let ny = ((ay * (self.screen_h - 1)) / 32767)
-            .clamp(0, self.screen_h.saturating_sub(1));
-        let moved = nx != self.x || ny != self.y || buttons != self.buttons;
-        self.x = nx;
-        self.y = ny;
-        self.buttons = buttons;
-        if moved {
-            mice.x = nx;
-            mice.y = ny;
-            mice.buttons = buttons;
-        }
-        moved
+        mice.apply_abs(ax, ay, buttons)
     }
 
     fn arm_interrupt_in(&mut self) {

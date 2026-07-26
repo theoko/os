@@ -37,8 +37,8 @@ pub const PAD_X: i32 = 28;
 const CONTENT_MAX: i32 = 920;
 
 /// Pill on/off switch width/height (Capabilities + setup).
-pub const SWITCH_W: i32 = 40;
-pub const SWITCH_H: i32 = 22;
+const SWITCH_W: i32 = 40;
+const SWITCH_H: i32 = 22;
 
 /// Pill switch, right-aligned inside a list row (18px pad, vertically centred).
 pub fn draw_switch_in_row(fb: &Surface, row: Rect, on: bool) {

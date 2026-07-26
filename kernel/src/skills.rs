@@ -76,6 +76,19 @@ impl SkillPeek {
     pub fn desc_at(&self, i: usize) -> &str {
         str_at(&self.descs[i])
     }
+
+    /// Desc when present; otherwise a source label for empty blurbs.
+    pub fn subtitle_at(&self, i: usize) -> &str {
+        let desc = self.desc_at(i);
+        if !desc.is_empty() {
+            return desc;
+        }
+        if self.from_bridge {
+            "From host bridge"
+        } else {
+            "Shipped with the ISO"
+        }
+    }
 }
 
 /// Decode the longest valid UTF-8 prefix — a cut mid-character must degrade
@@ -88,13 +101,13 @@ pub(crate) fn utf8_prefix(bytes: &[u8]) -> &str {
 }
 
 /// Null-terminated fixed field as a string (UTF-8 prefix).
-pub fn str_at(buf: &[u8]) -> &str {
+pub(crate) fn str_at(buf: &[u8]) -> &str {
     let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     utf8_prefix(&buf[..n])
 }
 
 /// Copy `src` into a fixed field, never splitting a UTF-8 char.
-pub fn copy_field(dst: &mut [u8], src: &str) {
+pub(crate) fn copy_field(dst: &mut [u8], src: &str) {
     dst.fill(0);
     let bytes = src.as_bytes();
     let mut n = bytes.len().min(dst.len());

@@ -93,17 +93,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
 
     let n = peek.count.min(6);
     for i in 0..n {
-        let desc = peek.desc_at(i);
-        let sub = if desc.is_empty() {
-            if peek.from_bridge {
-                "From host bridge"
-            } else {
-                "Shipped with the ISO"
-            }
-        } else {
-            desc
-        };
-        row(fb, w, i, peek.name_at(i), sub);
+        row(fb, w, i, peek.name_at(i), peek.subtitle_at(i));
     }
 
     let (x, _) = column(w);

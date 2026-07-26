@@ -43,7 +43,7 @@ pub enum Step {
 }
 
 /// Blurbs for each [`Cap::ALL`] row (tool names come from [`Cap::name`]).
-pub const CAP_BLURBS: [&str; 5] = [
+pub(crate) const CAP_BLURBS: [&str; 5] = [
     "Read the inbox through the host bridge",
     "Query the built-in knowledge corpus",
     "Write new skill playbooks to disk",
@@ -99,8 +99,8 @@ impl Setup {
 
     /// Apply a click at `(x, y)`. Returns true when the screen needs redrawing.
     ///
-    /// Rising-edge filtering lives in the main loop (`mouse::click_edge`) so
-    /// setup does not keep a parallel button latch.
+    /// Rising-edge filtering lives in the main loop (`Mouse::take_click_edge`)
+    /// so setup does not keep a parallel button latch.
     pub fn click(&mut self, x: i32, y: i32) -> bool {
         match self.hit(x, y) {
             Some(action) => self.apply(action),
@@ -207,17 +207,12 @@ impl Setup {
         let x = (w - cw) / 2;
         let mut y = top;
         for i in 0..skills.count.min(4) {
-            let desc = skills.desc_at(i);
-            let sub = if desc.is_empty() {
-                if skills.from_bridge {
-                    "From host bridge"
-                } else {
-                    "Shipped with the ISO"
-                }
-            } else {
-                desc
-            };
-            ui::draw_titled_row(fb, ui::Rect::new(x, y, cw, ROW_H), skills.name_at(i), sub);
+            ui::draw_titled_row(
+                fb,
+                ui::Rect::new(x, y, cw, ROW_H),
+                skills.name_at(i),
+                skills.subtitle_at(i),
+            );
             y += ROW_H + 8;
         }
         self.footer(fb, y);

@@ -48,9 +48,6 @@ impl Row {
         str_at(&self.url)
     }
 
-    fn cat(&self) -> &str {
-        self.cat
-    }
 }
 
 /// What the last query actually did, so the empty state can be truthful.
@@ -236,8 +233,8 @@ pub fn draw(
         crate::ui::outlined_round_rect(fb, crate::ui::Rect::new(f.x, y, f.w, ROW_H), 10);
         fb.draw_text(f.x + 18, y + 26, r.title(), &BRAND_FACE, 0, theme::INK);
         // Category chip, right-aligned.
-        let cw = SMALL_FACE.width(r.cat(), 0);
-        fb.draw_text(f.x + f.w - 18 - cw, y + 26, r.cat(), &SMALL_FACE, 0, theme::ACCENT);
+        let cw = SMALL_FACE.width(r.cat, 0);
+        fb.draw_text(f.x + f.w - 18 - cw, y + 26, r.cat, &SMALL_FACE, 0, theme::ACCENT);
         fb.draw_text(f.x + 18, y + 48, r.url(), &SMALL_FACE, 0, theme::MUTED);
         y += ROW_H + 10;
     }

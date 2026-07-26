@@ -147,4 +147,3 @@ pub(crate) mod heapless_vec {
     }
 }
 
-pub use crate::port::{inw, outw};
