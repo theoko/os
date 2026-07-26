@@ -112,10 +112,12 @@ unsafe extern "C" fn kmain() -> ! {
                     if let Some((p0, p1)) = usb_tablet::alloc_dma_pages(mmap) {
                         tablet = unsafe { usb_tablet::UsbTablet::init(hhdm, p0, p1, &mut why) };
                     } else {
-                        skills::copy_field(&mut why, "no-dma");
+                        let m = b"no-dma";
+                        why[..m.len()].copy_from_slice(m);
                     }
                 } else {
-                    skills::copy_field(&mut why, "no-mmap");
+                    let m = b"no-mmap";
+                    why[..m.len()].copy_from_slice(m);
                 }
                 if tablet.is_some() {
                     serial_port.write_str("mouse: usb-tablet ready\n");
