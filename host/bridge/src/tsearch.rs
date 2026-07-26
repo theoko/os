@@ -22,13 +22,13 @@ use std::sync::OnceLock;
 use crate::search::{CorpusFile, Doc};
 
 /// Live corpus published by the tsearch front-end.
-pub const DEFAULT_URL: &str = "https://teddysearch.com/tsearch/corpus.json";
+const DEFAULT_URL: &str = "https://teddysearch.com/tsearch/corpus.json";
 
-pub fn url() -> String {
+fn url() -> String {
     env::var("OS_TSEARCH_URL").unwrap_or_else(|_| DEFAULT_URL.to_string())
 }
 
-pub fn cache_path() -> PathBuf {
+fn cache_path() -> PathBuf {
     crate::paths::env_or_knowledge("OS_TSEARCH_CACHE", "teddysearch.json")
 }
 

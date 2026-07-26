@@ -51,7 +51,7 @@ const MEDIA_EXTS: &[&str] = &[
     "mp4", "mov", "mkv", "webm", "avi",
 ];
 
-pub fn is_media(path: &Path) -> bool {
+fn is_media(path: &Path) -> bool {
     path.extension()
         .and_then(|e| e.to_str())
         .map(|e| MEDIA_EXTS.contains(&e.to_ascii_lowercase().as_str()))

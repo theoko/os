@@ -210,7 +210,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     &screen,
                                     mice.x,
                                     mice.y,
-                                    &mut moved,
                                     view,
                                     &mail,
                                     &skill_peek,
@@ -219,6 +218,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     &page,
                                     setup.caps,
                                 );
+                                moved = false;
                             } else {
                                 cursor.hide(surface);
                                 setup.draw(surface, mail.status, &skill_peek);
@@ -321,7 +321,6 @@ unsafe extern "C" fn kmain() -> ! {
                                 &screen,
                                 mice.x,
                                 mice.y,
-                                &mut moved,
                                 view,
                                 &mail,
                                 &skill_peek,
@@ -330,6 +329,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 &page,
                                 setup.caps,
                             );
+                            moved = false;
                         }
                     }
                     if moved {
@@ -427,7 +427,6 @@ fn repaint(
     screen: &fb::Screen,
     x: i32,
     y: i32,
-    moved: &mut bool,
     view: screens::View,
     mail: &mcp::MailPeek,
     skills: &skills::SkillPeek,
@@ -448,7 +447,6 @@ fn repaint(
     }
     cursor.show_at(surface, x, y);
     enter(screen);
-    *moved = false;
 }
 
 /// Play a screen entrance: the frame is already composed in the back buffer.

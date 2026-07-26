@@ -180,7 +180,7 @@ fn now_secs() -> u64 {
 /// summaries, and something edited last week matters more than something
 /// untouched for two years. Recency is the one that stops an archived tree
 /// from outranking work in progress.
-pub fn rank(rel: &str, name: &str, mtime: u64, now: u64) -> f64 {
+fn rank(rel: &str, name: &str, mtime: u64, now: u64) -> f64 {
     let depth = rel.matches('/').count() as f64;
     let mut pr = 1.0 / (1.0 + depth);
     if name.to_ascii_uppercase().starts_with("README") {

@@ -38,7 +38,7 @@ impl Serial {
         }
     }
 
-    pub fn write_byte(&self, byte: u8) {
+    fn write_byte(&self, byte: u8) {
         #[cfg(target_arch = "x86_64")]
         unsafe {
             let mut spins = 0u32;

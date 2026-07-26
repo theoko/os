@@ -23,7 +23,7 @@ pub fn skills_dirs() -> (PathBuf, PathBuf) {
     (defaults, user)
 }
 
-pub fn list_skills() -> Vec<SkillMeta> {
+fn list_skills() -> Vec<SkillMeta> {
     let (defaults, user) = skills_dirs();
     let mut map: BTreeMap<String, SkillMeta> = BTreeMap::new();
     let mut tmp = Vec::new();
@@ -95,7 +95,7 @@ fn parse_frontmatter(text: &str) -> Option<(String, String)> {
     Some((name?, description))
 }
 
-pub fn get_skill_body(name: &str) -> Option<String> {
+fn get_skill_body(name: &str) -> Option<String> {
     list_skills()
         .into_iter()
         .find(|s| s.name == name)

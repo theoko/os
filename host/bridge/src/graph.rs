@@ -41,7 +41,7 @@ pub struct Graph {
 }
 
 /// Where the index lives. Never inside the repo.
-pub fn graph_path() -> PathBuf {
+fn graph_path() -> PathBuf {
     crate::paths::env_or_knowledge("OS_GRAPH_PATH", "emails.json")
 }
 

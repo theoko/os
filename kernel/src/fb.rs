@@ -55,11 +55,11 @@ impl Surface {
     }
 
     /// Current dirty rectangle as `(x0, y0, x1, y1)`, if anything changed.
-    pub fn dirty_rect(&self) -> Option<(i32, i32, i32, i32)> {
+    fn dirty_rect(&self) -> Option<(i32, i32, i32, i32)> {
         self.dirty.get()
     }
 
-    pub fn clear_dirty(&self) {
+    fn clear_dirty(&self) {
         self.dirty.set(None);
     }
 }

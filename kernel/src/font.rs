@@ -50,7 +50,7 @@ impl Face {
     ///
     /// Tracking is applied *between* glyphs only — a trailing gap would make
     /// centred text sit visibly left of true centre at negative tracking.
-    pub fn width64(&self, text: &str, tracking64: i32) -> i32 {
+    fn width64(&self, text: &str, tracking64: i32) -> i32 {
         let mut total = 0;
         let mut n = 0;
         for ch in text.bytes() {
