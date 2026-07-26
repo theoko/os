@@ -249,8 +249,8 @@ pub fn forget(tool: &str) {
         com2.write_str("CALL ");
         com2.write_str(tool);
         com2.write_str("\n");
-        // Drain the reply so the next call starts on a clean line.
-        for_each_reply(com2, line, 8, |resp| resp != "END");
+        // Drain OK/ROW/END (stop on ERR) so the next call starts clean.
+        let _ = for_each_ok_rows(com2, line, 8, |_| true);
     })
 }
 
