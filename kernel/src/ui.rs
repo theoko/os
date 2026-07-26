@@ -187,7 +187,7 @@ pub fn draw_home(
     grants: Caps,
     query: &str,
 ) {
-    let w = fb.width() as i32;
+    let w = fb.width as i32;
 
     fb.fill();
     let online = mail.online();
@@ -270,7 +270,7 @@ fn connect_rect(w: i32) -> Rect {
 }
 
 fn draw_nav(fb: &Surface, online: bool) {
-    let w = fb.width() as i32;
+    let w = fb.width as i32;
     let base = (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.ascent;
     fb.draw_text(PAD_X, base, "os", &BRAND_FACE, 0, theme::INK);
 
@@ -349,8 +349,8 @@ fn draw_status_bar(fb: &Surface, mail: &MailPeek, grant_count: usize) {
     );
     let text = core::str::from_utf8(&line[..n]).unwrap_or("");
     fb.draw_text_centered(
-        fb.width() as i32 / 2,
-        fb.height() as i32 - 28,
+        fb.width as i32 / 2,
+        fb.height as i32 - 28,
         text,
         &SMALL_FACE,
         0,

@@ -101,7 +101,9 @@ pub(crate) fn utf8_prefix(bytes: &[u8]) -> &str {
 }
 
 /// Null-terminated fixed field as a string (UTF-8 prefix).
-pub(crate) fn str_at(buf: &[u8]) -> &str {
+///
+/// `pub` for the kernel binary (`main` opens search hits via row buffers).
+pub fn str_at(buf: &[u8]) -> &str {
     let n = buf.iter().position(|&b| b == 0).unwrap_or(buf.len());
     utf8_prefix(&buf[..n])
 }

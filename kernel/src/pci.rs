@@ -111,7 +111,7 @@ pub(crate) fn for_each_ehci(mut f: impl FnMut(u8, u8, u8)) {
 pub(crate) mod heapless_vec {
     pub struct UhciList {
         data: [u16; 8],
-        len: usize,
+        pub len: usize,
     }
     impl UhciList {
         pub const fn new() -> Self {
@@ -125,9 +125,6 @@ pub(crate) mod heapless_vec {
                 self.data[self.len] = io;
                 self.len += 1;
             }
-        }
-        pub fn is_empty(&self) -> bool {
-            self.len == 0
         }
         pub fn iter(&self) -> impl Iterator<Item = &u16> {
             self.data[..self.len].iter()

@@ -96,8 +96,8 @@ unsafe extern "C" fn kmain() -> ! {
                 // thing that touches video memory.
                 let surface = screen.surface();
 
-                let cx = surface.width() as i32 / 2;
-                let cy = surface.height() as i32 / 2;
+                let cx = surface.width as i32 / 2;
+                let cy = surface.height as i32 / 2;
                 let mut cursor = mouse::Cursor::new();
                 // Blank + cursor for the QEMU smoke present; setup paints next.
                 surface.fill();
@@ -134,7 +134,7 @@ unsafe extern "C" fn kmain() -> ! {
                     serial_port.write_str("\n");
                 }
 
-                let mut mice = mouse::Mouse::new(surface.width() as i32, surface.height() as i32);
+                let mut mice = mouse::Mouse::new(surface.width as i32, surface.height as i32);
                 if mice.init() {
                     serial_port.write_str("mouse: ps2 ready\n");
                 } else {
@@ -158,7 +158,7 @@ unsafe extern "C" fn kmain() -> ! {
                 beep::startup();
 
                 loop {
-                    let w = surface.width() as i32;
+                    let w = surface.width as i32;
                     let mut moved = false;
                     if let Some(ref mut t) = tablet {
                         if t.poll(&mut mice) {
@@ -169,7 +169,7 @@ unsafe extern "C" fn kmain() -> ! {
                     }
 
                     let clicked = mice.take_click_edge();
-                    if !setup.is_finished() {
+                    if setup.step != setup::Step::Finished {
                         let before = setup.step;
                         if clicked && setup.click(mice.x, mice.y) {
                             // Entering the Bridge step: re-probe COM2 so the
@@ -187,7 +187,7 @@ unsafe extern "C" fn kmain() -> ! {
                             if setup.step == setup::Step::Skills && before != setup::Step::Skills {
                                 skill_peek = mcp::fetch_skill_peek();
                             }
-                            if setup.is_finished() {
+                            if setup.step == setup::Step::Finished {
                                 serial_port.write_str("ui: setup done\n");
                                 serial_port.write_str("caps: ");
                                 serial_port.write_u64(setup.caps.granted_count() as u64);
@@ -267,7 +267,8 @@ unsafe extern "C" fn kmain() -> ! {
                                 dirty = true;
                             } else if view == screens::View::Search {
                                 if let Some(i) = sview.hit(w, mice.x, mice.y) {
-                                    let (title, url) = sview.at(i);
+                                    let title = skills::str_at(&sview.rows[i].title);
+                                    let url = skills::str_at(&sview.rows[i].url);
                                     page = mcp::fetch_doc(setup.caps, url, title);
                                     view = screens::View::Reader;
                                     dirty = true;

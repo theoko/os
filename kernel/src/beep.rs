@@ -81,7 +81,8 @@ pub fn startup() {
         } else {
             tone_on(n.hz);
         }
-        let _ = anim::pace(crate::serial::rdtsc(), n.ms.saturating_mul(1000));
+        // Notes are ≤160ms; total STARTUP ≤1s (see tests) — mul cannot saturate.
+        let _ = anim::pace(crate::serial::rdtsc(), n.ms * 1000);
     }
     // STARTUP ends on hz=0, which already tone_off'd in-loop.
 }

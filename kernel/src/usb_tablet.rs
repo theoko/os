@@ -99,7 +99,7 @@ impl UsbTablet {
         disable_ehci_pci();
 
         let controllers = pci::find_all_uhci();
-        if controllers.is_empty() {
+        if controllers.len == 0 {
             copy_field(err, "no-uhci");
             return None;
         }
@@ -542,8 +542,8 @@ impl UsbTablet {
         }
 
         let buttons = report[0] & 0x07;
-        let ax = u16::from_le_bytes([report[1], report[2]]) as i32;
-        let ay = u16::from_le_bytes([report[3], report[4]]) as i32;
+        let ax = u16::from_le_bytes([report[1], report[2]]);
+        let ay = u16::from_le_bytes([report[3], report[4]]);
         mice.apply_abs(ax, ay, buttons)
     }
 

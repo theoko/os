@@ -65,10 +65,6 @@ impl Setup {
         }
     }
 
-    pub fn is_finished(&self) -> bool {
-        self.step == Step::Finished
-    }
-
     fn reset_zones(&mut self) {
         self.n_zones = 0;
     }
@@ -148,8 +144,8 @@ impl Setup {
 
     fn draw_welcome(&mut self, fb: &Surface) {
         // Apple opens on a single word and nothing else.
-        let w = fb.width() as i32;
-        let cy = fb.height() as i32 / 2 - 40;
+        let w = fb.width as i32;
+        let cy = fb.height as i32 / 2 - 40;
         fb.draw_text_centered(w / 2, cy, "hello", &HERO_FACE, font::HERO_TRACK, theme::INK);
         self.primary(fb, cy + 90, "Continue");
     }
@@ -179,7 +175,7 @@ impl Setup {
     }
 
     fn draw_skills(&mut self, fb: &Surface, skills: &SkillPeek) {
-        let w = fb.width() as i32;
+        let w = fb.width as i32;
         let top = self.header(
             fb,
             "Default Skills",
@@ -205,8 +201,8 @@ impl Setup {
     }
 
     fn draw_done(&mut self, fb: &Surface) {
-        let w = fb.width() as i32;
-        let cy = fb.height() as i32 / 2 - 40;
+        let w = fb.width as i32;
+        let cy = fb.height as i32 / 2 - 40;
         fb.draw_text_centered(
             w / 2,
             cy,
@@ -231,7 +227,7 @@ impl Setup {
 
     /// Title + subtitle. Returns the y where content should start.
     fn header(&self, fb: &Surface, title: &str, sub: &str) -> i32 {
-        let w = fb.width() as i32;
+        let w = fb.width as i32;
         let y = 132;
         fb.draw_text_centered(w / 2, y, title, &TITLE_FACE, font::TITLE_TRACK, theme::INK);
         fb.draw_text_centered(w / 2, y + 36, sub, &BODY_FACE, 0, theme::MUTED);
@@ -240,7 +236,7 @@ impl Setup {
 
     /// Capability toggle at index `i`: titled row + switch + hit zone.
     fn cap_row(&mut self, fb: &Surface, y: i32, i: usize) {
-        let r = content_rect(fb.width() as i32, y, ROW_H);
+        let r = content_rect(fb.width as i32, y, ROW_H);
         ui::draw_titled_row(fb, r, Cap::ALL[i].name(), Cap::ALL[i].blurb());
         ui::draw_switch_in_row(fb, r, self.caps.allows(Cap::ALL[i]));
         self.push_zone(r, Action::Row(i));
@@ -252,7 +248,7 @@ impl Setup {
         } else {
             (crate::mcp::BRIDGE_OFFLINE_HINT, theme::OFFLINE)
         };
-        let r = content_rect(fb.width() as i32, y, ROW_H + 8);
+        let r = content_rect(fb.width as i32, y, ROW_H + 8);
         ui::outlined_round_rect(fb, r, 10);
         let pad = 18;
         let d = 9;
@@ -263,7 +259,7 @@ impl Setup {
 
     /// Primary pill, centred, registering a Continue zone.
     fn primary(&mut self, fb: &Surface, y: i32, label: &str) {
-        let w = fb.width() as i32;
+        let w = fb.width as i32;
         let pad = 40;
         let bw = (BTN_FACE.width(label, 0) + pad * 2).max(180);
         let x = w / 2 - bw / 2;
@@ -274,7 +270,7 @@ impl Setup {
     }
 
     fn back_link(&mut self, fb: &Surface, y: i32) {
-        let w = fb.width() as i32;
+        let w = fb.width as i32;
         let label = "Go Back";
         let tw = BTN_FACE.width(label, 0);
         let x = w / 2 - tw / 2;
@@ -290,7 +286,7 @@ impl Setup {
     /// framebuffers the pill moves down rather than overlapping the rows
     /// (zones are hit first-match, so an overlap misroutes clicks).
     fn footer(&mut self, fb: &Surface, content_bottom: i32) {
-        let y = (fb.height() as i32 - 150).max(content_bottom + 24);
+        let y = (fb.height as i32 - 150).max(content_bottom + 24);
         self.primary(fb, y, "Continue");
         self.back_link(fb, y + CTA_H + 26);
     }
@@ -324,7 +320,7 @@ mod tests {
             assert_eq!(s.step, *expected, "step {i}");
             s.apply(Action::Continue);
         }
-        assert!(s.is_finished());
+        assert_eq!(s.step, Step::Finished);
     }
 
     #[test]

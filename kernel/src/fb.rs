@@ -33,8 +33,8 @@ fn mode_ok(width: u64, height: u64, pitch: u64, bpp: u16, mask_shifts: (u8, u8, 
 /// milliseconds and costing almost nothing.
 pub struct Surface {
     addr: *mut u8,
-    width: usize,
-    height: usize,
+    pub width: usize,
+    pub height: usize,
     pitch: usize,
     dirty: Cell<Option<(i32, i32, i32, i32)>>,
 }
@@ -104,14 +104,6 @@ impl Surface {
     /// `addr` must point to at least `width * height` u32s.
     pub(crate) unsafe fn in_memory(addr: *mut u32, width: usize, height: usize) -> Self {
         Self::from_parts(addr.cast::<u8>(), width, height, width * 4)
-    }
-
-    pub fn width(&self) -> usize {
-        self.width
-    }
-
-    pub fn height(&self) -> usize {
-        self.height
     }
 
     pub(crate) fn get_pixel(&self, x: i32, y: i32) -> u32 {
@@ -647,7 +639,7 @@ impl Screen {
         self.back.clear_dirty();
         // Anim feeds 0..=ONE already; no second clamp.
         let a = alpha_q16 as u32;
-        let (w, h) = (self.back.width(), self.back.height());
+        let (w, h) = (self.back.width, self.back.height);
         for y in 0..h {
             let dst = unsafe { self.fb.add(y * self.fb_pitch).cast::<u32>() };
             // Source row, shifted: rows above the offset show the backdrop.
@@ -671,8 +663,8 @@ impl Screen {
     fn blit(&self, x0: i32, y0: i32, x1: i32, y1: i32) {
         let x0 = x0.max(0) as usize;
         let y0 = y0.max(0) as usize;
-        let x1 = (x1.max(0) as usize).min(self.back.width());
-        let y1 = (y1.max(0) as usize).min(self.back.height());
+        let x1 = (x1.max(0) as usize).min(self.back.width);
+        let y1 = (y1.max(0) as usize).min(self.back.height);
         for y in y0..y1 {
             let src = unsafe { self.back.addr.add(y * self.back.pitch).cast::<u32>() };
             let dst = unsafe { self.fb.add(y * self.fb_pitch).cast::<u32>() };

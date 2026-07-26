@@ -20,12 +20,14 @@ pub const QUERY_MAX: usize = 64;
 /// Owns its text: bridge results are parsed out of a COM2 line buffer that is
 /// reused on the next call, so borrowing from it would dangle. Copying into
 /// fixed slots keeps the whole path free of unsafe lifetime tricks.
+///
+/// Fields are `pub` so the kernel binary can open a hit without a getter.
 #[derive(Clone, Copy)]
-struct Row {
-    title: [u8; search::TITLE_CHARS],
-    url: [u8; search::URL_CHARS],
+pub struct Row {
+    pub title: [u8; search::TITLE_CHARS],
+    pub url: [u8; search::URL_CHARS],
     /// Owned like title/url — bridge `cat=` outlives the COM2 line buffer.
-    cat: [u8; search::CAT_CHARS],
+    pub cat: [u8; search::CAT_CHARS],
 }
 
 impl Row {
@@ -72,8 +74,8 @@ fn empty_reason(done: SearchDone) -> &'static str {
 }
 
 pub struct SearchView {
-    rows: [Row; search::MAX_HITS],
-    count: usize,
+    pub rows: [Row; search::MAX_HITS],
+    pub count: usize,
     /// `None` = no query yet. `Some` = last fetch / local-only fill.
     outcome: Option<SearchDone>,
 }
@@ -88,11 +90,11 @@ impl SearchView {
     }
 
     /// Load baked-index hits for `q` into `rows` (does not touch `outcome`).
+    ///
+    /// Callers must pass a non-empty trimmed query (`run_via` already returns
+    /// early on blank input).
     fn fill_local(&mut self, q: &str) {
         self.count = 0;
-        if q.trim().is_empty() {
-            return;
-        }
         let mut hits = [0usize; search::MAX_HITS];
         let n = search::query(q, &mut hits);
         for &doc in hits.iter().take(n) {
@@ -144,10 +146,6 @@ impl SearchView {
     pub fn hit(&self, w: i32, x: i32, y: i32) -> Option<usize> {
         crate::ui::hit_among(self.count, x, y, |i| row_rect(w, i))
     }
-
-    pub fn at(&self, i: usize) -> (&str, &str) {
-        (str_at(&self.rows[i].title), str_at(&self.rows[i].url))
-    }
 }
 
 const ROW_H: i32 = 64;
@@ -171,7 +169,7 @@ pub fn draw(
     query: &str,
     online: bool,
 ) {
-    let w = fb.width() as i32;
+    let w = fb.width as i32;
     screens::chrome(fb, Some(("Search", "What do you want to know?")));
 
     // Input field.
@@ -233,9 +231,11 @@ mod tests {
         v.run_via("capability agent", crate::caps::Caps::none());
         assert_eq!(v.outcome, Some(SearchDone::Local));
         assert!(v.count > 0, "expected hits from the baked index");
-        let (title, url) = v.at(0);
-        assert!(!title.is_empty());
-        assert!(!url.is_empty(), "offline results must be openable too");
+        assert!(!str_at(&v.rows[0].title).is_empty());
+        assert!(
+            !str_at(&v.rows[0].url).is_empty(),
+            "offline results must be openable too"
+        );
     }
 
     #[test]
@@ -324,8 +324,8 @@ mod empty_state_tests {
 
 /// Draw a document the user opened from a result.
 pub fn draw_reader(fb: &Surface, page: &crate::mcp::DocPage) {
-    let w = fb.width() as i32;
-    let h = fb.height() as i32;
+    let w = fb.width as i32;
+    let h = fb.height as i32;
     screens::chrome(fb, None);
 
     let fx = crate::ui::content_column(w, crate::ui::LIST_CONTENT_MAX).0;

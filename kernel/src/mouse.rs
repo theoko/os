@@ -99,10 +99,12 @@ impl Mouse {
         edge
     }
 
-    /// Absolute tablet report in 0..=32767 → screen pixels on this mouse.
-    pub(crate) fn apply_abs(&mut self, ax: i32, ay: i32, buttons: u8) -> bool {
-        let ax = ax.clamp(0, 32767);
-        let ay = ay.clamp(0, 32767);
+    /// Absolute tablet report (`u16` HID axes) → screen pixels on this mouse.
+    ///
+    /// Values above 32767 are clamped; the low bound is inherent to `u16`.
+    pub(crate) fn apply_abs(&mut self, ax: u16, ay: u16, buttons: u8) -> bool {
+        let ax = (ax as i32).min(32767);
+        let ay = (ay as i32).min(32767);
         // ax/ay in 0..=32767 ⇒ product fits the screen (mode_ok requires w,h > 0).
         let nx = (ax * (self.screen_w - 1)) / 32767;
         let ny = (ay * (self.screen_h - 1)) / 32767;
