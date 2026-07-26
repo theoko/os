@@ -33,6 +33,9 @@ when `email.search` is granted.
 Capabilities rows use short human labels (`Inbox`, `Knowledge`, `Files`,
 `Transcripts`); host-tool verbs stay on the wire / COM1 revoke lines.
 
+Home and list screens share one content column cap (`CONTENT_MAX` = 720) so the
+search field width does not jump when Enter opens Search.
+
 **Constraint:** proportional Inter atlas is ASCII only (`0x20..=0x7E`).
 Never put em dashes, middots, or curly quotes in on-screen strings — they become `?`.
 

@@ -153,7 +153,7 @@ const ROW_H: i32 = 64;
 
 /// Geometry shared by the renderer and hit-testing.
 fn field_rect(w: i32) -> crate::ui::Rect {
-    let (x, cw) = crate::ui::content_column(w, crate::ui::LIST_CONTENT_MAX);
+    let (x, cw) = crate::ui::content_column(w, crate::ui::CONTENT_MAX);
     crate::ui::Rect::new(x, crate::ui::LIST_TOP, cw, crate::ui::FIELD_H)
 }
 
@@ -329,7 +329,7 @@ pub fn draw_reader(fb: &Surface, page: &crate::mcp::DocPage) {
     let h = fb.height as i32;
     screens::chrome(fb, None);
 
-    let fx = crate::ui::content_column(w, crate::ui::LIST_CONTENT_MAX).0;
+    let fx = crate::ui::content_column(w, crate::ui::CONTENT_MAX).0;
     fb.draw_text(
         fx,
         108,

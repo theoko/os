@@ -38,7 +38,7 @@ pub fn back_hit(x: i32, y: i32) -> bool {
 
 /// Bounding box of row `i`, for both drawing and hit-testing.
 fn row_rect(w: i32, i: usize) -> ui::Rect {
-    let (x, cw) = ui::content_column(w, ui::LIST_CONTENT_MAX);
+    let (x, cw) = ui::content_column(w, ui::CONTENT_MAX);
     ui::Rect::new(x, ui::LIST_TOP + i as i32 * (ROW_H + ROW_GAP), cw, ROW_H)
 }
 
@@ -84,7 +84,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
         );
     }
 
-    let (x, _) = ui::content_column(w, ui::LIST_CONTENT_MAX);
+    let (x, _) = ui::content_column(w, ui::CONTENT_MAX);
     let note = if !peek.live {
         "Compiled into the ISO. Saved skills live on the host."
     } else if peek.count == 0 {
@@ -114,7 +114,7 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
         ui::draw_switch_in_row(fb, r, on);
     }
 
-    let (x, _) = ui::content_column(w, ui::LIST_CONTENT_MAX);
+    let (x, _) = ui::content_column(w, ui::CONTENT_MAX);
     fb.draw_text(
         x,
         ui::LIST_TOP + Cap::ALL.len() as i32 * (ROW_H + ROW_GAP) + 26,
