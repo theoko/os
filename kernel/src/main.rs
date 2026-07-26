@@ -58,6 +58,16 @@ unsafe extern "C" fn kmain() -> ! {
         serial::exit_qemu(false);
     }
 
+    // Before the first byte: on aarch64 the MMU is already on and the kernel
+    // runs in the higher half, so the PL011's physical address is not a
+    // pointer. Locating it via the HHDM has to happen before any output,
+    // because getting it wrong is a data abort into a vector table that does
+    // not exist yet — the machine simply stops, saying nothing.
+    // NOTE: intentionally NOT calling serial::locate_pl011 yet — Limine's HHDM
+    // maps RAM, not device MMIO, so the PL011 is unreachable until the kernel
+    // maps it itself. Until then the early console stays disabled rather than
+    // aborting on first write. See serial::locate_pl011.
+
     let serial_port = serial::Serial::com1();
     serial_port.init();
 

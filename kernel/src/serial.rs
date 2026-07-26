@@ -38,6 +38,48 @@ mod port {
     }
 }
 
+/// Virtual address of the PL011, once someone has told us where physical
+/// memory is mapped.
+///
+/// Limine hands the kernel over with the MMU **on** and the kernel living in
+/// the higher half, so the PL011's physical address is not a valid pointer:
+/// writing to it takes a synchronous data abort, and with no vector table
+/// installed the CPU lands in unmapped memory at VBAR+0x200 and stops. That
+/// is a completely silent death — it happened after Limine printed "Loading
+/// executable" and before the kernel could say anything at all.
+///
+/// Zero means "not yet located"; `pl011_base()` then falls back to the
+/// physical address, which is correct on any machine that identity-maps it
+/// and no worse than the old behaviour anywhere else.
+#[cfg(target_arch = "aarch64")]
+static PL011_VIRT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Physical base of the PL011 on QEMU `virt` / VirtualBox `armv8virtual`.
+#[cfg(target_arch = "aarch64")]
+pub const PL011_PHYS: usize = 0x0900_0000;
+
+/// Point the early console at `hhdm_offset + PL011_PHYS`.
+///
+/// Call this before the first write, from `kmain`, using Limine's HHDM
+/// response. Idempotent.
+#[cfg(target_arch = "aarch64")]
+pub fn locate_pl011(hhdm_offset: u64) {
+    if hhdm_offset != 0 {
+        PL011_VIRT.store(
+            (hhdm_offset as usize).wrapping_add(PL011_PHYS),
+            core::sync::atomic::Ordering::SeqCst,
+        );
+    }
+}
+
+#[cfg(target_arch = "aarch64")]
+fn pl011_base() -> Option<usize> {
+    match PL011_VIRT.load(core::sync::atomic::Ordering::SeqCst) {
+        0 => None,
+        v => Some(v),
+    }
+}
+
 /// Early debug or bridge serial device.
 pub struct Serial {
     #[cfg(target_arch = "x86_64")]
@@ -52,7 +94,7 @@ impl Serial {
     #[cfg(target_arch = "x86_64")]
     pub const COM2: u16 = 0x2F8;
     #[cfg(target_arch = "aarch64")]
-    pub const PL011_COM1: usize = 0x0900_0000;
+    pub const PL011_COM1: usize = PL011_PHYS;
 
     #[cfg(target_arch = "x86_64")]
     pub const fn new(base: u16) -> Self {
@@ -69,11 +111,11 @@ impl Serial {
         Self {}
     }
 
-    pub const fn com1() -> Self {
+    pub fn com1() -> Self {
         #[cfg(target_arch = "x86_64")]
         return Self::new(Self::COM1);
         #[cfg(target_arch = "aarch64")]
-        return Self::new(Some(Self::PL011_COM1));
+        return Self::new(pl011_base());
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         Self::new()
     }

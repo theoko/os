@@ -30,7 +30,10 @@ ARM64_FIRMWARE ?= $(firstword $(wildcard \
 	/opt/homebrew/share/qemu/edk2-aarch64-code.fd \
 	/usr/local/share/qemu/edk2-aarch64-code.fd \
 	/usr/share/qemu/edk2-aarch64-code.fd))
-ARM64_QEMUFLAGS ?= -M virt -cpu cortex-a72 -m 512M -serial stdio -display none
+# `ramfb` is what gives Limine a framebuffer to hand the kernel on `virt`.
+# The serial is firmware/Limine output only: the guest's own PL011 stays dark
+# until the kernel maps device MMIO (Limine's HHDM covers RAM, not MMIO).
+ARM64_QEMUFLAGS ?= -M virt -cpu cortex-a72 -m 512M -device ramfb -serial stdio
 
 CARGO ?= $(firstword $(wildcard \
 	/opt/homebrew/opt/rustup/bin/cargo \
