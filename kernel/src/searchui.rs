@@ -140,7 +140,9 @@ impl SearchView {
         // Record reachability BEFORE any fallback, so an online bridge that
         // simply found nothing is never reported as a connection failure.
         // Rows are filled once from the COM2 parse — no intermediate peek buffer.
-        if crate::mcp::fetch_search_rows(caps, q, |title, url| {
+        use crate::caps::Cap;
+        use crate::mcp::DocOutcome;
+        match crate::mcp::fetch_search_rows(caps, q, |title, url| {
             if self.count >= search::MAX_HITS {
                 return false;
             }
@@ -148,14 +150,15 @@ impl SearchView {
             self.count += 1;
             true
         }) {
-
-            use crate::caps::Cap;
-            self.phase = Phase::Online {
-                files: caps.allows(Cap::WorkspaceIndex),
-                mail: caps.allows(Cap::EmailSearch),
-            };
-        } else {
-            self.phase = Phase::Offline;
+            DocOutcome::Offline => self.phase = Phase::Offline,
+            // Bridge ERR (grant miss, …) — same empty copy as a missing search cap.
+            DocOutcome::Err => self.phase = Phase::Denied,
+            DocOutcome::Ok => {
+                self.phase = Phase::Online {
+                    files: caps.allows(Cap::WorkspaceIndex),
+                    mail: caps.allows(Cap::EmailSearch),
+                };
+            }
         }
         if self.count == 0 {
             // Nothing from the bridge: try what we shipped with.

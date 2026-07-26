@@ -293,11 +293,8 @@ unsafe extern "C" fn kmain() -> ! {
                                     let before = setup.caps;
                                     setup.caps.toggle(i);
                                     for cap in caps::Cap::ALL {
-                                        let Some(tool) = cap.forget_tool() else {
-                                            continue;
-                                        };
                                         if before.allows(cap) && !setup.caps.allows(cap) {
-                                            mcp::forget(tool);
+                                            mcp::forget(cap);
                                             serial_port.write_str("caps: revoked ");
                                             serial_port.write_str(cap.name());
                                             serial_port.write_str(" - purged\n");

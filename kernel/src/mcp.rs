@@ -190,7 +190,7 @@ fn parse_ok_n(line: &str) -> usize {
     n
 }
 
-/// How `doc.read` finished (replaces parallel `status` + `denied` bits).
+/// How a framed CALL finished (`doc.read`, `search.query`).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum DocOutcome {
     Offline,
@@ -267,7 +267,10 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str, title: &str) -> DocPage {
 /// Turning a switch off should remove the index it built, not just stop
 /// answering from it — otherwise "off" means "hidden", which is not what the
 /// switch says.
-pub fn forget(tool: &str) {
+pub fn forget(cap: crate::caps::Cap) {
+    let Some(tool) = cap.forget_tool() else {
+        return;
+    };
     when_online((), |com2, line| {
         com2.write_str("CALL ");
         com2.write_str(tool);
@@ -321,15 +324,15 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
 /// Caller must hold [`crate::caps::Cap::SearchQuery`]. Scope flags
 /// (`email=1`, `files=1`, …) still follow the rest of `caps`.
 /// Invokes `on_hit(title, url)` for each ROW (stop early by returning `false`).
-/// Returns `false` when the bridge is offline; `true` when it answered
-/// (even with zero hits — so the UI can tell "no matches" from "no bridge").
+/// Offline → baked-index fallback; `Err` → denied empty state; `Ok` even with
+/// zero hits so the UI can tell "no matches" from "no bridge".
 pub(crate) fn fetch_search_rows(
     caps: crate::caps::Caps,
     q: &str,
     mut on_hit: impl FnMut(&str, &str) -> bool,
-) -> bool {
+) -> DocOutcome {
     // Offline: UI falls back to the baked index via SearchView::fill_local.
-    when_online(false, |com2, line| {
+    when_online(DocOutcome::Offline, |com2, line| {
         // CALL search.query q=… k=N [email=1]
         //
         // The email graph is opt-in per call on the bridge. Ask for it only when
@@ -345,13 +348,16 @@ pub(crate) fn fetch_search_rows(
         write_scope_flags(com2, caps);
         com2.write_str("\n");
 
-        let _ = for_each_ok_rows(com2, line, 16, |resp| {
+        let (saw_err, _) = for_each_ok_rows(com2, line, 16, |resp| {
             let (title, url) = parse_row_pair(resp, "title", "url");
             // Caller enforces MAX_HITS (returns false to stop).
             on_hit(title.unwrap_or("?"), url.unwrap_or(""))
-        })
-        .0;
-        true
+        });
+        if saw_err {
+            DocOutcome::Err
+        } else {
+            DocOutcome::Ok
+        }
     })
 }
 
