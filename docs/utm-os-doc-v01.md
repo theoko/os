@@ -39,7 +39,7 @@ The VM is created via UTM’s AppleScript API:
 
 ## What you should see
 
-**Display:** after `make utm-run`, the UTM window shows the white setup
+**Display:** after `make utm-run`, the UTM window shows the light setup
 assistant, then the home launcher (search field + tiles).
 
 **Serial:** UTM does **not** have View → Serial. Default serial is a PTTY. Use:

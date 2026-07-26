@@ -329,7 +329,7 @@ fn ensure_mask() {
                     // +1px so the keyline's left/top stamps stay in the box.
                     pts[i] = (ax + dx + 8, ay + dy + 8);
                 }
-                surf.fill_polygon(&pts, 0x00FF_FFFF);
+                surf.fill_polygon(&pts, theme::SURFACE);
             }
             for (i, px) in scratch.iter().enumerate() {
                 out[i] = (*px & 0xFF) as u8;

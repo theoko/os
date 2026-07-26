@@ -10,7 +10,8 @@ status: active
 ## Direction
 
 Home is a **launcher**, not a landing page: type into search on arrival, three
-destination tiles (Search, Capabilities, Skills), recent mail when granted.
+destination tiles (Search, Capabilities, Skills), inbox count in the footer
+when `email.search` is granted.
 
 ## Palette
 
@@ -24,11 +25,10 @@ destination tiles (Search, Capabilities, Skills), recent mail when granted.
 
 ## Composition
 
-1. Nav: brand `os` + bridge status
+1. Nav: brand `os` + Connect + bridge status
 2. Search field (type immediately; Enter runs Search)
 3. Three tiles with live counts
-4. Recent mail when `email.search` is granted
-5. Footer status / version whisper
+4. Footer: inbox count, active caps, bridge status
 
 **Constraint:** proportional Inter atlas is ASCII only (`0x20..=0x7E`).
 Never put em dashes, middots, or curly quotes in on-screen strings — they become `?`.

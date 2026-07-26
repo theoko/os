@@ -5,8 +5,7 @@
 //! makes it the right fit for a boot jingle in a freestanding kernel.
 //!
 //! The melody here is original. A recognisable pop song would be someone
-//! else's copyright baked into a build artifact in a public repo — see
-//! `docs/` for pointing this at your own licensed audio instead.
+//! else's copyright baked into a build artifact in a public repo.
 
 use crate::anim;
 use crate::port;

@@ -53,7 +53,7 @@ pub(crate) fn pace(since: u64, us: u32) -> u64 {
 
 /// Offset and opacity for entrance frame `i`, as (dy px, alpha Q16).
 fn slide_at(i: u32) -> (i32, i32) {
-    let denom = SLIDE_FRAMES.max(1) as i64;
+    let denom = SLIDE_FRAMES as i64;
     let t = ((i.min(SLIDE_FRAMES) as i64 * ONE as i64) / denom) as i32;
     let e = ease_out_cubic(t);
     let dy = lerp(SLIDE_TRAVEL_PX, 0, e);

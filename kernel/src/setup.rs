@@ -1,6 +1,6 @@
 //! First-boot setup journey, in the shape of the macOS Setup Assistant.
 //!
-//! One decision per screen, centred on a white page, with a single primary
+//! One decision per screen, centred on a light page, with a single primary
 //! action and a quiet way back. The steps mirror what this OS actually has to
 //! establish before the agent can do anything: whether the host bridge is
 //! reachable, which capabilities are granted, and which skills load.
@@ -238,7 +238,7 @@ impl Setup {
     // --- shared chrome -----------------------------------------------------
 
     /// Title + subtitle. Returns the y where content should start.
-    fn header(&mut self, fb: &Surface, title: &str, sub: &str) -> i32 {
+    fn header(&self, fb: &Surface, title: &str, sub: &str) -> i32 {
         let w = fb.width() as i32;
         let y = 132;
         fb.draw_text_centered(w / 2, y, title, &TITLE_FACE, font::TITLE_TRACK, theme::INK);
@@ -254,7 +254,7 @@ impl Setup {
         self.push_zone(r, Action::Row(i));
     }
 
-    fn status_card(&mut self, fb: &Surface, y: i32, status: BridgeStatus) {
+    fn status_card(&self, fb: &Surface, y: i32, status: BridgeStatus) {
         let (detail, tint) = match status {
             BridgeStatus::Online => ("Connected on COM2", theme::ONLINE),
             BridgeStatus::Offline => (crate::mcp::BRIDGE_OFFLINE_HINT, theme::OFFLINE),
