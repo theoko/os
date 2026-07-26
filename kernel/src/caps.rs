@@ -65,18 +65,15 @@ impl Caps {
         Cap::ALL.iter().filter(|&&c| self.allows(c)).count()
     }
 
-    pub(crate) fn set(&mut self, cap: Cap, on: bool) {
-        if on {
-            self.bits |= 1 << cap as usize;
-        } else {
-            self.bits &= !(1 << cap as usize);
-        }
-    }
-
     /// Flip capability `i` in place. Out-of-range is a no-op.
     pub fn toggle(&mut self, i: usize) {
         if let Some(c) = Cap::ALL.get(i) {
-            self.set(*c, !self.allows(*c));
+            let bit = 1 << *c as usize;
+            if self.bits & bit != 0 {
+                self.bits &= !bit;
+            } else {
+                self.bits |= bit;
+            }
         }
     }
 }

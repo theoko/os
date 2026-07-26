@@ -40,8 +40,10 @@ pub(crate) fn idf(n_docs: f64, df: f64) -> f64 {
 
 /// Title tokens twice, then body — tSearch client ethos.
 pub(crate) fn title_body_tokens(title: &str, body: &str) -> Vec<String> {
-    let mut t = tokenize(title);
-    t.extend(tokenize(title));
+    let title_toks = tokenize(title);
+    let mut t = Vec::with_capacity(title_toks.len() * 2 + 8);
+    t.extend_from_slice(&title_toks);
+    t.extend(title_toks);
     t.extend(tokenize(body));
     t
 }

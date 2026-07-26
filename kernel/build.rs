@@ -115,7 +115,8 @@ fn build_atlas() -> String {
     }
 
     out.push_str("\n/// All UI faces, in declaration order.\n");
-    out.push_str("pub static FACES: &[&Face] = &[");
+    out.push_str("#[cfg(test)]\n");
+    out.push_str("static FACES: &[&Face] = &[");
     for name in &faces {
         let _ = write!(out, "&{name}, ");
     }
@@ -170,7 +171,7 @@ fn rasterize(data: &[u8], style: &Style, out: &mut String) -> String {
     }
 
     let n = style.name;
-    let _ = writeln!(out, "pub static {n}_BITMAP: [u8; {}] = [", bitmap.len());
+    let _ = writeln!(out, "static {n}_BITMAP: [u8; {}] = [", bitmap.len());
     for chunk in bitmap.chunks(32) {
         out.push(' ');
         for b in chunk {
@@ -180,7 +181,7 @@ fn rasterize(data: &[u8], style: &Style, out: &mut String) -> String {
     }
     out.push_str("];\n");
 
-    let _ = writeln!(out, "pub static {n}_GLYPHS: [Glyph; {COUNT}] = [");
+    let _ = writeln!(out, "static {n}_GLYPHS: [Glyph; {COUNT}] = [");
     for (w, h, bx, by, adv64, off) in &metrics {
         let _ = writeln!(
             out,
@@ -192,7 +193,7 @@ fn rasterize(data: &[u8], style: &Style, out: &mut String) -> String {
     let face = format!("{n}_FACE");
     let _ = writeln!(
         out,
-        "pub static {face}: Face = Face {{ glyphs: &{n}_GLYPHS, bitmap: &{n}_BITMAP, \
+        "pub(crate) static {face}: Face = Face {{ glyphs: &{n}_GLYPHS, bitmap: &{n}_BITMAP, \
          ascent: {}, descent: {}, px: {} }};\n",
         ascent.round() as i32,
         descent.round() as i32,

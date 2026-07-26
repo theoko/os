@@ -5,7 +5,7 @@
 //! no rasterizer, no allocator and no float transcendentals here.
 
 /// One glyph's placement and its slice of the face's alpha bitmap.
-pub struct Glyph {
+pub(crate) struct Glyph {
     /// Bitmap width in px (0 for blanks like space).
     pub w: usize,
     /// Bitmap height in px.
@@ -22,8 +22,8 @@ pub struct Glyph {
 
 /// A single size+weight cut.
 pub struct Face {
-    pub glyphs: &'static [Glyph],
-    pub bitmap: &'static [u8],
+    pub(crate) glyphs: &'static [Glyph],
+    pub(crate) bitmap: &'static [u8],
     pub ascent: i32,
     pub descent: i32,
     pub px: i32,
@@ -37,7 +37,7 @@ include!(concat!(env!("OUT_DIR"), "/font_atlas.rs"));
 
 impl Face {
     /// Glyph for an ASCII byte; anything outside the atlas renders as `?`.
-    pub fn glyph_for(&self, ch: u8) -> &Glyph {
+    pub(crate) fn glyph_for(&self, ch: u8) -> &Glyph {
         let idx = if (FIRST..=LAST).contains(&ch) {
             (ch - FIRST) as usize
         } else {

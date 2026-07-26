@@ -385,7 +385,7 @@ mod tests {
         use crate::caps::{Cap, Caps};
         // Search-only grants must not ask the bridge for mail.
         let mut search_only = Caps::none();
-        search_only.set(Cap::SearchQuery, true);
+        search_only.toggle(Cap::SearchQuery as usize);
         assert!(search_only.allows(Cap::SearchQuery));
         assert!(
             !search_only.allows(Cap::EmailSearch),
@@ -393,7 +393,7 @@ mod tests {
         );
 
         let mut both = search_only;
-        both.set(Cap::EmailSearch, true);
+        both.toggle(Cap::EmailSearch as usize);
         assert!(both.allows(Cap::EmailSearch));
     }
 

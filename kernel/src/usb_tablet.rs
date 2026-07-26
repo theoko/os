@@ -51,7 +51,6 @@ pub struct UsbTablet {
     /// Max packet size for the interrupt endpoint (minus one goes in the TD).
     max_packet: u8,
     data_toggle: bool,
-    ready: bool,
     /// Interrupt IN TD is armed in the frame list; poll only checks completion.
     outstanding: bool,
 }
@@ -147,7 +146,6 @@ impl UsbTablet {
             ep: 1,
             max_packet: 8,
             data_toggle: false,
-            ready: false,
             outstanding: false,
         };
 
@@ -170,7 +168,6 @@ impl UsbTablet {
         // HID: prefer Report protocol; ignore failures (some firmwares NAK).
         let _ = me.hid_set_idle();
         let _ = me.hid_set_protocol(1);
-        me.ready = true;
         Probe::Bound(me)
     }
 
@@ -431,8 +428,8 @@ impl UsbTablet {
     /// Is the device on this port an absolute pointer we can drive?
     ///
     /// UTM populates the bus with keyboards and usb-redir stubs, so binding the
-    /// first device that enumerates picks up the wrong one and then reports
-    /// "ready" while never producing motion. QEMU's HID cuts are distinguished
+    /// first device that enumerates picks up the wrong one and then looks
+    /// bound while never producing motion. QEMU's HID cuts are distinguished
     /// by the interface descriptor:
     ///   usb-kbd     subclass 1 (boot), protocol 1 (keyboard)
     ///   usb-mouse   subclass 1 (boot), protocol 2 (relative mouse)
@@ -515,9 +512,6 @@ impl UsbTablet {
     }
 
     pub fn poll(&mut self, mice: &mut crate::mouse::Mouse) -> bool {
-        if !self.ready {
-            return false;
-        }
         // Non-blocking: arm an interrupt IN once, then only check Active.
         // Waiting out the full bInterval on every NAK froze the UI and also
         // tore down the schedule before the HC could retire the TD.

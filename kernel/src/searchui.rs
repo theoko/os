@@ -60,15 +60,17 @@ struct Source {
     bridge_online: bool,
     /// The bridge answered with ERR, or the capability was refused.
     errored: bool,
-    /// The caller held workspace.index, so the user's own files were in scope.
-    files_in_scope: bool,
-    /// The caller held email.search.
-    mail_in_scope: bool,
+    /// Grants held for this query — empty-state copy names what's missing.
+    caps: crate::caps::Caps,
 }
 
 impl Source {
     const fn offline() -> Self {
-        Self { bridge_online: false, errored: false, files_in_scope: false, mail_in_scope: false }
+        Self {
+            bridge_online: false,
+            errored: false,
+            caps: crate::caps::Caps::none(),
+        }
     }
 
     /// Shown when something actually broke, as opposed to simply finding
@@ -77,6 +79,7 @@ impl Source {
 
     /// One line explaining an empty result set, naming the fix when there is one.
     fn empty_reason(self) -> &'static str {
+        use crate::caps::Cap;
         // A failure is not the same as an empty result set, and only the
         // former gets the friendly line.
         if self.errored {
@@ -85,10 +88,10 @@ impl Source {
         if !self.bridge_online {
             return "No matches. Bridge offline - run: make utm-bridged";
         }
-        if !self.files_in_scope {
+        if !self.caps.allows(Cap::WorkspaceIndex) {
             return "No matches. Turn on workspace.index in Capabilities to search your files.";
         }
-        if !self.mail_in_scope {
+        if !self.caps.allows(Cap::EmailSearch) {
             return "No matches in your files. Turn on email.search to include mail.";
         }
         "No matches. The bridge searched your files and mail."
@@ -158,8 +161,7 @@ impl SearchView {
         let source = Source {
             bridge_online: online,
             errored: peek.denied,
-            files_in_scope: caps.allows(crate::caps::Cap::WorkspaceIndex),
-            mail_in_scope: caps.allows(crate::caps::Cap::EmailSearch),
+            caps,
         };
         if online {
             for i in 0..peek.count.min(search::MAX_HITS) {
@@ -326,12 +328,24 @@ mod tests {
 #[cfg(test)]
 mod source_tests {
     use super::*;
+    use crate::caps::{Cap, Caps};
+
+    fn source(online: bool, errored: bool, files: bool, mail: bool) -> Source {
+        let mut caps = Caps::none();
+        if mail {
+            caps.toggle(Cap::EmailSearch as usize);
+        }
+        if files {
+            caps.toggle(Cap::WorkspaceIndex as usize);
+        }
+        Source { bridge_online: online, errored, caps }
+    }
 
     #[test]
     fn an_online_bridge_is_never_reported_as_offline() {
         // The bug this replaces: a bridge that answered "n=0" was rendered as
         // "Bridge offline", sending the user to debug a working connection.
-        let s = Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: true };
+        let s = source(true, false, true, true);
         assert!(!s.empty_reason().contains("offline"));
     }
 
@@ -342,7 +356,7 @@ mod source_tests {
 
     #[test]
     fn missing_file_grant_names_the_fix() {
-        let s = Source { bridge_online: true, errored: false, files_in_scope: false, mail_in_scope: true };
+        let s = source(true, false, false, true);
         let m = s.empty_reason();
         assert!(m.contains("workspace.index"), "{m}");
         assert!(!m.contains("offline"), "{m}");
@@ -350,7 +364,7 @@ mod source_tests {
 
     #[test]
     fn missing_mail_grant_names_the_fix() {
-        let s = Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: false };
+        let s = source(true, false, true, false);
         assert!(s.empty_reason().contains("email.search"));
     }
 
@@ -358,9 +372,9 @@ mod source_tests {
     fn every_reason_is_renderable_ascii() {
         for s in [
             Source::offline(),
-            Source { bridge_online: true, errored: false, files_in_scope: false, mail_in_scope: false },
-            Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: false },
-            Source { bridge_online: true, errored: false, files_in_scope: true, mail_in_scope: true },
+            source(true, false, false, false),
+            source(true, false, true, false),
+            source(true, false, true, true),
         ] {
             let m = s.empty_reason();
             assert!(m.bytes().all(|b| (0x20..=0x7E).contains(&b)), "{m}");
@@ -372,10 +386,22 @@ mod source_tests {
 #[cfg(test)]
 mod teddy_tests {
     use super::*;
+    use crate::caps::{Cap, Caps};
+
+    fn source(online: bool, errored: bool, files: bool, mail: bool) -> Source {
+        let mut caps = Caps::none();
+        if mail {
+            caps.toggle(Cap::EmailSearch as usize);
+        }
+        if files {
+            caps.toggle(Cap::WorkspaceIndex as usize);
+        }
+        Source { bridge_online: online, errored, caps }
+    }
 
     #[test]
     fn a_real_failure_gets_the_friendly_line() {
-        let s = Source { bridge_online: true, errored: true, files_in_scope: true, mail_in_scope: true };
+        let s = source(true, true, true, true);
         assert_eq!(s.empty_reason(), Source::TEDDY);
     }
 
@@ -383,7 +409,7 @@ mod teddy_tests {
     fn an_empty_result_is_not_a_failure() {
         // Finding nothing is a legitimate answer and must stay actionable
         // rather than being papered over with a mascot.
-        let s = Source { bridge_online: true, errored: false, files_in_scope: false, mail_in_scope: true };
+        let s = source(true, false, false, true);
         assert_ne!(s.empty_reason(), Source::TEDDY);
         assert!(s.empty_reason().contains("workspace.index"));
     }
