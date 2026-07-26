@@ -86,24 +86,6 @@ impl Caps {
             self.bits &= !(1 << cap.index());
         }
     }
-
-    /// Short ASCII status for serial / legacy chrome (fits a 1024px row).
-    pub fn footer_status(self) -> &'static str {
-        let e = self.allows(Cap::EmailSearch);
-        let s = self.allows(Cap::SearchQuery);
-        let w = self.allows(Cap::SkillsSave);
-        match (e, s, w) {
-            (true, true, false) => "caps: email.search + search.query",
-            (true, true, true) => "caps: email + search + skills.save",
-            (true, false, false) => "caps: email.search only",
-            (false, true, false) => "caps: search.query only",
-            (false, false, false) => "caps: none granted",
-            (true, false, true) => "caps: email.search + skills.save",
-            (false, true, true) => "caps: search.query + skills.save",
-            (false, false, true) => "caps: skills.save only",
-        }
-    }
-
 }
 
 #[cfg(test)]
@@ -125,16 +107,6 @@ mod tests {
         assert!(!c.allows(Cap::EmailSearch));
         assert!(c.allows(Cap::SearchQuery));
         assert!(c.allows(Cap::SkillsSave));
-    }
-
-    #[test]
-    fn footer_is_ascii_and_short() {
-        for bits in 0u8..8 {
-            let c = Caps { bits };
-            let s = c.footer_status();
-            assert!(s.bytes().all(|b| (0x20..=0x7E).contains(&b)));
-            assert!(s.len() < 48, "footer too long: {s}");
-        }
     }
 
     #[test]

@@ -202,7 +202,7 @@ mod tests {
     #[test]
     fn toggle_out_of_range_is_a_noop() {
         let g = Caps::default_grants();
-        assert_eq!(toggle(g, 99).footer_status(), g.footer_status());
+        assert_eq!(toggle(g, 99), g);
     }
 
     #[test]

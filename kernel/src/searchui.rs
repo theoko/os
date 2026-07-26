@@ -192,8 +192,8 @@ pub fn result_hit(w: i32, count: usize, x: i32, y: i32) -> Option<usize> {
     crate::ui::hit_among(count.min(search::MAX_HITS), x, y, |i| row_rect(w, i))
 }
 
-/// Draw the search screen. `caret` blinks the insertion point on.
-pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_note: &str) {
+/// Draw the search screen.
+pub fn draw(fb: &Surface, view: &SearchView, query: &str, bridge_note: &str) {
     let w = fb.width() as i32;
     screens::chrome(fb, w, "Search", Some("What do you want to know?"));
 
@@ -208,7 +208,6 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
         fh,
         query,
         "Type a query, then press Enter",
-        caret,
         None,
     );
 

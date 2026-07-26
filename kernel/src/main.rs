@@ -94,7 +94,7 @@ unsafe extern "C" fn kmain() -> ! {
 
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
-                ui::draw_home_full(surface, &mail, &skill_peek, grants, "", false);
+                ui::draw_home_full(surface, &mail, &skill_peek, grants, "");
                 mouse::draw_arrow(surface, cx, cy);
                 screen.present();
                 serial_port.write_str("mouse: pointer painted\n");
@@ -147,7 +147,6 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut page = mcp::DocPage::empty(mcp::BridgeStatus::Offline, false);
                 let mut open_title = [0u8; searchui::QUERY_MAX];
                 let mut view = screens::View::Home;
-                let caret = true;
                 // First boot: run the setup journey before the home screen.
                 cursor.hide(surface);
                 setup.draw(surface, &mail, &skill_peek);
@@ -217,8 +216,8 @@ unsafe extern "C" fn kmain() -> ! {
                                 grants = setup.grants();
                                 serial_port.write_str("ui: setup done\n");
                                 serial_port.write_str("caps: ");
-                                serial_port.write_str(grants.footer_status());
-                                serial_port.write_str("\n");
+                                serial_port.write_u64(grants.granted_count() as u64);
+                                serial_port.write_str(" granted\n");
                                 mail = mcp::fetch_mail_peek(grants);
                                 view = screens::View::Home;
                                 repaint(
@@ -232,7 +231,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     &mail,
                                     &skill_peek,
                                     "",
-                                    false,
                                     &sview,
                                     "",
                                     &page,
@@ -343,7 +341,6 @@ unsafe extern "C" fn kmain() -> ! {
                                 &mail,
                                 &skill_peek,
                                 query.as_str(),
-                                caret,
                                 &sview,
                                 skills::str_at(&open_title),
                                 &page,
@@ -465,7 +462,6 @@ fn repaint(
     mail: &mcp::MailPeek,
     skills: &skills::SkillPeek,
     query: &str,
-    caret: bool,
     sview: &searchui::SearchView,
     open_title: &str,
     page: &mcp::DocPage,
@@ -474,14 +470,12 @@ fn repaint(
     cursor.hide(surface);
     match view {
         screens::View::Search => {
-            searchui::draw(surface, sview, query, caret, bridge_note(mail))
+            searchui::draw(surface, sview, query, bridge_note(mail))
         }
         screens::View::Skills => screens::draw_skills(surface, skills),
         screens::View::Caps => screens::draw_caps(surface, grants),
         screens::View::Reader => searchui::draw_reader(surface, open_title, page),
-        screens::View::Home => {
-            ui::draw_home_full(surface, mail, skills, grants, query, caret)
-        }
+        screens::View::Home => ui::draw_home_full(surface, mail, skills, grants, query),
     }
     cursor.show_at(surface, x, y);
     enter(screen);

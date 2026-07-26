@@ -130,7 +130,6 @@ pub fn draw_query_field(
     h: i32,
     query: &str,
     placeholder: &str,
-    caret: bool,
     badge: Option<&str>,
 ) {
     outlined_round_rect(fb, x, y, w, h, 12, theme::CARD_BORDER, theme::SURFACE);
@@ -147,10 +146,8 @@ pub fn draw_query_field(
         let bbase = y + (h - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
         fb.draw_text(bx, bbase, badge, &SMALL_FACE, 0, theme::MUTED);
     }
-    if caret {
-        let cx = (tx + BODY_FACE.width(query, 0) + 2).min(x + w - badge_w - 8);
-        fb.fill_rect(cx, y + 14, 2, h - 28, theme::INK);
-    }
+    let cx = (tx + BODY_FACE.width(query, 0) + 2).min(x + w - badge_w - 8);
+    fb.fill_rect(cx, y + 14, 2, h - 28, theme::INK);
 }
 
 /// Which home tile was under the pointer.
@@ -197,7 +194,6 @@ pub fn draw_home_full(
     skills: &SkillPeek,
     grants: Caps,
     query: &str,
-    caret: bool,
 ) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
@@ -218,7 +214,6 @@ pub fn draw_home_full(
         r.h,
         query,
         "Search knowledge base...",
-        caret,
         Some(badge),
     );
 
