@@ -57,7 +57,7 @@ endif
 RUSTUP_BIN := $(patsubst %/,%,$(dir $(CARGO)))
 WITH_RUST := PATH="$(RUSTUP_BIN):$$PATH"
 
-.PHONY: all build kernel arm64-kernel iso arm64-iso iso-arm64 virtualbox-arm64 bridge bridge-run run run-arm64 run-bridged run-best utm utm-run utm-bridged usb usb-list drive linux-vm refresh refresh-install refresh-uninstall test test-all test-host smoke smoke-arm64 smoke-bridge clean distclean
+.PHONY: all build kernel arm64-kernel iso arm64-iso iso-arm64 virtualbox-arm64 bridge bridge-run run run-arm64 run-bridged run-best utm utm-run utm-bridged usb usb-list drive linux-vm refresh refresh-install refresh-uninstall test test-all test-host smoke smoke-arm64 smoke-bridge publish-os clean distclean
 
 all: build
 
@@ -265,6 +265,22 @@ limine/limine:
 	rm -rf limine
 	git clone https://github.com/limine-bootloader/limine.git --branch=$(LIMINE_BRANCH) --depth=1 limine
 	$(MAKE) -C limine
+
+# Publish both ISOs to the public download page.
+#
+# Build release images from a clean tree, BOOT both, checksum them, upload
+# beside the live files and move into place, then verify on the server and
+# again over HTTPS. The boot test is the reason this is a target and not a
+# runbook: shipping an image that does not boot is the one failure here that
+# stays silent until a stranger hits it.
+#
+#   make publish-os                     the whole thing
+#   make publish-os DRY_RUN=1           build, boot, checksum; upload nothing
+#   make publish-os ALLOW_DIRTY=1       publish from an uncommitted tree
+#   make publish-os PUBLISH_HOST=... PUBLISH_DIR=... PUBLISH_URL=...
+publish-os:
+	chmod +x scripts/publish-os.sh
+	./scripts/publish-os.sh
 
 clean:
 	$(WITH_RUST) $(CARGO) clean
