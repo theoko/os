@@ -43,7 +43,7 @@ include!(concat!(env!("OUT_DIR"), "/corpus.rs"));
 /// Cap on search hits (offline index, SearchView rows; bridge default `k=`).
 pub const MAX_HITS: usize = 3;
 
-/// Guest `SearchView::Row` / bridge `sanitize_hit` budgets.
+/// Guest `SearchView::Row` / bridge `guest_slot` budgets.
 pub(crate) const TITLE_CHARS: usize = 56;
 pub(crate) const URL_CHARS: usize = 72;
 pub(crate) const CAT_CHARS: usize = 16;

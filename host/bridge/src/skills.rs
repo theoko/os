@@ -102,22 +102,18 @@ pub fn list_response() -> Vec<String> {
     let (defaults, user) = skills_dirs();
     let skills = list_skills(&defaults, &user);
     let rows = skills.iter().take(GUEST_MAX_LISTED).map(|(name, desc)| {
-        // Frontmatter is untrusted: cap to guest `skills::Slot` and ASCII so a
+        // Frontmatter is untrusted: cap to guest slot sizes and ASCII so a
         // '|' / non-atlas glyph cannot inject ROW fields or paint garbage.
-        let name = sanitize_slot(name, NAME_WIDTH);
-        let desc = sanitize_slot(desc, DESC_WIDTH);
+        let name = crate::text::guest_slot(name, NAME_CHARS);
+        let desc = crate::text::guest_slot(desc, DESC_CHARS);
         format!("ROW name={name}|desc={desc}")
     });
     crate::text::framed_ok("OK skills.list".into(), rows)
 }
 
 /// Guest `skills::{NAME,DESC}_CHARS`.
-const NAME_WIDTH: usize = 28;
-const DESC_WIDTH: usize = 40;
-
-fn sanitize_slot(s: &str, max: usize) -> String {
-    crate::text::sanitize(s, max, true, false)
-}
+const NAME_CHARS: usize = 28;
+const DESC_CHARS: usize = 40;
 
 #[cfg(test)]
 mod tests {

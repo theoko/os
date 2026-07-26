@@ -192,14 +192,9 @@ fn search_tfidf(
 }
 
 /// Guest `search::{TITLE,URL,CAT}_CHARS` (title / url / cat).
-const TITLE_WIDTH: usize = 56;
-const URL_WIDTH: usize = 72;
-const CAT_WIDTH: usize = 16;
-
-fn sanitize_hit(s: &str, max: usize) -> String {
-    // Guest font atlas is ASCII 0x20..=0x7E only; drop the rest.
-    crate::text::sanitize(s, max, true, false)
-}
+const TITLE_CHARS: usize = 56;
+const URL_CHARS: usize = 72;
+const CAT_CHARS: usize = 16;
 
 /// Search the curated corpus (plus optional email / files / audio scopes).
 ///
@@ -281,9 +276,9 @@ pub fn query_all(
         };
         format!(
             "ROW title={}|cat={}|url={}",
-            sanitize_hit(t, TITLE_WIDTH),
-            sanitize_hit(c, CAT_WIDTH),
-            sanitize_hit(u, URL_WIDTH)
+            crate::text::guest_slot(t, TITLE_CHARS),
+            crate::text::guest_slot(c, CAT_CHARS),
+            crate::text::guest_slot(u, URL_CHARS)
         )
     });
     crate::text::framed_ok("OK search.query".into(), rows)
@@ -328,13 +323,8 @@ pub fn body_for(url: &str) -> Option<&'static str> {
         })
 }
 
-/// Soft-wrap / sanitize budget for `ROW line=` (guest `DocPage` slot matches).
-pub(crate) const LINE_WIDTH: usize = 78;
-
-fn sanitize_line(s: &str) -> String {
-    // Cap at LINE_WIDTH so long words cannot overshoot the guest slot.
-    crate::text::sanitize(s, LINE_WIDTH, true, false)
-}
+/// Soft-wrap / sanitize budget for `ROW line=` (guest `DocPage::LINE_CHARS`).
+pub(crate) const LINE_CHARS: usize = 78;
 
 /// Hard-wrap text into `ROW line=...` entries the guest can render directly.
 pub(crate) fn wrap_lines(text: &str, max: usize) -> Vec<String> {
@@ -350,8 +340,8 @@ pub(crate) fn wrap_lines(text: &str, max: usize) -> Vec<String> {
         }
         let mut cur = String::new();
         for word in t.split_whitespace() {
-            if !cur.is_empty() && cur.chars().count() + 1 + word.chars().count() > LINE_WIDTH {
-                out.push(format!("ROW line={}", sanitize_line(&cur)));
+            if !cur.is_empty() && cur.chars().count() + 1 + word.chars().count() > LINE_CHARS {
+                out.push(format!("ROW line={}", crate::text::guest_slot(&cur, LINE_CHARS)));
                 cur.clear();
                 if out.len() >= max {
                     return out;
@@ -363,7 +353,7 @@ pub(crate) fn wrap_lines(text: &str, max: usize) -> Vec<String> {
             cur.push_str(word);
         }
         if !cur.is_empty() {
-            out.push(format!("ROW line={}", sanitize_line(&cur)));
+            out.push(format!("ROW line={}", crate::text::guest_slot(&cur, LINE_CHARS)));
         }
     }
     out.truncate(max);

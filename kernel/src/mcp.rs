@@ -178,7 +178,7 @@ pub struct DocPage {
 
 impl DocPage {
     pub(crate) const MAX: usize = 18;
-    /// Matches bridge `search::LINE_WIDTH` for `ROW line=`.
+    /// Matches bridge `search::LINE_CHARS` for `ROW line=`.
     pub(crate) const LINE_CHARS: usize = 78;
 
     pub const fn empty(outcome: DocOutcome) -> Self {

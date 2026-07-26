@@ -33,7 +33,7 @@ pub(crate) const BUILTIN: &[SkillRef] = &[
     },
 ];
 
-/// Guest `Slot` / bridge `sanitize_slot` budgets.
+/// Guest `Slot` / bridge `guest_slot` budgets.
 pub(crate) const NAME_CHARS: usize = 28;
 pub(crate) const DESC_CHARS: usize = 40;
 

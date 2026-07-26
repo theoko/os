@@ -200,7 +200,7 @@ fn write_reply<W: Write>(writer: &mut W, reply: &[String]) -> std::io::Result<()
 
 fn save_skill_reply(name: &str, body: &str) -> Vec<String> {
     match skills::save_skill(name, body) {
-        Ok(_) => vec!["OK skills.save".into()],
+        Ok(_) => text::framed_ok("OK skills.save".into(), []),
         Err(e) => vec![format!("ERR skills.save {e}")],
     }
 }
@@ -693,7 +693,7 @@ mod read_tests {
         for r in &rows {
             let line = r.strip_prefix("ROW line=").unwrap();
             assert!(
-                line.chars().count() <= search::LINE_WIDTH,
+                line.chars().count() <= search::LINE_CHARS,
                 "line too wide: {line:?}"
             );
         }
@@ -713,7 +713,7 @@ mod read_tests {
         for r in &rows {
             let line = r.strip_prefix("ROW line=").unwrap();
             assert!(
-                line.chars().count() <= search::LINE_WIDTH,
+                line.chars().count() <= search::LINE_CHARS,
                 "long word overshot: {line:?}"
             );
         }
