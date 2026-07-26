@@ -185,9 +185,9 @@ fn search_tfidf(
 }
 
 /// Guest `search::{TITLE,URL,CAT}_CHARS` (title / url / cat).
-const TITLE_CHARS: usize = 56;
-const URL_CHARS: usize = 72;
-const CAT_CHARS: usize = 16;
+pub(crate) const TITLE_CHARS: usize = 56;
+pub(crate) const URL_CHARS: usize = 72;
+pub(crate) const CAT_CHARS: usize = 16;
 
 /// Search the curated corpus (plus optional files / audio scopes).
 ///

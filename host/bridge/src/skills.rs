@@ -96,7 +96,7 @@ pub(crate) fn save_skill(name: &str, body: &str) -> Result<(), String> {
 }
 
 /// Matches guest `skills::MAX_LISTED` (buffer / paint / home count).
-const GUEST_MAX_LISTED: usize = 6;
+pub(crate) const GUEST_MAX_LISTED: usize = 6;
 
 pub(crate) fn list_response() -> Vec<String> {
     let (defaults, user) = skills_dirs();
@@ -112,8 +112,8 @@ pub(crate) fn list_response() -> Vec<String> {
 }
 
 /// Guest `skills::{NAME,DESC}_CHARS`.
-const NAME_CHARS: usize = 28;
-const DESC_CHARS: usize = 40;
+pub(crate) const NAME_CHARS: usize = 28;
+pub(crate) const DESC_CHARS: usize = 40;
 
 #[cfg(test)]
 mod tests {

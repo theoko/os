@@ -11,6 +11,9 @@ mod transcribe;
 mod tsearch;
 mod skills;
 
+#[cfg(test)]
+mod budgets_lockstep;
+
 use std::env;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{TcpListener, TcpStream};
