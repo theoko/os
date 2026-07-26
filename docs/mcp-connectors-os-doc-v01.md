@@ -59,11 +59,12 @@ Fields use `key=value`; use `|` between fields. Values are single-line; spaces a
 
 | Env | Behavior |
 |-----|----------|
-| `OS_MCP_EMAIL_BACKEND=mock` (default) | Deterministic fake rows (CI) |
+| `OS_MCP_EMAIL_BACKEND=mock` (default) | Deterministic `ROW n=` peek count (CI) |
 | `OS_MCP_EMAIL_BACKEND=gog` | `gog gmail search -j --results-only …` via keyring |
 
-Search always uses the in-bridge corpus + teddy/files/mail when those caps are
+Search uses the in-bridge corpus + teddy/files/audio when those scopes are
 granted on the `CALL` (see [`docs/search-os-doc-v01.md`](search-os-doc-v01.md)).
+Mail stays peek-only via `email.search`.
 
 ## Bridge API
 

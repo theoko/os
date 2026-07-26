@@ -21,19 +21,6 @@ const MAX_LINE: u64 = 64 * 1024;
 /// Cap on an accumulated skills.save body.
 const MAX_BODY: usize = 1024 * 1024;
 
-/// Tools handled by `call_tool` (skills.save is socket LINE…END — not here).
-const TOOLS: &[&str] = &[
-    "email.search",
-    "email.send",
-    "skills.list",
-    "search.query",
-    "workspace.index",
-    "audio.transcribe",
-    "workspace.forget",
-    "audio.forget",
-    "doc.read",
-];
-
 /// `read_line` with a hard length cap so a peer that never sends `\n` cannot
 /// grow the buffer without bound. `Ok(true)` = got a line, `Ok(false)` = EOF.
 fn read_line_bounded<R: BufRead>(reader: &mut R, line: &mut String) -> std::io::Result<bool> {
@@ -166,7 +153,10 @@ fn handle_client<R: Read, W: Write>(
                 // Disconnect mid-body: do not write a truncated skill.
                 vec!["ERR skills.save truncated_body".into()]
             } else {
-                save_skill_reply(name, &body)
+                match skills::save_skill(name, &body) {
+                    Ok(_) => text::framed_ok("OK skills.save".into(), []),
+                    Err(e) => vec![format!("ERR skills.save {e}")],
+                }
             };
             write_reply(&mut writer, &reply)?;
             continue;
@@ -186,13 +176,6 @@ fn write_reply<W: Write>(writer: &mut W, reply: &[String]) -> std::io::Result<()
         writeln!(writer, "{r}")?;
     }
     writer.flush()
-}
-
-fn save_skill_reply(name: &str, body: &str) -> Vec<String> {
-    match skills::save_skill(name, body) {
-        Ok(_) => text::framed_ok("OK skills.save".into(), []),
-        Err(e) => vec![format!("ERR skills.save {e}")],
-    }
 }
 
 /// Drop ANSI CSI sequences and other controls; keep printable ASCII protocol.
@@ -454,18 +437,14 @@ fn email_search(query: &str, max: usize) -> Vec<String> {
 
     match backend.as_str() {
         "gog" => email_search_gog(query, max),
-        _ => email_search_mock(query, max),
+        // Deterministic peek count for CI (no per-message payloads).
+        _ => email_count_ok(GUEST_MAIL_MAX.min(max)),
     }
 }
 
 /// Guest mail peek reads one `ROW n=<count>` (no per-message payloads).
 fn email_count_ok(n: usize) -> Vec<String> {
     text::framed_ok("OK email.search".into(), [format!("ROW n={n}")])
-}
-
-fn email_search_mock(_query: &str, max: usize) -> Vec<String> {
-    const MOCK_HITS: usize = 3;
-    email_count_ok(MOCK_HITS.min(max))
 }
 
 fn email_search_gog(query: &str, max: usize) -> Vec<String> {
@@ -517,7 +496,7 @@ mod tests {
 
     #[test]
     fn mock_search_returns_rows() {
-        let r = email_search_mock("in:inbox", 2);
+        let r = email_count_ok(2);
         assert_eq!(r[0], "OK email.search");
         assert_eq!(r.iter().filter(|l| l.starts_with("ROW ")).count(), 1);
         assert!(r.iter().any(|l| l == "ROW n=2"), "{r:?}");
@@ -561,11 +540,22 @@ mod tests {
 
     #[test]
     fn every_listed_tool_is_dispatched() {
-        for tool in TOOLS {
+        // skills.save is LINE…END on the socket — not in call_tool.
+        for tool in [
+            "email.search",
+            "email.send",
+            "skills.list",
+            "search.query",
+            "workspace.index",
+            "audio.transcribe",
+            "workspace.forget",
+            "audio.forget",
+            "doc.read",
+        ] {
             let r = dispatch(&format!("CALL {tool}"));
             assert!(
                 !r.first().is_some_and(|s| s.starts_with("ERR unknown_tool ")),
-                "{tool} listed but missing from call_tool: {r:?}"
+                "{tool} missing from call_tool: {r:?}"
             );
         }
     }

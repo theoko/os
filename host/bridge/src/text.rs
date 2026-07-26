@@ -31,25 +31,13 @@ pub(crate) fn trim_in_place(s: &mut String) {
 
 /// ASCII guest slot (font atlas 0x20..=0x7E); no trim — ROW fields keep spaces.
 pub fn guest_slot(s: &str, max: usize) -> String {
-    sanitize(s, max, true, false)
-}
-
-/// Map line breaks / pipes / controls to spaces, optionally drop non-ASCII,
-/// then take at most `max` chars (and optionally trim).
-pub fn sanitize(s: &str, max: usize, ascii_only: bool, trim: bool) -> String {
-    let mut out: String = s
-        .chars()
-        .filter(|c| !ascii_only || c.is_ascii())
+    s.chars()
+        .filter(|c| c.is_ascii())
         .map(|c| match c {
             '\n' | '\r' | '|' => ' ',
             c if c.is_control() => ' ',
             c => c,
         })
         .take(max)
-        .collect();
-    if trim {
-        trim_in_place(&mut out);
-    }
-    out
+        .collect()
 }
-

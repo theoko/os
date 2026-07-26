@@ -61,7 +61,6 @@ unsafe extern "C" fn kmain() -> ! {
     // CALL email.search against the host mailbox).
     let mut mail = mcp::fetch_mail_peek(caps::Caps::none());
     log_bridge_status(&serial_port, mail.online());
-    serial_port.write_str("skills: builtins ready\n");
     let mut skill_peek = skills::SkillPeek::from_builtins();
     if let Some(resp) = FRAMEBUFFER_REQUEST.get_response() {
         if let Some(fb_info) = resp.framebuffers().next() {
@@ -94,7 +93,8 @@ unsafe extern "C" fn kmain() -> ! {
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
                 let mut cursor = mouse::Cursor::new();
-                ui::draw_home_full(surface, &mail, &skill_peek, caps::Caps::none(), "");
+                // Blank + cursor for the QEMU smoke present; setup paints next.
+                ui::clear(surface);
                 cursor.show_at(surface, cx, cy);
                 screen.present();
                 serial_port.write_str("mouse: pointer painted\n");
