@@ -99,18 +99,21 @@ pub fn list_response() -> Vec<String> {
     let (defaults, user) = skills_dirs();
     let skills = list_skills(&defaults, &user);
     let rows = skills.iter().map(|(name, desc)| {
-        // Frontmatter names are untrusted text: sanitize like desc so a '|'
-        // in a name cannot inject ROW fields.
-        let name = sanitize(name);
-        let desc = sanitize(desc);
-        // Guest only reads name/desc.
+        // Frontmatter is untrusted: cap to guest `skills::Slot` and ASCII so a
+        // '|' / non-atlas glyph cannot inject ROW fields or paint garbage.
+        let name = sanitize_slot(name, NAME_WIDTH);
+        let desc = sanitize_slot(desc, DESC_WIDTH);
         format!("ROW name={name}|desc={desc}")
     });
     crate::text::framed_ok("OK skills.list".into(), rows)
 }
 
-fn sanitize(s: &str) -> String {
-    crate::text::sanitize(s, 120, false, false)
+/// Guest `skills::Slot` sizes (name / desc).
+const NAME_WIDTH: usize = 28;
+const DESC_WIDTH: usize = 40;
+
+fn sanitize_slot(s: &str, max: usize) -> String {
+    crate::text::sanitize(s, max, true, false)
 }
 
 #[cfg(test)]

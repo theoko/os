@@ -191,9 +191,14 @@ fn search_tfidf(
     scored
 }
 
-fn sanitize(s: &str) -> String {
+/// Guest `SearchView::Row` slot sizes (title / url / cat).
+const TITLE_WIDTH: usize = 56;
+const URL_WIDTH: usize = 72;
+const CAT_WIDTH: usize = 16;
+
+fn sanitize_hit(s: &str, max: usize) -> String {
     // Guest font atlas is ASCII 0x20..=0x7E only; drop the rest.
-    crate::text::sanitize(s, 90, true, false)
+    crate::text::sanitize(s, max, true, false)
 }
 
 /// Search the curated corpus (plus optional email / files / audio scopes).
@@ -276,9 +281,9 @@ pub fn query_all(
         };
         format!(
             "ROW title={}|cat={}|url={}",
-            sanitize(t),
-            sanitize(c),
-            sanitize(u)
+            sanitize_hit(t, TITLE_WIDTH),
+            sanitize_hit(c, CAT_WIDTH),
+            sanitize_hit(u, URL_WIDTH)
         )
     });
     crate::text::framed_ok("OK search.query".into(), rows)
@@ -327,8 +332,7 @@ pub fn body_for(url: &str) -> Option<&'static str> {
 pub(crate) const LINE_WIDTH: usize = 78;
 
 fn sanitize_line(s: &str) -> String {
-    // Cap at LINE_WIDTH so long words cannot overshoot the guest slot
-    // (search hit fields still use [`sanitize`] @ 90).
+    // Cap at LINE_WIDTH so long words cannot overshoot the guest slot.
     crate::text::sanitize(s, LINE_WIDTH, true, false)
 }
 

@@ -11,8 +11,7 @@ const TIMEOUT_LINE: u32 = 200_000;
 /// Only reached once PING has succeeded, so an offline bridge never waits.
 const TIMEOUT_REPLY: u32 = 40_000_000;
 
-/// Longest protocol line the bridge can legally send: title+url at up to 90
-/// chars each (plus short `cat=`) and framing fits with headroom.
+/// Longest protocol line: guest search slots (56+72+16) plus framing headroom.
 const LINE_BUF: usize = 768;
 
 /// Make-target tip shared by footer and empty-state offline copy.
