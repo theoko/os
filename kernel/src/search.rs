@@ -40,7 +40,7 @@ struct Posting {
 
 include!(concat!(env!("OUT_DIR"), "/corpus.rs"));
 
-/// Max hits returned. Matches the bridge's home-screen peek.
+/// Cap on search hits (offline index, SearchView rows, and guest `k=`).
 pub const MAX_HITS: usize = 3;
 
 /// Tokenizer. Must stay identical to `fold_tok` in `build.rs`, or query terms
