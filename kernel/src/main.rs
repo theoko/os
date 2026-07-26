@@ -57,9 +57,9 @@ unsafe extern "C" fn kmain() -> ! {
     serial_port.write_str(HELLO_MESSAGE);
     serial_port.write_str("\n");
 
-    // Liveness only until the user consents. Reading the inbox here would
-    // fetch — and persist — mail before anyone agreed to it.
-    let mut mail = mcp::probe_bridge();
+    // Caps::none(): PING only until the user consents (default_grants would
+    // CALL email.search and persist the inbox on the host).
+    let mut mail = mcp::fetch_mail_peek(caps::Caps::none());
     log_bridge_status(&serial_port, mail.bridge_status());
     serial_port.write_str("skills: builtins ready\n");
     let mut skill_peek = skills::SkillPeek::from_builtin();
@@ -185,9 +185,9 @@ unsafe extern "C" fn kmain() -> ! {
                             // Entering the Bridge step: re-probe COM2 so the
                             // status card reflects a bridge that came up after boot.
                             if setup.step == setup::Step::Bridge && before != setup::Step::Bridge {
-                                // Still pre-consent: the Capabilities step
-                                // comes after this one, so probe, don't read.
-                                mail = mcp::probe_bridge();
+                                // Still pre-consent: Caps::none() PINGs only
+                                // (setup.caps already has default_grants).
+                                mail = mcp::fetch_mail_peek(caps::Caps::none());
                                 log_bridge_status(&serial_port, mail.bridge_status());
                             }
                             if setup.step == setup::Step::Skills && before != setup::Step::Skills {

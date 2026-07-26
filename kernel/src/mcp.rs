@@ -152,7 +152,9 @@ fn write_scope_flags(com2: &Serial, caps: crate::caps::Caps) {
 
 /// Probe the host bridge and optionally fetch a short inbox peek.
 ///
-/// `email.search` is refused when `caps` does not grant [`crate::caps::Cap::EmailSearch`].
+/// Without [`crate::caps::Cap::EmailSearch`] (including [`crate::caps::Caps::none`]
+/// before consent) this only PINGs — Online → [`MailPeek::Denied`], never
+/// `CALL email.search` (which would persist inbox results on the host).
 pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
     when_online(MailPeek::Offline, |com2, line| {
         if !caps.allows(crate::caps::Cap::EmailSearch) {
@@ -273,22 +275,6 @@ pub fn forget(tool: &str) {
         // Drain OK/ROW/END (stop on ERR) so the next call starts clean.
         let _ = for_each_ok_rows(com2, line, 8, |_| true);
     })
-}
-
-/// Liveness only: PING the bridge without reading any mailbox.
-///
-/// Used before the user has consented on the Capabilities step. Calling
-/// `fetch_mail_peek` there would read — and, since the bridge indexes results,
-/// *persist* — the inbox before anyone agreed to it. Online → [`MailPeek::Denied`]
-/// (bridge up, no inbox read yet).
-pub fn probe_bridge() -> MailPeek {
-    let mut line = [0u8; LINE_BUF];
-    let com2 = Serial::com2();
-    com2.init();
-    match ping_bridge(&com2, &mut line) {
-        BridgeStatus::Offline => MailPeek::Offline,
-        BridgeStatus::Online => MailPeek::Denied,
-    }
 }
 
 /// List playbooks via `CALL skills.list`. Offline → builtins baked into the ISO.
