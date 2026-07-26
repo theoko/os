@@ -176,17 +176,15 @@ pub enum HomeHit {
 /// Combined home hit-test (search field preferred over tiles).
 #[derive(Clone, Copy, Debug)]
 pub struct HomeTargets {
-    search: Rect,
-    connect: Rect,
     w: i32,
 }
 
 impl HomeTargets {
     pub fn hit(self, px: i32, py: i32) -> Option<HomeHit> {
-        if self.search.contains(px, py) {
+        if search_rect(self.w).contains(px, py) {
             return Some(HomeHit::SearchField);
         }
-        if self.connect.contains(px, py) {
+        if connect_rect(self.w).contains(px, py) {
             return Some(HomeHit::Connect);
         }
         const IDS: [CardId; 3] = [CardId::Search, CardId::Capabilities, CardId::Skills];
@@ -265,14 +263,6 @@ fn fmt_n_label<'a>(buf: &'a mut [u8; 16], n: usize, label: &str) -> &'a str {
     core::str::from_utf8(&buf[..i]).unwrap_or("")
 }
 
-/// Render "3 messages" / "1 message" / "none" into a caller-owned buffer.
-fn fmt_count<'a>(buf: &'a mut [u8; 16], n: usize, one: &'static str, many: &'static str) -> &'a str {
-    if n == 0 {
-        return "none";
-    }
-    fmt_n_label(buf, n, if n == 1 { one } else { many })
-}
-
 /// Centered content column capped at `max` (home uses 920; list screens 720).
 pub(crate) fn content_column(w: i32, max: i32) -> (i32, i32) {
     let cw = (w - PAD_X * 2).min(max);
@@ -289,8 +279,8 @@ pub fn search_rect(w: i32) -> Rect {
     Rect::new(x, 120, cw, 52)
 }
 
-pub(crate) const TILE_TOP: i32 = 200;
-pub(crate) const TILE_H: i32 = 88;
+const TILE_TOP: i32 = 200;
+const TILE_H: i32 = 88;
 
 /// Bounding box of home tile `i` (0 = Search, 1 = Capabilities, 2 = Skills).
 pub fn tile_rect(w: i32, i: i32) -> Rect {
@@ -310,11 +300,7 @@ pub fn connect_rect(w: i32) -> Rect {
 }
 
 pub fn home_targets(w: i32) -> HomeTargets {
-    HomeTargets {
-        search: search_rect(w),
-        connect: connect_rect(w),
-        w,
-    }
+    HomeTargets { w }
 }
 
 fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
@@ -367,7 +353,7 @@ fn draw_status_bar(fb: &Surface, w: i32, h: i32, mail: &MailPeek, grants: Caps) 
         1 => push(&mut line, &mut n, "1 message"),
         c => {
             let mut b = [0u8; 16];
-            push(&mut line, &mut n, fmt_count(&mut b, c, "message", "messages"));
+            push(&mut line, &mut n, fmt_n_label(&mut b, c, "messages"));
         }
     }
     push(&mut line, &mut n, "  |  Caps: ");
@@ -400,7 +386,6 @@ mod tests {
     fn search_field_is_the_primary_target() {
         let t = home_targets(1024);
         let r = search_rect(1024);
-        assert_eq!(t.search, r);
         assert_eq!(
             t.hit(r.x + r.w / 2, r.y + r.h / 2),
             Some(HomeHit::SearchField)
@@ -411,7 +396,6 @@ mod tests {
     fn connect_sits_in_the_nav_bar() {
         let t = home_targets(1024);
         let c = connect_rect(1024);
-        assert_eq!(t.connect, c);
         assert!(c.y + c.h <= NAV_H);
         assert_eq!(
             t.hit(c.x + c.w / 2, c.y + c.h / 2),
@@ -458,13 +442,9 @@ mod tests {
     }
 
     #[test]
-    fn counts_render_singular_plural_and_zero() {
+    fn n_labels_render() {
         let mut b = [0u8; 16];
-        assert_eq!(fmt_count(&mut b, 0, "message", "messages"), "none");
-        let mut b = [0u8; 16];
-        assert_eq!(fmt_count(&mut b, 1, "message", "messages"), "1 message");
-        let mut b = [0u8; 16];
-        assert_eq!(fmt_count(&mut b, 3, "message", "messages"), "3 messages");
+        assert_eq!(fmt_n_label(&mut b, 3, "messages"), "3 messages");
         let mut b = [0u8; 16];
         assert_eq!(fmt_n_label(&mut b, 4, "Granted"), "4 Granted");
     }

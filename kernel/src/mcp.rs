@@ -175,16 +175,34 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
 
         com2.write_str("CALL email.search q=in:inbox max=3\n");
 
+        // Count comes from the OK header (`n=`); drain ROW/END for wire hygiene.
         let mut peek = MailPeek::empty(BridgeStatus::Online);
-        let _ = for_each_ok_rows(com2, line, 16, "OK email.search", |_resp| {
-            if peek.count >= 5 {
+        for_each_reply(com2, line, 16, |resp| {
+            if resp.starts_with("ERR ") || resp == "END" {
                 return false;
             }
-            peek.count += 1;
+            if resp.starts_with("OK email.search") {
+                peek.count = parse_ok_n(resp);
+            }
             true
         });
         peek
     })
+}
+
+/// Digits after `n=` on an OK header (`OK email.search n=3`).
+fn parse_ok_n(line: &str) -> usize {
+    let Some((_, after)) = line.split_once("n=") else {
+        return 0;
+    };
+    let mut n = 0usize;
+    for &b in after.as_bytes() {
+        if !b.is_ascii_digit() {
+            break;
+        }
+        n = n.saturating_mul(10).saturating_add((b - b'0') as usize);
+    }
+    n
 }
 
 /// Lines of a document, for the reader.
@@ -428,10 +446,17 @@ mod tests {
     }
 
     #[test]
+    fn parse_ok_count() {
+        assert_eq!(parse_ok_n("OK email.search n=3"), 3);
+        assert_eq!(parse_ok_n("OK email.search n=0"), 0);
+        assert_eq!(parse_ok_n("OK email.search"), 0);
+    }
+
+    #[test]
     fn parse_row() {
-        let line = "ROW from=Alice Chen|subj=Q2 planning";
-        assert_eq!(parse_row_field(line, "from"), Some("Alice Chen"));
-        assert_eq!(parse_row_field(line, "subj"), Some("Q2 planning"));
+        let line = "ROW title=MCP overview|url=https://example/mcp";
+        assert_eq!(parse_row_field(line, "title"), Some("MCP overview"));
+        assert_eq!(parse_row_field(line, "url"), Some("https://example/mcp"));
     }
 
     #[test]
