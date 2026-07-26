@@ -19,16 +19,11 @@ pub fn app_support() -> PathBuf {
     home().join("Library/Application Support/os")
 }
 
-/// A file under `app_support()/knowledge/`.
-pub fn knowledge(file: &str) -> PathBuf {
-    app_support().join("knowledge").join(file)
-}
-
-/// `$VAR` if set, else `knowledge(file)`.
+/// `$VAR` if set, else `app_support()/knowledge/<file>`.
 pub fn env_or_knowledge(var: &str, file: &str) -> PathBuf {
     env::var(var)
         .map(PathBuf::from)
-        .unwrap_or_else(|_| knowledge(file))
+        .unwrap_or_else(|_| app_support().join("knowledge").join(file))
 }
 
 /// Create parent dirs and write `value` as compact JSON.

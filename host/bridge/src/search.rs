@@ -105,7 +105,7 @@ fn email_docs() -> Vec<Doc> {
             u: format!("email://{}", m.id),
             c: "email".to_string(),
             // Sender is indexed so "from alice" style queries hit.
-            b: format!("{} {}", m.from, m.snippet),
+            b: m.from,
             pr: m.pr,
         })
         .collect()

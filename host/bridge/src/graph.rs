@@ -14,8 +14,8 @@
 //! 2. **Email content stays behind the email capability.** Every document is
 //!    tagged `cat=email`, and callers must opt in explicitly — otherwise a
 //!    guest holding only `search.query` could read mail through search.
-//! 3. **Bodies are not stored.** Only sender, subject and a short snippet,
-//!    which is all the home-screen peek can render anyway.
+//! 3. **Bodies are not stored.** Only sender and subject — enough to rank and
+//!    surface mail in search without persisting content.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -29,8 +29,6 @@ pub struct Message {
     pub id: String,
     pub from: String,
     pub subject: String,
-    #[serde(default)]
-    pub snippet: String,
     /// PageRank over the sender/message graph, 0..1.
     #[serde(default)]
     pub pr: f64,
@@ -102,22 +100,17 @@ impl Graph {
     ///
     /// When the cap is exceeded the lowest-ranked messages are dropped, so what
     /// survives is what the graph considers most connected.
-    pub fn ingest(&mut self, incoming: &[(String, String, String)]) -> usize {
+    pub fn ingest(&mut self, incoming: &[(String, String)]) -> usize {
         let mut added = 0;
-        for (from, subject, snippet) in incoming {
+        for (from, subject) in incoming {
             let id = id_for(from, subject);
-            if let Some(existing) = self.messages.iter_mut().find(|m| m.id == id) {
-                // Refresh the snippet; the message itself is already known.
-                if !snippet.is_empty() {
-                    existing.snippet = snippet.clone();
-                }
+            if self.messages.iter().any(|m| m.id == id) {
                 continue;
             }
             self.messages.push(Message {
                 id,
                 from: from.clone(),
                 subject: subject.clone(),
-                snippet: snippet.clone(),
                 pr: 0.0,
             });
             added += 1;
@@ -205,8 +198,8 @@ mod tests {
     use super::*;
     use std::env;
 
-    fn msg(from: &str, subj: &str) -> (String, String, String) {
-        (from.into(), subj.into(), format!("snippet for {subj}"))
+    fn msg(from: &str, subj: &str) -> (String, String) {
+        (from.into(), subj.into())
     }
 
     #[test]
@@ -263,15 +256,6 @@ mod tests {
     }
 
     #[test]
-    fn snippet_refreshes_without_duplicating() {
-        let mut g = Graph::default();
-        g.ingest(&[("a@x".into(), "S".into(), "old".into())]);
-        g.ingest(&[("a@x".into(), "S".into(), "new".into())]);
-        assert_eq!(g.messages.len(), 1);
-        assert_eq!(g.messages[0].snippet, "new");
-    }
-
-    #[test]
     fn graph_path_is_outside_the_repo() {
         // Guards the rule that matters: mail must never land in the tree.
         let p = graph_path();
@@ -324,11 +308,7 @@ mod gate_tests {
         unsafe { std::env::set_var("OS_GRAPH_PATH", &path) };
 
         let mut g = super::Graph::default();
-        g.ingest(&[(
-            "ceo@example.com".into(),
-            "Confidential merger".into(),
-            "secret".into(),
-        )]);
+        g.ingest(&[("ceo@example.com".into(), "Confidential merger".into())]);
         g.save().expect("save");
 
         let without =
@@ -376,8 +356,8 @@ mod hardening_tests {
     #[test]
     fn index_is_capped_and_keeps_the_best_ranked() {
         let mut g = Graph::default();
-        let batch: Vec<(String, String, String)> = (0..Graph::MAX_MESSAGES + 50)
-            .map(|i| (format!("s{i}@x"), format!("subject {i}"), String::new()))
+        let batch: Vec<(String, String)> = (0..Graph::MAX_MESSAGES + 50)
+            .map(|i| (format!("s{i}@x"), format!("subject {i}")))
             .collect();
         g.ingest(&batch);
         assert_eq!(g.messages.len(), Graph::MAX_MESSAGES, "index grew past the cap");

@@ -417,12 +417,12 @@ fn call_tool(tool: &str, args: &[(String, String)], email: &str) -> Vec<String> 
 ///
 /// Only sender and subject are kept — never the body.
 fn ingest_rows(rows: &[String]) {
-    let msgs: Vec<(String, String, String)> = rows
+    let msgs: Vec<(String, String)> = rows
         .iter()
         .filter_map(|r| {
             let from = parse_row_field(r, "from")?;
             let subj = parse_row_field(r, "subj").unwrap_or("");
-            Some((from.to_string(), subj.to_string(), String::new()))
+            Some((from.to_string(), subj.to_string()))
         })
         .collect();
     if msgs.is_empty() {

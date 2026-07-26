@@ -101,7 +101,7 @@ test-host:
 	$(WITH_RUST) $(CARGO) test -p os-mcp-bridge
 
 smoke: iso
-	./scripts/smoke-qemu.sh
+	python3 scripts/smoke_common.py serial
 
 smoke-bridge: iso bridge
 	./scripts/smoke-bridge.sh
