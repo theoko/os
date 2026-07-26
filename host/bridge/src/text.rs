@@ -19,16 +19,6 @@ pub(crate) fn stderr_brief(stderr: &[u8], fallback: &str, max: usize) -> String 
         .collect()
 }
 
-/// Trim leading/trailing whitespace without a second allocation.
-pub(crate) fn trim_in_place(s: &mut String) {
-    let end = s.trim_end().len();
-    s.truncate(end);
-    let lead = s.len() - s.trim_start().len();
-    if lead > 0 {
-        s.drain(..lead);
-    }
-}
-
 /// ASCII guest slot (font atlas 0x20..=0x7E); no trim — ROW fields keep spaces.
 pub(crate) fn guest_slot(s: &str, max: usize) -> String {
     s.chars()

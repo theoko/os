@@ -102,7 +102,7 @@ fn corpus_path() -> PathBuf {
 /// Curated corpus, parsed once per process (same idea as teddy's cache).
 static CURATED: OnceLock<Result<Vec<Doc>, String>> = OnceLock::new();
 
-fn load_docs() -> Result<&'static [Doc], &'static str> {
+pub(crate) fn load_docs() -> Result<&'static [Doc], &'static str> {
     match CURATED
         .get_or_init(|| {
             let path = corpus_path();
@@ -267,45 +267,6 @@ pub(crate) fn query_all(
     crate::text::framed_ok("OK search.query".into(), rows)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn finds_mcp_docs() {
-        let docs = load_docs().expect("corpus");
-        let q = tokenize("capability ambient root");
-        let hits = search_tfidf(&docs, &q, 5);
-        assert!(!hits.is_empty());
-        let top = &docs[hits[0].1];
-        assert!(
-            top.t.contains("Architecture") || top.b.contains("ambient") || top.t.contains("capability"),
-            "unexpected top hit {}",
-            top.t
-        );
-    }
-
-}
-
-/// Body text for a document URL, from the built-in corpus or teddysearch.
-///
-/// These sources carry their text in the index, so reading needs no file
-/// access — and no capability beyond the one that found them. Callers wrap
-/// with [`wrap_lines`] (same path as `file://` / `audio://`).
-pub(crate) fn body_for(url: &str) -> Option<&'static str> {
-    load_docs()
-        .ok()?
-        .iter()
-        .find(|d| d.u == url)
-        .map(|d| d.b.as_str())
-        .or_else(|| {
-            crate::tsearch::docs()
-                .iter()
-                .find(|d| d.u == url)
-                .map(|d| d.b.as_str())
-        })
-}
-
 /// Soft-wrap / sanitize budget for `ROW line=` (guest `search::LINE_CHARS`).
 pub(crate) const LINE_CHARS: usize = 78;
 
@@ -341,4 +302,23 @@ pub(crate) fn wrap_lines(text: &str, max: usize) -> Vec<String> {
     }
     out.truncate(max);
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finds_mcp_docs() {
+        let docs = load_docs().expect("corpus");
+        let q = tokenize("capability ambient root");
+        let hits = search_tfidf(&docs, &q, 5);
+        assert!(!hits.is_empty());
+        let top = &docs[hits[0].1];
+        assert!(
+            top.t.contains("Architecture") || top.b.contains("ambient") || top.t.contains("capability"),
+            "unexpected top hit {}",
+            top.t
+        );
+    }
 }

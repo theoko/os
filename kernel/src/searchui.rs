@@ -332,7 +332,7 @@ pub fn draw_reader(fb: &Surface, page: &crate::mcp::DocPage) {
     fb.draw_text(
         fx,
         108,
-        page.title(),
+        str_at(&page.title),
         &TITLE_FACE,
         font::TITLE_TRACK,
         theme::INK,
@@ -356,7 +356,7 @@ pub fn draw_reader(fb: &Surface, page: &crate::mcp::DocPage) {
 
     let mut y = 156;
     for i in 0..page.count {
-        fb.draw_text(fx, y, page.line_at(i), &BODY_FACE, 0, theme::INK);
+        fb.draw_text(fx, y, str_at(&page.lines[i]), &BODY_FACE, 0, theme::INK);
         y += 26;
         if y > h - 40 {
             break;

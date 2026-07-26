@@ -1,7 +1,7 @@
 //! Guest MCP client over COM2 (host bridge).
 
 use crate::serial::Serial;
-use crate::skills::{copy_field, str_at, utf8_prefix};
+use crate::skills::{copy_field, utf8_prefix};
 
 const TIMEOUT_PING: u32 = 80_000;
 const TIMEOUT_LINE: u32 = 200_000;
@@ -177,8 +177,8 @@ pub struct DocPage {
     pub(crate) outcome: DocOutcome,
     pub(crate) count: usize,
     /// Copied from the search hit (not on the wire).
-    title: [u8; crate::search::TITLE_CHARS],
-    lines: [[u8; crate::search::LINE_CHARS]; Self::MAX],
+    pub(crate) title: [u8; crate::search::TITLE_CHARS],
+    pub(crate) lines: [[u8; crate::search::LINE_CHARS]; Self::MAX],
 }
 
 impl DocPage {
@@ -191,14 +191,6 @@ impl DocPage {
             title: [0; crate::search::TITLE_CHARS],
             lines: [[0; crate::search::LINE_CHARS]; Self::MAX],
         }
-    }
-
-    pub(crate) fn title(&self) -> &str {
-        str_at(&self.title)
-    }
-
-    pub(crate) fn line_at(&self, i: usize) -> &str {
-        str_at(&self.lines[i])
     }
 }
 

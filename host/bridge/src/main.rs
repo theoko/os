@@ -206,7 +206,12 @@ fn scrub_protocol_line(s: &str) -> String {
     if let Some(i) = ["CALL ", "PING"].iter().find_map(|p| out.find(p)) {
         out.drain(..i);
     }
-    text::trim_in_place(&mut out);
+    let end = out.trim_end().len();
+    out.truncate(end);
+    let lead = out.len() - out.trim_start().len();
+    if lead > 0 {
+        out.drain(..lead);
+    }
     out
 }
 
@@ -412,7 +417,17 @@ fn read_doc(
         )
     } else {
         // Corpus and teddysearch documents carry their body in the index.
-        Cow::Borrowed(search::body_for(url).ok_or("no readable body")?)
+        let body = search::load_docs()
+            .ok()
+            .and_then(|docs| docs.iter().find(|d| d.u == url).map(|d| d.b.as_str()))
+            .or_else(|| {
+                tsearch::docs()
+                    .iter()
+                    .find(|d| d.u == url)
+                    .map(|d| d.b.as_str())
+            })
+            .ok_or("no readable body")?;
+        Cow::Borrowed(body)
     };
 
     Ok(search::wrap_lines(&body, max))

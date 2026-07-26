@@ -645,7 +645,8 @@ impl Screen {
             return;
         }
         self.back.clear_dirty();
-        let a = alpha_q16.clamp(0, 1 << 16) as u32;
+        // Anim feeds 0..=ONE already; no second clamp.
+        let a = alpha_q16 as u32;
         let (w, h) = (self.back.width(), self.back.height());
         for y in 0..h {
             let dst = unsafe { self.fb.add(y * self.fb_pitch).cast::<u32>() };

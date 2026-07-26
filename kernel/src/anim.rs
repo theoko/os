@@ -30,9 +30,9 @@ fn ease_out_cubic(t: i32) -> i32 {
     (ONE as i64 - cube) as i32
 }
 
-/// Interpolate `a`..`b` by Q16 `t`.
+/// Interpolate `a`..`b` by Q16 `t` (caller clamps `t` to 0..=ONE).
 fn lerp(a: i32, b: i32, t: i32) -> i32 {
-    a + (((b - a) as i64 * t.clamp(0, ONE) as i64) / ONE as i64) as i32
+    a + (((b - a) as i64 * t as i64) / ONE as i64) as i32
 }
 
 /// Busy-wait until `us` microseconds after `since`, returning the new mark.

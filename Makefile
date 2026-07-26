@@ -36,7 +36,7 @@ RUSTUP_BIN := $(patsubst %/,%,$(dir $(CARGO)))
 RUSTC ?= $(firstword $(wildcard $(RUSTUP_BIN)/rustc) $(shell command -v rustc 2>/dev/null))
 WITH_RUST := PATH="$(RUSTUP_BIN):$$PATH"
 
-.PHONY: all build kernel iso bridge bridge-run run run-bridged utm utm-run utm-bridged test test-host smoke smoke-bridge clean distclean
+.PHONY: all build kernel iso bridge bridge-run bridge-dial run run-bridged utm utm-run utm-bridged test test-host smoke smoke-bridge clean distclean
 
 all: build
 
@@ -73,9 +73,12 @@ iso: limine/limine kernel
 run: iso
 	$(QEMU) $(QEMU_MACHINE) -cdrom $(IMAGE_NAME).iso -boot d $(QEMUFLAGS) $(QEMU_DEBUG_EXIT) || true
 
-# COM1 via QEMUFLAGS, COM2 = TCP server; host bridge dials (same as UTM).
-run-bridged: iso bridge
+# Dial-mode bridge (guest listens; host connects).
+bridge-dial: bridge
 	OS_MCP_BRIDGE_CONNECT=tcp:$(BRIDGE_ADDR) ./scripts/ensure-bridge.sh
+
+# COM1 via QEMUFLAGS, COM2 = TCP server; host bridge dials (same as UTM).
+run-bridged: iso bridge-dial
 	$(QEMU) $(QEMU_MACHINE) -cdrom $(IMAGE_NAME).iso -boot d \
 		$(QEMUFLAGS) \
 		-serial tcp:$(BRIDGE_ADDR),server \
@@ -88,8 +91,7 @@ utm-run: iso
 	UTM_START=1 ./scripts/make-utm.sh
 
 # COM2 TcpServer + dialing bridge (retries). One wiring model for QEMU and UTM.
-utm-bridged: iso bridge
-	OS_MCP_BRIDGE_CONNECT=tcp:$(BRIDGE_ADDR) ./scripts/ensure-bridge.sh
+utm-bridged: iso bridge-dial
 	UTM_START=1 OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) ./scripts/make-utm.sh
 
 test: test-host smoke smoke-bridge
