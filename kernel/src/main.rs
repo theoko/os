@@ -292,10 +292,10 @@ unsafe extern "C" fn kmain() -> ! {
                                 if let Some(i) = screens::caps_hit(w, mice.x, mice.y) {
                                     let before = setup.caps;
                                     setup.caps.toggle(i);
-                                    for (cap, tool) in [
-                                        (caps::Cap::WorkspaceIndex, "workspace.forget"),
-                                        (caps::Cap::AudioTranscribe, "audio.forget"),
-                                    ] {
+                                    for cap in caps::Cap::ALL {
+                                        let Some(tool) = cap.forget_tool() else {
+                                            continue;
+                                        };
                                         if before.allows(cap) && !setup.caps.allows(cap) {
                                             mcp::forget(tool);
                                             serial_port.write_str("caps: revoked ");

@@ -47,6 +47,15 @@ impl Cap {
             Cap::AudioTranscribe => "Transcribe recordings and index what was said",
         }
     }
+
+    /// Bridge tool that purges what this grant produced, if any.
+    pub const fn forget_tool(self) -> Option<&'static str> {
+        match self {
+            Cap::WorkspaceIndex => Some("workspace.forget"),
+            Cap::AudioTranscribe => Some("audio.forget"),
+            _ => None,
+        }
+    }
 }
 
 /// Bitset of granted capabilities (one bit per [`Cap`]).
@@ -119,6 +128,15 @@ mod tests {
                 "non-ASCII blurb: {b:?}"
             );
         }
+    }
+
+    #[test]
+    fn forget_tools_match_index_producers() {
+        assert_eq!(Cap::WorkspaceIndex.forget_tool(), Some("workspace.forget"));
+        assert_eq!(Cap::AudioTranscribe.forget_tool(), Some("audio.forget"));
+        assert_eq!(Cap::EmailSearch.forget_tool(), None);
+        assert_eq!(Cap::SearchQuery.forget_tool(), None);
+        assert_eq!(Cap::SkillsSave.forget_tool(), None);
     }
 
     #[test]
