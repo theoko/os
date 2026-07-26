@@ -14,6 +14,12 @@ const TIMEOUT_REPLY: u32 = 40_000_000;
 /// Longest protocol line: guest search slots (56+72+16) plus framing headroom.
 const LINE_BUF: usize = 768;
 
+/// Bridge default `email.search max=` (guest omits the arg).
+const MAIL_PEEK_MAX: usize = 3;
+
+/// OK line + END-break allowance around ROW drains in [`for_each_ok_rows`].
+const FRAMED_PAD: usize = 2;
+
 /// Make-target tip shared by footer and empty-state offline copy.
 macro_rules! bridge_offline_tip {
     () => {
@@ -174,13 +180,13 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
             return MailPeek::Denied;
         }
 
-        // Bridge defaults: q=in:inbox, max=3 (guest mail-peek budget).
+        // Bridge defaults: q=in:inbox, max=MAIL_PEEK_MAX.
         com2.write_str("CALL email.search\n");
 
         // Count ROWs actually received. ERR is not an empty inbox — same
         // Denied path as a missing grant.
         let mut count = 0usize;
-        let saw_err = for_each_ok_rows(com2, line, 16, |_| {
+        let saw_err = for_each_ok_rows(com2, line, MAIL_PEEK_MAX + FRAMED_PAD, |_| {
             count += 1;
             true
         });
@@ -250,7 +256,7 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str, title: &str) -> DocPage {
         com2.write_str("\n");
 
         let mut page = DocPage::empty(DocOutcome::Ok);
-        let saw_err = for_each_ok_rows(com2, line, 40, |resp| {
+        let saw_err = for_each_ok_rows(com2, line, DocPage::MAX + FRAMED_PAD, |resp| {
             if page.count >= DocPage::MAX {
                 return false;
             }
@@ -282,8 +288,8 @@ pub fn forget(cap: crate::caps::Cap) -> bool {
         com2.write_str("CALL ");
         com2.write_str(tool);
         com2.write_str("\n");
-        // Drain OK/ROW/END (stop on ERR) so the next call starts clean.
-        !for_each_ok_rows(com2, line, 8, |_| true)
+        // Framed forget is OK + END (stop on ERR) so the next call starts clean.
+        !for_each_ok_rows(com2, line, FRAMED_PAD, |_| true)
     })
 }
 
@@ -294,7 +300,7 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
 
         let mut peek = crate::skills::SkillPeek::empty();
         // OK + up to MAX_LISTED ROWs (+ END breaks); push false also stops early.
-        let saw_err = for_each_ok_rows(com2, line, crate::skills::MAX_LISTED + 2, |resp| {
+        let saw_err = for_each_ok_rows(com2, line, crate::skills::MAX_LISTED + FRAMED_PAD, |resp| {
             let (name, desc) = parse_row_pair(resp, "name", "desc");
             peek.push(name.unwrap_or("?"), desc.unwrap_or(""))
         });
@@ -346,7 +352,7 @@ pub(crate) fn fetch_search_rows(
         write_scope_flags(com2, caps);
         com2.write_str("\n");
 
-        let saw_err = for_each_ok_rows(com2, line, 16, |resp| {
+        let saw_err = for_each_ok_rows(com2, line, crate::search::MAX_HITS + FRAMED_PAD, |resp| {
             let (title, url, cat) = parse_row_triple(resp, "title", "url", "cat");
             // Caller enforces MAX_HITS (returns false to stop).
             on_hit(

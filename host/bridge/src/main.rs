@@ -301,11 +301,19 @@ fn forget_file(tool: &str, path: &std::path::Path) -> Vec<String> {
     text::framed_ok(format!("OK {tool}"), [])
 }
 
+/// Guest peek budgets (guest omits these args on the wire).
+const GUEST_MAIL_MAX: usize = 3;
+const GUEST_MAX_HITS: usize = 3;
+const GUEST_DOC_LINES: usize = 18;
+
 fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
     match tool {
         "email.search" => {
             // Guest mail peek omits args; defaults are the peek budget.
-            email_search(arg_val(args, "q").unwrap_or("in:inbox"), arg_usize(args, "max", 3, 20))
+            email_search(
+                arg_val(args, "q").unwrap_or("in:inbox"),
+                arg_usize(args, "max", GUEST_MAIL_MAX, 20),
+            )
         }
         "email.send" => vec![format!("ERR {tool} disabled_until_cap_confirm")],
         "skills.list" => skills::list_response(),
@@ -347,7 +355,7 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
                 return vec![format!("ERR {tool} missing_url")];
             };
             // Guest omits lines=; default matches guest `DocPage::MAX`.
-            let max = arg_usize(args, "lines", 18, 200);
+            let max = arg_usize(args, "lines", GUEST_DOC_LINES, 200);
             match read_doc(url, max, arg_flag(args, "files"), arg_flag(args, "audio")) {
                 Ok(lines) => text::framed_ok(format!("OK {tool}"), lines),
                 Err(e) => vec![format!("ERR {tool} {e}")],
@@ -371,7 +379,7 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
         "search.query" => {
             let q = arg_val(args, "q").unwrap_or("");
             // Guest omits k=; default matches guest `search::MAX_HITS`.
-            let k = arg_usize(args, "k", 3, 20);
+            let k = arg_usize(args, "k", GUEST_MAX_HITS, 20);
             // Email content is opt-in per call. The guest only sets this when
             // the user granted email.search at setup, so holding search.query
             // alone cannot reach mail.
