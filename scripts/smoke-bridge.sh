@@ -4,8 +4,6 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-# shellcheck source=rust-path.sh
-source "$ROOT/scripts/rust-path.sh"
 
 ISO="${IMAGE_NAME:-os}.iso"
 ADDR="${OS_MCP_BRIDGE_ADDR:-127.0.0.1:7420}"
@@ -15,6 +13,7 @@ if [[ ! -f "$ISO" ]]; then
   exit 1
 fi
 
+# ensure-bridge sources rust-path for cargo.
 OS_MCP_BRIDGE_CONNECT="tcp:$ADDR" ./scripts/ensure-bridge.sh
 BRIDGE_PID="$(cat .bridge.pid)"
 
