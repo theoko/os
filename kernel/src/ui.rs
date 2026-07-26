@@ -8,7 +8,6 @@ use crate::caps::Caps;
 use crate::fb::Surface;
 use crate::font::{BODY_FACE, BRAND_FACE, BTN_FACE, H2_FACE, SMALL_FACE};
 use crate::mcp::{BridgeStatus, MailPeek};
-use crate::skills::SkillPeek;
 
 /// Apple-inspired light palette.
 pub mod theme {
@@ -25,7 +24,7 @@ pub mod theme {
     /// Hairline separators.
     pub const RULE: u32 = 0x00D2_D2D7;
     /// Card / input border.
-    pub const CARD_BORDER: u32 = 0x00E5_E5EA;
+    pub(super) const CARD_BORDER: u32 = 0x00E5_E5EA;
     pub const ONLINE: u32 = 0x0034_C759;
     pub const OFFLINE: u32 = 0x00FF_3B30;
 }
@@ -44,11 +43,6 @@ const SWITCH_H: i32 = 22;
 pub fn draw_switch_in_row(fb: &Surface, row: Rect, on: bool) {
     let tx = row.x + row.w - 18 - SWITCH_W;
     let ty = row.y + (row.h - SWITCH_H) / 2;
-    draw_switch(fb, tx, ty, on);
-}
-
-/// Draw a pill switch with its origin at `(tx, ty)`.
-fn draw_switch(fb: &Surface, tx: i32, ty: i32, on: bool) {
     fb.fill_round_rect(
         tx,
         ty,
@@ -191,7 +185,7 @@ impl HomeTargets {
 pub fn draw_home_full(
     fb: &Surface,
     mail: &MailPeek,
-    skills: &SkillPeek,
+    skill_count: usize,
     grants: Caps,
     query: &str,
 ) {
@@ -210,7 +204,7 @@ pub fn draw_home_full(
     let mut gbuf = [0u8; 16];
     let granted = fmt_n_label(&mut gbuf, grants.granted_count(), "Granted");
     let mut sbuf = [0u8; 16];
-    let playbooks = fmt_n_label(&mut sbuf, skills.count, "Playbooks");
+    let playbooks = fmt_n_label(&mut sbuf, skill_count, "Playbooks");
     let tiles: [(&str, &str); 3] = [
         ("Search", "Knowledge + Email"),
         ("Capabilities", granted),

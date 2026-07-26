@@ -663,20 +663,6 @@ impl Screen {
         }
     }
 
-    /// Blit the whole back buffer regardless of the dirty rectangle.
-    pub fn present_all(&self) {
-        if !self.buffered {
-            return;
-        }
-        self.back.clear_dirty();
-        self.blit(
-            0,
-            0,
-            self.back.width() as i32,
-            self.back.height() as i32,
-        );
-    }
-
     fn blit(&self, x0: i32, y0: i32, x1: i32, y1: i32) {
         let x0 = x0.max(0) as usize;
         let y0 = y0.max(0) as usize;

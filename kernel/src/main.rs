@@ -94,7 +94,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
                 let mut cursor = mouse::Cursor::new();
-                ui::draw_home_full(surface, &mail, &skill_peek, caps::Caps::none(), "");
+                ui::draw_home_full(surface, &mail, skill_peek.count, caps::Caps::none(), "");
                 cursor.show_at(surface, cx, cy);
                 screen.present();
                 serial_port.write_str("mouse: pointer painted\n");
@@ -155,7 +155,8 @@ unsafe extern "C" fn kmain() -> ! {
                 // Measure what a frame actually costs, rather than guessing.
                 {
                     let t0 = serial::rdtsc();
-                    screen.present_all();
+                    surface.mark_dirty(0, 0, surface.width() as i32, surface.height() as i32);
+                    screen.present();
                     let t1 = serial::rdtsc();
                     surface.mark_dirty(0, 0, 24, 32);
                     screen.present();
@@ -443,7 +444,7 @@ fn repaint(
         screens::View::Skills => screens::draw_skills(surface, skills),
         screens::View::Caps => screens::draw_caps(surface, grants),
         screens::View::Reader => searchui::draw_reader(surface, page),
-        screens::View::Home => ui::draw_home_full(surface, mail, skills, grants, query),
+        screens::View::Home => ui::draw_home_full(surface, mail, skills.count, grants, query),
     }
     cursor.show_at(surface, x, y);
     enter(screen);

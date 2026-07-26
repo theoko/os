@@ -1,13 +1,13 @@
 //! Builtin skill catalog (always available offline) + optional bridge merge.
 
 /// A skill name shown in the home UI.
-pub struct SkillRef {
+pub(crate) struct SkillRef {
     pub name: &'static str,
     pub blurb: &'static str,
 }
 
 /// Defaults shipped with the OS (mirrors skills/defaults/).
-pub const BUILTIN: &[SkillRef] = &[
+pub(crate) const BUILTIN: &[SkillRef] = &[
     SkillRef {
         name: "agent-plan-act",
         blurb: "Plan, act, report",

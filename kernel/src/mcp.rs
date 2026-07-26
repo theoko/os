@@ -45,7 +45,7 @@ struct SearchHit {
 }
 
 /// Short corpus peek from the host bridge.
-pub struct SearchPeek {
+pub(crate) struct SearchPeek {
     pub status: BridgeStatus,
     pub denied: bool,
     pub count: usize,
@@ -333,7 +333,7 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
 }
 
 /// Run `search.query` when granted. `q` must be ASCII without spaces (use `-`).
-pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
+pub(crate) fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     // Denied before CALL: still PING so the UI can show Online vs Offline.
     if !caps.allows(crate::caps::Cap::SearchQuery) {
         let mut line = [0u8; LINE_BUF];

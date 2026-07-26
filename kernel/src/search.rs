@@ -53,11 +53,11 @@ pub struct Hit {
 /// will not match the baked vocabulary.
 ///
 /// Yields lowercased ASCII-alphanumeric runs of 2+ chars.
-pub struct Tokens<'a> {
+struct Tokens<'a> {
     rest: &'a str,
 }
 
-pub fn tokenize(s: &str) -> Tokens<'_> {
+fn tokenize(s: &str) -> Tokens<'_> {
     Tokens { rest: s }
 }
 

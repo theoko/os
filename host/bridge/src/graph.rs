@@ -131,7 +131,7 @@ impl Graph {
     /// correspondent's individual mails do not each inherit full weight. Rank
     /// flows back sender-ward too, which is what makes a frequent
     /// correspondent's threads surface above a one-off newsletter.
-    pub fn rank(&mut self) {
+    fn rank(&mut self) {
         const DAMPING: f64 = 0.85;
         const ITERS: usize = 20;
 

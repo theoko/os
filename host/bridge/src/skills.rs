@@ -6,11 +6,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[derive(Clone, Debug)]
-pub struct SkillMeta {
-    pub name: String,
-    pub description: String,
-    pub path: PathBuf,
-    pub builtin: bool,
+struct SkillMeta {
+    name: String,
+    description: String,
+    path: PathBuf,
+    builtin: bool,
 }
 
 pub fn skills_dirs() -> (PathBuf, PathBuf) {
@@ -26,19 +26,12 @@ pub fn skills_dirs() -> (PathBuf, PathBuf) {
 fn list_skills() -> Vec<SkillMeta> {
     let (defaults, user) = skills_dirs();
     let mut map: BTreeMap<String, SkillMeta> = BTreeMap::new();
-    let mut tmp = Vec::new();
-    collect_dir(&defaults, true, &mut tmp);
-    for s in tmp.drain(..) {
-        map.insert(s.name.clone(), s);
-    }
-    collect_dir(&user, false, &mut tmp);
-    for s in tmp.drain(..) {
-        map.insert(s.name.clone(), s); // saved overrides default
-    }
+    collect_dir(&defaults, true, &mut map);
+    collect_dir(&user, false, &mut map); // saved overrides default
     map.into_values().collect()
 }
 
-fn collect_dir(dir: &Path, builtin: bool, out: &mut Vec<SkillMeta>) {
+fn collect_dir(dir: &Path, builtin: bool, map: &mut BTreeMap<String, SkillMeta>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -48,7 +41,7 @@ fn collect_dir(dir: &Path, builtin: bool, out: &mut Vec<SkillMeta>) {
             continue;
         }
         if let Some(meta) = parse_skill(&path, builtin) {
-            out.push(meta);
+            map.insert(meta.name.clone(), meta);
         }
     }
 }

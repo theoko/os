@@ -48,30 +48,27 @@ fn row_rect(w: i32, i: usize) -> ui::Rect {
     ui::Rect::new(x, TOP + i as i32 * (ROW_H + ROW_GAP), cw, ROW_H)
 }
 
-/// Which row in `0..count` contains this point, if any.
-fn row_hit(w: i32, count: usize, x: i32, y: i32) -> Option<usize> {
-    ui::hit_among(count, x, y, |i| row_rect(w, i))
-}
-
 /// Which capability row contains this point, if any.
 pub fn caps_hit(w: i32, x: i32, y: i32) -> Option<usize> {
-    row_hit(w, Cap::ALL.len(), x, y)
+    ui::hit_among(Cap::ALL.len(), x, y, |i| row_rect(w, i))
 }
 
-/// Shared top chrome: Back, centered title, rule, optional heading.
+/// Shared top chrome: Back, optional centered title, rule, optional heading.
 pub fn chrome(fb: &Surface, title: &str, heading: Option<&str>) {
     let w = fb.width() as i32;
     fb.fill(theme::BG);
     let back = back_rect();
     fb.draw_text(back.x, back.y + BTN_FACE.ascent, "Back", &BTN_FACE, 0, theme::ACCENT);
-    fb.draw_text_centered(
-        w / 2,
-        (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.ascent,
-        title,
-        &BRAND_FACE,
-        0,
-        theme::INK,
-    );
+    if !title.is_empty() {
+        fb.draw_text_centered(
+            w / 2,
+            (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.ascent,
+            title,
+            &BRAND_FACE,
+            0,
+            theme::INK,
+        );
+    }
     fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
     if let Some(heading) = heading {
         let track = font::tracking_pct(TITLE_FACE.px, -20);
