@@ -7,6 +7,7 @@
 
 use crate::fb::Surface;
 use crate::port;
+use crate::ui::theme;
 
 const DATA: u16 = 0x60;
 /// i8042 status (read) and command (write) share this port.
@@ -344,10 +345,7 @@ fn ensure_mask() {
 /// Paint a pointer (no save buffer) — safe during the first UI frame.
 fn draw_arrow(fb: &Surface, x: i32, y: i32) {
     // Ink body under a white keyline, so the pointer stays legible on both the
-    // white page and the blue CTA.
-    const INK: u32 = 0x001D_1D1F;
-    const KEYLINE: u32 = 0x00FF_FFFF;
-
+    // light page and the blue CTA.
     ensure_mask();
     // SAFETY: masks are fully initialised by ensure_mask and never mutated after.
     let (key, ink) = unsafe { (&*(&raw const MASK_KEY), &*(&raw const MASK_INK)) };
@@ -362,11 +360,11 @@ fn draw_arrow(fb: &Surface, x: i32, y: i32) {
             let (px, py) = (ox + col as i32, oy + row as i32);
             let k = key[i] as u32;
             if k != 0 {
-                fb.blend_pixel(px, py, KEYLINE, k);
+                fb.blend_pixel(px, py, theme::SURFACE, k);
             }
             let a = ink[i] as u32;
             if a != 0 {
-                fb.blend_pixel(px, py, INK, a);
+                fb.blend_pixel(px, py, theme::INK, a);
             }
         }
     }

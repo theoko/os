@@ -16,7 +16,7 @@ destination tiles (Search, Capabilities, Skills), recent mail when granted.
 
 | Token | Hex | Role |
 |-------|-----|------|
-| BG | `#FFFFFF` | Page |
+| BG | `#F5F5F7` | Page (`fb::PAGE_BG`) |
 | INK | `#1D1D1F` | Primary type |
 | MUTED | `#86868B` | Secondary copy |
 | ACCENT | `#0071E3` | Actions |

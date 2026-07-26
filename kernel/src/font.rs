@@ -1,8 +1,8 @@
 //! Anti-aliased proportional UI type.
 //!
-//! The atlas is rasterized at build time from a real outline font (SF Pro when
-//! present) — see `build.rs`. The kernel only blends 8-bit coverage, so there is
-//! no rasterizer, no allocator and no float transcendentals here.
+//! The atlas is rasterized at build time from a real outline font (vendored
+//! Inter by default; see `build.rs`). The kernel only blends 8-bit coverage, so
+//! there is no rasterizer, no allocator and no float transcendentals here.
 
 /// One glyph's placement and its slice of the face's alpha bitmap.
 pub(crate) struct Glyph {
