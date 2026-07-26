@@ -5,7 +5,7 @@
 //! be changed afterwards without reinstalling.
 
 use crate::caps::{Cap, Caps};
-use crate::fb::Surface;
+use crate::fb::{self, Surface};
 use crate::font::{self, BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
 use crate::skills::SkillPeek;
 #[cfg(test)]
@@ -52,7 +52,7 @@ pub(crate) fn chrome(fb: &Surface, label: Option<(&str, &str)>) {
     let w = fb.width() as i32;
     fb.fill();
     let back = back_rect();
-    fb.draw_text(back.x, back.y + BTN_FACE.ascent, "Back", &BTN_FACE, 0, theme::ACCENT);
+    fb.draw_text(back.x, back.y + BTN_FACE.ascent, "Back", &BTN_FACE, 0, fb::ACCENT);
     let heading = match label {
         Some((title, heading)) => {
             fb.draw_text_centered(

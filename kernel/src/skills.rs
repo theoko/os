@@ -59,17 +59,13 @@ pub struct SkillPeek {
 }
 
 impl SkillPeek {
-    const fn blank(live: bool) -> Self {
+    /// Empty peek; `live` marks a framed `skills.list` (incl. zero ROWs).
+    pub(crate) const fn blank(live: bool) -> Self {
         Self {
             live,
             count: 0,
             slots: [EMPTY_SLOT; MAX_LISTED],
         }
-    }
-
-    /// Empty live peek ready for [`Self::push`] (bridge fill path).
-    pub(crate) fn empty_live() -> Self {
-        Self::blank(true)
     }
 
     /// ISO builtins copied into slots (offline / framed ERR fallback).
@@ -162,7 +158,7 @@ mod tests {
 
     #[test]
     fn push_caps_at_slot_limit() {
-        let mut p = SkillPeek::empty_live();
+        let mut p = SkillPeek::blank(true);
         for i in 0..MAX_LISTED {
             assert!(p.push("n", "d"), "slot {i}");
         }
@@ -172,8 +168,8 @@ mod tests {
     }
 
     #[test]
-    fn empty_live_stays_live() {
-        let p = SkillPeek::empty_live();
+    fn blank_live_stays_live() {
+        let p = SkillPeek::blank(true);
         assert_eq!(p.count(), 0);
         assert!(p.is_live(), "framed empty list is not ISO builtins");
     }

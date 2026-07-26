@@ -11,9 +11,9 @@ use crate::font::Face;
 
 /// Page colour (Apple light grey) — full-screen fills and slide entrances.
 pub(crate) const PAGE_BG: u32 = 0x00F5_F5F7;
-/// Cards / knobs / cursor keyline — pure white (`ui::theme::SURFACE`).
+/// Cards / knobs / cursor keyline — pure white.
 pub(crate) const SURFACE: u32 = 0x00FF_FFFF;
-/// Accent / primary action (`ui::theme::ACCENT`).
+/// Accent / primary action.
 pub(crate) const ACCENT: u32 = 0x0000_71E3;
 
 /// Accept only 32-bit XRGB8888 with a sane pitch — Surface and Screen share this.

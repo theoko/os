@@ -43,10 +43,12 @@ include!(concat!(env!("OUT_DIR"), "/corpus.rs"));
 /// Cap on search hits (offline index, SearchView rows; bridge default `k=`).
 pub const MAX_HITS: usize = 3;
 
-/// Guest `SearchView::Row` / bridge `guest_slot` budgets.
+/// Guest `SearchView::Row` / `DocPage` / bridge `guest_slot` budgets.
 pub(crate) const TITLE_CHARS: usize = 56;
 pub(crate) const URL_CHARS: usize = 72;
 pub(crate) const CAT_CHARS: usize = 16;
+/// Soft-wrap budget for `ROW line=` (bridge `search::LINE_CHARS`).
+pub(crate) const LINE_CHARS: usize = 78;
 
 /// Tokenizer. Must stay identical to `fold_tok` in `build.rs`, or query terms
 /// will not match the baked vocabulary.

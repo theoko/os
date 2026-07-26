@@ -67,7 +67,7 @@ impl Serial {
         self.write_bytes(s.as_bytes());
     }
 
-    /// Decimal `u64` for COM1 perf / geometry lines.
+    /// Decimal `u64` for COM1 geometry / grant-count lines.
     pub fn write_u64(&self, mut v: u64) {
         let mut buf = [0u8; 20];
         let mut i = buf.len();

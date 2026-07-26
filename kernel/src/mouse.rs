@@ -5,7 +5,7 @@
 //! mouseless. We always paint a chunky arrow; PS/2 moves it when the controller
 //! is enabled (`make utm` turns PS/2 on).
 
-use crate::fb::Surface;
+use crate::fb::{self, Surface};
 use crate::port;
 use crate::ui::theme;
 
@@ -329,7 +329,7 @@ fn ensure_mask() {
                     // +1px so the keyline's left/top stamps stay in the box.
                     pts[i] = (ax + dx + 8, ay + dy + 8);
                 }
-                surf.fill_polygon(&pts, theme::SURFACE);
+                surf.fill_polygon(&pts, fb::SURFACE);
             }
             for (i, px) in scratch.iter().enumerate() {
                 out[i] = (*px & 0xFF) as u8;
@@ -360,7 +360,7 @@ fn draw_arrow(fb: &Surface, x: i32, y: i32) {
             let (px, py) = (ox + col as i32, oy + row as i32);
             let k = key[i] as u32;
             if k != 0 {
-                fb.blend_pixel(px, py, theme::SURFACE, k);
+                fb.blend_pixel(px, py, fb::SURFACE, k);
             }
             let a = ink[i] as u32;
             if a != 0 {

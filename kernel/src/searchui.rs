@@ -7,7 +7,7 @@
 //! Previously the home screen ran searches on a card click and wrote the hits
 //! to COM1 — invisible unless you were watching a serial console.
 
-use crate::fb::Surface;
+use crate::fb::{self, Surface};
 use crate::font::{self, BODY_FACE, BRAND_FACE, SMALL_FACE, TITLE_FACE};
 use crate::mcp::DocOutcome;
 use crate::screens;
@@ -234,7 +234,7 @@ pub fn draw(
                 cat,
                 &SMALL_FACE,
                 0,
-                theme::ACCENT,
+                fb::ACCENT,
             );
         }
         fb.draw_text(rect.x + 18, rect.y + 48, row.url(), &SMALL_FACE, 0, theme::MUTED);

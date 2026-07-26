@@ -5,21 +5,17 @@
 //! all copy is ASCII because the atlas covers 0x20..=0x7E only.
 
 use crate::caps::Caps;
-use crate::fb::Surface;
+use crate::fb::{self, Surface};
 use crate::font::{BODY_FACE, BRAND_FACE, BTN_FACE, H2_FACE, SMALL_FACE};
 use crate::mcp::MailPeek;
 use crate::skills::SkillPeek;
 
-/// Apple-inspired light palette.
+/// Apple-inspired light palette (SURFACE / ACCENT live on [`crate::fb`]).
 pub mod theme {
-    /// Cards, inputs, switch knobs — pure white.
-    pub(crate) const SURFACE: u32 = crate::fb::SURFACE;
     /// Primary text — Apple's near-black, never pure #000.
     pub(crate) const INK: u32 = 0x001D_1D1F;
     /// Secondary copy.
     pub(crate) const MUTED: u32 = 0x0086_868B;
-    /// Accent / primary action.
-    pub(crate) const ACCENT: u32 = crate::fb::ACCENT;
     /// Hairline separators.
     pub(crate) const RULE: u32 = 0x00D2_D2D7;
     /// Card / input border.
@@ -58,7 +54,7 @@ pub(crate) fn draw_switch_in_row(fb: &Surface, row: Rect, on: bool) {
         SWITCH_W,
         SWITCH_H,
         SWITCH_H / 2,
-        if on { theme::ACCENT } else { theme::RULE },
+        if on { fb::ACCENT } else { theme::RULE },
     );
     let knob = SWITCH_H - 6;
     let kx = if on {
@@ -66,7 +62,7 @@ pub(crate) fn draw_switch_in_row(fb: &Surface, row: Rect, on: bool) {
     } else {
         tx + 3
     };
-    fb.fill_round_rect(kx, ty + 3, knob, knob, knob / 2, theme::SURFACE);
+    fb.fill_round_rect(kx, ty + 3, knob, knob, knob / 2, fb::SURFACE);
 }
 
 
@@ -108,7 +104,7 @@ pub(crate) fn outlined_round_rect(fb: &Surface, r: Rect, radius: i32) {
         r.w - 2,
         r.h - 2,
         radius.saturating_sub(1),
-        theme::SURFACE,
+        fb::SURFACE,
     );
 }
 
@@ -279,9 +275,9 @@ fn draw_nav(fb: &Surface, online: bool) {
     fb.draw_text(PAD_X, base, "os", &BRAND_FACE, 0, theme::INK);
 
     let cr = connect_rect(w);
-    fb.fill_round_rect(cr.x, cr.y, cr.w, cr.h, cr.h / 2, theme::ACCENT);
+    fb.fill_round_rect(cr.x, cr.y, cr.w, cr.h, cr.h / 2, fb::ACCENT);
     let cbase = cr.y + (cr.h - BTN_FACE.px) / 2 + BTN_FACE.ascent;
-    fb.draw_text_centered(cr.x + cr.w / 2, cbase, CONNECT, &BTN_FACE, 0, theme::SURFACE);
+    fb.draw_text_centered(cr.x + cr.w / 2, cbase, CONNECT, &BTN_FACE, 0, fb::SURFACE);
 
     let label = "Bridge";
     let dot = if online { theme::ONLINE } else { theme::OFFLINE };

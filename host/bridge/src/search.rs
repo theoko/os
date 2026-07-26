@@ -303,7 +303,7 @@ pub(crate) fn body_for(url: &str) -> Option<&'static str> {
         })
 }
 
-/// Soft-wrap / sanitize budget for `ROW line=` (guest `DocPage::LINE_CHARS`).
+/// Soft-wrap / sanitize budget for `ROW line=` (guest `search::LINE_CHARS`).
 pub(crate) const LINE_CHARS: usize = 78;
 
 /// Hard-wrap text into `ROW line=...` entries the guest can render directly.

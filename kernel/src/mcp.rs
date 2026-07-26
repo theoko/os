@@ -106,11 +106,19 @@ fn when_online<T>(offline: T, f: impl FnOnce(&Serial, &mut [u8]) -> T) -> T {
     let mut line = [0u8; LINE_BUF];
     let com2 = Serial::com2();
     com2.init();
-    if !ping_bridge(&com2, &mut line) {
-        offline
-    } else {
-        f(&com2, &mut line)
+    for _ in 0..64 {
+        if com2.try_read_byte().is_none() {
+            break;
+        }
     }
+    com2.write_str("PING\n");
+    let Some(n) = com2.read_line(&mut line, TIMEOUT_PING) else {
+        return offline;
+    };
+    if !utf8_prefix(&line[..n]).starts_with("OK pong") {
+        return offline;
+    }
+    f(&com2, &mut line)
 }
 
 /// Opt-in scope flags shared by `doc.read` / `search.query`.
@@ -170,20 +178,18 @@ pub struct DocPage {
     pub(crate) count: usize,
     /// Copied from the search hit (not on the wire).
     title: [u8; crate::search::TITLE_CHARS],
-    lines: [[u8; Self::LINE_CHARS]; Self::MAX],
+    lines: [[u8; crate::search::LINE_CHARS]; Self::MAX],
 }
 
 impl DocPage {
     pub(crate) const MAX: usize = 18;
-    /// Matches bridge `search::LINE_CHARS` for `ROW line=`.
-    pub(crate) const LINE_CHARS: usize = 78;
 
     pub const fn empty(outcome: DocOutcome) -> Self {
         Self {
             outcome,
             count: 0,
             title: [0; crate::search::TITLE_CHARS],
-            lines: [[0; Self::LINE_CHARS]; Self::MAX],
+            lines: [[0; crate::search::LINE_CHARS]; Self::MAX],
         }
     }
 
@@ -255,7 +261,7 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
     when_online(crate::skills::SkillPeek::from_builtins(), |com2, line| {
         com2.write_str("CALL skills.list\n");
 
-        let mut peek = crate::skills::SkillPeek::empty_live();
+        let mut peek = crate::skills::SkillPeek::blank(true);
         // OK + up to MAX_LISTED ROWs (+ END breaks); push false also stops early.
         let saw_err = for_each_ok_rows(com2, line, crate::skills::MAX_LISTED + FRAMED_PAD, |resp| {
             let [Some(name), desc] = parse_row(resp, ["name", "desc"]) else {
@@ -271,19 +277,6 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
             peek
         }
     })
-}
-
-fn ping_bridge(com2: &Serial, line: &mut [u8]) -> bool {
-    for _ in 0..64 {
-        if com2.try_read_byte().is_none() {
-            break;
-        }
-    }
-    com2.write_str("PING\n");
-    let Some(n) = com2.read_line(line, TIMEOUT_PING) else {
-        return false;
-    };
-    utf8_prefix(&line[..n]).starts_with("OK pong")
 }
 
 /// Run `search.query`. `q` must be ASCII without spaces (use `-`).

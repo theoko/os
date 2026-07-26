@@ -9,7 +9,7 @@
 //! table to drift out of sync.
 
 use crate::caps::{Cap, Caps};
-use crate::fb::Surface;
+use crate::fb::{self, Surface};
 use crate::font::{self, BODY_FACE, BRAND_FACE, BTN_FACE, HERO_FACE, SMALL_FACE, TITLE_FACE};
 use crate::skills::SkillPeek;
 use crate::ui::{self, theme};
@@ -267,9 +267,9 @@ impl Setup {
         let pad = 40;
         let bw = (BTN_FACE.width(label, 0) + pad * 2).max(180);
         let x = w / 2 - bw / 2;
-        fb.fill_round_rect(x, y, bw, CTA_H, CTA_H / 2, theme::ACCENT);
+        fb.fill_round_rect(x, y, bw, CTA_H, CTA_H / 2, fb::ACCENT);
         let base = y + (CTA_H - BTN_FACE.px) / 2 + BTN_FACE.ascent - 2;
-        fb.draw_text_centered(w / 2, base, label, &BTN_FACE, 0, theme::SURFACE);
+        fb.draw_text_centered(w / 2, base, label, &BTN_FACE, 0, fb::SURFACE);
         self.push_zone(ui::Rect::new(x, y, bw, CTA_H), Action::Continue);
     }
 
@@ -278,7 +278,7 @@ impl Setup {
         let label = "Go Back";
         let tw = BTN_FACE.width(label, 0);
         let x = w / 2 - tw / 2;
-        fb.draw_text(x, y + BTN_FACE.ascent, label, &BTN_FACE, 0, theme::ACCENT);
+        fb.draw_text(x, y + BTN_FACE.ascent, label, &BTN_FACE, 0, fb::ACCENT);
         // Generous target: the text alone is a 15px-tall sliver.
         self.push_zone(
             ui::Rect::new(x - 12, y - 8, tw + 24, BTN_FACE.px + 20),
