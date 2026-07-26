@@ -105,11 +105,10 @@ impl SearchView {
         }
     }
 
-    /// Ask the bridge first, fall back to the baked index when it is down.
+    /// Ask the bridge first; baked index only when COM2 is down (or no search cap).
     ///
-    /// Without this the screen only ever saw the built-in documents, so every
-    /// question about the user's own files or mail came back empty even though
-    /// the bridge had them indexed.
+    /// Online `Ok`/`Err` with zero ROWs must stay empty — padding ISO hits would
+    /// hide `"No matches."` / TEDDY and lie about what the bridge answered.
     pub fn run_via(&mut self, q: &str, caps: crate::caps::Caps) {
         self.count = 0;
         if q.trim().is_empty() {
@@ -135,8 +134,12 @@ impl SearchView {
             self.count += 1;
             true
         }));
-        if self.count == 0 {
-            // Nothing from the bridge: try what we shipped with.
+        self.fill_if_offline(q);
+    }
+
+    /// Pad baked hits only after a COM2 outage (not after framed Ok/Err).
+    fn fill_if_offline(&mut self, q: &str) {
+        if self.count == 0 && matches!(self.outcome, Some(DocOutcome::Offline)) {
             self.fill_local(q);
         }
     }
@@ -257,6 +260,20 @@ mod tests {
         assert_eq!(v.count, 0, "stale rows must not survive a new search");
         // Grant-miss local empty is Ok — not Err/TEDDY (no CALL failed).
         assert_eq!(v.outcome, Some(DocOutcome::Ok));
+    }
+
+    #[test]
+    fn online_empty_does_not_pad_baked_hits() {
+        let mut v = SearchView::new();
+        v.outcome = Some(DocOutcome::Ok);
+        v.fill_if_offline("capability agent");
+        assert_eq!(v.count, 0, "framed Ok must not invent ISO hits");
+        v.outcome = Some(DocOutcome::Err);
+        v.fill_if_offline("capability agent");
+        assert_eq!(v.count, 0, "framed Err must keep TEDDY empty state");
+        v.outcome = Some(DocOutcome::Offline);
+        v.fill_if_offline("capability agent");
+        assert!(v.count > 0, "Offline still uses the baked index");
     }
 
     #[test]

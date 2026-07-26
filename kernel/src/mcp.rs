@@ -294,14 +294,14 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> bool {
 /// Caller must hold [`crate::caps::Cap::SearchQuery`]. Scope flags
 /// (`email=1`, `files=1`, …) still follow the rest of `caps`.
 /// Invokes `on_hit(title, url, cat)` for each ROW (stop early by returning `false`).
-/// Offline → baked-index fallback; `Err` → framed bridge ERR; `Ok` even with
-/// zero hits so the UI can tell "no matches" from "no bridge".
+/// Offline → UI may fill the baked index; `Err`/`Ok` empty stay empty so the
+/// UI can tell TEDDY / "no matches" from "no bridge".
 pub(crate) fn fetch_search_rows(
     caps: crate::caps::Caps,
     q: &str,
     mut on_hit: impl FnMut(&str, &str, &str) -> bool,
 ) -> DocOutcome {
-    // Offline: UI falls back to the baked index via SearchView::fill_local.
+    // Offline: SearchView::fill_if_offline may pad the baked index.
     when_online(DocOutcome::Offline, |com2, line| {
         // CALL search.query q=… [email=1] [files=1] [audio=1]
         // Bridge default k= matches MAX_HITS. Email graph is opt-in per call —
