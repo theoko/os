@@ -23,12 +23,16 @@ status: active
 ```
 guest SearchView
   ├─ bridge online  -- CALL search.query -->  host/bridge
-  │                        search/corpus.json + teddy / files / audio when granted
+  │                        corpus + teddy / files / audio scopes when granted
   └─ offline / empty     baked kernel index (search/corpus.json via build.rs)
 ```
 
 Corpus docs use the same card fields as tSearch: title `t`, url `u`, category `c`,
 body `b`, optional PageRank-ish boost `pr`.
+
+**Scopes:** `files=1` lazy-builds the workspace index when empty. `audio=1` only
+searches transcripts already stored on the host (populate with
+`CALL audio.transcribe path=…` from nc — guest never sends `path=`).
 
 ## Protocol
 

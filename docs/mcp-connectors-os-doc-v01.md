@@ -37,7 +37,9 @@ Guest → host:
 | `CALL search.query q=<keywords> [k=n] …` | Knowledge search (+ optional files/audio scopes) |
 | `CALL skills.list` / `skills.save` | Skill playbooks |
 | `CALL doc.read url=…` | Open a result body |
-| `CALL workspace.index` / `audio.transcribe` / `*.forget` | Force-rebuild indexes (nc) + revoke; guest search with `files=1` lazy-builds when empty |
+| `CALL workspace.index files=1` | Force-rebuild file index (nc); guest `files=1` search lazy-builds when empty |
+| `CALL audio.transcribe path=… audio=1` | Host-only: index one media file (guest never sends `path=`) |
+| `CALL workspace.forget` / `audio.forget` | Revoke purge |
 
 Host → guest:
 
@@ -64,7 +66,8 @@ Fields use `key=value`; use `|` between fields. Values are single-line; spaces a
 
 Search uses the in-bridge corpus + teddy/files/audio when those scopes are
 granted on the `CALL` (see [`docs/search-os-doc-v01.md`](search-os-doc-v01.md)).
-Mail stays peek-only via `email.search`.
+Files lazy-builds; audio needs a prior host `audio.transcribe`. Mail stays
+peek-only via `email.search`.
 
 ## Bridge API
 

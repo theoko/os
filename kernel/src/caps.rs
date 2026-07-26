@@ -15,11 +15,13 @@
 pub enum Cap {
     EmailSearch = 0,
     SearchQuery = 1,
-    /// Index and search the user's own documents. Off by default: a personal
-    /// file tree is not something to opt someone into silently.
+    /// Search the user's own documents (`files=1`). Off by default: a personal
+    /// file tree is not something to opt someone into silently. Guest search
+    /// lazy-builds the host index when empty.
     WorkspaceIndex = 2,
-    /// Transcribe local audio/video and index the text. Off by default: a
-    /// recording can contain anyone, not just the user.
+    /// Include host-indexed transcripts in search (`audio=1`). Off by default:
+    /// a recording can contain anyone, not just the user. Guest never sends
+    /// `path=`; populate via host `CALL audio.transcribe path=…`.
     AudioTranscribe = 3,
 }
 
@@ -58,7 +60,7 @@ impl Cap {
             Cap::EmailSearch => "Peek inbox count through the host bridge",
             Cap::SearchQuery => "Query the host knowledge corpus",
             Cap::WorkspaceIndex => "Search your own files on this machine",
-            Cap::AudioTranscribe => "Search transcripts of your recordings",
+            Cap::AudioTranscribe => "Search transcripts the host has indexed",
         }
     }
 
