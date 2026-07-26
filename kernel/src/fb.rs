@@ -9,7 +9,7 @@ use core::cell::Cell;
 
 use crate::font::Face;
 
-/// Page colour (Apple light grey). Shared with `ui::theme::BG`.
+/// Page colour (Apple light grey) — full-screen fills and slide entrances.
 pub const PAGE_BG: u32 = 0x00F5_F5F7;
 
 /// Accept only 32-bit XRGB8888 with a sane pitch — Surface and Screen share this.
@@ -140,11 +140,12 @@ impl Surface {
         unsafe { self.addr.add(y * self.pitch + x * 4).cast::<u32>() }
     }
 
-    pub(crate) fn fill(&self, color: u32) {
+    /// Fill the surface with [`PAGE_BG`].
+    pub(crate) fn fill(&self) {
         self.mark_dirty(0, 0, self.width as i32, self.height as i32);
         for y in 0..self.height {
             for x in 0..self.width {
-                unsafe { self.pixel(x, y).write_volatile(color) };
+                unsafe { self.pixel(x, y).write_volatile(PAGE_BG) };
             }
         }
     }

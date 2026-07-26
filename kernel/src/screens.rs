@@ -61,7 +61,7 @@ pub fn caps_hit(w: i32, x: i32, y: i32) -> Option<usize> {
 /// Shared top chrome: Back, rule, and optional title + heading (always paired).
 pub(crate) fn chrome(fb: &Surface, label: Option<(&str, &str)>) {
     let w = fb.width() as i32;
-    fb.fill(theme::BG);
+    fb.fill();
     let back = back_rect();
     fb.draw_text(back.x, back.y + BTN_FACE.ascent, "Back", &BTN_FACE, 0, theme::ACCENT);
     let heading = match label {

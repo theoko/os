@@ -12,8 +12,6 @@ use crate::skills::SkillPeek;
 
 /// Apple-inspired light palette.
 pub mod theme {
-    /// Page — Apple light grey.
-    pub const BG: u32 = crate::fb::PAGE_BG;
     /// Cards, inputs, switch knobs — pure white.
     pub(crate) const SURFACE: u32 = 0x00FF_FFFF;
     /// Primary text — Apple's near-black, never pure #000.
@@ -185,7 +183,7 @@ pub fn draw_home_full(
 ) {
     let w = fb.width() as i32;
 
-    fb.fill(theme::BG);
+    fb.fill();
     draw_nav(fb, mail.status);
 
     let r = search_rect(w);

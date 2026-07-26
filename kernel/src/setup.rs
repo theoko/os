@@ -143,7 +143,7 @@ impl Setup {
 
     /// Paint the current step. Records hit zones as a side effect.
     pub fn draw(&mut self, fb: &Surface, status: BridgeStatus, skills: &SkillPeek) {
-        fb.fill(theme::BG);
+        fb.fill();
         self.reset_zones();
 
         match self.step {

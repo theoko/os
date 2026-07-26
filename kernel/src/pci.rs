@@ -26,16 +26,6 @@ fn read32(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
     }
 }
 
-fn write32(bus: u8, slot: u8, func: u8, offset: u8, val: u32) {
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        port::outl(CONFIG_ADDR, cfg_addr(bus, slot, func, offset));
-        port::outl(CONFIG_DATA, val);
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    let _ = (bus, slot, func, offset, val);
-}
-
 /// Read the PCI command register (config offset 0x04).
 pub(crate) fn read_cmd(bus: u8, slot: u8, func: u8) -> u16 {
     (read32(bus, slot, func, 0x04) & 0xFFFF) as u16
@@ -45,7 +35,13 @@ pub(crate) fn read_cmd(bus: u8, slot: u8, func: u8) -> u16 {
 /// writing back the 1s we just read would clear them — so the high word is
 /// always written as 0 (a no-op for RW1C bits).
 pub(crate) fn write_cmd(bus: u8, slot: u8, func: u8, val: u16) {
-    write32(bus, slot, func, 0x04, val as u32);
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        port::outl(CONFIG_ADDR, cfg_addr(bus, slot, func, 0x04));
+        port::outl(CONFIG_DATA, val as u32);
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = (bus, slot, func, val);
 }
 
 /// Walk present PCI functions (buses 0..4).
