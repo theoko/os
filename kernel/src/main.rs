@@ -58,7 +58,7 @@ unsafe extern "C" fn kmain() -> ! {
     serial_port.write_str("\n");
 
     // Caps::none(): PING only until the user consents (default_grants would
-    // CALL email.search and persist the inbox on the host).
+    // CALL email.search against the host mailbox).
     let mut mail = mcp::fetch_mail_peek(caps::Caps::none());
     log_bridge_status(&serial_port, mail.online());
     serial_port.write_str("skills: builtins ready\n");

@@ -427,7 +427,7 @@ mod ascii_tests {
         // Real document titles contain emoji; the kernel atlas cannot render
         // them and would show '?' for each byte.
         let out =
-            crate::search::query_all("greek events engine", 3, false, false, false);
+            crate::search::query_all("greek events engine", 3, false, false);
         for row in &out {
             assert!(row.is_ascii(), "non-ASCII reached the wire: {row}");
         }
@@ -442,7 +442,7 @@ mod consent_tests {
 
     #[test]
     fn personal_files_need_the_workspace_grant() {
-        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::paths::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = env::temp_dir().join(format!("os-consent-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -452,8 +452,8 @@ mod consent_tests {
         unsafe { env::set_var("OS_WORKSPACE_INDEX", &ix_path) };
         build(std::slice::from_ref(&dir)).save().expect("save index");
 
-        let without = crate::search::query_all("zygote notary", 5, false, false, false);
-        let with = crate::search::query_all("zygote notary", 5, false, true, false);
+        let without = crate::search::query_all("zygote notary", 5, false, false);
+        let with = crate::search::query_all("zygote notary", 5, true, false);
 
         assert!(
             !without.iter().any(|r| r.contains("Zygote Notary")),
@@ -476,7 +476,7 @@ mod revocation_tests {
     #[test]
     fn forgetting_removes_the_index_from_disk() {
         // "Off" must mean gone, not hidden — the switch does not say "pause".
-        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::paths::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = env::temp_dir().join(format!("os-forget-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();

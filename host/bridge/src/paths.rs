@@ -44,3 +44,7 @@ pub fn read_json_or_default<T: DeserializeOwned + Default>(path: impl AsRef<Path
         Err(_) => T::default(),
     }
 }
+
+/// Serialise tests that mutate process env / Application Support paths.
+#[cfg(test)]
+pub(crate) static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

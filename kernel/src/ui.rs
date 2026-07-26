@@ -207,7 +207,7 @@ pub fn draw_home_full(
     let mut sbuf = [0u8; 16];
     let playbooks = fmt_n_label(&mut sbuf, skills.count(), "Playbooks");
     let tiles: [(&str, &str); 3] = [
-        ("Search", "Knowledge + Email"),
+        ("Search", "Knowledge corpus"),
         ("Capabilities", granted),
         ("Skills", playbooks),
     ];
@@ -440,7 +440,7 @@ mod tests {
             "Search",
             "Capabilities",
             "Skills",
-            "Knowledge + Email",
+            "Knowledge corpus",
             CONNECT,
             "Bridge",
             "Inbox empty",
@@ -459,7 +459,7 @@ mod tests {
         for s in ["Search", "Capabilities", "Skills"] {
             assert!(H2_FACE.width(s, 0) < r.w - 36, "tile title overflows: {s}");
         }
-        assert!(SMALL_FACE.width("Knowledge + Email", 0) < r.w - 36);
+        assert!(SMALL_FACE.width("Knowledge corpus", 0) < r.w - 36);
         let mut b = [0u8; 16];
         assert!(SMALL_FACE.width(fmt_n_label(&mut b, 5, "Granted"), 0) < r.w - 36);
     }

@@ -1,4 +1,4 @@
-//! Audio transcription, and folding transcripts into the knowledge graph.
+//! Audio transcription, and folding transcripts into searchable documents.
 //!
 //! Runs entirely locally: `ffmpeg` normalises any media to 16 kHz mono WAV,
 //! `whisper-cli` transcribes it, and the result is stored as a searchable
@@ -243,7 +243,7 @@ mod tests {
 
     #[test]
     fn store_lives_outside_the_repo() {
-        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::paths::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::remove_var("OS_TRANSCRIPT_STORE") };
         let p = store_path().to_string_lossy().to_string();
         assert!(!p.contains("/os/search"), "transcripts must not land in the repo: {p}");
@@ -264,7 +264,7 @@ mod scope_tests {
 
     #[test]
     fn transcripts_need_their_own_grant_not_the_file_one() {
-        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::paths::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let dir = env::temp_dir().join(format!("os-audio-scope-{}", std::process::id()));
         let _ = fs::remove_dir_all(&dir);
         fs::create_dir_all(&dir).unwrap();
@@ -281,14 +281,14 @@ mod scope_tests {
 
         // workspace.index granted, audio.transcribe not: must stay hidden.
         let files_only =
-            crate::search::query_all("zygotenotary", 5, false, true, false);
+            crate::search::query_all("zygotenotary", 5, true, false);
         assert!(
             !files_only.iter().any(|r| r.contains("ZygoteNotary")),
             "a recording surfaced under the files grant: {files_only:?}"
         );
 
         let with_audio =
-            crate::search::query_all("zygotenotary", 5, false, false, true);
+            crate::search::query_all("zygotenotary", 5, false, true);
         assert!(
             with_audio.iter().any(|r| r.contains("ZygoteNotary")),
             "granted search should find the transcript: {with_audio:?}"

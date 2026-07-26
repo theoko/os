@@ -93,22 +93,6 @@ fn workspace_docs() -> Vec<Doc> {
         .collect()
 }
 
-/// Email graph entries, projected into corpus documents.
-fn email_docs() -> Vec<Doc> {
-    crate::graph::Graph::load_or_empty()
-        .messages
-        .into_iter()
-        .map(|m| Doc {
-            t: m.subject,
-            u: format!("email://{}", m.id),
-            c: "email".to_string(),
-            // Sender is indexed so "from alice" style queries hit.
-            b: m.from,
-            pr: m.pr,
-        })
-        .collect()
-}
-
 fn corpus_path() -> PathBuf {
     env::var("OS_SEARCH_CORPUS")
         .map(PathBuf::from)
@@ -196,15 +180,14 @@ const TITLE_CHARS: usize = 56;
 const URL_CHARS: usize = 72;
 const CAT_CHARS: usize = 16;
 
-/// Search the curated corpus (plus optional email / files / audio scopes).
+/// Search the curated corpus (plus optional files / audio scopes).
 ///
-/// `include_email` / `include_files` / `include_audio` default off everywhere:
-/// holding `search.query` alone must not reach mail, personal files, or
-/// recordings.
+/// `include_files` / `include_audio` default off everywhere: holding
+/// `search.query` alone must not reach personal files or recordings.
+/// Mail stays peek-only via `email.search` (no openable search hits).
 pub fn query_all(
     q: &str,
     k: usize,
-    include_email: bool,
     include_files: bool,
     include_audio: bool,
 ) -> Vec<String> {
@@ -219,16 +202,13 @@ pub fn query_all(
     // Default search.query only needs the curated slice — clone only when a
     // scope adds personal docs into the same scoring universe.
     let docs: std::borrow::Cow<'_, [Doc]> =
-        if include_files || include_audio || include_email {
+        if include_files || include_audio {
             let mut v = curated.to_vec();
             if include_files {
                 v.extend(workspace_docs());
             }
             if include_audio {
                 v.extend(transcript_docs());
-            }
-            if include_email {
-                v.extend(email_docs());
             }
             std::borrow::Cow::Owned(v)
         } else {

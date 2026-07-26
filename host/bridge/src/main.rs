@@ -3,7 +3,6 @@
 //! Speaks the line protocol in docs/mcp-connectors-os-doc-v01.md over TCP.
 //! Email backends: mock (default) or `gog`. Skills: defaults + saved on host.
 
-mod graph;
 mod paths;
 mod workspace;
 mod search;
@@ -380,10 +379,6 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
             let q = arg_val(args, "q").unwrap_or("");
             // Guest omits k=; default matches guest `search::MAX_HITS`.
             let k = arg_usize(args, "k", GUEST_MAX_HITS, 20);
-            // Email content is opt-in per call. The guest only sets this when
-            // the user granted email.search at setup, so holding search.query
-            // alone cannot reach mail.
-            let with_email = arg_flag(args, "email");
             let with_files = arg_flag(args, "files");
             // Recordings have their own grant, so they get their own scope:
             // enabling workspace.index must not surface transcripts.
@@ -391,30 +386,11 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
             if q.is_empty() {
                 vec![format!("ERR {tool} missing_q")]
             } else {
-                search::query_all(q, k, with_email, with_files, with_audio)
+                search::query_all(q, k, with_files, with_audio)
             }
         }
         // Distinct from tool-specific `… not_found` replies.
         _ => vec![format!("ERR unknown_tool {tool}")],
-    }
-}
-
-/// Parse `ROW from=…|subj=…` lines back into graph messages.
-///
-/// Only sender and subject are kept — never the body.
-fn ingest_rows(rows: &[String]) {
-    let mut msgs = rows.iter().filter_map(|r| {
-        let [from, subj] = text::parse_row(r, ["from", "subj"]);
-        Some((from?, subj.unwrap_or("")))
-    }).peekable();
-    if msgs.peek().is_none() {
-        return;
-    }
-    let mut g = graph::Graph::load_or_empty();
-    if g.ingest(msgs) > 0 {
-        if let Err(e) = g.save() {
-            eprintln!("graph: save failed: {e}");
-        }
     }
 }
 
@@ -492,15 +468,10 @@ fn arg_usize(args: &[(String, String)], key: &str, default: usize, max: usize) -
 fn email_search(query: &str, max: usize) -> Vec<String> {
     let backend = env::var("OS_MCP_EMAIL_BACKEND").unwrap_or_else(|_| "mock".into());
 
-    let out = match backend.as_str() {
+    match backend.as_str() {
         "gog" => email_search_gog(query, max),
         _ => email_search_mock(query, max),
-    };
-    // Fold what we just fetched into the knowledge graph. Hooked here rather
-    // than inside a backend so every backend feeds it. Best effort: failing to
-    // index must not fail the search the caller asked for.
-    ingest_rows(&out);
-    out
+    }
 }
 
 fn email_search_mock(query: &str, max: usize) -> Vec<String> {

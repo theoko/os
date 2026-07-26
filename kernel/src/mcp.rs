@@ -131,7 +131,7 @@ fn write_scope_flags(com2: &Serial, caps: crate::caps::Caps) {
 ///
 /// Without [`crate::caps::Cap::EmailSearch`] (including [`crate::caps::Caps::none`]
 /// before consent) this only PINGs — Online → [`MailPeek::Denied`], never
-/// `CALL email.search` (which would persist inbox results on the host).
+/// `CALL email.search` (gog / mock would still hit the host mailbox).
 pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
     when_online(MailPeek::Offline, |com2, line| {
         if !caps.allows(crate::caps::Cap::EmailSearch) {
@@ -292,7 +292,7 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> bool {
 /// Run `search.query`. `q` must be ASCII without spaces (use `-`).
 ///
 /// Caller must hold [`crate::caps::Cap::SearchQuery`]. Scope flags
-/// (`email=1`, `files=1`, …) still follow the rest of `caps`.
+/// (`files=1`, `audio=1`) still follow the rest of `caps`.
 /// Invokes `on_hit(title, url, cat)` for each ROW (stop early by returning `false`).
 /// Offline → UI may fill the baked index; `Err`/`Ok` empty stay empty so the
 /// UI can tell TEDDY / "no matches" from "no bridge".
@@ -303,14 +303,10 @@ pub(crate) fn fetch_search_rows(
 ) -> DocOutcome {
     // Offline: SearchView::fill_if_offline may pad the baked index.
     when_online(DocOutcome::Offline, |com2, line| {
-        // CALL search.query q=… [email=1] [files=1] [audio=1]
-        // Bridge default k= matches MAX_HITS. Email graph is opt-in per call —
-        // holding search.query alone must not reach mail content.
+        // CALL search.query q=… [files=1] [audio=1]
+        // Bridge default k= matches MAX_HITS. Mail is peek-only (no search hits).
         com2.write_str("CALL search.query q=");
         com2.write_str(q);
-        if caps.allows(crate::caps::Cap::EmailSearch) {
-            com2.write_str(" email=1");
-        }
         write_scope_flags(com2, caps);
         com2.write_str("\n");
 

@@ -66,7 +66,7 @@ mod tests {
 
     #[test]
     fn cache_lives_outside_the_repo() {
-        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = crate::paths::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
         let p = cache_path().to_string_lossy().to_string();
         assert!(!p.contains("/os/search"), "cache must not land in the repo: {p}");
