@@ -104,7 +104,7 @@ smoke: iso
 	python3 scripts/smoke_common.py serial
 
 smoke-bridge: iso bridge
-	./scripts/smoke-bridge.sh
+	python3 scripts/smoke_common.py bridge
 
 # An existing checkout is never auto-refreshed, so at least surface a
 # LIMINE_BRANCH mismatch instead of silently building with the old bootloader.

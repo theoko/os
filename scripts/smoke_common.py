@@ -120,26 +120,43 @@ def run_serial_smoke() -> None:
         qemu_log.unlink(missing_ok=True)
 
 
+def _ensure_bridge(root: Path, addr: str) -> Path:
+    """Start dial-mode bridge via ensure-bridge.sh; return .bridge.pid path."""
+    env = os.environ.copy()
+    env["OS_MCP_BRIDGE_CONNECT"] = f"tcp:{addr}"
+    subprocess.run(
+        [str(root / "scripts" / "ensure-bridge.sh")],
+        cwd=root,
+        env=env,
+        check=True,
+    )
+    return root / ".bridge.pid"
+
+
+def _stop_bridge(pid_file: Path) -> None:
+    if pid_file.is_file():
+        try:
+            pid = int(pid_file.read_text().strip())
+            os.kill(pid, 15)
+        except (ValueError, OSError, ProcessLookupError):
+            pass
+    pid_file.unlink(missing_ok=True)
+
+
 def run_bridge_smoke() -> None:
     root, iso = _root_and_iso()
     addr = os.environ.get("OS_SMOKE_ADDR", os.environ.get("OS_MCP_BRIDGE_ADDR", "127.0.0.1:7420"))
-    serial_env = os.environ.get("OS_SMOKE_SERIAL")
-    if serial_env:
-        serial_path = Path(serial_env)
-        serial_path.write_bytes(b"")
-        own_serial = False
-    else:
-        serial_path = Path(tempfile.mkstemp(prefix="os-bridge-serial.")[1])
-        own_serial = True
+    serial_path = Path(tempfile.mkstemp(prefix="os-bridge-serial.")[1])
+    pid_file = _ensure_bridge(root, addr)
     try:
-        # Guest listens; wait for the dialing bridge before the guest runs (early PING).
+        # Guest listens; dialing bridge must already be up (early PING).
         argv = qemu_argv(iso, serial_path, com2=addr)
         status, serial = run_qemu(argv, cwd=root, serial_path=serial_path, timeout=120)
         check_smoke(status, serial, need_mcp=True)
         print("smoke-bridge ok: hello + mcp email connected")
     finally:
-        if own_serial:
-            serial_path.unlink(missing_ok=True)
+        _stop_bridge(pid_file)
+        serial_path.unlink(missing_ok=True)
 
 
 def main(argv: list[str] | None = None) -> None:

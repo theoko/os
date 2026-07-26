@@ -22,9 +22,6 @@ pub struct Transcript {
     pub title: String,
     /// Full transcript text.
     pub text: String,
-    /// Seconds of audio, when ffprobe could tell us.
-    pub seconds: f64,
-    pub words: usize,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
@@ -73,8 +70,8 @@ fn duration_secs(path: &Path) -> f64 {
     }
 }
 
-/// Transcribe `path`. Returns the transcript without storing it.
-pub fn transcribe(path: &Path) -> Result<Transcript, String> {
+/// Transcribe `path`. Returns the transcript and duration (seconds) without storing.
+pub fn transcribe(path: &Path) -> Result<(Transcript, f64), String> {
     if !path.is_file() {
         return Err(format!("no such file: {}", path.display()));
     }
@@ -132,13 +129,14 @@ pub fn transcribe(path: &Path) -> Result<Transcript, String> {
         return Err("no speech detected".into());
     }
 
-    Ok(Transcript {
-        source: path.to_string_lossy().to_string(),
-        title: title_for(path, &text),
-        words: text.split_whitespace().count(),
-        seconds: duration_secs(path),
-        text,
-    })
+    Ok((
+        Transcript {
+            source: path.to_string_lossy().to_string(),
+            title: title_for(path, &text),
+            text,
+        },
+        duration_secs(path),
+    ))
 }
 
 /// A readable title: the first clause of speech, falling back to the filename.
@@ -253,17 +251,15 @@ mod tests {
     #[test]
     fn upsert_replaces_rather_than_duplicating() {
         let mut st = Store::default();
-        let mk = |w: usize| Transcript {
+        let mk = |text: &str| Transcript {
             source: "/a.wav".into(),
             title: "t".into(),
-            text: "x".into(),
-            seconds: 1.0,
-            words: w,
+            text: text.into(),
         };
-        st.upsert(mk(10));
-        st.upsert(mk(20));
+        st.upsert(mk("first"));
+        st.upsert(mk("second"));
         assert_eq!(st.items.len(), 1, "re-transcribing must not duplicate");
-        assert_eq!(st.items[0].words, 20);
+        assert_eq!(st.items[0].text, "second");
     }
 
     #[test]
@@ -301,8 +297,6 @@ mod scope_tests {
             source: "/tmp/call.wav".into(),
             title: "ZygoteNotary Briefing".into(),
             text: "the zygotenotary briefing covered settlement".into(),
-            seconds: 10.0,
-            words: 5,
         });
         st.save().unwrap();
 
