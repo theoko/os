@@ -305,7 +305,7 @@ fn draw_nav(fb: &Surface, online: bool) {
 }
 
 /// Unified bottom telemetry — no orphaned mid-page status lines.
-/// Inbox count is only shown after a granted peek ([`MailPeek::Ok`]).
+/// Inbox count is only shown after a granted peek (`Online { inbox: Some(_) }`).
 fn draw_status_bar(fb: &Surface, mail: &MailPeek, grant_count: usize) {
     let mut line = [0u8; 96];
     let mut n = 0;
@@ -324,7 +324,10 @@ fn draw_status_bar(fb: &Surface, mail: &MailPeek, grant_count: usize) {
         }
         first = false;
     };
-    if let MailPeek::Ok { count } = *mail {
+    if let MailPeek::Online {
+        inbox: Some(count),
+    } = *mail
+    {
         sep(&mut line, &mut n);
         match count {
             0 => push(&mut line, &mut n, "Inbox empty"),

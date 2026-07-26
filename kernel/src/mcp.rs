@@ -39,16 +39,15 @@ pub(crate) const NO_MATCHES_BRIDGE_OFFLINE: &str =
 pub enum MailPeek {
     /// COM2 bridge down.
     Offline,
-    /// Bridge up, but inbox was not read (no grant / pre-consent probe).
-    Denied,
-    /// `email.search` answered; `count` is ROWs received.
-    Ok { count: usize },
+    /// Bridge up. `inbox: None` = no grant / pre-consent / framed ERR
+    /// (not an empty inbox). `Some(n)` = ROW count from `email.search`.
+    Online { inbox: Option<usize> },
 }
 
 impl MailPeek {
     /// Bridge reachability for nav / setup / search chrome.
     pub const fn online(self) -> bool {
-        !matches!(self, Self::Offline)
+        matches!(self, Self::Online { .. })
     }
 }
 
@@ -130,29 +129,29 @@ fn write_scope_flags(com2: &Serial, caps: crate::caps::Caps) {
 /// Probe the host bridge and optionally fetch a short inbox peek.
 ///
 /// Without [`crate::caps::Cap::EmailSearch`] (including [`crate::caps::Caps::none`]
-/// before consent) this only PINGs — Online → [`MailPeek::Denied`], never
+/// before consent) this only PINGs — Online with `inbox: None`, never
 /// `CALL email.search` (gog / mock would still hit the host mailbox).
 pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
     when_online(MailPeek::Offline, |com2, line| {
         if !caps.allows(crate::caps::Cap::EmailSearch) {
-            // Bridge is up, but this guest was not granted inbox read.
-            return MailPeek::Denied;
+            return MailPeek::Online { inbox: None };
         }
 
         // Bridge defaults: q=in:inbox, max=MAIL_PEEK_MAX.
         com2.write_str("CALL email.search\n");
 
-        // Count ROWs actually received. ERR is not an empty inbox — same
-        // Denied path as a missing grant.
+        // Count ROWs actually received. ERR is not an empty inbox.
         let mut count = 0usize;
         let saw_err = for_each_ok_rows(com2, line, MAIL_PEEK_MAX + FRAMED_PAD, |_| {
             count += 1;
             true
         });
         if saw_err {
-            MailPeek::Denied
+            MailPeek::Online { inbox: None }
         } else {
-            MailPeek::Ok { count }
+            MailPeek::Online {
+                inbox: Some(count),
+            }
         }
     })
 }

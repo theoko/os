@@ -60,7 +60,7 @@ pub(crate) fn rank_score(tf_score: f64, pr: f64, hit_all: bool) -> f64 {
 }
 
 /// Transcripts, projected into corpus documents so speech is searchable
-/// next to files and mail.
+/// next to workspace files.
 fn transcript_docs() -> Vec<Doc> {
     crate::transcribe::Store::load()
         .items

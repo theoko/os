@@ -2,7 +2,7 @@
 //!
 //! Type a query, press Enter, read answers. Results come from the index baked
 //! into the kernel (`search.rs`), so this works with no host bridge at all;
-//! email is folded in by the bridge when that capability was granted.
+//! the bridge adds corpus / files / audio when those caps are granted.
 //!
 //! Previously the home screen ran searches on a card click and wrote the hits
 //! to COM1 — invisible unless you were watching a serial console.
