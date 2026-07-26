@@ -170,9 +170,14 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
 
         com2.write_str("CALL email.search q=in:inbox max=3\n");
 
-        // Count from OK `n=`; ROWs are drained for wire hygiene only.
-        let (_, n) = for_each_ok_rows(com2, line, 16, |_| true);
-        MailPeek::Ok { count: n }
+        // Count from OK `n=`; ROWs drained for wire hygiene. ERR is not an
+        // empty inbox — same Denied path as a missing grant.
+        let (saw_err, n) = for_each_ok_rows(com2, line, 16, |_| true);
+        if saw_err {
+            MailPeek::Denied
+        } else {
+            MailPeek::Ok { count: n }
+        }
     })
 }
 
