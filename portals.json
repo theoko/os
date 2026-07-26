@@ -4,7 +4,7 @@
     "",
     "The ISO is portal-agnostic: the guest talks to a host bridge over COM2 and",
     "knows nothing about which portal it is. Everything that differs between",
-    "users lives on the HOST — which corpus URL to fetch, which credential to",
+    "users lives on the HOST \u2014 which corpus URL to fetch, which credential to",
     "use, and where the resulting private data is cached. So a 'version per",
     "portal' is a per-portal bridge profile, not a per-portal kernel build.",
     "",
@@ -23,7 +23,121 @@
       "name": "theo",
       "corpus": "https://teddysearch.com/theo/corpus.json",
       "auth": "basic",
-      "note": "Verified 401 — the portal exists and requires basic auth."
+      "note": "Verified 401 \u2014 the portal exists and requires basic auth."
+    },
+    {
+      "name": "amir",
+      "corpus": "https://teddysearch.com/amir/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "anna",
+      "corpus": "https://teddysearch.com/anna/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "apekshya",
+      "corpus": "https://teddysearch.com/apekshya/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "babas",
+      "corpus": "https://teddysearch.com/babas/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "efthimis",
+      "corpus": "https://teddysearch.com/efthimis/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "fivos",
+      "corpus": "https://teddysearch.com/fivos/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "george",
+      "corpus": "https://teddysearch.com/george/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "giannis",
+      "corpus": "https://teddysearch.com/giannis/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "jacobkrit",
+      "corpus": "https://teddysearch.com/jacobkrit/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "jason",
+      "corpus": "https://teddysearch.com/jason/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "kalampalikis",
+      "corpus": "https://teddysearch.com/kalampalikis/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "kostas",
+      "corpus": "https://teddysearch.com/kostas/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "linardos",
+      "corpus": "https://teddysearch.com/linardos/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "nikos",
+      "corpus": "https://teddysearch.com/nikos/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "nikos-rigas",
+      "corpus": "https://teddysearch.com/nikos-rigas/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "petros",
+      "corpus": "https://teddysearch.com/petros/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "rolando",
+      "corpus": "https://teddysearch.com/rolando/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "spyridon",
+      "corpus": "https://teddysearch.com/spyridon/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
+    },
+    {
+      "name": "suhas",
+      "corpus": "https://teddysearch.com/suhas/corpus.json",
+      "auth": "basic",
+      "note": "verified live: HTTP 401, protected, so the portal exists"
     }
   ]
 }
