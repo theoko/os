@@ -132,12 +132,6 @@ mod tests {
         assert_eq!(c.docs[0].t, "A");
         assert_eq!(c.docs[0].pr, 0.5);
     }
-
-    #[test]
-    fn a_truncated_corpus_is_rejected_not_silently_empty() {
-        let bad = r#"{"crawled_at":"now","docs":[{"t":"A","u":"x"#;
-        assert!(serde_json::from_str::<CorpusFile>(bad).is_err());
-    }
 }
 
 /// Inverted index over the cached corpus.

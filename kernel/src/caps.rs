@@ -71,12 +71,7 @@ impl Caps {
     /// Flip capability `i` in place. Out-of-range is a no-op.
     pub fn toggle(&mut self, i: usize) {
         if let Some(c) = Cap::ALL.get(i) {
-            let bit = 1 << *c as usize;
-            if self.bits & bit != 0 {
-                self.bits &= !bit;
-            } else {
-                self.bits |= bit;
-            }
+            self.bits ^= 1 << *c as usize;
         }
     }
 }

@@ -120,16 +120,6 @@ impl SearchView {
         }
     }
 
-    /// Run `q` against the in-kernel index only (unit tests).
-    ///
-    /// Production always goes through [`Self::run_via`]; the baked corpus alone
-    /// is still useful for offline assertions.
-    #[cfg(test)]
-    fn run(&mut self, q: &str) {
-        self.phase = Phase::Offline;
-        self.fill_local(q);
-    }
-
     /// Ask the bridge first, fall back to the baked index when it is down.
     ///
     /// Without this the screen only ever saw the built-in documents, so every
@@ -245,7 +235,9 @@ mod tests {
     #[test]
     fn running_a_query_populates_openable_rows() {
         let mut v = SearchView::new();
-        v.run("capability agent");
+        // Caps::none() never PINGs COM2; Denied + baked fill exercises the
+        // offline index the same way production does when search.query is off.
+        v.run_via("capability agent", crate::caps::Caps::none());
         assert_ne!(v.phase, Phase::Idle);
         assert!(v.count > 0, "expected hits from the baked index");
         let (title, url) = v.at(0);
@@ -256,7 +248,7 @@ mod tests {
     #[test]
     fn empty_query_searches_nothing_but_marks_searched() {
         let mut v = SearchView::new();
-        v.run("   ");
+        v.run_via("   ", crate::caps::Caps::none());
         assert_ne!(
             v.phase,
             Phase::Idle,
@@ -268,10 +260,10 @@ mod tests {
     #[test]
     fn rerunning_replaces_previous_results() {
         let mut v = SearchView::new();
-        v.run("capability agent");
+        v.run_via("capability agent", crate::caps::Caps::none());
         let first = v.count;
         assert!(first > 0);
-        v.run("zzzz qqqq");
+        v.run_via("zzzz qqqq", crate::caps::Caps::none());
         assert_eq!(v.count, 0, "stale rows must not survive a new search");
     }
 
@@ -327,12 +319,8 @@ mod empty_state_tests {
     }
 
     #[test]
-    fn a_real_failure_gets_the_friendly_line() {
-        assert_eq!(Phase::Denied.empty_reason(), TEDDY);
-    }
-
-    #[test]
     fn every_reason_is_renderable_ascii() {
+        assert_eq!(Phase::Denied.empty_reason(), TEDDY);
         for s in [
             Phase::Offline,
             online(false, false),

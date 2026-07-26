@@ -200,17 +200,40 @@ fn search_tfidf(
     scored
 }
 
+/// Byte offset of `needle` (already lowercase ASCII) in ASCII `hay`, ignoring case.
+fn find_ascii_ignore_case(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || needle.len() > hay.len() {
+        return None;
+    }
+    hay.windows(needle.len()).position(|w| {
+        w.iter()
+            .zip(needle.iter())
+            .all(|(&a, &b)| a.to_ascii_lowercase() == b)
+    })
+}
+
 fn snip<'a>(body: &'a str, q_terms: &[String]) -> &'a str {
-    let lower = body.to_lowercase();
-    // `find` returns a byte offset into `lower`; that only maps back onto
-    // `body` when lowercasing didn't change byte lengths. Otherwise anchor at
-    // the start rather than slicing at a wrong (possibly non-boundary) offset.
+    // Query terms are already lowercased by `tokenize`. Prefer a no-alloc scan
+    // on ASCII bodies (the common guest path) over cloning a large teddy body.
     let mut best = 0usize;
-    if lower.len() == body.len() {
+    if body.is_ascii() {
         for term in q_terms {
-            if let Some(i) = lower.find(term) {
+            if let Some(i) = find_ascii_ignore_case(body.as_bytes(), term.as_bytes()) {
                 best = i;
                 break;
+            }
+        }
+    } else {
+        let lower = body.to_lowercase();
+        // `find` returns a byte offset into `lower`; that only maps back onto
+        // `body` when lowercasing didn't change byte lengths. Otherwise anchor
+        // at the start rather than slicing at a wrong offset.
+        if lower.len() == body.len() {
+            for term in q_terms {
+                if let Some(i) = lower.find(term) {
+                    best = i;
+                    break;
+                }
             }
         }
     }
@@ -255,16 +278,24 @@ pub fn query_all(
     if q_terms.is_empty() {
         return crate::text::framed_ok("OK search.query n=0 backend=tfidf-pr".into(), []);
     }
-    let mut docs = curated.to_vec();
-    if include_files {
-        docs.extend(workspace_docs());
-    }
-    if include_audio {
-        docs.extend(transcript_docs());
-    }
-    if include_email {
-        docs.extend(email_docs());
-    }
+    // Default search.query only needs the curated slice — clone only when a
+    // scope adds personal docs into the same scoring universe.
+    let docs: std::borrow::Cow<'_, [Doc]> =
+        if include_files || include_audio || include_email {
+            let mut v = curated.to_vec();
+            if include_files {
+                v.extend(workspace_docs());
+            }
+            if include_audio {
+                v.extend(transcript_docs());
+            }
+            if include_email {
+                v.extend(email_docs());
+            }
+            std::borrow::Cow::Owned(v)
+        } else {
+            std::borrow::Cow::Borrowed(curated)
+        };
     // Local indices into `docs`; teddy indices into the cached corpus — never
     // clone 64 MB bodies into the local vec just to re-address them.
     enum Src {
@@ -280,13 +311,18 @@ pub fn query_all(
     // Empty teddy index: `search` returns nothing; merge is a no-op.
     // Skip loading the ~64 MB cache when a category filter excludes it.
     let tdocs = if cat.is_none() {
-        let teddy = crate::tsearch::index();
         let tdocs = crate::tsearch::docs();
-        for (score, i) in teddy.search_tokens(&q_terms, k) {
-            hits.push((score, Src::Teddy(i)));
+        if !tdocs.is_empty() {
+            let before = hits.len();
+            let teddy = crate::tsearch::index();
+            for (score, i) in teddy.search_tokens(&q_terms, k) {
+                hits.push((score, Src::Teddy(i)));
+            }
+            if hits.len() > before {
+                hits.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+                hits.truncate(k);
+            }
         }
-        hits.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        hits.truncate(k);
         tdocs
     } else {
         &[]

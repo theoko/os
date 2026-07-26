@@ -19,6 +19,16 @@ pub fn stderr_brief(stderr: &[u8], fallback: &str, max: usize) -> String {
         .collect()
 }
 
+/// Trim leading/trailing whitespace without a second allocation.
+pub(crate) fn trim_in_place(s: &mut String) {
+    let end = s.trim_end().len();
+    s.truncate(end);
+    let lead = s.len() - s.trim_start().len();
+    if lead > 0 {
+        s.drain(..lead);
+    }
+}
+
 /// Map line breaks / pipes / controls to spaces, optionally drop non-ASCII,
 /// then take at most `max` chars (and optionally trim).
 pub fn sanitize(s: &str, max: usize, ascii_only: bool, trim: bool) -> String {
@@ -33,12 +43,7 @@ pub fn sanitize(s: &str, max: usize, ascii_only: bool, trim: bool) -> String {
         .take(max)
         .collect();
     if trim {
-        let end = out.trim_end().len();
-        out.truncate(end);
-        let lead = out.len() - out.trim_start().len();
-        if lead > 0 {
-            out.drain(..lead);
-        }
+        trim_in_place(&mut out);
     }
     out
 }

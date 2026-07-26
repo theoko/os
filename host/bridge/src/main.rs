@@ -237,12 +237,7 @@ fn scrub_protocol_line(s: &str) -> String {
     if let Some(i) = ["CALL ", "PING", "LIST"].iter().find_map(|p| out.find(p)) {
         out.drain(..i);
     }
-    let end = out.trim_end().len();
-    out.truncate(end);
-    let lead = out.len() - out.trim_start().len();
-    if lead > 0 {
-        out.drain(..lead);
-    }
+    text::trim_in_place(&mut out);
     out
 }
 
