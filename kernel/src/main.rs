@@ -60,10 +60,7 @@ unsafe extern "C" fn kmain() -> ! {
     // Liveness only until the user consents. Reading the inbox here would
     // fetch — and persist — mail before anyone agreed to it.
     let mut mail = mcp::MailPeek::empty(mcp::probe_bridge());
-    match mail.status {
-        mcp::BridgeStatus::Online => serial_port.write_str("mcp: email connected\n"),
-        mcp::BridgeStatus::Offline => serial_port.write_str("mcp: email offline\n"),
-    }
+    log_mail_status(&serial_port, mail.status);
     serial_port.write_str("skills: builtins ready\n");
     let mut skill_peek = skills::SkillPeek::from_builtin();
     if let Some(resp) = FRAMEBUFFER_REQUEST.get_response() {
@@ -251,23 +248,23 @@ unsafe extern "C" fn kmain() -> ! {
                         }
                     } else {
                         let mut dirty = false;
-                        // Keep Home vs non-Home arms separate so a same-frame
-                        // key that changes `view` cannot also run the other
-                        // arm's click handler.
-                        if view == screens::View::Home {
-                            while let Some(key) = kb.poll() {
-                                if handle_key(
-                                    &mut view,
-                                    key,
-                                    &mut query,
-                                    &mut sview,
-                                    grants,
-                                    &serial_port,
-                                ) {
-                                    dirty = true;
-                                }
+                        // Snapshot Home before keys so a same-frame view change
+                        // cannot also run the other arm's click handler.
+                        let on_home = view == screens::View::Home;
+                        while let Some(key) = kb.poll() {
+                            if handle_key(
+                                &mut view,
+                                key,
+                                &mut query,
+                                &mut sview,
+                                grants,
+                                &serial_port,
+                            ) {
+                                dirty = true;
                             }
-                            if click_edge(buttons, prev_buttons) {
+                        }
+                        if click_edge(buttons, prev_buttons) {
+                            if on_home {
                                 let targets = ui::home_targets(w);
                                 match targets.hit(x, y) {
                                     Some(ui::HomeHit::SearchField)
@@ -281,14 +278,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     Some(ui::HomeHit::Connect) => {
                                         serial_port.write_str("ui: connect bridge\n");
                                         mail = mcp::fetch_mail_peek(grants);
-                                        match mail.status {
-                                            mcp::BridgeStatus::Online => {
-                                                serial_port.write_str("mcp: email connected\n")
-                                            }
-                                            mcp::BridgeStatus::Offline => {
-                                                serial_port.write_str("mcp: email offline\n")
-                                            }
-                                        }
+                                        log_mail_status(&serial_port, mail.status);
                                         dirty = true;
                                     }
                                     Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
@@ -305,71 +295,53 @@ unsafe extern "C" fn kmain() -> ! {
                                     }
                                     None => {}
                                 }
-                            }
-                        } else {
-                            while let Some(key) = kb.poll() {
-                                if handle_key(
-                                    &mut view,
-                                    key,
-                                    &mut query,
-                                    &mut sview,
-                                    grants,
-                                    &serial_port,
-                                ) {
+                            } else if screens::back_rect().contains(x, y) {
+                                // Back from the reader returns to results.
+                                view = if view == screens::View::Reader {
+                                    screens::View::Search
+                                } else {
+                                    screens::View::Home
+                                };
+                                dirty = true;
+                            } else if view == screens::View::Search {
+                                if let Some(i) = searchui::result_hit(w, sview.count, x, y) {
+                                    let row = &sview.rows[i];
+                                    skills::copy_field(&mut open_title, row.title());
+                                    page = mcp::fetch_doc(grants, row.url());
+                                    view = screens::View::Reader;
+                                    serial_port.write_str("ui: open doc\n");
                                     dirty = true;
                                 }
-                            }
-                            if click_edge(buttons, prev_buttons) {
-                                if screens::back_rect().contains(x, y) {
-                                    // Back from the reader returns to results.
-                                    view = if view == screens::View::Reader {
-                                        screens::View::Search
-                                    } else {
-                                        screens::View::Home
-                                    };
-                                    dirty = true;
-                                } else if view == screens::View::Search {
-                                    if let Some(i) =
-                                        searchui::result_hit(w, sview.count, x, y)
-                                    {
-                                        let row = &sview.rows[i];
-                                        skills::copy_field(&mut open_title, row.title());
-                                        page = mcp::fetch_doc(grants, row.url());
-                                        view = screens::View::Reader;
-                                        serial_port.write_str("ui: open doc\n");
-                                        dirty = true;
-                                    }
-                                } else if view == screens::View::Caps {
-                                    if let Some(i) = screens::caps_hit(w, x, y) {
-                                        let before = grants;
-                                        grants = screens::toggle(grants, i);
-                                        for (cap, tool) in [
-                                            (caps::Cap::WorkspaceIndex, "workspace.forget"),
-                                            (caps::Cap::AudioTranscribe, "audio.forget"),
-                                        ] {
-                                            if before.allows(cap) && !grants.allows(cap) {
-                                                mcp::forget(tool);
-                                                serial_port.write_str("caps: revoked ");
-                                                serial_port.write_str(cap.name());
-                                                serial_port.write_str(" - purged\n");
-                                            }
+                            } else if view == screens::View::Caps {
+                                if let Some(i) = screens::caps_hit(w, x, y) {
+                                    let before = grants;
+                                    grants = screens::toggle(grants, i);
+                                    for (cap, tool) in [
+                                        (caps::Cap::WorkspaceIndex, "workspace.forget"),
+                                        (caps::Cap::AudioTranscribe, "audio.forget"),
+                                    ] {
+                                        if before.allows(cap) && !grants.allows(cap) {
+                                            mcp::forget(tool);
+                                            serial_port.write_str("caps: revoked ");
+                                            serial_port.write_str(cap.name());
+                                            serial_port.write_str(" - purged\n");
                                         }
-                                        dirty = true;
                                     }
-                                } else if view == screens::View::Skills {
-                                    // Serial feedback only — home no longer shows blurbs.
-                                    if let Some(i) =
-                                        screens::skills_hit(w, skill_peek.count, x, y)
-                                    {
-                                        let name = skill_peek.name_at(i);
-                                        serial_port.write_str(if mcp::skill_available(name) {
-                                            "skills: got "
-                                        } else {
-                                            "skills: get offline "
-                                        });
-                                        serial_port.write_str(name);
-                                        serial_port.write_str("\n");
-                                    }
+                                    dirty = true;
+                                }
+                            } else if view == screens::View::Skills {
+                                // Serial feedback only — home no longer shows blurbs.
+                                if let Some(i) =
+                                    screens::skills_hit(w, skill_peek.count, x, y)
+                                {
+                                    let name = skill_peek.name_at(i);
+                                    serial_port.write_str(if mcp::skill_available(name) {
+                                        "skills: got "
+                                    } else {
+                                        "skills: get offline "
+                                    });
+                                    serial_port.write_str(name);
+                                    serial_port.write_str("\n");
                                 }
                             }
                         }
@@ -478,6 +450,13 @@ fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
         mcp::BridgeStatus::Online => "Answers come from the local index and the host bridge.",
         mcp::BridgeStatus::Offline => mcp::BRIDGE_OFFLINE_HINT,
     }
+}
+
+fn log_mail_status(port: &serial::Serial, status: mcp::BridgeStatus) {
+    port.write_str(match status {
+        mcp::BridgeStatus::Online => "mcp: email connected\n",
+        mcp::BridgeStatus::Offline => "mcp: email offline\n",
+    });
 }
 
 fn log_skill_source(port: &serial::Serial, peek: &skills::SkillPeek) {

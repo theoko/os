@@ -173,34 +173,12 @@ pub enum HomeHit {
     Card(CardId),
 }
 
-/// Hit targets for the three destination tiles.
-#[derive(Clone, Copy, Debug)]
-struct CardTargets {
-    search: Rect,
-    capabilities: Rect,
-    skills: Rect,
-}
-
-impl CardTargets {
-    fn hit(self, px: i32, py: i32) -> Option<CardId> {
-        if self.search.contains(px, py) {
-            Some(CardId::Search)
-        } else if self.capabilities.contains(px, py) {
-            Some(CardId::Capabilities)
-        } else if self.skills.contains(px, py) {
-            Some(CardId::Skills)
-        } else {
-            None
-        }
-    }
-}
-
 /// Combined home hit-test (search field preferred over tiles).
 #[derive(Clone, Copy, Debug)]
 pub struct HomeTargets {
     search: Rect,
     connect: Rect,
-    cards: CardTargets,
+    w: i32,
 }
 
 impl HomeTargets {
@@ -211,7 +189,8 @@ impl HomeTargets {
         if self.connect.contains(px, py) {
             return Some(HomeHit::Connect);
         }
-        self.cards.hit(px, py).map(HomeHit::Card)
+        const IDS: [CardId; 3] = [CardId::Search, CardId::Capabilities, CardId::Skills];
+        hit_among(3, px, py, |i| tile_rect(self.w, i as i32)).map(|i| HomeHit::Card(IDS[i]))
     }
 }
 
@@ -330,19 +309,11 @@ pub fn connect_rect(w: i32) -> Rect {
     Rect::new(w - PAD_X - bw, (NAV_H - bh) / 2, bw, bh)
 }
 
-fn card_targets(w: i32) -> CardTargets {
-    CardTargets {
-        search: tile_rect(w, 0),
-        capabilities: tile_rect(w, 1),
-        skills: tile_rect(w, 2),
-    }
-}
-
 pub fn home_targets(w: i32) -> HomeTargets {
     HomeTargets {
         search: search_rect(w),
         connect: connect_rect(w),
-        cards: card_targets(w),
+        w,
     }
 }
 
@@ -355,9 +326,10 @@ fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
     let cbase = cr.y + (cr.h - BTN_FACE.px) / 2 + BTN_FACE.baseline();
     fb.draw_text_centered(cr.x + cr.w / 2, cbase, "Connect", &BTN_FACE, 0, theme::SURFACE);
 
-    let (label, dot) = match mail.status {
-        BridgeStatus::Online => ("Bridge", theme::ONLINE),
-        BridgeStatus::Offline => ("Bridge", theme::OFFLINE),
+    let label = "Bridge";
+    let dot = match mail.status {
+        BridgeStatus::Online => theme::ONLINE,
+        BridgeStatus::Offline => theme::OFFLINE,
     };
     let tw = SMALL_FACE.width(label, 0);
     let gap = 10;
@@ -461,7 +433,10 @@ mod tests {
             .enumerate()
         {
             let r = tile_rect(1024, i as i32);
-            assert_eq!(t.cards.hit(r.x + r.w / 2, r.y + r.h / 2), Some(*want));
+            assert_eq!(
+                t.hit(r.x + r.w / 2, r.y + r.h / 2),
+                Some(HomeHit::Card(*want))
+            );
         }
     }
 

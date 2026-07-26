@@ -79,10 +79,9 @@ pub fn chrome(fb: &Surface, w: i32, title: &str, heading: Option<&str>) {
 }
 
 /// A bordered row with a title and a subtitle.
-fn row(fb: &Surface, w: i32, i: usize, title: &str, sub: &str, accent: bool) -> ui::Rect {
+fn row(fb: &Surface, w: i32, i: usize, title: &str, sub: &str) -> ui::Rect {
     let r = row_rect(w, i);
-    let border = if accent { theme::ACCENT } else { theme::CARD_BORDER };
-    ui::draw_titled_row(fb, r, title, sub, border);
+    ui::draw_titled_row(fb, r, title, sub, theme::CARD_BORDER);
     r
 }
 
@@ -103,7 +102,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
         } else {
             desc
         };
-        row(fb, w, i, peek.name_at(i), sub, false);
+        row(fb, w, i, peek.name_at(i), sub);
     }
 
     let (x, cw) = column(w);
@@ -137,7 +136,7 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
 
     for (i, cap) in Cap::ALL.iter().enumerate() {
         let on = grants.allows(*cap);
-        let r = row(fb, w, i, cap.name(), CAP_BLURBS[i], false);
+        let r = row(fb, w, i, cap.name(), CAP_BLURBS[i]);
 
         let tx = r.x + r.w - 18 - ui::SWITCH_W;
         let ty = r.y + (r.h - ui::SWITCH_H) / 2;

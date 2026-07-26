@@ -24,36 +24,16 @@ pub enum BridgeStatus {
 /// Footer / empty-state hint when COM2 has no host bridge.
 pub const BRIDGE_OFFLINE_HINT: &str = "Bridge offline - run: make utm-bridged";
 
-pub struct MailRow {
-    pub from: [u8; 40],
-    pub subj: [u8; 72],
-}
-
+/// Inbox liveness + unread count for the home status strip.
+/// Row payloads are not retained — the home UI only shows a count.
 pub struct MailPeek {
     pub status: BridgeStatus,
     pub count: usize,
-    pub rows: [MailRow; 5],
 }
 
 impl MailPeek {
     pub const fn empty(status: BridgeStatus) -> Self {
-        const EMPTY: MailRow = MailRow {
-            from: [0; 40],
-            subj: [0; 72],
-        };
-        Self {
-            status,
-            count: 0,
-            rows: [EMPTY; 5],
-        }
-    }
-
-    pub fn row_from(&self, i: usize) -> &str {
-        str_at(&self.rows[i].from)
-    }
-
-    pub fn row_subj(&self, i: usize) -> &str {
-        str_at(&self.rows[i].subj)
+        Self { status, count: 0 }
     }
 }
 
@@ -196,14 +176,10 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
         com2.write_str("CALL email.search q=in:inbox max=3\n");
 
         let mut peek = MailPeek::empty(BridgeStatus::Online);
-        let _ = for_each_ok_rows(com2, line, 16, "OK email.search", |resp| {
-            if peek.count >= peek.rows.len() {
+        let _ = for_each_ok_rows(com2, line, 16, "OK email.search", |_resp| {
+            if peek.count >= 5 {
                 return false;
             }
-            let from = parse_row_field(resp, "from").unwrap_or("?");
-            let subj = parse_row_field(resp, "subj").unwrap_or("(no subject)");
-            copy_field(&mut peek.rows[peek.count].from, from);
-            copy_field(&mut peek.rows[peek.count].subj, subj);
             peek.count += 1;
             true
         });
@@ -437,7 +413,7 @@ mod tests {
     #[test]
     fn probe_does_not_imply_a_mailbox_read() {
         // Guard the consent rule: the pre-consent path must expose liveness
-        // only. MailPeek::empty carries no rows.
+        // only — never a fetched count.
         let p = MailPeek::empty(BridgeStatus::Offline);
         assert_eq!(p.count, 0);
     }
