@@ -32,7 +32,6 @@ Guest → host:
 | Request | Meaning |
 |---------|---------|
 | `PING` | Liveness |
-| `LIST` | Tool names |
 | `CALL email.search q=<gmail query> max=<n>` | Search mail |
 | `CALL email.send …` | Always `ERR … disabled_until_cap_confirm` (policy stub) |
 | `CALL search.query q=<keywords> k=<n> …` | Knowledge search (+ optional email/files/audio scopes) |
@@ -45,7 +44,6 @@ Host → guest:
 | Response | Meaning |
 |----------|---------|
 | `OK pong` | Alive |
-| `OK tools=a,b,c` | Tool list |
 | `OK email.search` / `ROW from=…\|subj=…` / `END` | Mail hits |
 | `OK search.query` / `ROW title=…\|…` / `END` | Knowledge hits |
 | `ERR <tool> <reason>` | Failure |

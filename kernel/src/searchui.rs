@@ -141,7 +141,7 @@ impl SearchView {
             self.phase = Phase::Idle;
             return;
         }
-        // Refuse before CALL: no PING/LIST traffic without the search cap.
+        // Refuse before CALL: no PING/CALL traffic without the search cap.
         if !caps.allows(crate::caps::Cap::SearchQuery) {
             self.phase = Phase::Denied;
             self.fill_local(q);

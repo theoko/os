@@ -22,8 +22,8 @@ const MAX_LINE: u64 = 64 * 1024;
 /// Cap on an accumulated skills.save body.
 const MAX_BODY: usize = 1024 * 1024;
 
-/// Tools advertised by `LIST` — keep in sync with `call_tool` (+ `skills.save`
-/// which is handled on the socket for the LINE…END body).
+/// Tools known to `call_tool` (+ `skills.save` on the socket for LINE…END).
+/// Kept for dispatch inventory tests.
 const TOOLS: &[&str] = &[
     "email.search",
     "email.send",
@@ -232,7 +232,7 @@ fn scrub_protocol_line(s: &str) -> String {
         out.push(c);
     }
     // Firmware may leave prose before the guest command on the same "line".
-    if let Some(i) = ["CALL ", "PING", "LIST"].iter().find_map(|p| out.find(p)) {
+    if let Some(i) = ["CALL ", "PING"].iter().find_map(|p| out.find(p)) {
         out.drain(..i);
     }
     text::trim_in_place(&mut out);
@@ -243,7 +243,6 @@ fn dispatch(line: &str) -> Vec<String> {
     let (cmd, rest) = split_word(line);
     match cmd {
         "PING" => vec!["OK pong".into()],
-        "LIST" => vec![format!("OK tools={}", TOOLS.join(","))],
         "CALL" => {
             let (tool, rest) = split_word(rest);
             let args = parse_args(rest);
@@ -636,10 +635,8 @@ mod tests {
     }
 
     #[test]
-    fn list_matches_tools_table() {
+    fn ping_answers() {
         assert_eq!(dispatch("PING"), vec!["OK pong".to_string()]);
-        let r = dispatch("LIST");
-        assert_eq!(r[0], format!("OK tools={}", TOOLS.join(",")));
     }
 
     #[test]
