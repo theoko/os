@@ -63,14 +63,36 @@ impl Row {
 /// Named for the search engine this OS queries.
 const TEDDY: &str = "Teddy is looking into it.";
 
+/// How a search finished — distinct from [`DocOutcome`] (framed `doc.read` /
+/// `search.query` only). Grant-miss never PINGs, so it is not framed `Ok`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SearchDone {
+    Offline,
+    /// Framed bridge `ERR`.
+    Err,
+    /// Framed `search.query` OK (zero or more ROWs).
+    Framed,
+    /// Cap off — baked fill only, no PING/CALL.
+    Local,
+}
+
+impl SearchDone {
+    fn from_bridge(o: DocOutcome) -> Self {
+        match o {
+            DocOutcome::Offline => Self::Offline,
+            DocOutcome::Err => Self::Err,
+            DocOutcome::Ok => Self::Framed,
+        }
+    }
+}
+
 /// One line explaining an empty result set for a completed query.
-fn empty_reason(outcome: DocOutcome) -> &'static str {
-    match outcome {
-        DocOutcome::Offline => crate::mcp::NO_MATCHES_BRIDGE_OFFLINE,
-        // Framed bridge ERR only — grant-miss uses local Ok (no CALL).
-        DocOutcome::Err => TEDDY,
-        // Do not invent a missing-grant cause — scopes already ran (or were off).
-        DocOutcome::Ok => "No matches.",
+fn empty_reason(done: SearchDone) -> &'static str {
+    match done {
+        SearchDone::Offline => crate::mcp::NO_MATCHES_BRIDGE_OFFLINE,
+        SearchDone::Err => TEDDY,
+        // Framed empty and local-empty share copy — scopes already ran (or were off).
+        SearchDone::Framed | SearchDone::Local => "No matches.",
     }
 }
 
@@ -78,7 +100,7 @@ pub struct SearchView {
     rows: [Row; search::MAX_HITS],
     count: usize,
     /// `None` = no query yet. `Some` = last fetch / local-only fill.
-    outcome: Option<DocOutcome>,
+    outcome: Option<SearchDone>,
 }
 
 impl SearchView {
@@ -117,29 +139,32 @@ impl SearchView {
             return;
         }
         // Refuse before CALL: no PING/CALL traffic without the search cap.
-        // Local-only fill is Ok — Err/TEDDY is reserved for a framed bridge ERR.
         if !caps.allows(crate::caps::Cap::SearchQuery) {
             self.fill_local(q);
-            self.outcome = Some(DocOutcome::Ok);
+            self.outcome = Some(SearchDone::Local);
             return;
         }
         // Record reachability BEFORE any fallback, so an online bridge that
         // simply found nothing is never reported as a connection failure.
         // Rows are filled once from the COM2 parse — no intermediate peek buffer.
-        self.outcome = Some(crate::mcp::fetch_search_rows(caps, q, |title, url, cat| {
-            if self.count >= search::MAX_HITS {
-                return false;
-            }
-            self.rows[self.count].set(title, url, cat);
-            self.count += 1;
-            true
-        }));
+        self.outcome = Some(SearchDone::from_bridge(crate::mcp::fetch_search_rows(
+            caps,
+            q,
+            |title, url, cat| {
+                if self.count >= search::MAX_HITS {
+                    return false;
+                }
+                self.rows[self.count].set(title, url, cat);
+                self.count += 1;
+                true
+            },
+        )));
         self.fill_if_offline(q);
     }
 
-    /// Pad baked hits only after a COM2 outage (not after framed Ok/Err).
+    /// Pad baked hits only after a COM2 outage (not after framed / local).
     fn fill_if_offline(&mut self, q: &str) {
-        if self.count == 0 && matches!(self.outcome, Some(DocOutcome::Offline)) {
+        if self.count == 0 && matches!(self.outcome, Some(SearchDone::Offline)) {
             self.fill_local(q);
         }
     }
@@ -233,9 +258,9 @@ mod tests {
     #[test]
     fn running_a_query_populates_openable_rows() {
         let mut v = SearchView::new();
-        // Caps::none() never PINGs COM2; local Ok + baked fill when search.query is off.
+        // Caps::none() never PINGs COM2; Local + baked fill when search.query is off.
         v.run_via("capability agent", crate::caps::Caps::none());
-        assert_eq!(v.outcome, Some(DocOutcome::Ok));
+        assert_eq!(v.outcome, Some(SearchDone::Local));
         assert!(v.count > 0, "expected hits from the baked index");
         let (title, url) = v.at(0);
         assert!(!title.is_empty());
@@ -258,20 +283,23 @@ mod tests {
         assert!(first > 0);
         v.run_via("zzzz qqqq", crate::caps::Caps::none());
         assert_eq!(v.count, 0, "stale rows must not survive a new search");
-        // Grant-miss local empty is Ok — not Err/TEDDY (no CALL failed).
-        assert_eq!(v.outcome, Some(DocOutcome::Ok));
+        // Grant-miss local empty is Local — not Err/TEDDY (no CALL failed).
+        assert_eq!(v.outcome, Some(SearchDone::Local));
     }
 
     #[test]
     fn online_empty_does_not_pad_baked_hits() {
         let mut v = SearchView::new();
-        v.outcome = Some(DocOutcome::Ok);
+        v.outcome = Some(SearchDone::Framed);
         v.fill_if_offline("capability agent");
         assert_eq!(v.count, 0, "framed Ok must not invent ISO hits");
-        v.outcome = Some(DocOutcome::Err);
+        v.outcome = Some(SearchDone::Local);
+        v.fill_if_offline("capability agent");
+        assert_eq!(v.count, 0, "Local empty must not double-fill");
+        v.outcome = Some(SearchDone::Err);
         v.fill_if_offline("capability agent");
         assert_eq!(v.count, 0, "framed Err must keep TEDDY empty state");
-        v.outcome = Some(DocOutcome::Offline);
+        v.outcome = Some(SearchDone::Offline);
         v.fill_if_offline("capability agent");
         assert!(v.count > 0, "Offline still uses the baked index");
     }
@@ -300,23 +328,30 @@ mod empty_state_tests {
 
     #[test]
     fn online_empty_does_not_invent_a_grant_tip() {
-        let m = empty_reason(DocOutcome::Ok);
-        assert_eq!(m, "No matches.");
-        assert!(!m.contains("workspace.index"), "{m}");
-        assert!(!m.contains("email.search"), "{m}");
-        assert!(!m.contains("offline"), "{m}");
-        assert_ne!(m, TEDDY);
+        for done in [SearchDone::Framed, SearchDone::Local] {
+            let m = empty_reason(done);
+            assert_eq!(m, "No matches.");
+            assert!(!m.contains("workspace.index"), "{m}");
+            assert!(!m.contains("email.search"), "{m}");
+            assert!(!m.contains("offline"), "{m}");
+            assert_ne!(m, TEDDY);
+        }
     }
 
     #[test]
     fn every_reason_is_renderable_ascii() {
-        assert_eq!(empty_reason(DocOutcome::Err), TEDDY);
+        assert_eq!(empty_reason(SearchDone::Err), TEDDY);
         // A bridge that answered with zero hits must not read as offline.
-        assert!(!empty_reason(DocOutcome::Ok).contains("offline"));
-        let offline = empty_reason(DocOutcome::Offline);
+        assert!(!empty_reason(SearchDone::Framed).contains("offline"));
+        let offline = empty_reason(SearchDone::Offline);
         assert!(offline.contains("offline"));
         assert!(!offline.contains("Teddy"));
-        for o in [DocOutcome::Offline, DocOutcome::Ok, DocOutcome::Err] {
+        for o in [
+            SearchDone::Offline,
+            SearchDone::Framed,
+            SearchDone::Local,
+            SearchDone::Err,
+        ] {
             let m = empty_reason(o);
             assert!(m.bytes().all(|b| (0x20..=0x7E).contains(&b)), "{m}");
             assert!(BODY_FACE.width(m, 0) < 980, "empty-state line overflows: {m}");

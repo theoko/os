@@ -111,7 +111,7 @@ impl SkillPeek {
         }
     }
 
-    pub(crate) fn subtitle_at(&self, i: usize) -> &str {
+    pub(crate) fn desc_at(&self, i: usize) -> &str {
         if i < self.count {
             str_at(&self.slots[i].desc)
         } else {
@@ -172,7 +172,7 @@ mod tests {
     }
 
     #[test]
-    fn empty_live_is_still_from_bridge() {
+    fn empty_live_stays_live() {
         let p = SkillPeek::empty_live();
         assert_eq!(p.count(), 0);
         assert!(p.is_live(), "framed empty list is not ISO builtins");

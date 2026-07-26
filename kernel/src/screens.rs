@@ -83,7 +83,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
 
     let n = peek.count();
     for i in 0..n {
-        ui::draw_titled_row(fb, row_rect(w, i), peek.name_at(i), peek.subtitle_at(i));
+        ui::draw_titled_row(fb, row_rect(w, i), peek.name_at(i), peek.desc_at(i));
     }
 
     let (x, _) = ui::content_column(w, ui::LIST_CONTENT_MAX);
@@ -188,8 +188,6 @@ mod tests {
             "Skills",
             "Capabilities",
             "Back",
-            "From host bridge",
-            "Shipped with the ISO",
         ];
         for s in BUILTIN {
             all.push(s.name);
@@ -214,9 +212,9 @@ mod tests {
                 peek.name_at(i)
             );
             assert!(
-                SMALL_FACE.width(peek.subtitle_at(i), 0) < cw - 36,
+                SMALL_FACE.width(peek.desc_at(i), 0) < cw - 36,
                 "blurb overflows: {}",
-                peek.subtitle_at(i)
+                peek.desc_at(i)
             );
         }
     }

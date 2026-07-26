@@ -197,7 +197,7 @@ impl Setup {
                 fb,
                 content_rect(w, y, ROW_H),
                 skills.name_at(i),
-                skills.subtitle_at(i),
+                skills.desc_at(i),
             );
             y += ROW_H + 8;
         }
@@ -398,8 +398,6 @@ mod tests {
             "Default Skills",
             "Markdown playbooks the agent can load. Editable later.",
             "Live from the host bridge. Tap Continue when ready.",
-            "From host bridge",
-            "Shipped with the ISO",
             "You're all set.",
             "Capabilities granted. Skills loaded.",
             "Continue",
