@@ -1,0 +1,29 @@
+{
+  "_comment": [
+    "Known tSearch portals, one machine per entry.",
+    "",
+    "The ISO is portal-agnostic: the guest talks to a host bridge over COM2 and",
+    "knows nothing about which portal it is. Everything that differs between",
+    "users lives on the HOST — which corpus URL to fetch, which credential to",
+    "use, and where the resulting private data is cached. So a 'version per",
+    "portal' is a per-portal bridge profile, not a per-portal kernel build.",
+    "",
+    "auth=basic entries need a keychain credential before they can sync;",
+    "scripts/make-portal.sh prints the exact command and never handles the",
+    "password itself."
+  ],
+  "portals": [
+    {
+      "name": "tsearch",
+      "corpus": "https://teddysearch.com/tsearch/corpus.json",
+      "auth": "none",
+      "note": "The shared/public corpus. Verified 200 without credentials."
+    },
+    {
+      "name": "theo",
+      "corpus": "https://teddysearch.com/theo/corpus.json",
+      "auth": "basic",
+      "note": "Verified 401 — the portal exists and requires basic auth."
+    }
+  ]
+}
