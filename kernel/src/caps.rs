@@ -19,7 +19,8 @@ pub enum Cap {
 }
 
 impl Cap {
-    pub(crate) const ALL: [Cap; 5] = [
+    /// Dense table for UI rows and revoke walks (`main` is a separate binary).
+    pub const ALL: [Cap; 5] = [
         Cap::EmailSearch,
         Cap::SearchQuery,
         Cap::SkillsSave,
