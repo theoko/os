@@ -298,34 +298,38 @@ mod tests {
 mod empty_state_tests {
     use super::*;
 
-    fn online(files: bool, mail: bool) -> Phase {
-        Phase::Online { files, mail }
-    }
-
     #[test]
     fn missing_grants_name_the_fix() {
         // Finding nothing is a legitimate answer and must stay actionable
         // rather than being papered over with a mascot.
-        let m = online(false, true).empty_reason();
+        let m = Phase::Online { files: false, mail: true }.empty_reason();
         assert!(m.contains("workspace.index"), "{m}");
         assert!(!m.contains("offline"), "{m}");
         assert_ne!(m, TEDDY);
-        assert!(online(true, false).empty_reason().contains("email.search"));
+        assert!(
+            Phase::Online { files: true, mail: false }
+                .empty_reason()
+                .contains("email.search")
+        );
     }
 
     #[test]
     fn every_reason_is_renderable_ascii() {
         assert_eq!(Phase::Denied.empty_reason(), TEDDY);
         // A bridge that answered n=0 must not read as a connection failure.
-        assert!(!online(true, true).empty_reason().contains("offline"));
+        assert!(
+            !Phase::Online { files: true, mail: true }
+                .empty_reason()
+                .contains("offline")
+        );
         let offline = Phase::Offline.empty_reason();
         assert!(offline.contains("offline"));
         assert!(!offline.contains("Teddy"));
         for s in [
             Phase::Offline,
-            online(false, false),
-            online(true, false),
-            online(true, true),
+            Phase::Online { files: false, mail: false },
+            Phase::Online { files: true, mail: false },
+            Phase::Online { files: true, mail: true },
             Phase::Denied,
         ] {
             let m = s.empty_reason();

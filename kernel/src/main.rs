@@ -49,7 +49,7 @@ unsafe extern "C" fn kmain() -> ! {
     black_box(&FRAMEBUFFER_REQUEST);
 
     if !BASE_REVISION.is_supported() {
-        serial::exit_qemu(false);
+        serial::exit_qemu();
     }
 
     let serial_port = serial::Serial::com1();
@@ -348,7 +348,7 @@ unsafe extern "C" fn kmain() -> ! {
 
     // Only the framebuffer-missing/unsupported paths reach here — that is a
     // boot failure, and the smoke test must see it as one.
-    serial::exit_qemu(false);
+    serial::exit_qemu();
 }
 
 /// Keyboard for Home / Search (and Escape-to-home elsewhere).
@@ -455,5 +455,5 @@ fn enter(screen: &fb::Screen) {
 
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
-    serial::exit_qemu(false);
+    serial::exit_qemu();
 }

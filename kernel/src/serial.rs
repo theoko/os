@@ -156,9 +156,10 @@ pub fn request_qemu_exit(success: bool) {
     let _ = success;
 }
 
-/// QEMU `isa-debug-exit` device (iobase 0xf4): status = `(code << 1) | 1`.
-pub fn exit_qemu(success: bool) -> ! {
-    request_qemu_exit(success);
+/// Fail the QEMU smoke run and halt. Success uses [`request_qemu_exit`]`(true)`
+/// without halting so the guest can keep running under UTM.
+pub fn exit_qemu() -> ! {
+    request_qemu_exit(false);
     halt()
 }
 

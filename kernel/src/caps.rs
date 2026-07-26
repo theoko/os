@@ -39,7 +39,7 @@ impl Cap {
 }
 
 /// Bitset of granted capabilities (one bit per [`Cap`]).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Caps {
     bits: u8,
 }
