@@ -46,8 +46,39 @@ impl MailPeek {
     }
 }
 
-/// One pass over a ROW for up to three keys (avoids re-splitting the line).
-/// Pass `""` for unused keys.
+/// One key from a `ROW k=v|…` line.
+fn parse_row_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    let rest = line.strip_prefix("ROW ")?;
+    for part in rest.split('|') {
+        if let Some((k, v)) = part.split_once('=') {
+            if k == key {
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
+/// One pass over a ROW for two keys (same shape as the host bridge helper).
+fn parse_row_pair<'a>(line: &'a str, ka: &str, kb: &str) -> (Option<&'a str>, Option<&'a str>) {
+    let mut a = None;
+    let mut b = None;
+    let Some(rest) = line.strip_prefix("ROW ") else {
+        return (None, None);
+    };
+    for part in rest.split('|') {
+        if let Some((k, v)) = part.split_once('=') {
+            if k == ka {
+                a = Some(v);
+            } else if k == kb {
+                b = Some(v);
+            }
+        }
+    }
+    (a, b)
+}
+
+/// One pass over a ROW for three keys (avoids re-splitting the line).
 fn parse_row_triple<'a>(
     line: &'a str,
     ka: &str,
@@ -66,17 +97,12 @@ fn parse_row_triple<'a>(
                 a = Some(v);
             } else if k == kb {
                 b = Some(v);
-            } else if !kc.is_empty() && k == kc {
+            } else if k == kc {
                 c = Some(v);
             }
         }
     }
     (a, b, c)
-}
-
-fn parse_row_pair<'a>(line: &'a str, ka: &str, kb: &str) -> (Option<&'a str>, Option<&'a str>) {
-    let (a, b, _) = parse_row_triple(line, ka, kb, "");
-    (a, b)
 }
 
 /// Drain a typical OK / ROW* / END reply. Stops on `ERR` / `END`.
@@ -180,12 +206,15 @@ pub enum DocOutcome {
 pub struct DocPage {
     pub(crate) outcome: DocOutcome,
     pub(crate) count: usize,
-    title: [u8; 72],
+    /// Copied from the search hit (not on the wire) — guest title slot size.
+    title: [u8; Self::TITLE_CHARS],
     lines: [[u8; Self::LINE_CHARS]; Self::MAX],
 }
 
 impl DocPage {
     pub(crate) const MAX: usize = 18;
+    /// Matches bridge / `SearchView::Row` title width.
+    pub(crate) const TITLE_CHARS: usize = 56;
     /// Matches bridge `search::LINE_WIDTH` for `ROW line=`.
     pub(crate) const LINE_CHARS: usize = 78;
 
@@ -193,7 +222,7 @@ impl DocPage {
         Self {
             outcome,
             count: 0,
-            title: [0; 72],
+            title: [0; Self::TITLE_CHARS],
             lines: [[0; Self::LINE_CHARS]; Self::MAX],
         }
     }
@@ -225,7 +254,7 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str, title: &str) -> DocPage {
             if page.count >= DocPage::MAX {
                 return false;
             }
-            let text = parse_row_pair(resp, "line", "").0.unwrap_or("");
+            let text = parse_row_field(resp, "line").unwrap_or("");
             copy_field(&mut page.lines[page.count], text);
             page.count += 1;
             true
@@ -355,6 +384,9 @@ mod tests {
             (Some("email-triage"), Some("Inbox via MCP email"))
         );
         // Single-key extract (doc.read uses `line=` this way).
-        assert_eq!(parse_row_pair(skill, "desc", "").0, Some("Inbox via MCP email"));
+        assert_eq!(
+            parse_row_field("ROW line=hello world", "line"),
+            Some("hello world")
+        );
     }
 }
