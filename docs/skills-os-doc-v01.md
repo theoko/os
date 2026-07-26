@@ -17,7 +17,9 @@ skills/defaults/<name>/SKILL.md     # shipped with the OS repo
 ~/Library/Application Support/os/skills/<name>/SKILL.md   # saved / user
 ```
 
-Frontmatter: `name`, `description` (same convention as Cursor skills).
+Frontmatter: `name`, optional `blurb` (≤40 chars — guest Skills row; matches
+ISO builtins), `description` (agent routing prose; Cursor-style).
+`skills.list` prefers `blurb` when present, else truncates `description`.
 
 ## Bridge API
 
