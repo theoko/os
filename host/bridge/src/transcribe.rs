@@ -161,25 +161,6 @@ impl Store {
     }
 }
 
-/// Simple extractive summary: the longest sentences carry the most content.
-///
-/// Deliberately not a model call — this runs on the bridge with no network and
-/// no inference, and its job is to give the guest something readable in three
-/// lines rather than to be clever.
-pub fn summarize(text: &str) -> Vec<String> {
-    let mut sentences: Vec<&str> = text
-        .split(|c| c == '.' || c == '!' || c == '?')
-        .map(|s| s.trim())
-        .filter(|s| s.split_whitespace().count() >= 5)
-        .collect();
-    sentences.sort_by_key(|s| core::cmp::Reverse(s.split_whitespace().count()));
-    sentences
-        .into_iter()
-        .take(3)
-        .map(|s| s.chars().take(110).collect())
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -213,18 +194,6 @@ mod tests {
         let t = title_for(Path::new("/x/rec01.wav"), "the quarterly review meeting began with revenue");
         assert!(t.starts_with("the quarterly review"), "{t}");
         assert_eq!(title_for(Path::new("/x/rec01.wav"), "ok"), "rec01");
-    }
-
-    #[test]
-    fn summary_picks_substantial_sentences_and_stays_bounded() {
-        let text = "Hi. This is a much longer sentence carrying the actual content of the recording. Bye.";
-        let s = summarize(text);
-        assert_eq!(s.len(), 1, "short fragments should be dropped");
-        assert!(s[0].contains("actual content"));
-        let long = "word ".repeat(400) + ".";
-        let s = summarize(&long);
-        assert!(s.len() <= 3);
-        assert!(s.iter().all(|l| l.chars().count() <= 110));
     }
 
     #[test]

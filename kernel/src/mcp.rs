@@ -97,7 +97,8 @@ fn for_each_ok_rows(
         if resp.starts_with("OK ") {
             continue;
         }
-        if resp.starts_with("ROW ") && !on_row(resp) {
+        // Bare `ROW` (mail peek count) or `ROW k=v|…` (search / doc / skills).
+        if (resp == "ROW" || resp.starts_with("ROW ")) && !on_row(resp) {
             break;
         }
     }

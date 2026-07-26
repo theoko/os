@@ -42,7 +42,7 @@ impl Cap {
     pub(crate) const fn blurb(self) -> &'static str {
         match self {
             Cap::EmailSearch => "Read the inbox through the host bridge",
-            Cap::SearchQuery => "Query the built-in knowledge corpus",
+            Cap::SearchQuery => "Query the host knowledge corpus",
             Cap::WorkspaceIndex => "Search your own files on this machine",
             Cap::AudioTranscribe => "Transcribe recordings and index what was said",
         }

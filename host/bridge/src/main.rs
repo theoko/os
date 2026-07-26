@@ -136,46 +136,37 @@ fn handle_client<R: Read, W: Write>(
         }
         eprintln!("← {line}");
 
-        // Multi-line save: CALL skills.save name=foo  then LINE… END.
-        // A one-line form with desc= creates a starter skill with no body read,
-        // so a client that never sends LINE/END cannot desync the protocol.
+        // CALL skills.save name=foo  then LINE… END (sole save shape).
         if line.starts_with("CALL skills.save ") {
             let args = parse_args(line.trim_start_matches("CALL skills.save "));
             let name = arg_val(&args, "name").unwrap_or("");
-            let reply = if let Some(desc) = arg_val(&args, "desc") {
-                let body = format!(
-                    "---\nname: {name}\ndescription: {desc}\n---\n\n# {name}\n\n(edit me)\n"
-                );
-                save_skill_reply(name, &body)
+            let mut body = String::new();
+            let mut ended = false;
+            loop {
+                if !read_line_bounded(&mut reader, &mut raw)? {
+                    break;
+                }
+                let t = raw.trim_end_matches(['\r', '\n']);
+                if t == "END" {
+                    ended = true;
+                    break;
+                }
+                if let Some(rest) = t.strip_prefix("LINE ") {
+                    if body.len() + rest.len() + 1 > MAX_BODY {
+                        return Err(std::io::Error::new(
+                            std::io::ErrorKind::InvalidData,
+                            "skills.save body exceeds MAX_BODY",
+                        ));
+                    }
+                    body.push_str(rest);
+                    body.push('\n');
+                }
+            }
+            let reply = if !ended {
+                // Disconnect mid-body: do not write a truncated skill.
+                vec!["ERR skills.save truncated_body".into()]
             } else {
-                let mut body = String::new();
-                let mut ended = false;
-                loop {
-                    if !read_line_bounded(&mut reader, &mut raw)? {
-                        break;
-                    }
-                    let t = raw.trim_end_matches(['\r', '\n']);
-                    if t == "END" {
-                        ended = true;
-                        break;
-                    }
-                    if let Some(rest) = t.strip_prefix("LINE ") {
-                        if body.len() + rest.len() + 1 > MAX_BODY {
-                            return Err(std::io::Error::new(
-                                std::io::ErrorKind::InvalidData,
-                                "skills.save body exceeds MAX_BODY",
-                            ));
-                        }
-                        body.push_str(rest);
-                        body.push('\n');
-                    }
-                }
-                if !ended {
-                    // Disconnect mid-body: do not write a truncated skill.
-                    vec!["ERR skills.save truncated_body".into()]
-                } else {
-                    save_skill_reply(name, &body)
-                }
+                save_skill_reply(name, &body)
             };
             write_reply(&mut writer, &reply)?;
             continue;
@@ -319,7 +310,8 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
         // skills.save is handled in handle_client (LINE…END body on the socket).
         "audio.transcribe" => {
             // Reads media and puts the words in a searchable index, so it
-            // needs the grant just like workspace.index does.
+            // needs the grant just like workspace.index does. Empty framed OK
+            // — guest never read title/summary ROWs (search indexes the store).
             if !arg_flag(args, "audio") {
                 return vec![format!("ERR {tool} needs_audio_cap")];
             }
@@ -329,19 +321,11 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
             match transcribe::transcribe(std::path::Path::new(path)) {
                 Ok(t) => {
                     let mut store = transcribe::Store::load();
-                    let summary = transcribe::summarize(&t.text);
-                    let mut rows = vec![format!(
-                        "ROW field=title|value={}",
-                        sanitize_field(&t.title)
-                    )];
-                    rows.extend(summary.into_iter().map(|line| {
-                        format!("ROW field=summary|value={}", sanitize_field(&line))
-                    }));
                     store.upsert(t);
-                    if let Err(e) = store.save() {
-                        return vec![format!("ERR {tool} {e}")];
+                    match store.save() {
+                        Ok(()) => text::framed_ok(format!("OK {tool}"), []),
+                        Err(e) => vec![format!("ERR {tool} {e}")],
                     }
-                    text::framed_ok(format!("OK {tool}"), rows)
                 }
                 Err(e) => vec![format!("ERR {tool} {e}")],
             }
@@ -474,17 +458,10 @@ fn email_search(query: &str, max: usize) -> Vec<String> {
     }
 }
 
-fn email_search_mock(query: &str, max: usize) -> Vec<String> {
-    let query = sanitize_field(query);
-    let samples = [
-        ("Alice Chen", "Q2 planning notes"),
-        ("GitHub", "Your Actions workflow run"),
-        ("os bridge", &format!("Mock hit for {query}")),
-    ];
-    let rows = samples
-        .iter()
-        .take(max)
-        .map(|(from, subj)| format!("ROW from={from}|subj={subj}"));
+fn email_search_mock(_query: &str, max: usize) -> Vec<String> {
+    // Guest mail peek counts bare ROWs; from=/subj= were never parsed.
+    const MOCK_HITS: usize = 3;
+    let rows = (0..MOCK_HITS.min(max)).map(|_| "ROW".into());
     text::framed_ok("OK email.search".into(), rows)
 }
 
@@ -522,39 +499,20 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
             .or_else(|| val.get("messages").and_then(|t| t.as_array()).map(|a| a.as_slice()))
             .unwrap_or(&[]);
 
-        for item in items.iter().take(max) {
-            let from = item
-                .pointer("/from")
-                .or_else(|| item.pointer("/sender"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown");
-            let subj = item
-                .get("subject")
-                .or_else(|| item.get("snippet"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("(no subject)");
-            rows.push(format!(
-                "ROW from={}|subj={}",
-                sanitize_field(from),
-                sanitize_field(subj)
-            ));
+        for _ in items.iter().take(max) {
+            rows.push("ROW".into());
         }
     }
 
     if rows.is_empty() {
         for line in stdout.lines().take(max) {
-            let line = sanitize_field(line);
-            if !line.is_empty() {
-                rows.push(format!("ROW from=gog|subj={line}"));
+            if !line.trim().is_empty() {
+                rows.push("ROW".into());
             }
         }
     }
 
     text::framed_ok("OK email.search".into(), rows)
-}
-
-fn sanitize_field(s: &str) -> String {
-    text::sanitize(s, 90, false, true)
 }
 
 #[cfg(test)]
@@ -565,7 +523,7 @@ mod tests {
     fn mock_search_returns_rows() {
         let r = email_search_mock("in:inbox", 2);
         assert_eq!(r[0], "OK email.search");
-        assert_eq!(r.iter().filter(|l| l.starts_with("ROW ")).count(), 2);
+        assert_eq!(r.iter().filter(|l| l.as_str() == "ROW").count(), 2);
         assert_eq!(r.last().map(String::as_str), Some("END"));
     }
 
