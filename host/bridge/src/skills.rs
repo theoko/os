@@ -45,13 +45,7 @@ fn collect_dir(dir: &Path, map: &mut BTreeMap<String, SkillMeta>) {
 fn parse_skill(path: &Path) -> Option<(String, SkillMeta)> {
     let text = fs::read_to_string(path).ok()?;
     let (name, description) = parse_frontmatter(&text)?;
-    Some((
-        name,
-        SkillMeta {
-            description,
-            path: path.to_path_buf(),
-        },
-    ))
+    Some((name, SkillMeta { description }))
 }
 
 fn parse_frontmatter(text: &str) -> Option<(String, String)> {
