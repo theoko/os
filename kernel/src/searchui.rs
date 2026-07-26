@@ -294,20 +294,6 @@ mod empty_state_tests {
     }
 
     #[test]
-    fn an_online_bridge_is_never_reported_as_offline() {
-        // The bug this replaces: a bridge that answered "n=0" was rendered as
-        // "Bridge offline", sending the user to debug a working connection.
-        assert!(!online(true, true).empty_reason().contains("offline"));
-    }
-
-    #[test]
-    fn a_real_outage_still_says_offline() {
-        let m = Phase::Offline.empty_reason();
-        assert!(m.contains("offline"));
-        assert!(!m.contains("Teddy"));
-    }
-
-    #[test]
     fn missing_grants_name_the_fix() {
         // Finding nothing is a legitimate answer and must stay actionable
         // rather than being papered over with a mascot.
@@ -321,6 +307,11 @@ mod empty_state_tests {
     #[test]
     fn every_reason_is_renderable_ascii() {
         assert_eq!(Phase::Denied.empty_reason(), TEDDY);
+        // A bridge that answered n=0 must not read as a connection failure.
+        assert!(!online(true, true).empty_reason().contains("offline"));
+        let offline = Phase::Offline.empty_reason();
+        assert!(offline.contains("offline"));
+        assert!(!offline.contains("Teddy"));
         for s in [
             Phase::Offline,
             online(false, false),

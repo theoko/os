@@ -310,7 +310,7 @@ fn forget_file(tool: &str, path: &std::path::Path) -> Vec<String> {
 fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
     match tool {
         "email.search" => {
-            email_search(tool, arg_val(args, "q").unwrap_or("in:inbox"), arg_usize(args, "max", 5, 20))
+            email_search(arg_val(args, "q").unwrap_or("in:inbox"), arg_usize(args, "max", 5, 20))
         }
         "email.send" => vec![format!("ERR {tool} disabled_until_cap_confirm")],
         "skills.list" => skills::list_response(),
@@ -507,12 +507,12 @@ fn arg_usize(args: &[(String, String)], key: &str, default: usize, max: usize) -
         .clamp(1, max)
 }
 
-fn email_search(tool: &str, query: &str, max: usize) -> Vec<String> {
+fn email_search(query: &str, max: usize) -> Vec<String> {
     let backend = env::var("OS_MCP_EMAIL_BACKEND").unwrap_or_else(|_| "mock".into());
 
     let out = match backend.as_str() {
-        "gog" => email_search_gog(tool, query, max),
-        _ => email_search_mock(tool, query, max),
+        "gog" => email_search_gog(query, max),
+        _ => email_search_mock(query, max),
     };
     // Fold what we just fetched into the knowledge graph. Hooked here rather
     // than inside a backend so every backend feeds it. Best effort: failing to
@@ -521,7 +521,7 @@ fn email_search(tool: &str, query: &str, max: usize) -> Vec<String> {
     out
 }
 
-fn email_search_mock(tool: &str, query: &str, max: usize) -> Vec<String> {
+fn email_search_mock(query: &str, max: usize) -> Vec<String> {
     let query = sanitize_field(query);
     let samples = [
         ("Alice Chen", "Q2 planning notes"),
@@ -533,10 +533,10 @@ fn email_search_mock(tool: &str, query: &str, max: usize) -> Vec<String> {
         .iter()
         .take(n)
         .map(|(from, subj)| format!("ROW from={from}|subj={subj}"));
-    text::framed_ok(format!("OK {tool} n={n}"), rows)
+    text::framed_ok(format!("OK email.search n={n}"), rows)
 }
 
-fn email_search_gog(tool: &str, query: &str, max: usize) -> Vec<String> {
+fn email_search_gog(query: &str, max: usize) -> Vec<String> {
     // `--` stops flag parsing so an untrusted query cannot inject gog flags.
     let output = Command::new("gog")
         .args([
@@ -554,9 +554,9 @@ fn email_search_gog(tool: &str, query: &str, max: usize) -> Vec<String> {
         Ok(o) if o.status.success() => o,
         Ok(o) => {
             let brief = text::stderr_brief(&o.stderr, "gog_failed", 80);
-            return vec![format!("ERR {tool} {brief}")];
+            return vec![format!("ERR email.search {brief}")];
         }
-        Err(_) => return vec![format!("ERR {tool} gog_missing")],
+        Err(_) => return vec!["ERR email.search gog_missing".into()],
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -599,7 +599,7 @@ fn email_search_gog(tool: &str, query: &str, max: usize) -> Vec<String> {
     }
 
     let n = rows.len();
-    text::framed_ok(format!("OK {tool} n={n}"), rows)
+    text::framed_ok(format!("OK email.search n={n}"), rows)
 }
 
 fn sanitize_field(s: &str) -> String {
@@ -612,7 +612,7 @@ mod tests {
 
     #[test]
     fn mock_search_returns_rows() {
-        let r = email_search_mock("email.search", "in:inbox", 2);
+        let r = email_search_mock("in:inbox", 2);
         assert!(r[0].starts_with("OK email.search n=2"));
         assert!(r.iter().any(|l| l.starts_with("ROW ")));
         assert_eq!(r.last().map(String::as_str), Some("END"));

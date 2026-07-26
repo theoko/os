@@ -206,25 +206,23 @@ impl Index {
             return Vec::new();
         }
         let docs = docs();
-        let mut score: HashMap<usize, f64> = HashMap::new();
-        let mut hits: HashMap<usize, usize> = HashMap::new();
+        // (tf-idf accumulator, distinct query terms that hit this doc)
+        let mut acc: HashMap<usize, (f64, usize)> = HashMap::new();
         let mut seen = 0usize;
         for w in q {
             let Some(t) = self.find(w) else { continue };
             seen += 1;
             for &(doc, tf) in &self.postings[t.start..t.start + t.len] {
-                *score.entry(doc).or_insert(0.0) += tf * t.idf;
-                *hits.entry(doc).or_insert(0) += 1;
+                let e = acc.entry(doc).or_insert((0.0, 0));
+                e.0 += tf * t.idf;
+                e.1 += 1;
             }
         }
-        let mut out: Vec<(f64, usize)> = score
+        let mut out: Vec<(f64, usize)> = acc
             .into_iter()
-            .map(|(doc, s)| {
-                let hit_all = seen > 0 && hits.get(&doc).copied().unwrap_or(0) >= seen;
-                (
-                    crate::search::with_and_bonus(crate::search::blend_pr(s, docs[doc].pr), hit_all),
-                    doc,
-                )
+            .map(|(doc, (s, n_hit))| {
+                let hit_all = seen > 0 && n_hit >= seen;
+                (crate::search::rank_score(s, docs[doc].pr, hit_all), doc)
             })
             .collect();
         out.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));

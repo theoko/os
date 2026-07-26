@@ -49,14 +49,10 @@ pub(crate) fn title_body_tokens(title: &str, body: &str) -> Vec<String> {
     t
 }
 
-/// tf-idf × (1 + 4·PageRank), with finite/clamp on `pr`.
-pub(crate) fn blend_pr(tf_score: f64, pr: f64) -> f64 {
+/// tf-idf × (1 + 4·PageRank), then the exact-AND ladder bonus.
+pub(crate) fn rank_score(tf_score: f64, pr: f64, hit_all: bool) -> f64 {
     let pr = if pr.is_finite() { pr.clamp(0.0, 1.0) } else { 0.0 };
-    tf_score * (1.0 + 4.0 * pr)
-}
-
-/// Exact-AND ladder bonus when every query term hit.
-pub(crate) fn with_and_bonus(score: f64, hit_all: bool) -> f64 {
+    let score = tf_score * (1.0 + 4.0 * pr);
     if hit_all {
         score * 1.35
     } else {
@@ -193,7 +189,7 @@ fn search_tfidf(
         if tf_score <= 0.0 {
             continue;
         }
-        scored.push((with_and_bonus(blend_pr(tf_score, d.pr), hit_all), i));
+        scored.push((rank_score(tf_score, d.pr, hit_all), i));
     }
     scored.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
     scored.truncate(k);
