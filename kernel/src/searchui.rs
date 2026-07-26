@@ -318,7 +318,7 @@ mod empty_state_tests {
     #[test]
     fn every_reason_is_renderable_ascii() {
         assert_eq!(Phase::Denied.empty_reason(), TEDDY);
-        // A bridge that answered n=0 must not read as a connection failure.
+        // A bridge that answered with zero hits must not read as offline.
         assert!(
             !Phase::Online { files: true, mail: true }
                 .empty_reason()

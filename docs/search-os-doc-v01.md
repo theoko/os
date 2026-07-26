@@ -34,7 +34,7 @@ body `b`, optional PageRank-ish boost `pr`.
 
 | Call | Result |
 |------|--------|
-| `CALL search.query q=… k=5 cat=docs` | `OK search.query n=N …` + `ROW title=…\|cat=…\|score=…\|snip=…\|url=…` + `END` |
+| `CALL search.query q=… k=5 cat=docs` | `OK search.query` + `ROW title=…\|cat=…\|score=…\|snip=…\|url=…` + `END` |
 
 In-bridge ranking is tf-idf × (1+4·pr) with an exact-AND bonus. Override corpus
 path with `OS_SEARCH_CORPUS`.

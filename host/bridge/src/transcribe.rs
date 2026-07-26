@@ -148,7 +148,7 @@ impl Store {
         crate::paths::read_json_or_default(store_path())
     }
 
-    pub fn save(&self) -> Result<PathBuf, String> {
+    pub fn save(&self) -> Result<(), String> {
         crate::paths::write_json(store_path(), self)
     }
 

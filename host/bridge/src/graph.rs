@@ -88,7 +88,7 @@ impl Graph {
         }
     }
 
-    pub fn save(&self) -> Result<PathBuf, String> {
+    pub fn save(&self) -> Result<(), String> {
         crate::paths::write_json(graph_path(), self)
     }
 

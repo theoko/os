@@ -46,8 +46,8 @@ Host → guest:
 |----------|---------|
 | `OK pong` | Alive |
 | `OK tools=a,b,c` | Tool list |
-| `OK email.search n=<N>` / `ROW from=…\|subj=…` / `END` | Mail hits |
-| `OK search.query n=<N> …` / `ROW title=…\|…` / `END` | Knowledge hits |
+| `OK email.search` / `ROW from=…\|subj=…` / `END` | Mail hits |
+| `OK search.query` / `ROW title=…\|…` / `END` | Knowledge hits |
 | `ERR <tool> <reason>` | Failure |
 
 Fields use `key=value`; use `|` between fields. Values are single-line; spaces allowed after `=`.

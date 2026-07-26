@@ -267,7 +267,7 @@ pub fn query_all(
     };
     let q_terms = tokenize(q);
     if q_terms.is_empty() {
-        return crate::text::framed_ok("OK search.query n=0".into(), []);
+        return crate::text::framed_ok("OK search.query".into(), []);
     }
     // Default search.query only needs the curated slice — clone only when a
     // scope adds personal docs into the same scoring universe.
@@ -318,7 +318,6 @@ pub fn query_all(
     } else {
         &[]
     };
-    let n = hits.len();
     let rows = hits.into_iter().map(|(score, src)| {
         let (t, c, b, u) = match src {
             Src::Local(i) => {
@@ -344,7 +343,7 @@ pub fn query_all(
             sanitize(u)
         )
     });
-    crate::text::framed_ok(format!("OK search.query n={n}"), rows)
+    crate::text::framed_ok("OK search.query".into(), rows)
 }
 
 #[cfg(test)]

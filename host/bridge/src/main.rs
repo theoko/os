@@ -334,7 +334,7 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
                     }));
                     store.upsert(t);
                     let _ = store.save();
-                    text::framed_ok(format!("OK {tool} n={}", rows.len()), rows)
+                    text::framed_ok(format!("OK {tool}"), rows)
                 }
                 Err(e) => vec![format!("ERR {tool} {e}")],
             }
@@ -348,7 +348,7 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
             };
             let max = arg_usize(args, "lines", 24, 200);
             match read_doc(url, max, arg_flag(args, "files"), arg_flag(args, "audio")) {
-                Ok(lines) => text::framed_ok(format!("OK {tool} n={}", lines.len()), lines),
+                Ok(lines) => text::framed_ok(format!("OK {tool}"), lines),
                 Err(e) => vec![format!("ERR {tool} {e}")],
             }
         }
@@ -362,9 +362,8 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
             }
             let roots = workspace::roots();
             let ix = workspace::build(&roots);
-            let n = ix.entries.len();
             match ix.save() {
-                Ok(_) => text::framed_ok(format!("OK {tool} n={n}"), []),
+                Ok(()) => text::framed_ok(format!("OK {tool}"), []),
                 Err(e) => vec![format!("ERR {tool} {e}")],
             }
         }
@@ -521,12 +520,11 @@ fn email_search_mock(query: &str, max: usize) -> Vec<String> {
         ("GitHub", "Your Actions workflow run"),
         ("os bridge", &format!("Mock hit for {query}")),
     ];
-    let n = samples.len().min(max);
     let rows = samples
         .iter()
-        .take(n)
+        .take(max)
         .map(|(from, subj)| format!("ROW from={from}|subj={subj}"));
-    text::framed_ok(format!("OK email.search n={n}"), rows)
+    text::framed_ok("OK email.search".into(), rows)
 }
 
 fn email_search_gog(query: &str, max: usize) -> Vec<String> {
@@ -591,8 +589,7 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
         }
     }
 
-    let n = rows.len();
-    text::framed_ok(format!("OK email.search n={n}"), rows)
+    text::framed_ok("OK email.search".into(), rows)
 }
 
 fn sanitize_field(s: &str) -> String {
@@ -606,7 +603,8 @@ mod tests {
     #[test]
     fn mock_search_returns_rows() {
         let r = email_search_mock("in:inbox", 2);
-        assert!(r[0].starts_with("OK email.search n=2"));
+        assert_eq!(r[0], "OK email.search");
+        assert_eq!(r.iter().filter(|l| l.starts_with("ROW ")).count(), 2);
         assert!(r.iter().any(|l| l.starts_with("ROW ")));
         assert_eq!(r.last().map(String::as_str), Some("END"));
     }

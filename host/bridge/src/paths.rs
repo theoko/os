@@ -27,14 +27,14 @@ pub fn env_or_knowledge(var: &str, file: &str) -> PathBuf {
 }
 
 /// Create parent dirs and write `value` as compact JSON.
-pub fn write_json<T: Serialize>(path: impl AsRef<Path>, value: &T) -> Result<PathBuf, String> {
+pub fn write_json<T: Serialize>(path: impl AsRef<Path>, value: &T) -> Result<(), String> {
     let path = path.as_ref();
     if let Some(d) = path.parent() {
         fs::create_dir_all(d).map_err(|e| format!("mkdir {}: {e}", d.display()))?;
     }
     let raw = serde_json::to_string(value).map_err(|e| e.to_string())?;
     fs::write(path, raw).map_err(|e| format!("write {}: {e}", path.display()))?;
-    Ok(path.to_path_buf())
+    Ok(())
 }
 
 /// Read JSON from `path`, or `T::default()` when missing / invalid.

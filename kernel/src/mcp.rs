@@ -42,7 +42,7 @@ pub enum MailPeek {
     Offline,
     /// Bridge up, but inbox was not read (no grant / pre-consent probe).
     Denied,
-    /// `email.search` answered; `count` is the OK `n=` header.
+    /// `email.search` answered; `count` is ROWs received.
     Ok { count: usize },
 }
 
@@ -78,16 +78,14 @@ fn parse_row_pair<'a>(line: &'a str, ka: &str, kb: &str) -> (Option<&'a str>, Op
 
 /// Drain a typical OK / ROW* / END reply. Stops on `ERR` / `END`.
 /// First line waits [`TIMEOUT_REPLY`]; later lines use [`TIMEOUT_LINE`].
-/// `on_row` returns `false` to stop early. Returns `(saw_err, n)` where `n`
-/// is the `n=` count from the OK header (0 if absent).
+/// `on_row` returns `false` to stop early. Returns whether an `ERR` was seen.
 fn for_each_ok_rows(
     com2: &Serial,
     line: &mut [u8],
     max: usize,
     mut on_row: impl FnMut(&str) -> bool,
-) -> (bool, usize) {
+) -> bool {
     let mut saw_err = false;
-    let mut ok_n = 0usize;
     let mut first = true;
     for _ in 0..max {
         let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
@@ -104,14 +102,13 @@ fn for_each_ok_rows(
             break;
         }
         if resp.starts_with("OK ") {
-            ok_n = parse_ok_n(resp);
             continue;
         }
         if resp.starts_with("ROW ") && !on_row(resp) {
             break;
         }
     }
-    (saw_err, ok_n)
+    saw_err
 }
 
 /// Ping COM2; if Online, run `f`. Otherwise return `offline`.
@@ -150,30 +147,19 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
 
         com2.write_str("CALL email.search q=in:inbox max=3\n");
 
-        // Count from OK `n=`; ROWs drained for wire hygiene. ERR is not an
-        // empty inbox — same Denied path as a missing grant.
-        let (saw_err, n) = for_each_ok_rows(com2, line, 16, |_| true);
+        // Count ROWs actually received. ERR is not an empty inbox — same
+        // Denied path as a missing grant.
+        let mut count = 0usize;
+        let saw_err = for_each_ok_rows(com2, line, 16, |_| {
+            count += 1;
+            true
+        });
         if saw_err {
             MailPeek::Denied
         } else {
-            MailPeek::Ok { count: n }
+            MailPeek::Ok { count }
         }
     })
-}
-
-/// Digits after `n=` on an OK header (`OK email.search n=3`).
-fn parse_ok_n(line: &str) -> usize {
-    let Some((_, after)) = line.split_once("n=") else {
-        return 0;
-    };
-    let mut n = 0usize;
-    for &b in after.as_bytes() {
-        if !b.is_ascii_digit() {
-            break;
-        }
-        n = n.saturating_mul(10).saturating_add((b - b'0') as usize);
-    }
-    n
 }
 
 /// How a framed CALL finished (`doc.read`, `search.query`).
@@ -230,7 +216,7 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str, title: &str) -> DocPage {
         com2.write_str("\n");
 
         let mut page = DocPage::empty(DocOutcome::Ok);
-        let (saw_err, _) = for_each_ok_rows(com2, line, 40, |resp| {
+        let saw_err = for_each_ok_rows(com2, line, 40, |resp| {
             if page.count >= DocPage::MAX {
                 return false;
             }
@@ -330,7 +316,7 @@ pub(crate) fn fetch_search_rows(
         write_scope_flags(com2, caps);
         com2.write_str("\n");
 
-        let (saw_err, _) = for_each_ok_rows(com2, line, 16, |resp| {
+        let saw_err = for_each_ok_rows(com2, line, 16, |resp| {
             let (title, url) = parse_row_pair(resp, "title", "url");
             // Caller enforces MAX_HITS (returns false to stop).
             on_hit(title.unwrap_or("?"), url.unwrap_or(""))
@@ -346,13 +332,6 @@ pub(crate) fn fetch_search_rows(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_ok_count() {
-        assert_eq!(parse_ok_n("OK email.search n=3"), 3);
-        assert_eq!(parse_ok_n("OK email.search n=0"), 0);
-        assert_eq!(parse_ok_n("OK email.search"), 0);
-    }
 
     #[test]
     fn parse_row_field_extracts_keys() {

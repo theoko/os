@@ -246,7 +246,7 @@ impl Index {
         crate::paths::read_json_or_default(index_path())
     }
 
-    pub fn save(&self) -> Result<PathBuf, String> {
+    pub fn save(&self) -> Result<(), String> {
         crate::paths::write_json(index_path(), self)
     }
 }

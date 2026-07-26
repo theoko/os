@@ -32,15 +32,12 @@ fn collect_dir(dir: &Path, map: &mut BTreeMap<String, String>) {
         if !path.is_file() {
             continue;
         }
-        if let Some((name, desc)) = parse_skill(&path) {
-            map.insert(name, desc);
+        if let Ok(text) = fs::read_to_string(&path) {
+            if let Some((name, desc)) = parse_frontmatter(&text) {
+                map.insert(name, desc);
+            }
         }
     }
-}
-
-fn parse_skill(path: &Path) -> Option<(String, String)> {
-    let text = fs::read_to_string(path).ok()?;
-    parse_frontmatter(&text)
 }
 
 fn parse_frontmatter(text: &str) -> Option<(String, String)> {
@@ -101,7 +98,6 @@ pub fn save_skill(name: &str, body: &str) -> Result<(), String> {
 pub fn list_response() -> Vec<String> {
     let (defaults, user) = skills_dirs();
     let skills = list_skills(&defaults, &user);
-    let n = skills.len();
     let rows = skills.iter().map(|(name, desc)| {
         // Frontmatter names are untrusted text: sanitize like desc so a '|'
         // in a name cannot inject ROW fields.
@@ -110,7 +106,7 @@ pub fn list_response() -> Vec<String> {
         // Guest only reads name/desc (`from_bridge` is COM2 reachability).
         format!("ROW name={name}|desc={desc}")
     });
-    crate::text::framed_ok(format!("OK skills.list n={n}"), rows)
+    crate::text::framed_ok("OK skills.list".into(), rows)
 }
 
 fn sanitize(s: &str) -> String {
