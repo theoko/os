@@ -27,7 +27,7 @@ pub struct Row {
     pub title: [u8; search::TITLE_CHARS],
     pub url: [u8; search::URL_CHARS],
     /// Owned like title/url — bridge `cat=` outlives the COM2 line buffer.
-    pub cat: [u8; search::CAT_CHARS],
+    pub(crate) cat: [u8; search::CAT_CHARS],
 }
 
 impl Row {

@@ -146,7 +146,8 @@ pub(crate) fn draw_query_field(
         let bbase = y + (h - SMALL_FACE.px) / 2 + SMALL_FACE.ascent;
         fb.draw_text(bx, bbase, badge, &SMALL_FACE, 0, theme::MUTED);
     }
-    let cx = (tx + BODY_FACE.width(query, 0) + 2).min(x + w - badge_tw.saturating_add(18) - 8);
+    // badge_tw is a face width (tiny vs i32::MAX); +18 cannot saturate.
+    let cx = (tx + BODY_FACE.width(query, 0) + 2).min(x + w - (badge_tw + 18) - 8);
     fb.fill_rect(cx, y + 14, 2, h - 28, theme::INK);
 }
 

@@ -188,8 +188,9 @@ impl Mouse {
                 // dx/dy. `as i8` alone misreads deltas outside -128..127.
                 let dx = self.packet[1] as i32 - (((flags as i32) << 4) & 0x100);
                 let dy = self.packet[2] as i32 - (((flags as i32) << 3) & 0x100);
-                self.x = (self.x + dx).clamp(0, self.screen_w.saturating_sub(1));
-                self.y = (self.y - dy).clamp(0, self.screen_h.saturating_sub(1));
+                // screen_w/h > 0 (Surface mode_ok / Mouse::new from live FB).
+                self.x = (self.x + dx).clamp(0, self.screen_w - 1);
+                self.y = (self.y - dy).clamp(0, self.screen_h - 1);
                 self.buttons = flags & 0x07;
                 moved = true;
             }
