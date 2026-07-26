@@ -83,6 +83,10 @@ iso: limine/limine kernel
 	mkdir -p iso_root/boot/limine iso_root/EFI/BOOT
 	cp -f $(KERNEL_ELF) iso_root/boot/kernel
 	cp -f limine.conf iso_root/boot/limine/
+	@if [ -n "$(RESOLUTION)" ]; then \
+		printf '    resolution: %s\n' "$(RESOLUTION)" >> iso_root/boot/limine/limine.conf; \
+		echo "boot resolution: $(RESOLUTION)"; \
+	fi
 	cp -f limine/limine-bios.sys limine/limine-bios-cd.bin limine/limine-uefi-cd.bin \
 		iso_root/boot/limine/
 	cp -f limine/BOOTX64.EFI iso_root/EFI/BOOT/
@@ -104,6 +108,10 @@ arm64-iso: limine/limine arm64-kernel
 	mkdir -p arm64_iso_root/boot/limine arm64_iso_root/EFI/BOOT
 	cp -f $(ARM64_KERNEL_ELF) arm64_iso_root/boot/kernel
 	cp -f limine.conf arm64_iso_root/boot/limine/
+	@if [ -n "$(RESOLUTION)" ]; then \
+		printf '    resolution: %s\n' "$(RESOLUTION)" >> arm64_iso_root/boot/limine/limine.conf; \
+		echo "boot resolution: $(RESOLUTION)"; \
+	fi
 	cp -f limine/limine-uefi-cd.bin arm64_iso_root/boot/limine/
 	# El Torito boots from the FAT image above; this copy is what makes the
 	# same ISO bootable once written to a USB stick, where firmware looks for
