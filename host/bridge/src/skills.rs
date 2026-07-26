@@ -139,20 +139,19 @@ pub fn get_response(name: &str) -> Vec<String> {
     // '|'-separated fields — preserve it verbatim so save→get
     // round-trips; only strip control chars that would break the
     // line framing (keep tabs for markdown code blocks).
-    let lines = body
-        .lines()
-        .map(|line| format!("LINE {}", strip_line_controls(line)));
+    let lines = body.lines().map(|line| {
+        // Preserve markdown tabs; scrub other controls that would break LINE framing.
+        let scrubbed: String = line
+            .chars()
+            .map(|c| if c.is_control() && c != '\t' { ' ' } else { c })
+            .collect();
+        format!("LINE {scrubbed}")
+    });
     crate::text::framed_ok("OK skills.get".into(), lines)
 }
 
 fn sanitize(s: &str) -> String {
     crate::text::sanitize(s, 120, false, false)
-}
-
-fn strip_line_controls(s: &str) -> String {
-    s.chars()
-        .map(|c| if c.is_control() && c != '\t' { ' ' } else { c })
-        .collect()
 }
 
 #[cfg(test)]

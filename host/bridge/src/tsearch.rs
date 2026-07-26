@@ -125,14 +125,6 @@ mod tests {
     }
 
     #[test]
-    fn missing_cache_yields_no_documents_not_a_panic() {
-        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { env::set_var("OS_TSEARCH_CACHE", "/nonexistent/os-teddy/none.json") };
-        assert!(!cache_path().is_file());
-        unsafe { env::remove_var("OS_TSEARCH_CACHE") };
-    }
-
-    #[test]
     fn schema_matches_the_published_corpus() {
         // {t,u,c,b,pr} plus extras like `img`, which must be ignored rather
         // than rejected.

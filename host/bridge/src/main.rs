@@ -370,8 +370,8 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
                 Err(e) => vec![format!("ERR doc.read {e}")],
             }
         }
-        "workspace.forget" => forget_file("workspace.forget", &workspace::index_path()),
-        "audio.forget" => forget_file("audio.forget", &transcribe::store_path()),
+        "workspace.forget" => forget_file(tool, &workspace::index_path()),
+        "audio.forget" => forget_file(tool, &transcribe::store_path()),
         "workspace.index" => {
             // Building the index reads the user's files, so it needs the same
             // grant as searching them.

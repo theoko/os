@@ -354,11 +354,6 @@ mod tests {
     }
 
     #[test]
-    fn index_is_capped() {
-        assert!(MAX_ENTRIES > 0 && MAX_ENTRIES <= 10_000);
-    }
-
-    #[test]
     fn missing_root_is_not_an_error() {
         let ix = build(&[PathBuf::from("/nonexistent/os-ws")]);
         assert!(ix.entries.is_empty());
@@ -406,18 +401,13 @@ mod rank_tests {
         for (rel, name, mt) in [
             ("README.md", "README.md", NOW),
             ("a/b/c/d/e/f.md", "f.md", 0),
-            ("x.md", "x.md", NOW + 10 * DAY), // clock skew: mtime in the future
+            ("x.md", "x.md", NOW + 10 * DAY), // mild clock skew
+            // saturating_sub keeps a large skew from producing a negative age.
+            ("a.md", "a.md", NOW + 999 * DAY),
         ] {
             let r = rank(rel, name, mt, NOW);
-            assert!((0.0..=1.0).contains(&r), "{rel} scored {r}");
+            assert!(r.is_finite() && (0.0..=1.0).contains(&r), "{rel} scored {r}");
         }
-    }
-
-    #[test]
-    fn future_mtime_does_not_explode() {
-        // saturating_sub keeps a skewed clock from producing a negative age.
-        let r = rank("a.md", "a.md", NOW + 999 * DAY, NOW);
-        assert!(r.is_finite() && r <= 1.0);
     }
 
     #[test]

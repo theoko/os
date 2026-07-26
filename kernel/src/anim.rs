@@ -33,7 +33,7 @@ fn lerp(a: i32, b: i32, t: i32) -> i32 {
 /// Busy-wait until `us` microseconds after `since`, returning the new mark.
 ///
 /// Capped so a stuck or unavailable counter cannot hang an animation.
-pub fn pace(since: u64, us: u32) -> u64 {
+pub(crate) fn pace(since: u64, us: u32) -> u64 {
     let target = since.wrapping_add(ASSUMED_HZ / 1_000_000 * us as u64);
     let mut guard: u64 = 0;
     while rdtsc() < target {
@@ -63,7 +63,7 @@ pub const SLIDE_IN: Entrance = Entrance {
 
 impl Entrance {
     /// Offset and opacity for frame `i`, as (dy px, alpha Q16).
-    pub fn at(&self, i: u32) -> (i32, i32) {
+    fn at(&self, i: u32) -> (i32, i32) {
         let denom = self.frames.max(1) as i64;
         let t = ((i.min(self.frames) as i64 * ONE as i64) / denom) as i32;
         let e = ease_out_cubic(t);

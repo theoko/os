@@ -261,35 +261,52 @@ pub fn query_all(
         docs.extend(email_docs());
     }
     let q_terms = tokenize(q);
-    let mut hits = search_tfidf(&docs, &q_terms, k, cat);
+    // Local indices into `docs`; teddy indices into the cached corpus — never
+    // clone 64 MB bodies into the local vec just to re-address them.
+    enum Src {
+        Local(usize),
+        Teddy(usize),
+    }
+    let mut hits: Vec<(f64, Src)> = search_tfidf(&docs, &q_terms, k, cat)
+        .into_iter()
+        .map(|(s, i)| (s, Src::Local(i)))
+        .collect();
     // The big corpus is scored from its prebuilt index, then merged. Scoring it
     // inline would re-tokenise 12k documents on every keystroke.
     // Empty teddy index: `search` returns nothing; merge is a no-op.
+    let tdocs = crate::tsearch::docs();
     if cat.is_none() {
         let teddy = crate::tsearch::index();
-        let tdocs = crate::tsearch::docs();
         for (score, i) in teddy.search_tokens(&q_terms, k) {
-            let mut d = tdocs[i].clone();
-            if d.c.is_empty() {
-                d.c = "teddy".into();
-            }
-            docs.push(d);
-            // `docs` just grew by one; that entry is what this score refers to.
-            hits.push((score, docs.len() - 1));
+            hits.push((score, Src::Teddy(i)));
         }
         hits.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         hits.truncate(k);
     }
     let n = hits.len();
-    let rows = hits.into_iter().map(|(score, i)| {
-        let d = &docs[i];
+    let rows = hits.into_iter().map(|(score, src)| {
+        let (t, c, b, u) = match src {
+            Src::Local(i) => {
+                let d = &docs[i];
+                (d.t.as_str(), d.c.as_str(), d.b.as_str(), d.u.as_str())
+            }
+            Src::Teddy(i) => {
+                let d = &tdocs[i];
+                (
+                    d.t.as_str(),
+                    if d.c.is_empty() { "teddy" } else { d.c.as_str() },
+                    d.b.as_str(),
+                    d.u.as_str(),
+                )
+            }
+        };
         format!(
             "ROW title={}|cat={}|score={:.3}|snip={}|url={}",
-            sanitize(&d.t),
-            sanitize(&d.c),
+            sanitize(t),
+            sanitize(c),
             score,
-            sanitize(&snip(&d.b, &q_terms)),
-            sanitize(&d.u)
+            sanitize(&snip(b, &q_terms)),
+            sanitize(u)
         )
     });
     crate::text::framed_ok(format!("OK search.query n={n} backend=tfidf-pr"), rows)
@@ -324,14 +341,14 @@ pub fn body_for(url: &str, max_lines: usize) -> Option<Vec<String>> {
         .ok()?
         .iter()
         .find(|d| d.u == url)
-        .map(|d| d.b.clone())
+        .map(|d| d.b.as_str())
         .or_else(|| {
             crate::tsearch::docs()
                 .iter()
                 .find(|d| d.u == url)
-                .map(|d| d.b.clone())
+                .map(|d| d.b.as_str())
         })?;
-    Some(wrap_lines(&body, 78, max_lines))
+    Some(wrap_lines(body, 78, max_lines))
 }
 
 /// Hard-wrap text into `ROW line=...` entries the guest can render directly.
