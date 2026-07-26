@@ -160,7 +160,7 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DocOutcome {
     Offline,
-    /// Bridge returned `ERR` (not found, host grant miss, …).
+    /// Bridge returned framed `ERR` (not found, host-side refuse, …).
     Err,
     /// Bridge returned a framed OK (zero or more lines).
     Ok,
