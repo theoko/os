@@ -52,63 +52,22 @@ impl MailPeek {
     }
 }
 
-/// One key from a `ROW k=v|…` line.
-fn parse_row_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
-    let rest = line.strip_prefix("ROW ")?;
-    for part in rest.split('|') {
-        if let Some((k, v)) = part.split_once('=') {
-            if k == key {
-                return Some(v);
-            }
-        }
-    }
-    None
-}
-
-/// One pass over a ROW for two keys (same shape as the host bridge helper).
-fn parse_row_pair<'a>(line: &'a str, ka: &str, kb: &str) -> (Option<&'a str>, Option<&'a str>) {
-    let mut a = None;
-    let mut b = None;
+/// One pass over a `ROW k=v|…` line for `N` keys (avoids re-splitting).
+fn parse_row<'a, const N: usize>(line: &'a str, keys: [&str; N]) -> [Option<&'a str>; N] {
+    let mut out = [None; N];
     let Some(rest) = line.strip_prefix("ROW ") else {
-        return (None, None);
+        return out;
     };
     for part in rest.split('|') {
         if let Some((k, v)) = part.split_once('=') {
-            if k == ka {
-                a = Some(v);
-            } else if k == kb {
-                b = Some(v);
+            for (i, key) in keys.iter().enumerate() {
+                if k == *key {
+                    out[i] = Some(v);
+                }
             }
         }
     }
-    (a, b)
-}
-
-/// One pass over a ROW for three keys (avoids re-splitting the line).
-fn parse_row_triple<'a>(
-    line: &'a str,
-    ka: &str,
-    kb: &str,
-    kc: &str,
-) -> (Option<&'a str>, Option<&'a str>, Option<&'a str>) {
-    let mut a = None;
-    let mut b = None;
-    let mut c = None;
-    let Some(rest) = line.strip_prefix("ROW ") else {
-        return (None, None, None);
-    };
-    for part in rest.split('|') {
-        if let Some((k, v)) = part.split_once('=') {
-            if k == ka {
-                a = Some(v);
-            } else if k == kb {
-                b = Some(v);
-            } else if k == kc {
-                c = Some(v);
-            }
-        }
-    }
-    (a, b, c)
+    out
 }
 
 /// Drain a typical OK / ROW* / END reply. Stops on `ERR` / `END`.
@@ -258,7 +217,10 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str, title: &str) -> DocPage {
             if page.count >= DocPage::MAX {
                 return false;
             }
-            let text = parse_row_field(resp, "line").unwrap_or("");
+            // Missing `line=` is skipped; empty value (`ROW line=`) is a blank.
+            let [Some(text)] = parse_row(resp, ["line"]) else {
+                return true;
+            };
             copy_field(&mut page.lines[page.count], text);
             page.count += 1;
             true
@@ -299,8 +261,10 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
         let mut peek = crate::skills::SkillPeek::empty();
         // OK + up to MAX_LISTED ROWs (+ END breaks); push false also stops early.
         let saw_err = for_each_ok_rows(com2, line, crate::skills::MAX_LISTED + FRAMED_PAD, |resp| {
-            let (name, desc) = parse_row_pair(resp, "name", "desc");
-            peek.push(name.unwrap_or("?"), desc.unwrap_or(""))
+            let [Some(name), desc] = parse_row(resp, ["name", "desc"]) else {
+                return true;
+            };
+            peek.push(name, desc.unwrap_or(""))
         });
         if saw_err {
             // Failed CALL — show ISO defaults; from_bridge stays false.
@@ -330,7 +294,7 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> bool {
 /// Caller must hold [`crate::caps::Cap::SearchQuery`]. Scope flags
 /// (`email=1`, `files=1`, …) still follow the rest of `caps`.
 /// Invokes `on_hit(title, url, cat)` for each ROW (stop early by returning `false`).
-/// Offline → baked-index fallback; `Err` → denied empty state; `Ok` even with
+/// Offline → baked-index fallback; `Err` → framed bridge ERR; `Ok` even with
 /// zero hits so the UI can tell "no matches" from "no bridge".
 pub(crate) fn fetch_search_rows(
     caps: crate::caps::Caps,
@@ -351,13 +315,12 @@ pub(crate) fn fetch_search_rows(
         com2.write_str("\n");
 
         let saw_err = for_each_ok_rows(com2, line, crate::search::MAX_HITS + FRAMED_PAD, |resp| {
-            let (title, url, cat) = parse_row_triple(resp, "title", "url", "cat");
+            // title+url required; cat optional chip.
+            let [Some(title), Some(url), cat] = parse_row(resp, ["title", "url", "cat"]) else {
+                return true;
+            };
             // Caller enforces MAX_HITS (returns false to stop).
-            on_hit(
-                title.unwrap_or("?"),
-                url.unwrap_or(""),
-                cat.unwrap_or(""),
-            )
+            on_hit(title, url, cat.unwrap_or(""))
         });
         if saw_err {
             DocOutcome::Err
@@ -372,26 +335,28 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_row_field_extracts_keys() {
+    fn parse_row_extracts_keys() {
         let search = "ROW title=MCP overview|cat=docs|url=https://example/mcp";
         assert_eq!(
-            parse_row_triple(search, "title", "url", "cat"),
-            (
+            parse_row(search, ["title", "url", "cat"]),
+            [
                 Some("MCP overview"),
                 Some("https://example/mcp"),
                 Some("docs"),
-            )
+            ]
         );
 
         let skill = "ROW name=email-triage|desc=Inbox via MCP email";
         assert_eq!(
-            parse_row_pair(skill, "name", "desc"),
-            (Some("email-triage"), Some("Inbox via MCP email"))
+            parse_row(skill, ["name", "desc"]),
+            [Some("email-triage"), Some("Inbox via MCP email")]
         );
         // Single-key extract (doc.read uses `line=` this way).
         assert_eq!(
-            parse_row_field("ROW line=hello world", "line"),
-            Some("hello world")
+            parse_row("ROW line=hello world", ["line"]),
+            [Some("hello world")]
         );
+        // Missing required key stays None (call sites skip inventing "?").
+        assert_eq!(parse_row("ROW url=https://x", ["title", "url"]), [None, Some("https://x")]);
     }
 }
