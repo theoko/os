@@ -147,7 +147,6 @@ fn search_tfidf(
     docs: &[Doc],
     q_terms: &[String],
     k: usize,
-    cat: Option<&str>,
 ) -> Vec<(f64, usize)> {
     if q_terms.is_empty() || docs.is_empty() {
         return Vec::new();
@@ -171,11 +170,6 @@ fn search_tfidf(
     // Exact-first ladder: prefer docs that contain ALL query terms; else OR.
     let mut scored: Vec<(f64, usize)> = Vec::new();
     for (i, (d, terms)) in docs.iter().zip(doc_toks.iter()).enumerate() {
-        if let Some(cat) = cat {
-            if d.c != cat {
-                continue;
-            }
-        }
         let mut tf_score = 0.0;
         let mut hit_all = true;
         for qt in &q_set {
@@ -210,7 +204,6 @@ fn sanitize(s: &str) -> String {
 pub fn query_all(
     q: &str,
     k: usize,
-    cat: Option<&str>,
     include_email: bool,
     include_files: bool,
     include_audio: bool,
@@ -247,31 +240,25 @@ pub fn query_all(
         Local(usize),
         Teddy(usize),
     }
-    let mut hits: Vec<(f64, Src)> = search_tfidf(&docs, &q_terms, k, cat)
+    let mut hits: Vec<(f64, Src)> = search_tfidf(&docs, &q_terms, k)
         .into_iter()
         .map(|(s, i)| (s, Src::Local(i)))
         .collect();
     // The big corpus is scored from its prebuilt index, then merged. Scoring it
     // inline would re-tokenise 12k documents on every keystroke.
     // Empty teddy index: `search` returns nothing; merge is a no-op.
-    // Skip loading the ~64 MB cache when a category filter excludes it.
-    let tdocs = if cat.is_none() {
-        let tdocs = crate::tsearch::docs();
-        if !tdocs.is_empty() {
-            let before = hits.len();
-            let teddy = crate::tsearch::index();
-            for (score, i) in teddy.search_tokens(&q_terms, k) {
-                hits.push((score, Src::Teddy(i)));
-            }
-            if hits.len() > before {
-                hits.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-                hits.truncate(k);
-            }
+    let tdocs = crate::tsearch::docs();
+    if !tdocs.is_empty() {
+        let before = hits.len();
+        let teddy = crate::tsearch::index();
+        for (score, i) in teddy.search_tokens(&q_terms, k) {
+            hits.push((score, Src::Teddy(i)));
         }
-        tdocs
-    } else {
-        &[]
-    };
+        if hits.len() > before {
+            hits.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            hits.truncate(k);
+        }
+    }
     let rows = hits.into_iter().map(|(_score, src)| {
         let (t, c, u) = match src {
             Src::Local(i) => {
@@ -305,7 +292,7 @@ mod tests {
     fn finds_mcp_docs() {
         let docs = load_docs().expect("corpus");
         let q = tokenize("capability ambient root");
-        let hits = search_tfidf(&docs, &q, 5, None);
+        let hits = search_tfidf(&docs, &q, 5);
         assert!(!hits.is_empty());
         let top = &docs[hits[0].1];
         assert!(

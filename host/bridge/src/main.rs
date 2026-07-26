@@ -22,13 +22,11 @@ const MAX_LINE: u64 = 64 * 1024;
 /// Cap on an accumulated skills.save body.
 const MAX_BODY: usize = 1024 * 1024;
 
-/// Tools known to `call_tool` (+ `skills.save` on the socket for LINE…END).
-/// Kept for dispatch inventory tests.
+/// Tools handled by `call_tool` (skills.save is socket LINE…END — not here).
 const TOOLS: &[&str] = &[
     "email.search",
     "email.send",
     "skills.list",
-    "skills.save",
     "search.query",
     "workspace.index",
     "audio.transcribe",
@@ -371,7 +369,6 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
         "search.query" => {
             let q = arg_val(args, "q").unwrap_or("");
             let k = arg_usize(args, "k", 5, 20);
-            let cat = arg_val(args, "cat");
             // Email content is opt-in per call. The guest only sets this when
             // the user granted email.search at setup, so holding search.query
             // alone cannot reach mail.
@@ -383,7 +380,7 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
             if q.is_empty() {
                 vec![format!("ERR {tool} missing_q")]
             } else {
-                search::query_all(q, k, cat, with_email, with_files, with_audio)
+                search::query_all(q, k, with_email, with_files, with_audio)
             }
         }
         // Distinct from tool-specific `… not_found` replies.
@@ -642,10 +639,6 @@ mod tests {
     #[test]
     fn every_listed_tool_is_dispatched() {
         for tool in TOOLS {
-            if *tool == "skills.save" {
-                // Multi-line body protocol lives in handle_client, not call_tool.
-                continue;
-            }
             let r = dispatch(&format!("CALL {tool}"));
             assert!(
                 !r.first().is_some_and(|s| s.starts_with("ERR unknown_tool ")),
