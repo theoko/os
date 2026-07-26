@@ -11,7 +11,7 @@
 use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{self, BODY_FACE, BRAND_FACE, BTN_FACE, HERO_FACE, SMALL_FACE, TITLE_FACE};
-use crate::mcp::{BridgeStatus, MailPeek};
+use crate::mcp::BridgeStatus;
 use crate::skills::SkillPeek;
 use crate::ui::{self, theme};
 
@@ -164,7 +164,7 @@ impl Setup {
     }
 
     /// Paint the current step. Records hit zones as a side effect.
-    pub fn draw(&mut self, fb: &Surface, mail: &MailPeek, skills: &SkillPeek) {
+    pub fn draw(&mut self, fb: &Surface, status: BridgeStatus, skills: &SkillPeek) {
         let w = fb.width() as i32;
         let h = fb.height() as i32;
         fb.fill(theme::BG);
@@ -172,7 +172,7 @@ impl Setup {
 
         match self.step {
             Step::Welcome => self.draw_welcome(fb, w, h),
-            Step::Bridge => self.draw_bridge(fb, w, h, mail.status),
+            Step::Bridge => self.draw_bridge(fb, w, h, status),
             Step::Capabilities => self.draw_caps(fb, w, h),
             Step::Skills => self.draw_skills(fb, w, h, skills),
             Step::Done => self.draw_done(fb, w, h),

@@ -149,7 +149,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut view = screens::View::Home;
                 // First boot: run the setup journey before the home screen.
                 cursor.hide(surface);
-                setup.draw(surface, &mail, &skill_peek);
+                setup.draw(surface, mail.status, &skill_peek);
                 cursor.show_at(surface, x, y);
                 enter(&screen);
                 serial_port.write_str("ui: setup welcome\n");
@@ -238,7 +238,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 );
                             } else {
                                 cursor.hide(surface);
-                                setup.draw(surface, &mail, &skill_peek);
+                                setup.draw(surface, mail.status, &skill_peek);
                                 cursor.show_at(surface, x, y);
                                 enter(&screen);
                                 moved = false;
@@ -428,8 +428,8 @@ fn handle_key(
 }
 
 /// One line telling the user where answers come from right now.
-fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
-    match mail.status {
+fn bridge_note(status: mcp::BridgeStatus) -> &'static str {
+    match status {
         mcp::BridgeStatus::Online => "Answers come from the local index and the host bridge.",
         mcp::BridgeStatus::Offline => mcp::BRIDGE_OFFLINE_HINT,
     }
@@ -470,7 +470,7 @@ fn repaint(
     cursor.hide(surface);
     match view {
         screens::View::Search => {
-            searchui::draw(surface, sview, query, bridge_note(mail))
+            searchui::draw(surface, sview, query, bridge_note(mail.status))
         }
         screens::View::Skills => screens::draw_skills(surface, skills),
         screens::View::Caps => screens::draw_caps(surface, grants),
