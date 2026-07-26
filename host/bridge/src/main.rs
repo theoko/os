@@ -339,8 +339,8 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
         "workspace.forget" => forget_file(tool, &workspace::index_path()),
         "audio.forget" => forget_file(tool, &transcribe::store_path()),
         "workspace.index" => {
-            // Building the index reads the user's files, so it needs the same
-            // grant as searching them.
+            // Force-rebuild for nc / host. Guest search with files=1 lazy-builds
+            // when the on-disk index is empty (see search::workspace_docs).
             if !arg_flag(args, "files") {
                 return vec![format!("ERR {tool} needs_workspace_cap")];
             }
@@ -357,7 +357,7 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
             let k = arg_usize(args, "k", GUEST_MAX_HITS, 20);
             let with_files = arg_flag(args, "files");
             // Recordings have their own grant, so they get their own scope:
-            // enabling workspace.index must not surface transcripts.
+            // enabling Files must not surface transcripts.
             let with_audio = arg_flag(args, "audio");
             if q.is_empty() {
                 vec![format!("ERR {tool} missing_q")]

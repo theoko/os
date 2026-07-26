@@ -248,7 +248,7 @@ mod scope_tests {
         });
         st.save().unwrap();
 
-        // workspace.index granted, audio.transcribe not: must stay hidden.
+        // Files granted, Transcripts not: audio hits must stay hidden.
         let files_only =
             crate::search::query_all("zygotenotary", 5, true, false);
         assert!(

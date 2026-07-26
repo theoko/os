@@ -433,7 +433,7 @@ mod ascii_tests {
 #[cfg(test)]
 mod consent_tests {
     //! The rule: `search.query` alone reaches the built-in corpus, never the
-    //! user's own documents. Those need `workspace.index`, granted at setup.
+    //! user's own documents. Those need the Files grant (`files=1` on the CALL).
     use super::*;
 
     #[test]
@@ -462,6 +462,36 @@ mod consent_tests {
 
         let _ = fs::remove_dir_all(&dir);
         unsafe { env::remove_var("OS_WORKSPACE_INDEX") };
+    }
+
+    #[test]
+    fn empty_index_lazy_builds_on_files_search() {
+        // Guest never CALLs workspace.index; first files=1 search must populate.
+        let _g = crate::paths::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = env::temp_dir().join(format!("os-lazy-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("lazy.md"), "# Quokka Parcel Manifest\n\nunique lazy hit\n").unwrap();
+
+        let ix_path = dir.join("index.json");
+        unsafe {
+            env::set_var("OS_WORKSPACE_INDEX", &ix_path);
+            env::set_var("OS_WORKSPACE_ROOTS", dir.to_str().unwrap());
+        }
+        assert!(!ix_path.is_file(), "precondition: no index on disk");
+
+        let hits = crate::search::query_all("quokka parcel", 5, true, false);
+        assert!(
+            hits.iter().any(|r| r.contains("Quokka Parcel")),
+            "lazy build should surface the file: {hits:?}"
+        );
+        assert!(ix_path.is_file(), "lazy build should persist the index");
+
+        let _ = fs::remove_dir_all(&dir);
+        unsafe {
+            env::remove_var("OS_WORKSPACE_INDEX");
+            env::remove_var("OS_WORKSPACE_ROOTS");
+        }
     }
 }
 

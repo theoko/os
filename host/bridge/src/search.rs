@@ -77,11 +77,17 @@ fn transcript_docs() -> Vec<Doc> {
 
 /// Workspace files, projected into corpus documents.
 ///
-/// Reached only when the caller passed `files=1`, i.e. the user granted
-/// workspace.index during setup.
+/// Reached only when the caller passed `files=1` (Files cap). Guest never
+/// `CALL workspace.index` — if the on-disk index is empty, build it here so
+/// the grant is not a hollow switch. Explicit `workspace.index` remains for
+/// nc force-rebuilds.
 fn workspace_docs() -> Vec<Doc> {
-    crate::workspace::Index::load()
-        .entries
+    let mut ix = crate::workspace::Index::load();
+    if ix.entries.is_empty() {
+        ix = crate::workspace::build(&crate::workspace::roots());
+        let _ = ix.save();
+    }
+    ix.entries
         .into_iter()
         .map(|e| Doc {
             t: e.title,

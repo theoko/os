@@ -37,7 +37,7 @@ Guest → host:
 | `CALL search.query q=<keywords> [k=n] …` | Knowledge search (+ optional files/audio scopes) |
 | `CALL skills.list` / `skills.save` | Skill playbooks |
 | `CALL doc.read url=…` | Open a result body |
-| `CALL workspace.index` / `audio.transcribe` / `*.forget` | Host indexes + revoke |
+| `CALL workspace.index` / `audio.transcribe` / `*.forget` | Force-rebuild indexes (nc) + revoke; guest search with `files=1` lazy-builds when empty |
 
 Host → guest:
 
