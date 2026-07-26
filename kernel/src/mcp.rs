@@ -294,7 +294,7 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> bool {
 ///
 /// Caller must hold [`crate::caps::Cap::SearchQuery`]. Scope flags
 /// (`email=1`, `files=1`, …) still follow the rest of `caps`.
-/// Invokes `on_hit(title, url)` for each ROW (stop early by returning `false`).
+/// Invokes `on_hit(title, url, cat)` for each ROW (stop early by returning `false`).
 /// Offline → baked-index fallback; `Err` → denied empty state; `Ok` even with
 /// zero hits so the UI can tell "no matches" from "no bridge".
 pub(crate) fn fetch_search_rows(
