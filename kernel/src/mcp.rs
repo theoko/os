@@ -14,9 +14,6 @@ const TIMEOUT_REPLY: u32 = 40_000_000;
 /// Longest protocol line: guest search slots plus framing headroom.
 const LINE_BUF: usize = 768;
 
-/// Bridge default `email.search max=` (guest omits the arg).
-const MAIL_PEEK_MAX: usize = 3;
-
 /// OK line + END-break allowance around ROW drains in [`for_each_ok_rows`].
 const FRAMED_PAD: usize = 2;
 
@@ -39,8 +36,8 @@ pub(crate) const NO_MATCHES_BRIDGE_OFFLINE: &str =
 pub enum MailPeek {
     /// COM2 bridge down.
     Offline,
-    /// Bridge up. `inbox: None` = no grant / pre-consent / framed ERR
-    /// (not an empty inbox). `Some(n)` = `ROW n=` from `email.search`.
+    /// Bridge up. `inbox: None` = no grant / pre-consent / framed ERR /
+    /// missing `ROW n=` (not an empty inbox). `Some(n)` = parsed count.
     Online { inbox: Option<usize> },
 }
 
@@ -137,10 +134,10 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
             return MailPeek::Online { inbox: None };
         }
 
-        // Bridge defaults: q=in:inbox, max=MAIL_PEEK_MAX.
+        // Bridge defaults: q=in:inbox, max=GUEST_MAIL_MAX.
         com2.write_str("CALL email.search\n");
 
-        // One `ROW n=<count>`; ERR is not an empty inbox.
+        // One `ROW n=<count>`; missing/ERR is not an empty inbox.
         let mut n: Option<usize> = None;
         let saw_err = for_each_ok_rows(com2, line, 1 + FRAMED_PAD, |resp| {
             if let [Some(s)] = parse_row(resp, ["n"]) {
@@ -151,9 +148,8 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
         if saw_err {
             MailPeek::Online { inbox: None }
         } else {
-            MailPeek::Online {
-                inbox: Some(n.unwrap_or(0).min(MAIL_PEEK_MAX)),
-            }
+            // Bridge always emits `ROW n=`; inventing `Some(0)` would lie.
+            MailPeek::Online { inbox: n }
         }
     })
 }

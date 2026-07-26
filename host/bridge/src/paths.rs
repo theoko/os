@@ -8,26 +8,26 @@ use serde::de::DeserializeOwned;
 use serde::Serialize;
 
 /// `$HOME`, or `.` when unset (tests / odd hosts).
-pub fn home() -> PathBuf {
+pub(crate) fn home() -> PathBuf {
     env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
 /// `~/Library/Application Support/os` — skills, knowledge indexes, etc.
-pub fn app_support() -> PathBuf {
+pub(crate) fn app_support() -> PathBuf {
     home().join("Library/Application Support/os")
 }
 
 /// `$VAR` if set, else `app_support()/knowledge/<file>`.
-pub fn env_or_knowledge(var: &str, file: &str) -> PathBuf {
+pub(crate) fn env_or_knowledge(var: &str, file: &str) -> PathBuf {
     env::var(var)
         .map(PathBuf::from)
         .unwrap_or_else(|_| app_support().join("knowledge").join(file))
 }
 
 /// Create parent dirs and write `value` as compact JSON.
-pub fn write_json<T: Serialize>(path: impl AsRef<Path>, value: &T) -> Result<(), String> {
+pub(crate) fn write_json<T: Serialize>(path: impl AsRef<Path>, value: &T) -> Result<(), String> {
     let path = path.as_ref();
     if let Some(d) = path.parent() {
         fs::create_dir_all(d).map_err(|e| format!("mkdir {}: {e}", d.display()))?;
@@ -38,7 +38,7 @@ pub fn write_json<T: Serialize>(path: impl AsRef<Path>, value: &T) -> Result<(),
 }
 
 /// Read JSON from `path`, or `T::default()` when missing / invalid.
-pub fn read_json_or_default<T: DeserializeOwned + Default>(path: impl AsRef<Path>) -> T {
+pub(crate) fn read_json_or_default<T: DeserializeOwned + Default>(path: impl AsRef<Path>) -> T {
     match fs::read_to_string(path) {
         Ok(raw) => serde_json::from_str(&raw).unwrap_or_default(),
         Err(_) => T::default(),

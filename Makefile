@@ -17,6 +17,7 @@ EMAIL_BACKEND ?= mock
 QEMU ?= qemu-system-x86_64
 # Shared machine knobs for `run` / `run-bridged` (smokes build argv in Python).
 QEMU_MACHINE := -M q35 -m 512M -display none
+export QEMU_MACHINE
 QEMUFLAGS ?= -serial stdio
 QEMU_DEBUG_EXIT := -device isa-debug-exit,iobase=0xf4,iosize=0x04
 

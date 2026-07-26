@@ -94,7 +94,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let cy = surface.height() as i32 / 2;
                 let mut cursor = mouse::Cursor::new();
                 // Blank + cursor for the QEMU smoke present; setup paints next.
-                ui::clear(surface);
+                surface.fill();
                 cursor.show_at(surface, cx, cy);
                 screen.present();
                 serial_port.write_str("mouse: pointer painted\n");
@@ -434,7 +434,7 @@ fn repaint(
         screens::View::Skills => screens::draw_skills(surface, skills),
         screens::View::Caps => screens::draw_caps(surface, grants),
         screens::View::Reader => searchui::draw_reader(surface, page),
-        screens::View::Home => ui::draw_home_full(surface, mail, skills, grants, query),
+        screens::View::Home => ui::draw_home(surface, mail, skills, grants, query),
     }
     cursor.show_at(surface, x, y);
     enter(screen);

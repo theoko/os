@@ -183,13 +183,8 @@ pub fn home_hit(w: i32, px: i32, py: i32) -> Option<HomeHit> {
     hit_among(3, px, py, |i| tile_rect(w, i as i32)).map(|i| HomeHit::Card(IDS[i]))
 }
 
-/// Page background only — used for the pre-setup smoke present.
-pub fn clear(fb: &Surface) {
-    fb.fill();
-}
-
 /// The home screen: one focal search field, three equal cards, locked footer.
-pub fn draw_home_full(
+pub fn draw_home(
     fb: &Surface,
     mail: &MailPeek,
     skills: &SkillPeek,

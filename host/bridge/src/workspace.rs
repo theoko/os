@@ -7,7 +7,7 @@
 //!
 //! * **Never baked.** `kernel/build.rs` compiles the static corpus into the
 //!   ISO; putting personal documents there would ship them inside a build
-//!   artifact in a public repo. This index lives under Application Support.
+//!   artifact in a pub(crate)lic repo. This index lives under Application Support.
 //! * **Roots are opt-in.** The default is the user's project directories, not
 //!   all of `~`. Personal folders (immigration paperwork, notes) are only
 //!   indexed if they are named explicitly via `OS_WORKSPACE_ROOTS`.
@@ -22,16 +22,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize, Deserialize)]
 pub(crate) struct Entry {
-    pub title: String,
+    pub(crate) title: String,
     /// Path relative to the root it was found under.
-    pub path: String,
-    pub snippet: String,
+    pub(crate) path: String,
+    pub(crate) snippet: String,
     /// Cheap relevance prior: shallower and more "index-like" files rank up.
-    pub pr: f64,
+    pub(crate) pr: f64,
 }
 
 #[derive(Default, Serialize, Deserialize)]
-pub struct Index {
+pub(crate) struct Index {
     #[serde(default)]
     pub(crate) entries: Vec<Entry>,
 }
@@ -65,7 +65,7 @@ const MAX_BYTES: u64 = 512 * 1024;
 /// Hard cap on entries so a stray root cannot produce an unbounded index.
 const MAX_ENTRIES: usize = 4000;
 
-pub fn index_path() -> PathBuf {
+pub(crate) fn index_path() -> PathBuf {
     crate::paths::env_or_knowledge("OS_WORKSPACE_INDEX", "workspace.json")
 }
 
@@ -75,7 +75,7 @@ pub fn index_path() -> PathBuf {
 /// — personal notes, forms, correspondence — stays out unless asked for by
 /// name, because "search my machine" should not silently mean "index my
 /// immigration paperwork".
-pub fn roots() -> Vec<PathBuf> {
+pub(crate) fn roots() -> Vec<PathBuf> {
     if let Ok(v) = env::var("OS_WORKSPACE_ROOTS") {
         return v
             .split(':')
@@ -159,7 +159,7 @@ fn snippet_of(body: &str) -> String {
 }
 
 /// Walk `roots` and build an index. Returns entries found.
-pub fn build(roots: &[PathBuf]) -> Index {
+pub(crate) fn build(roots: &[PathBuf]) -> Index {
     let now = now_secs();
     let mut entries = Vec::new();
     for root in roots {
@@ -242,11 +242,11 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<Entry>, depth: usize, now: u64) {
 }
 
 impl Index {
-    pub fn load() -> Self {
+    pub(crate) fn load() -> Self {
         crate::paths::read_json_or_default(index_path())
     }
 
-    pub fn save(&self) -> Result<(), String> {
+    pub(crate) fn save(&self) -> Result<(), String> {
         crate::paths::write_json(index_path(), self)
     }
 }

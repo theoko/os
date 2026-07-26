@@ -145,7 +145,7 @@ impl Surface {
     }
 
     /// Fill the surface with [`PAGE_BG`].
-    pub(crate) fn fill(&self) {
+    pub fn fill(&self) {
         self.mark_dirty(0, 0, self.width as i32, self.height as i32);
         for y in 0..self.height {
             for x in 0..self.width {

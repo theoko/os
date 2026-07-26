@@ -34,7 +34,7 @@ static CACHE: OnceLock<Vec<Doc>> = OnceLock::new();
 /// unusable; this is why the source is a cache rather than a live call.
 /// Refresh by curling [`CORPUS_URL`] into `OS_TSEARCH_CACHE` (or the
 /// Application Support default) before starting the bridge.
-pub fn docs() -> &'static [Doc] {
+pub(crate) fn docs() -> &'static [Doc] {
     CACHE.get_or_init(|| {
         let path = cache_path();
         let Ok(raw) = fs::read_to_string(&path) else {
@@ -93,7 +93,7 @@ mod tests {
 /// 12k: measured at 5.6 s per search. The cache is fixed for the process
 /// lifetime, so tokenisation and idf are computed once and queries walk
 /// postings instead.
-pub struct Index {
+pub(crate) struct Index {
     /// Sorted by term, so lookup is a binary search.
     terms: Vec<Term>,
     postings: Vec<(usize, f64)>,
@@ -108,7 +108,7 @@ struct Term {
 
 static INDEX: OnceLock<Index> = OnceLock::new();
 
-pub fn index() -> &'static Index {
+pub(crate) fn index() -> &'static Index {
     INDEX.get_or_init(|| {
         let docs = docs();
         let n = docs.len() as f64;
@@ -154,7 +154,7 @@ impl Index {
     ///
     /// Mirrors the built-in scorer: tf-idf blended with PageRank, plus the
     /// exact-AND bonus for documents carrying every query term.
-    pub fn search_tokens(&self, q: &[String], k: usize) -> Vec<(f64, usize)> {
+    pub(crate) fn search_tokens(&self, q: &[String], k: usize) -> Vec<(f64, usize)> {
         if q.is_empty() || self.terms.is_empty() {
             return Vec::new();
         }

@@ -15,22 +15,22 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct Transcript {
+pub(crate) struct Transcript {
     /// Source media path.
-    pub source: String,
+    pub(crate) source: String,
     /// Display title: the file stem unless the text suggests better.
-    pub title: String,
+    pub(crate) title: String,
     /// Full transcript text.
-    pub text: String,
+    pub(crate) text: String,
 }
 
 #[derive(Default, Serialize, Deserialize)]
-pub struct Store {
+pub(crate) struct Store {
     #[serde(default)]
-    pub items: Vec<Transcript>,
+    pub(crate) items: Vec<Transcript>,
 }
 
-pub fn store_path() -> PathBuf {
+pub(crate) fn store_path() -> PathBuf {
     crate::paths::env_or_knowledge("OS_TRANSCRIPT_STORE", "transcripts.json")
 }
 
@@ -59,7 +59,7 @@ fn is_media(path: &Path) -> bool {
 }
 
 /// Transcribe `path`. Returns the transcript without storing.
-pub fn transcribe(path: &Path) -> Result<Transcript, String> {
+pub(crate) fn transcribe(path: &Path) -> Result<Transcript, String> {
     if !path.is_file() {
         return Err(format!("no such file: {}", path.display()));
     }
@@ -144,16 +144,16 @@ fn title_for(path: &Path, text: &str) -> String {
 }
 
 impl Store {
-    pub fn load() -> Self {
+    pub(crate) fn load() -> Self {
         crate::paths::read_json_or_default(store_path())
     }
 
-    pub fn save(&self) -> Result<(), String> {
+    pub(crate) fn save(&self) -> Result<(), String> {
         crate::paths::write_json(store_path(), self)
     }
 
     /// Add or replace by source path, so re-transcribing updates in place.
-    pub fn upsert(&mut self, t: Transcript) {
+    pub(crate) fn upsert(&mut self, t: Transcript) {
         match self.items.iter_mut().find(|i| i.source == t.source) {
             Some(existing) => *existing = t,
             None => self.items.push(t),

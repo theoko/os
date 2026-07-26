@@ -16,18 +16,15 @@ OK_STATUS = 33
 
 
 def qemu_argv(iso: Path, serial_path: Path, *, com2: str | None = None) -> list[str]:
+    # Prefer Makefile `QEMU_MACHINE` so smoke and `make run` share one knob.
+    machine = os.environ.get("QEMU_MACHINE", "-M q35 -m 512M -display none").split()
     argv = [
         "qemu-system-x86_64",
-        "-M",
-        "q35",
-        "-m",
-        "512M",
+        *machine,
         "-cdrom",
         str(iso),
         "-boot",
         "d",
-        "-display",
-        "none",
         "-serial",
         f"file:{serial_path}",
     ]

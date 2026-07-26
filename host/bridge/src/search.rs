@@ -16,21 +16,21 @@ use std::sync::OnceLock;
 #[derive(Deserialize)]
 pub(crate) struct CorpusFile {
     #[serde(default)]
-    pub docs: Vec<Doc>,
+    pub(crate) docs: Vec<Doc>,
 }
 
 /// Curated / teddy / projected corpus document (`{t,u,c,b,pr}`).
 #[derive(Clone, Deserialize)]
-pub struct Doc {
-    pub t: String,
+pub(crate) struct Doc {
+    pub(crate) t: String,
     #[serde(default)]
-    pub u: String,
+    pub(crate) u: String,
     #[serde(default)]
-    pub c: String,
+    pub(crate) c: String,
     #[serde(default)]
-    pub b: String,
+    pub(crate) b: String,
     #[serde(default)]
-    pub pr: f64,
+    pub(crate) pr: f64,
 }
 
 /// Inverse document frequency used by both the small-corpus scan and the teddy index.
@@ -185,7 +185,7 @@ const CAT_CHARS: usize = 16;
 /// `include_files` / `include_audio` default off everywhere: holding
 /// `search.query` alone must not reach personal files or recordings.
 /// Mail stays peek-only via `email.search` (no openable search hits).
-pub fn query_all(
+pub(crate) fn query_all(
     q: &str,
     k: usize,
     include_files: bool,
@@ -289,7 +289,7 @@ mod tests {
 /// These sources carry their text in the index, so reading needs no file
 /// access — and no capability beyond the one that found them. Callers wrap
 /// with [`wrap_lines`] (same path as `file://` / `audio://`).
-pub fn body_for(url: &str) -> Option<&'static str> {
+pub(crate) fn body_for(url: &str) -> Option<&'static str> {
     load_docs()
         .ok()?
         .iter()

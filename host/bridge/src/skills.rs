@@ -5,7 +5,7 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-pub fn skills_dirs() -> (PathBuf, PathBuf) {
+pub(crate) fn skills_dirs() -> (PathBuf, PathBuf) {
     let defaults = env::var("OS_SKILLS_DEFAULTS")
         .map(PathBuf::from)
         .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../skills/defaults"));
@@ -71,7 +71,7 @@ fn parse_frontmatter(text: &str) -> Option<(String, String)> {
     Some((name?, description))
 }
 
-pub fn save_skill(name: &str, body: &str) -> Result<(), String> {
+pub(crate) fn save_skill(name: &str, body: &str) -> Result<(), String> {
     if name.is_empty()
         || !name
             .chars()
@@ -98,7 +98,7 @@ pub fn save_skill(name: &str, body: &str) -> Result<(), String> {
 /// Matches guest `skills::MAX_LISTED` (buffer / paint / home count).
 const GUEST_MAX_LISTED: usize = 6;
 
-pub fn list_response() -> Vec<String> {
+pub(crate) fn list_response() -> Vec<String> {
     let (defaults, user) = skills_dirs();
     let skills = list_skills(&defaults, &user);
     let rows = skills.iter().take(GUEST_MAX_LISTED).map(|(name, desc)| {
