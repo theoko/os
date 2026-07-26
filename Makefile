@@ -227,6 +227,7 @@ test-all: test arm64-kernel smoke-arm64
 
 test-host:
 	$(WITH_RUST) $(CARGO) test -p kernel --target $$($(RUSTC) -vV | awk '/^host:/{print $$2}') --lib
+	$(WITH_RUST) $(CARGO) test -p os-core
 	$(WITH_RUST) $(CARGO) test -p os-mcp-bridge
 
 smoke: iso

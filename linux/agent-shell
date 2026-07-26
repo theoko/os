@@ -1,0 +1,166 @@
+#!/bin/sh
+#
+# agent-shell — Linux-guest client for the host bridge line protocol.
+#
+# One request, one reply:
+#   -> CALL agent.act goal=<query> k=5 portal=1
+#   <- OK agent.act n=<count> intent=<intent>
+#      SAY <sentence>
+#      ROW title=…|url=…|why=…      (zero or more)
+#      END
+#   or ERR <tool> <why>
+#
+# WHY a POSIX shell script and not Rust: see linux/README.md. The short version
+# is that busybox already ships every tool this protocol needs, and a Rust port
+# would have to clear an aarch64-musl cross toolchain first — a linker fight
+# that proves nothing about the substrate.
+#
+# WHY nc with no flags beyond -w: both nc implementations this has to run under
+# (busybox in the guest, Apple's nc on the host during development) half-close
+# the socket on stdin EOF and then keep reading until the peer closes. That is
+# exactly the bridge's request/reply shape, so no -N/-q/-q-1 dance is needed —
+# and neither flag exists on both anyway.
+set -u
+
+PROG="agent-shell"
+
+# QEMU user-mode networking maps the host to 10.0.2.2, so that — not localhost —
+# is what a guest must dial by default. Override for host-side testing.
+ADDR="${BRIDGE_ADDR:-10.0.2.2:7420}"
+# A cold tsearch corpus on the host can take tens of seconds to answer the first
+# query, so the default is generous rather than snappy.
+TIMEOUT="${BRIDGE_TIMEOUT:-60}"
+ROWS="${AGENT_K:-5}"
+
+# Exit codes are part of this tool's contract — callers branch on them, and
+# "no rows" must never be indistinguishable from "it worked".
+EX_EMPTY=1
+EX_USAGE=2
+EX_UNREACHABLE=3
+EX_BRIDGE_ERR=4
+EX_PROTOCOL=5
+
+die() {
+	printf '%s: %s\n' "$PROG" "$1" >&2
+	exit "$2"
+}
+
+if [ "$#" -lt 1 ]; then
+	printf 'usage: %s <query>\n' "$PROG" >&2
+	printf '  env: BRIDGE_ADDR (default 10.0.2.2:7420), BRIDGE_TIMEOUT, AGENT_K\n' >&2
+	exit "$EX_USAGE"
+fi
+
+case "$1" in
+-h | --help)
+	printf 'usage: %s <query>\n' "$PROG"
+	exit 0
+	;;
+esac
+
+# Newlines and tabs in the query would be read by the bridge as the start of a
+# second command on the same connection: a query is untrusted input, so flatten
+# it before it can become protocol. Runs of whitespace collapse so the goal
+# stays one readable token sequence.
+QUERY=$(printf '%s' "$*" | tr '\n\r\t' '   ' | sed 's/  */ /g; s/^ //; s/ $//')
+[ -n "$QUERY" ] || die "empty query" "$EX_USAGE"
+
+HOST=${ADDR%:*}
+PORT=${ADDR##*:}
+if [ -z "$HOST" ] || [ -z "$PORT" ] || [ "$HOST" = "$ADDR" ]; then
+	die "BRIDGE_ADDR must look like host:port, got \"$ADDR\"" "$EX_USAGE"
+fi
+case "$PORT" in
+*[!0-9]* | "") die "BRIDGE_ADDR port is not a number: \"$PORT\"" "$EX_USAGE" ;;
+esac
+
+command -v nc >/dev/null 2>&1 || die "nc not found — install busybox-extras or netcat" "$EX_UNREACHABLE"
+
+# Deliberately unquoted: these are options, not one argument. A busybox built
+# without NC_EXTRA has no -w, hence the override rather than a hardcoded flag.
+NC_OPTS="${BRIDGE_NC_OPTS:--w $TIMEOUT}"
+
+# goal= comes first and k= terminates it, so a multi-word query folds into the
+# goal the way the bridge's own arg parser expects.
+REQUEST="CALL agent.act goal=$QUERY k=$ROWS portal=1"
+
+# nc is the last stage on purpose: its exit status is the pipeline's, and that
+# status is the difference between "refused" and "answered".
+# shellcheck disable=SC2086
+RAW=$(printf '%s\n' "$REQUEST" | nc $NC_OPTS "$HOST" "$PORT" 2>/dev/null)
+NC_STATUS=$?
+
+if [ -z "$RAW" ]; then
+	die "no reply from bridge at $ADDR (nc exit $NC_STATUS) — is the host running ./scripts/ensure-bridge.sh?" "$EX_UNREACHABLE"
+fi
+
+# The bridge writes bare LF, but the same protocol also rides a serial line where
+# something upstream may add CR. Strip it once, with tr, because "\r" as a regex
+# escape is a GNU extension that BSD sed does not honour.
+ANSWER=$(printf '%s\n' "$RAW" | tr -d '\r')
+
+FIRST=$(printf '%s\n' "$ANSWER" | sed -n '1p')
+case "$FIRST" in
+"ERR "*) die "bridge refused: ${FIRST#ERR }" "$EX_BRIDGE_ERR" ;;
+"OK agent.act "*) : ;;
+*) die "unexpected reply from $ADDR: $FIRST" "$EX_PROTOCOL" ;;
+esac
+
+# END is the bridge's own end-of-reply marker. Without it the reply was cut off
+# mid-flight, and the rows we did get are not the whole answer — say so instead
+# of printing a short list that looks complete.
+printf '%s\n' "$ANSWER" | grep -qx 'END' ||
+	die "truncated reply from $ADDR — no END marker" "$EX_PROTOCOL"
+
+printf '%s\n' "$ANSWER" | awk '
+	/^SAY / { say = substr($0, 5); next }
+
+	/^ROW / {
+		payload = substr($0, 5)
+		n = split(payload, seg, "|")
+		title = ""; url = ""; cur = ""
+		for (i = 1; i <= n; i++) {
+			s = seg[i]
+			p = index(s, "=")
+			key = ""
+			if (p > 1) {
+				k = substr(s, 1, p - 1)
+				if (k ~ /^[a-z][a-z0-9_]*$/) key = k
+			}
+			if (key != "") {
+				cur = key
+				v = substr(s, p + 1)
+				if (cur == "title") title = v
+				else if (cur == "url") url = v
+			} else if (cur == "title") {
+				# The bridge strips "|" from search rows but passes agent step
+				# labels through raw, so a bar inside a value is possible.
+				# Rejoin it rather than silently truncating the field.
+				title = title "|" s
+			} else if (cur == "url") {
+				url = url "|" s
+			}
+		}
+		rows++
+		titles[rows] = title
+		urls[rows] = url
+		next
+	}
+
+	END {
+		if (say != "") print say
+		if (rows > 0) print ""
+		for (i = 1; i <= rows; i++) {
+			printf "%2d. %s\n", i, (titles[i] != "" ? titles[i] : "(untitled)")
+			if (urls[i] != "") printf "    %s\n", urls[i]
+		}
+		# Exit status carries the row count decision back to the shell, because
+		# a pipeline cannot hand back a variable.
+		exit (rows > 0 ? 0 : 1)
+	}
+'
+AWK_STATUS=$?
+
+if [ "$AWK_STATUS" -ne 0 ]; then
+	die "no results for \"$QUERY\"" "$EX_EMPTY"
+fi

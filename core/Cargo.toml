@@ -1,0 +1,15 @@
+[package]
+name = "os-core"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "os_core"
+path = "src/lib.rs"
+doctest = false
+
+# serde_json is already a workspace dependency (host/bridge runtime,
+# kernel build script), so this pulls nothing new into Cargo.lock.
+[build-dependencies]
+serde_json = "1"
