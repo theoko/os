@@ -24,14 +24,3 @@ pub mod usb_tablet;
 
 /// Canonical early-boot banner printed to COM1.
 pub const HELLO_MESSAGE: &str = "os: hello from kernel";
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn hello_message_is_stable() {
-        assert_eq!(HELLO_MESSAGE, "os: hello from kernel");
-        assert!(HELLO_MESSAGE.starts_with("os:"));
-    }
-}

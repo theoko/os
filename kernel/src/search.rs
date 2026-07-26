@@ -46,7 +46,11 @@ pub const MAX_HITS: usize = 3;
 #[derive(Clone, Copy)]
 pub struct Hit {
     pub doc: usize,
-    pub score: i64,
+    score: i64,
+}
+
+impl Hit {
+    pub(crate) const EMPTY: Self = Self { doc: 0, score: 0 };
 }
 
 /// Tokenizer. Must stay identical to `fold_tok` in `build.rs`, or query terms
@@ -135,7 +139,7 @@ pub fn query(q: &str, out: &mut [Hit; MAX_HITS]) -> usize {
     }
 
     let mut n = 0usize;
-    let mut ranked = [Hit { doc: 0, score: 0 }; N_DOCS];
+    let mut ranked = [Hit::EMPTY; N_DOCS];
     for (i, &raw) in scores.iter().enumerate() {
         if raw <= 0 {
             continue;
@@ -169,7 +173,7 @@ mod tests {
     use super::*;
 
     fn top(q: &str) -> Option<&'static str> {
-        let mut out = [Hit { doc: 0, score: 0 }; MAX_HITS];
+        let mut out = [Hit::EMPTY; MAX_HITS];
         let n = query(q, &mut out);
         (n > 0).then(|| DOCS[out[0].doc].title)
     }
@@ -219,19 +223,19 @@ mod tests {
 
     #[test]
     fn unknown_terms_return_nothing() {
-        let mut out = [Hit { doc: 0, score: 0 }; MAX_HITS];
+        let mut out = [Hit::EMPTY; MAX_HITS];
         assert_eq!(query("zzzz qqqq wwww", &mut out), 0);
     }
 
     #[test]
     fn empty_query_returns_nothing() {
-        let mut out = [Hit { doc: 0, score: 0 }; MAX_HITS];
+        let mut out = [Hit::EMPTY; MAX_HITS];
         assert_eq!(query("", &mut out), 0);
     }
 
     #[test]
     fn results_are_descending() {
-        let mut out = [Hit { doc: 0, score: 0 }; MAX_HITS];
+        let mut out = [Hit::EMPTY; MAX_HITS];
         let n = query("os agent search skills", &mut out);
         for i in 1..n {
             assert!(out[i - 1].score >= out[i].score, "not sorted at {i}");
@@ -240,7 +244,7 @@ mod tests {
 
     #[test]
     fn never_returns_more_than_max_hits() {
-        let mut out = [Hit { doc: 0, score: 0 }; MAX_HITS];
+        let mut out = [Hit::EMPTY; MAX_HITS];
         // A term-heavy query that touches most of the corpus.
         let n = query("os agent kernel search skills bridge capability docs", &mut out);
         assert!(n <= MAX_HITS);
@@ -248,8 +252,8 @@ mod tests {
 
     #[test]
     fn lookup_is_case_insensitive() {
-        let mut a = [Hit { doc: 0, score: 0 }; MAX_HITS];
-        let mut b = [Hit { doc: 0, score: 0 }; MAX_HITS];
+        let mut a = [Hit::EMPTY; MAX_HITS];
+        let mut b = [Hit::EMPTY; MAX_HITS];
         let na = query("CAPABILITY", &mut a);
         let nb = query("capability", &mut b);
         assert_eq!(na, nb);

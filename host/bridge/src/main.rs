@@ -275,16 +275,19 @@ fn split_word(s: &str) -> (&str, &str) {
 fn parse_args(rest: &str) -> Vec<(String, String)> {
     let mut out: Vec<(String, String)> = Vec::new();
     for tok in rest.split_whitespace() {
-        let key = tok.split_once('=').map(|(k, _)| k);
-        let is_key = key.is_some_and(|k| {
-            let mut ch = k.chars();
-            ch.next().is_some_and(|c| c.is_ascii_lowercase())
-                && k.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
-        });
-        if is_key {
-            let (k, v) = tok.split_once('=').unwrap();
-            out.push((k.to_string(), v.to_string()));
-        } else if let Some(last) = out.last_mut() {
+        if let Some((k, v)) = tok.split_once('=') {
+            let is_key = {
+                let mut ch = k.chars();
+                ch.next().is_some_and(|c| c.is_ascii_lowercase())
+                    && k.chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+            };
+            if is_key {
+                out.push((k.to_string(), v.to_string()));
+                continue;
+            }
+        }
+        if let Some(last) = out.last_mut() {
             if !last.1.is_empty() {
                 last.1.push(' ');
             }

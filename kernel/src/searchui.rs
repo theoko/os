@@ -50,60 +50,50 @@ impl Row {
 
 }
 
+/// Shown when something actually broke, as opposed to simply finding nothing.
+/// Named for the search engine this OS queries.
+const TEDDY: &str = "Teddy is looking into it.";
+
 /// What the last query actually did, so the empty state can be truthful.
 ///
 /// A bridge that answers "no matches" is NOT an offline bridge — reporting it
 /// as one sent people looking for a connection problem that did not exist.
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Source {
-    /// COM2 answered.
-    bridge_online: bool,
-    /// The bridge answered with ERR, or the capability was refused.
-    errored: bool,
-    /// Grants held for this query — empty-state copy names what's missing.
-    caps: crate::caps::Caps,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Phase {
+    /// No query run yet — idle tip uses live bridge status, not this.
+    Idle,
+    /// Queried, but COM2 was down (or the query was empty).
+    Offline,
+    /// `search.query` was not granted.
+    Denied,
+    /// Bridge answered; grants name what's missing when the result set is empty.
+    Online(crate::caps::Caps),
 }
 
-impl Source {
-    const fn offline() -> Self {
-        Self {
-            bridge_online: false,
-            errored: false,
-            caps: crate::caps::Caps::none(),
-        }
-    }
-
-    /// Shown when something actually broke, as opposed to simply finding
-    /// nothing. Named for the search engine this OS queries.
-    const TEDDY: &'static str = "Teddy is looking into it.";
-
+impl Phase {
     /// One line explaining an empty result set, naming the fix when there is one.
     fn empty_reason(self) -> &'static str {
         use crate::caps::Cap;
-        // A failure is not the same as an empty result set, and only the
-        // former gets the friendly line.
-        if self.errored {
-            return Self::TEDDY;
+        match self {
+            Phase::Idle | Phase::Offline => crate::mcp::NO_MATCHES_BRIDGE_OFFLINE,
+            Phase::Denied => TEDDY,
+            Phase::Online(caps) => {
+                if !caps.allows(Cap::WorkspaceIndex) {
+                    return "No matches. Turn on workspace.index in Capabilities to search your files.";
+                }
+                if !caps.allows(Cap::EmailSearch) {
+                    return "No matches in your files. Turn on email.search to include mail.";
+                }
+                "No matches. The bridge searched your files and mail."
+            }
         }
-        if !self.bridge_online {
-            return crate::mcp::NO_MATCHES_BRIDGE_OFFLINE;
-        }
-        if !self.caps.allows(Cap::WorkspaceIndex) {
-            return "No matches. Turn on workspace.index in Capabilities to search your files.";
-        }
-        if !self.caps.allows(Cap::EmailSearch) {
-            return "No matches in your files. Turn on email.search to include mail.";
-        }
-        "No matches. The bridge searched your files and mail."
     }
 }
 
 pub struct SearchView {
     rows: [Row; search::MAX_HITS],
     count: usize,
-    /// True once a query has been run, so we can tell "no results" from "idle".
-    searched: bool,
-    source: Source,
+    phase: Phase,
 }
 
 impl SearchView {
@@ -111,18 +101,17 @@ impl SearchView {
         Self {
             rows: [Row::empty(); search::MAX_HITS],
             count: 0,
-            searched: false,
-            source: Source::offline(),
+            phase: Phase::Idle,
         }
     }
 
-    /// Load baked-index hits for `q` into `rows` (does not touch `source`).
+    /// Load baked-index hits for `q` into `rows` (does not touch `phase`).
     fn fill_local(&mut self, q: &str) {
         self.count = 0;
         if q.trim().is_empty() {
             return;
         }
-        let mut hits = [search::Hit { doc: 0, score: 0 }; search::MAX_HITS];
+        let mut hits = [search::Hit::EMPTY; search::MAX_HITS];
         let n = search::query(q, &mut hits);
         for h in hits.iter().take(n) {
             let d = &search::DOCS[h.doc];
@@ -137,8 +126,7 @@ impl SearchView {
     /// is still useful for offline assertions.
     #[cfg(test)]
     fn run(&mut self, q: &str) {
-        self.searched = true;
-        self.source = Source::offline();
+        self.phase = Phase::Offline;
         self.fill_local(q);
     }
 
@@ -148,19 +136,14 @@ impl SearchView {
     /// question about the user's own files or mail came back empty even though
     /// the bridge had them indexed.
     pub fn run_via(&mut self, q: &str, caps: crate::caps::Caps) {
-        self.searched = true;
         self.count = 0;
         if q.trim().is_empty() {
-            self.source = Source::offline();
+            self.phase = Phase::Offline;
             return;
         }
         // Refuse before CALL: no PING/LIST traffic without the search cap.
         if !caps.allows(crate::caps::Cap::SearchQuery) {
-            self.source = Source {
-                bridge_online: false,
-                errored: true,
-                caps,
-            };
+            self.phase = Phase::Denied;
             self.fill_local(q);
             return;
         }
@@ -168,10 +151,10 @@ impl SearchView {
         let online = matches!(peek.status, crate::mcp::BridgeStatus::Online);
         // Record reachability BEFORE any fallback, so an online bridge that
         // simply found nothing is never reported as a connection failure.
-        let source = Source {
-            bridge_online: online,
-            errored: false,
-            caps,
+        self.phase = if online {
+            Phase::Online(caps)
+        } else {
+            Phase::Offline
         };
         if online {
             for i in 0..peek.count.min(search::MAX_HITS) {
@@ -183,7 +166,6 @@ impl SearchView {
             // Nothing from the bridge: try what we shipped with.
             self.fill_local(q);
         }
-        self.source = source;
     }
 
     /// Which drawn result contains `(x, y)`, if any.
@@ -231,7 +213,7 @@ pub fn draw(
 
     // Results.
     let mut y = f.y + f.h + 26;
-    if !view.searched {
+    if view.phase == Phase::Idle {
         let note = match status {
             crate::mcp::BridgeStatus::Online => {
                 "Answers come from the local index and the host bridge."
@@ -242,7 +224,7 @@ pub fn draw(
         return;
     }
     if view.count == 0 {
-        fb.draw_text_centered(w / 2, y + 30, view.source.empty_reason(), &BODY_FACE, 0, theme::MUTED);
+        fb.draw_text_centered(w / 2, y + 30, view.phase.empty_reason(), &BODY_FACE, 0, theme::MUTED);
         return;
     }
 
@@ -266,7 +248,7 @@ mod tests {
     fn running_a_query_populates_rows() {
         let mut v = SearchView::new();
         v.run("capability agent");
-        assert!(v.searched);
+        assert_ne!(v.phase, Phase::Idle);
         assert!(v.count > 0, "expected hits from the baked index");
         assert!(!v.rows[0].title().is_empty());
     }
@@ -275,7 +257,11 @@ mod tests {
     fn empty_query_searches_nothing_but_marks_searched() {
         let mut v = SearchView::new();
         v.run("   ");
-        assert!(v.searched, "must distinguish 'ran and found nothing' from idle");
+        assert_ne!(
+            v.phase,
+            Phase::Idle,
+            "must distinguish 'ran and found nothing' from idle"
+        );
         assert_eq!(v.count, 0);
     }
 
@@ -333,7 +319,7 @@ mod empty_state_tests {
     use super::*;
     use crate::caps::{Cap, Caps};
 
-    fn source(online: bool, errored: bool, files: bool, mail: bool) -> Source {
+    fn online(files: bool, mail: bool) -> Phase {
         let mut caps = Caps::none();
         if mail {
             caps.toggle(Cap::EmailSearch as usize);
@@ -341,20 +327,19 @@ mod empty_state_tests {
         if files {
             caps.toggle(Cap::WorkspaceIndex as usize);
         }
-        Source { bridge_online: online, errored, caps }
+        Phase::Online(caps)
     }
 
     #[test]
     fn an_online_bridge_is_never_reported_as_offline() {
         // The bug this replaces: a bridge that answered "n=0" was rendered as
         // "Bridge offline", sending the user to debug a working connection.
-        let s = source(true, false, true, true);
-        assert!(!s.empty_reason().contains("offline"));
+        assert!(!online(true, true).empty_reason().contains("offline"));
     }
 
     #[test]
     fn a_real_outage_still_says_offline() {
-        let m = Source::offline().empty_reason();
+        let m = Phase::Offline.empty_reason();
         assert!(m.contains("offline"));
         assert!(!m.contains("Teddy"));
     }
@@ -363,40 +348,37 @@ mod empty_state_tests {
     fn missing_file_grant_names_the_fix() {
         // Finding nothing is a legitimate answer and must stay actionable
         // rather than being papered over with a mascot.
-        let s = source(true, false, false, true);
-        let m = s.empty_reason();
+        let m = online(false, true).empty_reason();
         assert!(m.contains("workspace.index"), "{m}");
         assert!(!m.contains("offline"), "{m}");
-        assert_ne!(m, Source::TEDDY);
+        assert_ne!(m, TEDDY);
     }
 
     #[test]
     fn missing_mail_grant_names_the_fix() {
-        let s = source(true, false, true, false);
-        assert!(s.empty_reason().contains("email.search"));
+        assert!(online(true, false).empty_reason().contains("email.search"));
     }
 
     #[test]
     fn a_real_failure_gets_the_friendly_line() {
-        let s = source(true, true, true, true);
-        assert_eq!(s.empty_reason(), Source::TEDDY);
+        assert_eq!(Phase::Denied.empty_reason(), TEDDY);
     }
 
     #[test]
     fn every_reason_is_renderable_ascii() {
         for s in [
-            Source::offline(),
-            source(true, false, false, false),
-            source(true, false, true, false),
-            source(true, false, true, true),
-            source(true, true, true, true),
+            Phase::Offline,
+            online(false, false),
+            online(true, false),
+            online(true, true),
+            Phase::Denied,
         ] {
             let m = s.empty_reason();
             assert!(m.bytes().all(|b| (0x20..=0x7E).contains(&b)), "{m}");
             assert!(BODY_FACE.width(m, 0) < 980, "empty-state line overflows: {m}");
         }
-        assert!(Source::TEDDY.bytes().all(|b| (0x20..=0x7E).contains(&b)));
-        assert!(BODY_FACE.width(Source::TEDDY, 0) < 980);
+        assert!(TEDDY.bytes().all(|b| (0x20..=0x7E).contains(&b)));
+        assert!(BODY_FACE.width(TEDDY, 0) < 980);
     }
 }
 
@@ -417,7 +399,7 @@ pub fn draw_reader(fb: &Surface, page: &crate::mcp::DocPage) {
     );
 
     if page.denied {
-        fb.draw_text(fx, 160, Source::TEDDY, &BODY_FACE, 0, theme::MUTED);
+        fb.draw_text(fx, 160, TEDDY, &BODY_FACE, 0, theme::MUTED);
         return;
     }
     if page.count == 0 {

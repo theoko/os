@@ -185,15 +185,14 @@ fn search_tfidf(docs: &[Doc], query: &str, k: usize, cat: Option<&str>) -> Vec<(
     scored
 }
 
-fn snip(body: &str, query: &str) -> String {
-    let q = tokenize(query);
+fn snip(body: &str, q_terms: &[String]) -> String {
     let lower = body.to_lowercase();
     // `find` returns a byte offset into `lower`; that only maps back onto
     // `body` when lowercasing didn't change byte lengths. Otherwise anchor at
     // the start rather than slicing at a wrong (possibly non-boundary) offset.
     let mut best = 0usize;
     if lower.len() == body.len() {
-        for term in &q {
+        for term in q_terms {
             if let Some(i) = lower.find(term) {
                 best = i;
                 break;
@@ -266,6 +265,7 @@ pub fn query_all(
         hits.truncate(k);
     }
     let n = hits.len();
+    let q_terms = tokenize(q);
     let rows = hits.into_iter().map(|(score, i)| {
         let d = &docs[i];
         format!(
@@ -273,7 +273,7 @@ pub fn query_all(
             sanitize(&d.t),
             sanitize(&d.c),
             score,
-            sanitize(&snip(&d.b, q)),
+            sanitize(&snip(&d.b, &q_terms)),
             sanitize(&d.u)
         )
     });

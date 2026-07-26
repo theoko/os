@@ -21,7 +21,7 @@ pub(crate) struct Glyph {
 }
 
 /// A single size+weight cut.
-pub struct Face {
+pub(crate) struct Face {
     pub(crate) glyphs: &'static [Glyph],
     pub(crate) bitmap: &'static [u8],
     pub(crate) ascent: i32,

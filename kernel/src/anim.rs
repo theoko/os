@@ -85,8 +85,9 @@ mod tests {
     #[test]
     fn ease_is_monotonic() {
         let mut prev = -1;
-        for i in 0..=32 {
-            let v = ease_out_cubic(i * ONE / 32);
+        for i in 0..=64 {
+            let v = ease_out_cubic(i * ONE / 64);
+            assert!((0..=ONE).contains(&v), "overshoot at {i}: {v}");
             assert!(v >= prev, "eased curve went backwards at {i}");
             prev = v;
         }
@@ -104,14 +105,6 @@ mod tests {
     fn ease_clamps_out_of_range_input() {
         assert_eq!(ease_out_cubic(-ONE), 0);
         assert_eq!(ease_out_cubic(3 * ONE), ONE);
-    }
-
-    #[test]
-    fn ease_never_overshoots() {
-        for i in 0..=64 {
-            let v = ease_out_cubic(i * ONE / 64);
-            assert!((0..=ONE).contains(&v), "overshoot at {i}: {v}");
-        }
     }
 
     #[test]

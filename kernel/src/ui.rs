@@ -422,13 +422,8 @@ mod tests {
         assert_eq!(fmt_n_label(&mut b, 3, "messages"), "3 messages");
         let mut b = [0u8; 16];
         assert_eq!(fmt_n_label(&mut b, 4, "Granted"), "4 Granted");
-    }
-
-    #[test]
-    fn count_cannot_overflow_its_buffer() {
         let mut b = [0u8; 16];
-        let s = fmt_n_label(&mut b, 99, "Playbooks");
-        assert!(s.len() <= 16);
+        assert!(fmt_n_label(&mut b, 99, "Playbooks").len() <= 16);
     }
 
     #[test]
