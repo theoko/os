@@ -19,23 +19,23 @@ pub struct Doc {
     pub cat: &'static str,
     pub url: &'static str,
     /// PageRank, 0..1024.
-    pub pr_q10: i32,
+    pr_q10: i32,
 }
 
 /// A vocabulary entry pointing into [`POSTINGS`].
-pub struct Term {
-    pub word: &'static str,
+struct Term {
+    word: &'static str,
     /// Inverse document frequency, Q16.
-    pub idf_q16: i64,
-    pub start: usize,
-    pub len: usize,
+    idf_q16: i64,
+    start: usize,
+    len: usize,
 }
 
 /// One (document, weight) pair for a term.
-pub struct Posting {
-    pub doc: usize,
+struct Posting {
+    doc: usize,
     /// Length-normalised term frequency, Q16.
-    pub tf_q16: i64,
+    tf_q16: i64,
 }
 
 include!(concat!(env!("OUT_DIR"), "/corpus.rs"));

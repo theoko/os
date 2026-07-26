@@ -8,6 +8,7 @@ use crate::caps::Caps;
 use crate::fb::Surface;
 use crate::font::{BODY_FACE, BRAND_FACE, BTN_FACE, H2_FACE, SMALL_FACE};
 use crate::mcp::{BridgeStatus, MailPeek};
+use crate::skills::SkillPeek;
 
 /// Apple-inspired light palette.
 pub mod theme {
@@ -185,7 +186,7 @@ impl HomeTargets {
 pub fn draw_home_full(
     fb: &Surface,
     mail: &MailPeek,
-    skill_count: usize,
+    skills: &SkillPeek,
     grants: Caps,
     query: &str,
 ) {
@@ -204,7 +205,7 @@ pub fn draw_home_full(
     let mut gbuf = [0u8; 16];
     let granted = fmt_n_label(&mut gbuf, grants.granted_count(), "Granted");
     let mut sbuf = [0u8; 16];
-    let playbooks = fmt_n_label(&mut sbuf, skill_count, "Playbooks");
+    let playbooks = fmt_n_label(&mut sbuf, skills.count, "Playbooks");
     let tiles: [(&str, &str); 3] = [
         ("Search", "Knowledge + Email"),
         ("Capabilities", granted),

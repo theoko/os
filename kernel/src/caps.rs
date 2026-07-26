@@ -19,7 +19,7 @@ pub enum Cap {
 }
 
 impl Cap {
-    pub const ALL: [Cap; 5] = [
+    pub(crate) const ALL: [Cap; 5] = [
         Cap::EmailSearch,
         Cap::SearchQuery,
         Cap::SkillsSave,

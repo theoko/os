@@ -94,7 +94,7 @@ impl Graph {
 
     /// Cap on retained messages. Without this the index grows forever: the
     /// mock backend alone appends a fresh row for every distinct query.
-    pub const MAX_MESSAGES: usize = 2000;
+    const MAX_MESSAGES: usize = 2000;
 
     /// Fold messages in, deduping by identity. Returns how many were new.
     ///

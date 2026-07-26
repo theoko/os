@@ -292,10 +292,10 @@ fn build_corpus(manifest_dir: &Path) -> String {
         n_vocab += 1;
     }
 
-    let _ = writeln!(out, "pub const N_TERMS: usize = {n_vocab};");
-    let _ = writeln!(out, "pub const N_POSTINGS: usize = {n_post};");
+    let _ = writeln!(out, "const N_TERMS: usize = {n_vocab};");
+    let _ = writeln!(out, "const N_POSTINGS: usize = {n_post};");
     // Sorted by BTreeMap, so the runtime can binary-search.
-    let _ = writeln!(out, "pub static TERMS: [Term; N_TERMS] = [\n{vocab}];");
-    let _ = writeln!(out, "pub static POSTINGS: [Posting; N_POSTINGS] = [\n{postings}];");
+    let _ = writeln!(out, "static TERMS: [Term; N_TERMS] = [\n{vocab}];");
+    let _ = writeln!(out, "static POSTINGS: [Posting; N_POSTINGS] = [\n{postings}];");
     out
 }

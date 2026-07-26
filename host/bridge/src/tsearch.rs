@@ -214,12 +214,11 @@ impl Index {
             .map(|i| &self.terms[i])
     }
 
-    /// Score `query`, returning `(score, doc_index)` best-first.
+    /// Score pre-tokenized query terms, returning `(score, doc_index)` best-first.
     ///
     /// Mirrors the built-in scorer: tf-idf blended with PageRank, plus the
     /// exact-AND bonus for documents carrying every query term.
-    pub fn search(&self, query: &str, k: usize) -> Vec<(f64, usize)> {
-        let q = crate::search::tokenize(query);
+    pub fn search_tokens(&self, q: &[String], k: usize) -> Vec<(f64, usize)> {
         if q.is_empty() || self.terms.is_empty() {
             return Vec::new();
         }
@@ -227,7 +226,7 @@ impl Index {
         let mut score: HashMap<usize, f64> = HashMap::new();
         let mut hits: HashMap<usize, usize> = HashMap::new();
         let mut seen = 0usize;
-        for w in &q {
+        for w in q {
             let Some(t) = self.find(w) else { continue };
             seen += 1;
             for &(doc, tf) in &self.postings[t.start..t.start + t.len] {

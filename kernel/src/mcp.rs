@@ -60,13 +60,13 @@ struct SearchHit {
 /// Callers must hold [`crate::caps::Cap::SearchQuery`] before calling
 /// [`fetch_search_peek`]; the cap gate lives in the UI, not here.
 pub(crate) struct SearchPeek {
-    pub status: BridgeStatus,
-    pub count: usize,
+    pub(crate) status: BridgeStatus,
+    pub(crate) count: usize,
     hits: [SearchHit; crate::search::MAX_HITS],
 }
 
 impl SearchPeek {
-    pub const fn empty(status: BridgeStatus) -> Self {
+    const fn empty(status: BridgeStatus) -> Self {
         const EMPTY: SearchHit = SearchHit { title: [0; 48], url: [0; 72] };
         Self {
             status,

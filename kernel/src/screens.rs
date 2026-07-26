@@ -167,6 +167,13 @@ mod tests {
     }
 
     #[test]
+    fn back_target_is_clickable_sized() {
+        let b = back_rect();
+        let (w, h) = (b.w, b.h);
+        assert!(w >= 44 && h >= 24, "back target too small to hit");
+    }
+
+    #[test]
     fn all_rows_fit_a_768_screen() {
         let n = BUILTIN.len().min(6).max(Cap::ALL.len());
         let r = row_rect(1024, n - 1);

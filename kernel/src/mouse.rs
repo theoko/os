@@ -139,7 +139,7 @@ impl Mouse {
     }
 
     /// Absolute tablet report in 0..=32767 → screen pixels on this mouse.
-    pub fn apply_abs(&mut self, ax: i32, ay: i32, buttons: u8) -> bool {
+    pub(crate) fn apply_abs(&mut self, ax: i32, ay: i32, buttons: u8) -> bool {
         let ax = ax.clamp(0, 32767);
         let ay = ay.clamp(0, 32767);
         let nx = ((ax * (self.screen_w - 1)) / 32767).clamp(0, self.screen_w.saturating_sub(1));

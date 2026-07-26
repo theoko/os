@@ -12,7 +12,7 @@ use std::path::PathBuf;
 
 /// On-disk / HTTP corpus shell around `{t,u,c,b,pr}` documents.
 #[derive(Debug, Deserialize)]
-pub struct CorpusFile {
+pub(crate) struct CorpusFile {
     #[serde(default)]
     pub docs: Vec<Doc>,
     #[serde(default)]
@@ -135,8 +135,12 @@ pub(crate) fn tokenize(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn search_tfidf(docs: &[Doc], query: &str, k: usize, cat: Option<&str>) -> Vec<(f64, usize)> {
-    let q_terms: Vec<String> = tokenize(query);
+fn search_tfidf(
+    docs: &[Doc],
+    q_terms: &[String],
+    k: usize,
+    cat: Option<&str>,
+) -> Vec<(f64, usize)> {
     if q_terms.is_empty() || docs.is_empty() {
         return Vec::new();
     }
@@ -245,14 +249,15 @@ pub fn query_all(
     if include_email {
         docs.extend(email_docs());
     }
-    let mut hits = search_tfidf(&docs, q, k, cat);
+    let q_terms = tokenize(q);
+    let mut hits = search_tfidf(&docs, &q_terms, k, cat);
     // The big corpus is scored from its prebuilt index, then merged. Scoring it
     // inline would re-tokenise 12k documents on every keystroke.
     // Empty teddy index: `search` returns nothing; merge is a no-op.
     if cat.is_none() {
         let teddy = crate::tsearch::index();
         let tdocs = crate::tsearch::docs();
-        for (score, i) in teddy.search(q, k) {
+        for (score, i) in teddy.search_tokens(&q_terms, k) {
             let mut d = tdocs[i].clone();
             if d.c.is_empty() {
                 d.c = "teddy".into();
@@ -265,7 +270,6 @@ pub fn query_all(
         hits.truncate(k);
     }
     let n = hits.len();
-    let q_terms = tokenize(q);
     let rows = hits.into_iter().map(|(score, i)| {
         let d = &docs[i];
         format!(
@@ -287,7 +291,8 @@ mod tests {
     #[test]
     fn finds_mcp_docs() {
         let docs = load_docs().expect("corpus");
-        let hits = search_tfidf(&docs, "capability ambient root", 5, None);
+        let q = tokenize("capability ambient root");
+        let hits = search_tfidf(&docs, &q, 5, None);
         assert!(!hits.is_empty());
         let top = &docs[hits[0].1];
         assert!(
