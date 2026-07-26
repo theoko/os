@@ -211,21 +211,15 @@ impl DocPage {
     pub(crate) fn line_at(&self, i: usize) -> &str {
         str_at(&self.lines[i])
     }
-
-    /// Stamp the search-hit title (not sent on the wire).
-    pub fn titled(mut self, title: &str) -> Self {
-        copy_field(&mut self.title, title);
-        self
-    }
 }
 
 /// Read a document the search results pointed at.
 ///
 /// The same grants are sent as for the query, because the bridge checks scope
 /// per source: a caller that could not have found a document must not be able
-/// to read it by knowing its URL. Stamp the display title with [`DocPage::titled`].
-pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
-    when_online(DocPage::empty(BridgeStatus::Offline), |com2, line| {
+/// to read it by knowing its URL. `title` is the search-hit label (not on the wire).
+pub fn fetch_doc(caps: crate::caps::Caps, url: &str, title: &str) -> DocPage {
+    let mut page = when_online(DocPage::empty(BridgeStatus::Offline), |com2, line| {
         com2.write_str("CALL doc.read url=");
         com2.write_str(url);
         com2.write_str(" lines=");
@@ -244,7 +238,9 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
             true
         });
         page
-    })
+    });
+    copy_field(&mut page.title, title);
+    page
 }
 
 /// Ask the bridge to delete what a revoked capability produced.
@@ -268,7 +264,10 @@ pub fn forget(tool: &str) {
 /// `fetch_mail_peek` there would read — and, since the bridge indexes results,
 /// *persist* — the inbox before anyone agreed to it.
 pub fn probe_bridge() -> BridgeStatus {
-    when_online(BridgeStatus::Offline, |_, _| BridgeStatus::Online)
+    let mut line = [0u8; LINE_BUF];
+    let com2 = Serial::com2();
+    com2.init();
+    ping_bridge(&com2, &mut line)
 }
 
 /// List playbooks via `CALL skills.list`. Offline → builtins baked into the ISO.

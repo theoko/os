@@ -272,7 +272,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     }
                                     None => {}
                                 }
-                            } else if screens::back_hit(mice.x, mice.y) {
+                            } else if screens::back_rect().contains(mice.x, mice.y) {
                                 // Back from the reader returns to results.
                                 view = if view == screens::View::Reader {
                                     screens::View::Search
@@ -283,7 +283,7 @@ unsafe extern "C" fn kmain() -> ! {
                             } else if view == screens::View::Search {
                                 if let Some(i) = sview.hit(w, mice.x, mice.y) {
                                     let (title, url) = sview.at(i);
-                                    page = mcp::fetch_doc(setup.caps, url).titled(title);
+                                    page = mcp::fetch_doc(setup.caps, url, title);
                                     view = screens::View::Reader;
                                     serial_port.write_str("ui: open doc\n");
                                     dirty = true;

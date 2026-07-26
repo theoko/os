@@ -177,8 +177,8 @@ const ROW_H: i32 = 64;
 
 /// Geometry shared by the renderer and hit-testing.
 fn field_rect(w: i32) -> crate::ui::Rect {
-    let (x, cw) = screens::column(w);
-    crate::ui::Rect::new(x, 150, cw, crate::ui::FIELD_H)
+    let (x, cw) = crate::ui::content_column(w, screens::CONTENT_MAX);
+    crate::ui::Rect::new(x, crate::ui::LIST_TOP, cw, crate::ui::FIELD_H)
 }
 
 /// Bounding box of result row `i`, shared by drawing and hit-testing.
@@ -344,7 +344,7 @@ pub fn draw_reader(fb: &Surface, page: &crate::mcp::DocPage) {
     let h = fb.height() as i32;
     screens::chrome(fb, None);
 
-    let fx = screens::column(w).0;
+    let fx = crate::ui::content_column(w, screens::CONTENT_MAX).0;
     fb.draw_text(
         fx,
         108,

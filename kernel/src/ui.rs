@@ -33,6 +33,8 @@ pub(crate) const NAV_H: i32 = 56;
 
 /// Search field height on Home and Search.
 pub(crate) const FIELD_H: i32 = 52;
+/// Top of the Search field / Skills·Caps list column.
+pub(crate) const LIST_TOP: i32 = 150;
 /// Shared horizontal page margin.
 pub(crate) const PAD_X: i32 = 28;
 const CONTENT_MAX: i32 = 920;

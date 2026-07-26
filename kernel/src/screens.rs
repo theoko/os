@@ -28,29 +28,19 @@ pub enum View {
 }
 
 /// Column width cap for Skills / Caps / Search (home uses a wider max).
-const CONTENT_MAX: i32 = 720;
+pub(crate) const CONTENT_MAX: i32 = 720;
 const ROW_H: i32 = 62;
 const ROW_GAP: i32 = 8;
-const TOP: i32 = 150;
 
 /// Back affordance used by Skills, Caps, Search, and Reader.
-fn back_rect() -> ui::Rect {
+pub(crate) fn back_rect() -> ui::Rect {
     ui::Rect::new(PAD_X, (NAV_H - 24) / 2, 72, 28)
-}
-
-/// Whether `(x, y)` hits the shared Back control.
-pub fn back_hit(x: i32, y: i32) -> bool {
-    back_rect().contains(x, y)
-}
-
-pub(crate) fn column(w: i32) -> (i32, i32) {
-    ui::content_column(w, CONTENT_MAX)
 }
 
 /// Bounding box of row `i`, for both drawing and hit-testing.
 fn row_rect(w: i32, i: usize) -> ui::Rect {
-    let (x, cw) = column(w);
-    ui::Rect::new(x, TOP + i as i32 * (ROW_H + ROW_GAP), cw, ROW_H)
+    let (x, cw) = ui::content_column(w, CONTENT_MAX);
+    ui::Rect::new(x, ui::LIST_TOP + i as i32 * (ROW_H + ROW_GAP), cw, ROW_H)
 }
 
 /// Which capability row contains this point, if any.
@@ -94,7 +84,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
         ui::draw_titled_row(fb, row_rect(w, i), peek.name_at(i), peek.subtitle_at(i));
     }
 
-    let (x, _) = column(w);
+    let (x, _) = ui::content_column(w, CONTENT_MAX);
     // Boot / fetch always leave at least the ISO builtins, so the empty case
     // never reaches the screen.
     let note = if peek.from_bridge {
@@ -104,7 +94,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
     };
     fb.draw_text(
         x,
-        TOP + n as i32 * (ROW_H + ROW_GAP) + 26,
+        ui::LIST_TOP + n as i32 * (ROW_H + ROW_GAP) + 26,
         note,
         &SMALL_FACE,
         0,
@@ -124,10 +114,10 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
         ui::draw_switch_in_row(fb, r, on);
     }
 
-    let (x, _) = column(w);
+    let (x, _) = ui::content_column(w, CONTENT_MAX);
     fb.draw_text(
         x,
-        TOP + Cap::ALL.len() as i32 * (ROW_H + ROW_GAP) + 26,
+        ui::LIST_TOP + Cap::ALL.len() as i32 * (ROW_H + ROW_GAP) + 26,
         "Tap a row to grant or revoke. Takes effect immediately.",
         &SMALL_FACE,
         0,
@@ -165,7 +155,7 @@ mod tests {
         // Left of the column.
         assert_eq!(caps_hit(1024, 2, y + h / 2), None);
         // Above the first row.
-        assert_eq!(caps_hit(1024, 512, TOP - 5), None);
+        assert_eq!(caps_hit(1024, 512, ui::LIST_TOP - 5), None);
     }
 
     #[test]
