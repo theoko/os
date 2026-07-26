@@ -220,22 +220,43 @@ pub fn draw_home(
 }
 
 /// `"N label"` into a caller-owned buffer (digits + space + label).
+///
+/// Full decimal (not two-digit truncation) — gog mail peeks can exceed 99.
+/// Caps `n` only when digits would not fit beside the label in `buf`.
 fn fmt_n_label<'a>(buf: &'a mut [u8; 16], n: usize, label: &str) -> &'a str {
-    let mut i = 0;
-    if n >= 10 {
-        buf[i] = b'0' + ((n / 10) % 10) as u8;
-        i += 1;
+    let lab = label.as_bytes();
+    let lab_n = lab.len().min(buf.len().saturating_sub(2));
+    let dig_room = buf.len() - 1 - lab_n;
+
+    let mut lim = 1usize;
+    for _ in 0..dig_room {
+        lim = lim.saturating_mul(10);
     }
-    buf[i] = b'0' + (n % 10) as u8;
-    i += 1;
-    buf[i] = b' ';
-    i += 1;
-    for &b in label.as_bytes() {
-        if i < buf.len() {
-            buf[i] = b;
-            i += 1;
+    let n = n.min(lim.saturating_sub(1));
+
+    let mut tmp = [0u8; 20];
+    let mut v = n;
+    let mut t = tmp.len();
+    if v == 0 {
+        t -= 1;
+        tmp[t] = b'0';
+    } else {
+        while v > 0 {
+            t -= 1;
+            tmp[t] = b'0' + (v % 10) as u8;
+            v /= 10;
         }
     }
+
+    let mut i = 0;
+    for &b in &tmp[t..] {
+        buf[i] = b;
+        i += 1;
+    }
+    buf[i] = b' ';
+    i += 1;
+    buf[i..i + lab_n].copy_from_slice(&lab[..lab_n]);
+    i += lab_n;
     core::str::from_utf8(&buf[..i]).unwrap_or("")
 }
 
@@ -428,6 +449,10 @@ mod tests {
         assert_eq!(fmt_n_label(&mut b, 3, "messages"), "3 messages");
         let mut b = [0u8; 16];
         assert_eq!(fmt_n_label(&mut b, 4, "Granted"), "4 Granted");
+        let mut b = [0u8; 16];
+        assert_eq!(fmt_n_label(&mut b, 100, "messages"), "100 messages");
+        let mut b = [0u8; 16];
+        assert_eq!(fmt_n_label(&mut b, 247, "messages"), "247 messages");
         let mut b = [0u8; 16];
         assert!(fmt_n_label(&mut b, 99, "Playbooks").len() <= 16);
     }
