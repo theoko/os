@@ -55,7 +55,7 @@ const MAX_ZONES: usize = 12;
 
 pub struct Setup {
     pub step: Step,
-    pub caps: [bool; Cap::ALL.len()],
+    pub caps: Caps,
     zones: [Zone; MAX_ZONES],
     n_zones: usize,
     /// Edge detection: a held button must not advance every frame.
@@ -67,8 +67,8 @@ impl Setup {
         Self {
             step: Step::Welcome,
             // Read-only tools on; anything that writes to disk or reaches
-            // personal files is opt-in, matching the "no ambient root" rule.
-            caps: [true, true, false, false, false],
+            // personal files is opt-in — see Caps::default_grants.
+            caps: Caps::default_grants(),
             zones: [Zone {
                 rect: ui::Rect::new(0, 0, 0, 0),
                 action: Action::Continue,
@@ -80,7 +80,7 @@ impl Setup {
 
     /// Grant set chosen on the Capabilities step.
     pub fn grants(&self) -> Caps {
-        Caps::from_bools(&self.caps)
+        self.caps
     }
 
     pub fn is_finished(&self) -> bool {
@@ -152,8 +152,8 @@ impl Setup {
             }
             Action::Row(i) => match self.step {
                 Step::Capabilities => {
-                    if i < Cap::ALL.len() {
-                        self.caps[i] = !self.caps[i];
+                    if let Some(&cap) = Cap::ALL.get(i) {
+                        self.caps.set(cap, !self.caps.allows(cap));
                         return true;
                     }
                     false
@@ -287,7 +287,7 @@ impl Setup {
             fb,
             x + cw - pad - ui::SWITCH_W,
             y + (ROW_H - ui::SWITCH_H) / 2,
-            self.caps[i],
+            self.caps.allows(Cap::ALL[i]),
         );
         self.push_zone(x, y, cw, ROW_H, Action::Row(i));
     }
@@ -402,28 +402,19 @@ mod tests {
     fn capability_rows_toggle_both_ways() {
         let mut s = setup();
         s.step = Step::Capabilities;
-        let before = s.caps[2];
+        let cap = Cap::ALL[2];
+        let before = s.caps.allows(cap);
         s.apply(Action::Row(2));
-        assert_ne!(s.caps[2], before);
+        assert_ne!(s.caps.allows(cap), before);
         s.apply(Action::Row(2));
-        assert_eq!(s.caps[2], before);
+        assert_eq!(s.caps.allows(cap), before);
     }
 
     #[test]
     fn skills_write_is_off_by_default() {
         // "No ambient root" - granting disk writes must be a deliberate act.
         let s = setup();
-        assert!(!s.caps[Cap::SkillsSave.index()]);
-    }
-
-    #[test]
-    fn grants_match_cap_module() {
-        let s = setup();
-        let g = s.grants();
-        assert_eq!(CAP_BLURBS.len(), Cap::ALL.len());
-        for (i, cap) in Cap::ALL.iter().enumerate() {
-            assert_eq!(s.caps[i], g.allows(*cap));
-        }
+        assert!(!s.caps.allows(Cap::SkillsSave));
     }
 
     #[test]
@@ -559,9 +550,10 @@ mod layout_tests {
         let mut s = Setup::new();
         s.step = Step::Capabilities;
         for i in 0..Cap::ALL.len() {
-            let before = s.caps[i];
+            let cap = Cap::ALL[i];
+            let before = s.caps.allows(cap);
             assert!(s.apply(Action::Row(i)), "row {i} did nothing");
-            assert_ne!(s.caps[i], before, "row {i} did not toggle");
+            assert_ne!(s.caps.allows(cap), before, "row {i} did not toggle");
         }
     }
 
