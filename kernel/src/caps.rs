@@ -39,7 +39,7 @@ impl Cap {
     }
 
     /// One-line UI blurb for setup / Capabilities rows.
-    pub const fn blurb(self) -> &'static str {
+    pub(crate) const fn blurb(self) -> &'static str {
         match self {
             Cap::EmailSearch => "Read the inbox through the host bridge",
             Cap::SearchQuery => "Query the built-in knowledge corpus",
@@ -50,7 +50,7 @@ impl Cap {
     }
 
     /// Bridge tool that purges what this grant produced, if any.
-    pub const fn forget_tool(self) -> Option<&'static str> {
+    pub(crate) const fn forget_tool(self) -> Option<&'static str> {
         match self {
             Cap::WorkspaceIndex => Some("workspace.forget"),
             Cap::AudioTranscribe => Some("audio.forget"),

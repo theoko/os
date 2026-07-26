@@ -605,7 +605,6 @@ mod tests {
         let r = email_search_mock("in:inbox", 2);
         assert_eq!(r[0], "OK email.search");
         assert_eq!(r.iter().filter(|l| l.starts_with("ROW ")).count(), 2);
-        assert!(r.iter().any(|l| l.starts_with("ROW ")));
         assert_eq!(r.last().map(String::as_str), Some("END"));
     }
 
@@ -622,14 +621,14 @@ mod tests {
     #[test]
     fn dispatch_skills_list() {
         let r = dispatch("CALL skills.list");
-        assert!(r[0].starts_with("OK skills.list"));
+        assert_eq!(r[0], "OK skills.list");
         assert!(r.iter().any(|l| l.contains("email-triage")));
     }
 
     #[test]
     fn dispatch_search_query() {
         let r = dispatch("CALL search.query q=capability k=3");
-        assert!(r[0].starts_with("OK search.query"), "{r:?}");
+        assert_eq!(r[0], "OK search.query");
         assert!(r.iter().any(|l| l.starts_with("ROW ")));
         assert_eq!(r.last().map(String::as_str), Some("END"));
     }

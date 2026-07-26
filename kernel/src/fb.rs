@@ -10,11 +10,11 @@ use core::cell::Cell;
 use crate::font::Face;
 
 /// Page colour (Apple light grey) — full-screen fills and slide entrances.
-pub const PAGE_BG: u32 = 0x00F5_F5F7;
+pub(crate) const PAGE_BG: u32 = 0x00F5_F5F7;
 /// Cards / knobs / cursor keyline — pure white (`ui::theme::SURFACE`).
-pub const SURFACE: u32 = 0x00FF_FFFF;
+pub(crate) const SURFACE: u32 = 0x00FF_FFFF;
 /// Accent / primary action (`ui::theme::ACCENT`).
-pub const ACCENT: u32 = 0x0000_71E3;
+pub(crate) const ACCENT: u32 = 0x0000_71E3;
 
 /// Accept only 32-bit XRGB8888 with a sane pitch — Surface and Screen share this.
 fn mode_ok(width: u64, height: u64, pitch: u64, bpp: u16, mask_shifts: (u8, u8, u8)) -> bool {
