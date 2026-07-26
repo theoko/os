@@ -135,7 +135,6 @@ fn rasterize(data: &[u8], style: &Style, out: &mut String) -> String {
 
     let ascent = scaled.ascent();
     let descent = scaled.descent();
-    let line_gap = scaled.line_gap();
 
     let mut bitmap: Vec<u8> = Vec::new();
     let mut metrics = Vec::with_capacity(COUNT);
@@ -194,10 +193,9 @@ fn rasterize(data: &[u8], style: &Style, out: &mut String) -> String {
     let _ = writeln!(
         out,
         "pub static {face}: Face = Face {{ glyphs: &{n}_GLYPHS, bitmap: &{n}_BITMAP, \
-         ascent: {}, descent: {}, line: {}, px: {} }};\n",
+         ascent: {}, descent: {}, px: {} }};\n",
         ascent.round() as i32,
         descent.round() as i32,
-        (ascent - descent + line_gap).round() as i32,
         style.px.round() as i32,
     );
     face
@@ -247,7 +245,7 @@ fn build_corpus(manifest_dir: &Path) -> String {
     let n = docs.len();
     let _ = writeln!(out, "pub const N_DOCS: usize = {n};");
     out.push_str("pub static DOCS: [Doc; N_DOCS] = [\n");
-    for (i, d) in docs.iter().enumerate() {
+    for d in docs.iter() {
         let esc = |k: &str| -> String {
             d[k].as_str().unwrap_or("").replace('\\', "\\\\").replace('"', "\\\"")
         };
@@ -255,8 +253,8 @@ fn build_corpus(manifest_dir: &Path) -> String {
         let pr = (d["pr"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0) * 1024.0).round() as i32;
         let _ = writeln!(
             out,
-            "  Doc {{ title: \"{}\", cat: \"{}\", url: \"{}\", pr_q10: {pr}, n_tokens: {} }},",
-            esc("t"), esc("c"), esc("u"), doc_tokens[i].len().max(1)
+            "  Doc {{ title: \"{}\", cat: \"{}\", url: \"{}\", pr_q10: {pr} }},",
+            esc("t"), esc("c"), esc("u")
         );
     }
     out.push_str("];\n");

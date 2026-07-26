@@ -130,7 +130,7 @@ pub fn draw_query_field(
     let Rect { x, y, w, h } = r;
     outlined_round_rect(fb, r, 12);
     let tx = x + 18;
-    let base = y + (h - BODY_FACE.px) / 2 + BODY_FACE.baseline();
+    let base = y + (h - BODY_FACE.px) / 2 + BODY_FACE.ascent;
     let badge_w = badge.map(|b| SMALL_FACE.width(b, 0) + 18).unwrap_or(0);
     if query.is_empty() {
         fb.draw_text(tx, base, placeholder, &BODY_FACE, 0, theme::MUTED);
@@ -139,7 +139,7 @@ pub fn draw_query_field(
     }
     if let Some(badge) = badge {
         let bx = x + w - 18 - SMALL_FACE.width(badge, 0);
-        let bbase = y + (h - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
+        let bbase = y + (h - SMALL_FACE.px) / 2 + SMALL_FACE.ascent;
         fb.draw_text(bx, bbase, badge, &SMALL_FACE, 0, theme::MUTED);
     }
     let cx = (tx + BODY_FACE.width(query, 0) + 2).min(x + w - badge_w - 8);
@@ -280,12 +280,12 @@ fn connect_rect(w: i32) -> Rect {
 
 fn draw_nav(fb: &Surface, status: BridgeStatus) {
     let w = fb.width() as i32;
-    let base = (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline();
+    let base = (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.ascent;
     fb.draw_text(PAD_X, base, "os", &BRAND_FACE, 0, theme::INK);
 
     let cr = connect_rect(w);
     fb.fill_round_rect(cr.x, cr.y, cr.w, cr.h, cr.h / 2, theme::ACCENT);
-    let cbase = cr.y + (cr.h - BTN_FACE.px) / 2 + BTN_FACE.baseline();
+    let cbase = cr.y + (cr.h - BTN_FACE.px) / 2 + BTN_FACE.ascent;
     fb.draw_text_centered(cr.x + cr.w / 2, cbase, "Connect", &BTN_FACE, 0, theme::SURFACE);
 
     let label = "Bridge";
@@ -298,7 +298,7 @@ fn draw_nav(fb: &Surface, status: BridgeStatus) {
     let dot_d = 7;
     let cluster_w = dot_d + 6 + tw;
     let cluster_x = cr.x - gap - cluster_w;
-    let sbase = (NAV_H - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
+    let sbase = (NAV_H - SMALL_FACE.px) / 2 + SMALL_FACE.ascent;
     fb.fill_round_rect(
         cluster_x,
         NAV_H / 2 - dot_d / 2,

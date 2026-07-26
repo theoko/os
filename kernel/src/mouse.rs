@@ -105,7 +105,7 @@ fn mouse_expect_ack() -> bool {
 pub struct Mouse {
     pub x: i32,
     pub y: i32,
-    pub buttons: u8,
+    buttons: u8,
     pub present: bool,
     screen_w: i32,
     screen_h: i32,

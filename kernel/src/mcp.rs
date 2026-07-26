@@ -49,7 +49,7 @@ pub struct SearchPeek {
     pub status: BridgeStatus,
     pub denied: bool,
     pub count: usize,
-    hits: [SearchHit; 3],
+    hits: [SearchHit; crate::search::MAX_HITS],
 }
 
 impl SearchPeek {
@@ -59,7 +59,7 @@ impl SearchPeek {
             status,
             denied,
             count: 0,
-            hits: [EMPTY; 3],
+            hits: [EMPTY; crate::search::MAX_HITS],
         }
     }
 

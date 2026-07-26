@@ -26,8 +26,6 @@ pub struct Face {
     pub bitmap: &'static [u8],
     pub ascent: i32,
     pub descent: i32,
-    /// Default line height (ascent - descent + gap).
-    pub line: i32,
     pub px: i32,
 }
 
@@ -68,11 +66,6 @@ impl Face {
     /// Width of `text` in whole px.
     pub fn width(&self, text: &str, tracking64: i32) -> i32 {
         (self.width64(text, tracking64) + 32) >> 6
-    }
-
-    /// Distance from the top of a line box to the baseline.
-    pub fn baseline(&self) -> i32 {
-        self.ascent
     }
 }
 

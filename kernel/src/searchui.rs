@@ -113,14 +113,9 @@ impl SearchView {
         }
     }
 
-    /// Run `q` against the in-kernel index only.
-    ///
-    /// The baked corpus is a handful of documents about the OS itself, so a
-    /// question about the user's own work legitimately finds nothing here.
-    fn run(&mut self, q: &str) {
-        self.searched = true;
+    /// Load baked-index hits for `q` into `rows` (does not touch `source`).
+    fn fill_local(&mut self, q: &str) {
         self.count = 0;
-        self.source = Source::offline();
         if q.trim().is_empty() {
             return;
         }
@@ -131,6 +126,16 @@ impl SearchView {
             self.rows[self.count].set(d.title, d.url, d.cat);
             self.count += 1;
         }
+    }
+
+    /// Run `q` against the in-kernel index only.
+    ///
+    /// The baked corpus is a handful of documents about the OS itself, so a
+    /// question about the user's own work legitimately finds nothing here.
+    fn run(&mut self, q: &str) {
+        self.searched = true;
+        self.source = Source::offline();
+        self.fill_local(q);
     }
 
     /// Ask the bridge first, fall back to the baked index when it is down.
@@ -163,7 +168,7 @@ impl SearchView {
         }
         if self.count == 0 {
             // Nothing from the bridge: try what we shipped with.
-            self.run(q);
+            self.fill_local(q);
         }
         self.source = source;
     }

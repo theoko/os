@@ -203,13 +203,11 @@ impl Setup {
                 "Markdown playbooks the agent can load. Editable later."
             },
         );
-        let cw = CONTENT_W.min(w - 80);
-        let x = (w - cw) / 2;
         let mut y = top;
         for i in 0..skills.count.min(4) {
             ui::draw_titled_row(
                 fb,
-                ui::Rect::new(x, y, cw, ROW_H),
+                content_rect(w, y, ROW_H),
                 skills.name_at(i),
                 skills.subtitle_at(i),
             );
@@ -249,30 +247,24 @@ impl Setup {
 
     /// Capability toggle at index `i`: titled row + switch + hit zone.
     fn cap_row(&mut self, fb: &Surface, y: i32, i: usize) {
-        let w = fb.width() as i32;
-        let cw = CONTENT_W.min(w - 80);
-        let x = (w - cw) / 2;
-        let r = ui::Rect::new(x, y, cw, ROW_H);
+        let r = content_rect(fb.width() as i32, y, ROW_H);
         ui::draw_titled_row(fb, r, Cap::ALL[i].name(), CAP_BLURBS[i]);
         ui::draw_switch_in_row(fb, r, self.caps.allows(Cap::ALL[i]));
         self.push_zone(r, Action::Row(i));
     }
 
     fn status_card(&mut self, fb: &Surface, y: i32, status: BridgeStatus) {
-        let w = fb.width() as i32;
         let (detail, tint) = match status {
             BridgeStatus::Online => ("Connected on COM2", theme::ONLINE),
             BridgeStatus::Offline => (crate::mcp::BRIDGE_OFFLINE_HINT, theme::OFFLINE),
         };
-        let cw = CONTENT_W.min(w - 80);
-        let x = (w - cw) / 2;
-        let r = ui::Rect::new(x, y, cw, ROW_H + 8);
+        let r = content_rect(fb.width() as i32, y, ROW_H + 8);
         ui::outlined_round_rect(fb, r, 10);
         let pad = 18;
         let d = 9;
-        fb.fill_round_rect(x + pad, y + (ROW_H + 8 - d) / 2, d, d, d / 2, tint);
-        fb.draw_text(x + pad + d + 12, y + 26, "Host bridge", &BRAND_FACE, 0, theme::INK);
-        fb.draw_text(x + pad + d + 12, y + 46, detail, &SMALL_FACE, 0, theme::MUTED);
+        fb.fill_round_rect(r.x + pad, y + (ROW_H + 8 - d) / 2, d, d, d / 2, tint);
+        fb.draw_text(r.x + pad + d + 12, y + 26, "Host bridge", &BRAND_FACE, 0, theme::INK);
+        fb.draw_text(r.x + pad + d + 12, y + 46, detail, &SMALL_FACE, 0, theme::MUTED);
     }
 
     /// Primary pill, centred, registering a Continue zone.
@@ -282,7 +274,7 @@ impl Setup {
         let bw = (BTN_FACE.width(label, 0) + pad * 2).max(180);
         let x = w / 2 - bw / 2;
         fb.fill_round_rect(x, y, bw, CTA_H, CTA_H / 2, theme::ACCENT);
-        let base = y + (CTA_H - BTN_FACE.px) / 2 + BTN_FACE.baseline() - 2;
+        let base = y + (CTA_H - BTN_FACE.px) / 2 + BTN_FACE.ascent - 2;
         fb.draw_text_centered(w / 2, base, label, &BTN_FACE, 0, theme::SURFACE);
         self.push_zone(ui::Rect::new(x, y, bw, CTA_H), Action::Continue);
     }
@@ -292,7 +284,7 @@ impl Setup {
         let label = "Go Back";
         let tw = BTN_FACE.width(label, 0);
         let x = w / 2 - tw / 2;
-        fb.draw_text(x, y + BTN_FACE.baseline(), label, &BTN_FACE, 0, theme::ACCENT);
+        fb.draw_text(x, y + BTN_FACE.ascent, label, &BTN_FACE, 0, theme::ACCENT);
         // Generous target: the text alone is a 15px-tall sliver.
         self.push_zone(
             ui::Rect::new(x - 12, y - 8, tw + 24, BTN_FACE.px + 20),
@@ -313,6 +305,11 @@ impl Setup {
 const CONTENT_W: i32 = 460;
 const ROW_H: i32 = 58;
 const CTA_H: i32 = 44;
+
+fn content_rect(w: i32, y: i32, h: i32) -> ui::Rect {
+    let cw = CONTENT_W.min(w - 80);
+    ui::Rect::new((w - cw) / 2, y, cw, h)
+}
 
 #[cfg(test)]
 mod tests {

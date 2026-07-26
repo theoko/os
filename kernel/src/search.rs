@@ -20,8 +20,6 @@ pub struct Doc {
     pub url: &'static str,
     /// PageRank, 0..1024.
     pub pr_q10: i32,
-    /// Token count, for length normalisation.
-    pub n_tokens: usize,
 }
 
 /// A vocabulary entry pointing into [`POSTINGS`].

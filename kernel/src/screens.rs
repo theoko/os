@@ -63,10 +63,10 @@ pub fn chrome(fb: &Surface, title: &str, heading: Option<&str>) {
     let w = fb.width() as i32;
     fb.fill(theme::BG);
     let back = back_rect();
-    fb.draw_text(back.x, back.y + BTN_FACE.baseline(), "Back", &BTN_FACE, 0, theme::ACCENT);
+    fb.draw_text(back.x, back.y + BTN_FACE.ascent, "Back", &BTN_FACE, 0, theme::ACCENT);
     fb.draw_text_centered(
         w / 2,
-        (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline(),
+        (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.ascent,
         title,
         &BRAND_FACE,
         0,
@@ -221,9 +221,9 @@ mod tests {
                 peek.name_at(i)
             );
             assert!(
-                SMALL_FACE.width(peek.desc_at(i), 0) < cw - 36,
+                SMALL_FACE.width(peek.subtitle_at(i), 0) < cw - 36,
                 "blurb overflows: {}",
-                peek.desc_at(i)
+                peek.subtitle_at(i)
             );
         }
     }

@@ -73,7 +73,7 @@ impl SkillPeek {
         str_at(&self.names[i])
     }
 
-    pub fn desc_at(&self, i: usize) -> &str {
+    fn desc_at(&self, i: usize) -> &str {
         str_at(&self.descs[i])
     }
 
