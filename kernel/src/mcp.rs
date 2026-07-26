@@ -31,7 +31,7 @@ pub(crate) const BRIDGE_OFFLINE_HINT: &str = bridge_offline_tip!();
 pub(crate) const NO_MATCHES_BRIDGE_OFFLINE: &str =
     concat!("No matches. ", bridge_offline_tip!());
 
-/// Inbox peek for the home status strip (row payloads are not retained).
+/// Inbox peek for the home status strip (count-only `ROW n=`; no message fields).
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum MailPeek {
     /// COM2 bridge down.
@@ -142,7 +142,7 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
             return MailPeek::Online { inbox: None };
         }
 
-        // Bridge defaults: q=in:inbox, max=GUEST_MAIL_MAX.
+        // Guest omits args; host gog defaults q=in:inbox / max=3 (mock is fixed n=).
         com2.write_str("CALL email.search\n");
 
         // One `ROW n=<count>`; missing/ERR is not an empty inbox.

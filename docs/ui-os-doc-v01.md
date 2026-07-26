@@ -27,7 +27,7 @@ when `email.search` is granted.
 
 1. Nav: brand `os` + Connect + bridge status
 2. Search field (type immediately; Enter runs Search)
-3. Three tiles with live counts
+3. Three tiles (Search static; Capabilities / Skills show live counts)
 4. Footer: inbox count, active caps, bridge status
 
 **Constraint:** proportional Inter atlas is ASCII only (`0x20..=0x7E`).

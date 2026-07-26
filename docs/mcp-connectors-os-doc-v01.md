@@ -44,7 +44,7 @@ Host → guest:
 | Response | Meaning |
 |----------|---------|
 | `OK pong` | Alive |
-| `OK email.search` / `ROW n=<count>` / `END` | Mail peek count (guest does not keep payloads) |
+| `OK email.search` / `ROW n=<count>` / `END` | Mail peek count only (no message fields on the wire) |
 | `OK search.query` / `ROW title=…\|…` / `END` | Knowledge hits |
 | `ERR <tool> <reason>` | Failure |
 
