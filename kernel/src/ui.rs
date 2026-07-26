@@ -26,8 +26,6 @@ pub mod theme {
     pub const RULE: u32 = 0x00D2_D2D7;
     /// Card / input border.
     pub const CARD_BORDER: u32 = 0x00E5_E5EA;
-    /// Accent at 6% over white — the tinted secondary pill.
-    pub const TINT_BG: u32 = 0x00F2_F8FD;
     pub const ONLINE: u32 = 0x0034_C759;
     pub const OFFLINE: u32 = 0x00FF_3B30;
 }

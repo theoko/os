@@ -214,8 +214,7 @@ impl Setup {
         );
         let mut y = top;
         for (i, cap) in Cap::ALL.iter().enumerate() {
-            let on = self.caps[i];
-            self.row(fb, w, y, cap.name(), Some(CAP_BLURBS[i]), on, true, Some(Action::Row(i)));
+            self.cap_row(fb, w, y, cap.name(), CAP_BLURBS[i], self.caps[i], Action::Row(i));
             y += ROW_H + 8;
         }
         self.footer(fb, w, h, y, true);
@@ -232,12 +231,27 @@ impl Setup {
                 "Markdown playbooks the agent can load. Editable later."
             },
         );
+        let cw = CONTENT_W.min(w - 80);
+        let x = (w - cw) / 2;
         let mut y = top;
         for i in 0..skills.count.min(4) {
             let desc = skills.desc_at(i);
-            let blurb = if desc.is_empty() { None } else { Some(desc) };
-            // Display-only — Continue advances; rows are not toggles.
-            self.row(fb, w, y, skills.name_at(i), blurb, true, false, None);
+            let sub = if desc.is_empty() {
+                if skills.from_bridge {
+                    "From host bridge"
+                } else {
+                    "Shipped with the ISO"
+                }
+            } else {
+                desc
+            };
+            ui::draw_titled_row(
+                fb,
+                ui::Rect::new(x, y, cw, ROW_H),
+                skills.name_at(i),
+                sub,
+                theme::CARD_BORDER,
+            );
             y += ROW_H + 8;
         }
         self.footer(fb, w, h, y, true);
@@ -270,64 +284,34 @@ impl Setup {
         y + 76
     }
 
-    /// A selectable row. `toggle` draws a switch instead of a checkmark.
-    /// Pass `action: None` for paint-only rows (setup Skills).
-    #[allow(clippy::too_many_arguments)]
-    fn row(
+    /// Capability toggle: titled row + switch + hit zone.
+    fn cap_row(
         &mut self,
         fb: &Surface,
         w: i32,
         y: i32,
         title: &str,
-        blurb: Option<&str>,
+        blurb: &str,
         on: bool,
-        toggle: bool,
-        action: Option<Action>,
+        action: Action,
     ) {
         let cw = CONTENT_W.min(w - 80);
         let x = (w - cw) / 2;
-
-        // Selected rows get an accent hairline; the rest a neutral one.
-        let border = if on && !toggle { theme::ACCENT } else { theme::CARD_BORDER };
-        let inner = if on && !toggle {
-            theme::TINT_BG
-        } else {
-            theme::SURFACE
-        };
-        ui::outlined_round_rect(fb, x, y, cw, ROW_H, 10, border, inner);
-
+        ui::draw_titled_row(
+            fb,
+            ui::Rect::new(x, y, cw, ROW_H),
+            title,
+            blurb,
+            theme::CARD_BORDER,
+        );
         let pad = 18;
-        let has_blurb = blurb.is_some();
-        let title_base = if has_blurb {
-            y + 24
-        } else {
-            y + ROW_H / 2 + BRAND_FACE.px / 3
-        };
-        fb.draw_text(x + pad, title_base, title, &BRAND_FACE, 0, theme::INK);
-        if let Some(b) = blurb {
-            fb.draw_text(x + pad, title_base + 20, b, &SMALL_FACE, 0, theme::MUTED);
-        }
-
-        if toggle {
-            let tx = x + cw - pad - ui::SWITCH_W;
-            let ty = y + (ROW_H - ui::SWITCH_H) / 2;
-            ui::draw_switch(fb, tx, ty, on);
-        } else if on {
-            // Selection dot.
-            let d = 10;
-            fb.fill_round_rect(
-                x + cw - pad - d,
-                y + (ROW_H - d) / 2,
-                d,
-                d,
-                d / 2,
-                theme::ACCENT,
-            );
-        }
-
-        if let Some(action) = action {
-            self.push_zone(x, y, cw, ROW_H, action);
-        }
+        ui::draw_switch(
+            fb,
+            x + cw - pad - ui::SWITCH_W,
+            y + (ROW_H - ui::SWITCH_H) / 2,
+            on,
+        );
+        self.push_zone(x, y, cw, ROW_H, action);
     }
 
     fn status_card(&mut self, fb: &Surface, w: i32, y: i32, label: &str, detail: &str, tint: u32) {
@@ -514,6 +498,8 @@ mod tests {
             "Default Skills",
             "Markdown playbooks the agent can load. Editable later.",
             "Live from the host bridge. Tap Continue when ready.",
+            "From host bridge",
+            "Shipped with the ISO",
             "You're all set.",
             "Capabilities granted. Skills loaded.",
             "Continue",
