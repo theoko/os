@@ -178,12 +178,6 @@ fn pick_top(scores: &mut [i64; N_DOCS], out: &mut [usize; MAX_HITS]) -> usize {
 mod tests {
     use super::*;
 
-    fn top(q: &str) -> Option<&'static str> {
-        let mut out = [0usize; MAX_HITS];
-        let n = query(q, &mut out);
-        (n > 0).then(|| DOCS[out[0]].title)
-    }
-
     #[test]
     fn index_is_populated() {
         assert!(N_DOCS > 0, "corpus baked empty");
@@ -223,8 +217,9 @@ mod tests {
 
     #[test]
     fn finds_a_relevant_document() {
-        let hit = top("capability ambient root");
-        assert!(hit.is_some(), "expected a hit for a corpus phrase");
+        let mut out = [0usize; MAX_HITS];
+        let n = query("capability ambient root", &mut out);
+        assert!(n > 0, "expected a hit for a corpus phrase");
     }
 
     #[test]

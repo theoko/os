@@ -89,4 +89,4 @@ UTM_VM_NAME=os-dev make utm-run
 
 ## Still use QEMU for CI
 
-`make test` / `scripts/smoke-qemu.sh` stay headless and deterministic. UTM is for interactive desktop use only.
+`make test` / `scripts/smoke_common.py` stay headless and deterministic. UTM is for interactive desktop use only.

@@ -40,7 +40,7 @@ Placed in `.requests` (see `kernel/linker-x86_64.ld`):
 ```sh
 make build   # ISO
 make run     # interactive serial
-make smoke   # non-interactive check (scripts/smoke-qemu.sh)
+make smoke   # non-interactive check (scripts/smoke_common.py)
 ```
 
 ## Linker / rustflags
