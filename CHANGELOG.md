@@ -12,13 +12,14 @@ native teddy indexing covers live corpus search. Also dropped the mock search
 backend / `OS_MCP_SEARCH_BACKEND`, folded five bridge `home()` copies into
 `paths::home`, shared the bridge tokenizer, folded setup cap names into
 `Cap::name()` (blurbs-only table), and removed the unused `skills.save`
-`call_tool` arm (socket path owns saves).
+`call_tool` arm (socket path owns saves). Dropped `skills.get` and the Skills
+row click body probe — Skills UI is list + desc only (`skills.list` / builtins).
 
 ## 0.9.1 — 2026-07-25
 
 Setup Skills and the home Skills screen list playbooks from the host bridge
-(`CALL skills.list`) over COM2. Offline still shows the ISO builtins. Clicking
-a skill row calls `skills.get` for a short body blurb in the footer.
+(`CALL skills.list`) over COM2. Offline still shows the ISO builtins. (Row
+click → `skills.get` footer blurbs shipped here; removed in 0.9.2.)
 
 ## 0.9.0 — 2026-07-25
 

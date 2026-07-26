@@ -293,8 +293,10 @@ const ROW_H: i32 = 58;
 const CTA_H: i32 = 44;
 
 fn content_rect(w: i32, y: i32, h: i32) -> ui::Rect {
-    let cw = CONTENT_W.min(w - 80);
-    ui::Rect::new((w - cw) / 2, y, cw, h)
+    // Same centering math as list chrome (`PAD_X` margins); cap stays narrow
+    // for the setup journey (list screens use `ui::CONTENT_MAX`).
+    let (x, cw) = ui::content_column(w, CONTENT_W);
+    ui::Rect::new(x, y, cw, h)
 }
 
 #[cfg(test)]
@@ -468,5 +470,15 @@ mod layout_tests {
             );
             assert!(SMALL_FACE.width(blurb, 0) < CONTENT_W - 76, "blurb hits the switch: {blurb}");
         }
+    }
+
+    #[test]
+    fn setup_column_matches_shared_content_column() {
+        // Real framebuffers are wide enough that PAD_X margins and the old
+        // w-80 shrink agree; content_rect must stay on ui::content_column.
+        let r = content_rect(1024, 200, ROW_H);
+        let (x, cw) = ui::content_column(1024, CONTENT_W);
+        assert_eq!((r.x, r.w), (x, cw));
+        assert_eq!(cw, CONTENT_W);
     }
 }
