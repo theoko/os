@@ -23,4 +23,4 @@ ranking over `{t,u,c,b,pr}` docs, exact-first ladder, no crawler in v1.
 1. `CALL search.query q=capability ambient k=5`
 2. Skim ROW title/snip/url
 3. If thin, refine query or `cat=docs`
-4. Act using the cited source (skill get, plan, etc.)
+4. Act using the cited source (plan, etc.)

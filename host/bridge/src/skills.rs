@@ -103,7 +103,7 @@ pub fn list_response() -> Vec<String> {
         // in a name cannot inject ROW fields.
         let name = sanitize(name);
         let desc = sanitize(desc);
-        // Guest only reads name/desc (`from_bridge` is COM2 reachability).
+        // Guest only reads name/desc.
         format!("ROW name={name}|desc={desc}")
     });
     crate::text::framed_ok("OK skills.list".into(), rows)

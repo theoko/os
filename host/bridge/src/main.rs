@@ -333,7 +333,9 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
                         format!("ROW field=summary|value={}", sanitize_field(&line))
                     }));
                     store.upsert(t);
-                    let _ = store.save();
+                    if let Err(e) = store.save() {
+                        return vec![format!("ERR {tool} {e}")];
+                    }
                     text::framed_ok(format!("OK {tool}"), rows)
                 }
                 Err(e) => vec![format!("ERR {tool} {e}")],

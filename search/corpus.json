@@ -1,6 +1,4 @@
 {
-  "crawled_at": "2026-07-25",
-  "source": "os curated slice — tsearch-style {t,u,c,b,pr}",
   "docs": [
     {
       "t": "os identity",
@@ -97,7 +95,7 @@
       "t": "Host MCP bridge",
       "u": "os://host/bridge",
       "c": "code",
-      "b": "Rust os-mcp-bridge. Guest COM2 listens; bridge dials TCP 7420. Mock or gog email. Skills list get save. Search over curated corpus.",
+      "b": "Rust os-mcp-bridge. Guest COM2 listens; bridge dials TCP 7420. Mock or gog email. Skills list save. Search over curated corpus.",
       "pr": 0.85
     },
     {
