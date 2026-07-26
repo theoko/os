@@ -33,12 +33,12 @@ pub(crate) const BUILTIN: &[SkillRef] = &[
     },
 ];
 
-/// Guest `Slot` / bridge `guest_slot` budgets.
+/// Guest skill-row / bridge `guest_slot` budgets.
 pub(crate) const NAME_CHARS: usize = 28;
 pub(crate) const DESC_CHARS: usize = 40;
 
-/// One skill row from `CALL skills.list` (fields private; fill via [`SkillPeek::push`]).
-pub struct Slot {
+/// One skill row (fill via [`SkillPeek::push`]).
+struct Slot {
     name: [u8; NAME_CHARS],
     desc: [u8; DESC_CHARS],
 }
@@ -49,74 +49,73 @@ const EMPTY_SLOT: Slot = Slot {
 };
 
 /// Names (+ short descs) from ISO builtins or a live bridge list.
-pub enum SkillPeek {
-    /// [`BUILTIN`] — offline / ERR fallback (not a live empty list).
-    Builtin,
-    /// Rows from `CALL skills.list` (empty list stays Listed).
-    Listed {
-        count: usize,
-        slots: [Slot; MAX_LISTED],
-    },
+///
+/// One slot buffer for both sources. `live` is true after a framed
+/// `skills.list` (including empty); false after ISO fill (offline / ERR).
+pub struct SkillPeek {
+    live: bool,
+    count: usize,
+    slots: [Slot; MAX_LISTED],
 }
 
 impl SkillPeek {
-    /// Empty listed peek ready for [`Self::push`] (bridge fill path).
-    pub(crate) fn empty() -> Self {
-        Self::Listed {
+    const fn blank(live: bool) -> Self {
+        Self {
+            live,
             count: 0,
             slots: [EMPTY_SLOT; MAX_LISTED],
         }
     }
 
-    pub(crate) fn count(&self) -> usize {
-        match self {
-            Self::Builtin => BUILTIN.len(),
-            Self::Listed { count, .. } => *count,
+    /// Empty live peek ready for [`Self::push`] (bridge fill path).
+    pub(crate) fn empty_live() -> Self {
+        Self::blank(true)
+    }
+
+    /// ISO builtins copied into slots (offline / framed ERR fallback).
+    ///
+    /// `pub` for the kernel binary (`main` is a separate crate).
+    pub fn from_builtins() -> Self {
+        let mut p = Self::blank(false);
+        for s in BUILTIN {
+            let _ = p.push(s.name, s.blurb);
         }
+        p
+    }
+
+    /// True after a framed `skills.list` (empty list stays live).
+    pub fn is_live(&self) -> bool {
+        self.live
+    }
+
+    pub(crate) fn count(&self) -> usize {
+        self.count
     }
 
     pub(crate) fn push(&mut self, name: &str, desc: &str) -> bool {
-        let Self::Listed { count, slots } = self else {
-            return false;
-        };
-        if *count >= slots.len() {
+        if self.count >= self.slots.len() {
             return false;
         }
-        let slot = &mut slots[*count];
+        let slot = &mut self.slots[self.count];
         copy_field(&mut slot.name, name);
         copy_field(&mut slot.desc, desc);
-        *count += 1;
+        self.count += 1;
         true
     }
 
     pub(crate) fn name_at(&self, i: usize) -> &str {
-        match self {
-            Self::Builtin => BUILTIN.get(i).map(|s| s.name).unwrap_or(""),
-            Self::Listed { count, slots } => {
-                if i < *count {
-                    str_at(&slots[i].name)
-                } else {
-                    ""
-                }
-            }
+        if i < self.count {
+            str_at(&self.slots[i].name)
+        } else {
+            ""
         }
     }
 
-    /// Desc when present; otherwise a source label for empty blurbs.
     pub(crate) fn subtitle_at(&self, i: usize) -> &str {
-        match self {
-            Self::Builtin => BUILTIN.get(i).map(|s| s.blurb).unwrap_or("Shipped with the ISO"),
-            Self::Listed { count, slots } => {
-                if i >= *count {
-                    return "From host bridge";
-                }
-                let desc = str_at(&slots[i].desc);
-                if desc.is_empty() {
-                    "From host bridge"
-                } else {
-                    desc
-                }
-            }
+        if i < self.count {
+            str_at(&self.slots[i].desc)
+        } else {
+            ""
         }
     }
 }
@@ -155,30 +154,36 @@ mod tests {
 
     #[test]
     fn builtins_present() {
-        let p = SkillPeek::Builtin;
-        assert!(p.count() >= 5);
+        let p = SkillPeek::from_builtins();
+        assert_eq!(p.count(), BUILTIN.len());
         assert_eq!(p.name_at(0), "agent-plan-act");
-        assert!(matches!(p, SkillPeek::Builtin));
+        assert!(!p.is_live());
     }
 
     #[test]
     fn push_caps_at_slot_limit() {
-        let mut p = SkillPeek::empty();
+        let mut p = SkillPeek::empty_live();
         for i in 0..MAX_LISTED {
             assert!(p.push("n", "d"), "slot {i}");
         }
         assert!(!p.push("overflow", "no"));
         assert_eq!(p.count(), MAX_LISTED);
-        assert!(matches!(p, SkillPeek::Listed { .. }));
+        assert!(p.is_live());
     }
 
     #[test]
-    fn empty_listed_is_still_from_bridge() {
-        let p = SkillPeek::empty();
+    fn empty_live_is_still_from_bridge() {
+        let p = SkillPeek::empty_live();
         assert_eq!(p.count(), 0);
-        assert!(
-            matches!(p, SkillPeek::Listed { .. }),
-            "framed empty list is not ISO builtins"
-        );
+        assert!(p.is_live(), "framed empty list is not ISO builtins");
+    }
+
+    #[test]
+    fn builtins_fit_slot_caps() {
+        assert!(BUILTIN.len() <= MAX_LISTED);
+        for s in BUILTIN {
+            assert!(s.name.len() <= NAME_CHARS, "{}", s.name);
+            assert!(s.blurb.len() <= DESC_CHARS, "{}", s.blurb);
+        }
     }
 }

@@ -183,12 +183,12 @@ impl Setup {
         let top = self.header(
             fb,
             "Default Skills",
-            match skills {
-                SkillPeek::Listed { count: 0, .. } => {
-                    "Bridge listed no skills. Tap Continue when ready."
-                }
-                SkillPeek::Listed { .. } => "Live from the host bridge. Tap Continue when ready.",
-                SkillPeek::Builtin => "Markdown playbooks the agent can load. Editable later.",
+            if !skills.is_live() {
+                "Markdown playbooks the agent can load. Editable later."
+            } else if skills.count() == 0 {
+                "Bridge listed no skills. Tap Continue when ready."
+            } else {
+                "Live from the host bridge. Tap Continue when ready."
             },
         );
         let mut y = top;

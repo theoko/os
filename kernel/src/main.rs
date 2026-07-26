@@ -62,7 +62,7 @@ unsafe extern "C" fn kmain() -> ! {
     let mut mail = mcp::fetch_mail_peek(caps::Caps::none());
     log_bridge_status(&serial_port, mail.online());
     serial_port.write_str("skills: builtins ready\n");
-    let mut skill_peek = skills::SkillPeek::Builtin;
+    let mut skill_peek = skills::SkillPeek::from_builtins();
     if let Some(resp) = FRAMEBUFFER_REQUEST.get_response() {
         if let Some(fb_info) = resp.framebuffers().next() {
             // Always log geometry so UTM/QEMU serial shows why the window may be blank.
@@ -390,7 +390,11 @@ fn handle_key(
             }
             k => query.apply(k),
         },
-        // Skills / Caps / Reader: Escape returns home; typing is ignored.
+        // Reader Escape matches Back (results); Skills / Caps Escape → Home.
+        (screens::View::Reader, keyboard::Key::Escape) => {
+            *view = screens::View::Search;
+            true
+        }
         (_, keyboard::Key::Escape) => {
             *view = screens::View::Home;
             true
@@ -408,9 +412,10 @@ fn log_bridge_status(port: &serial::Serial, online: bool) {
 }
 
 fn log_skill_source(port: &serial::Serial, peek: &skills::SkillPeek) {
-    port.write_str(match peek {
-        skills::SkillPeek::Listed { .. } => "skills: listed from bridge\n",
-        skills::SkillPeek::Builtin => "skills: builtins\n",
+    port.write_str(if peek.is_live() {
+        "skills: listed from bridge\n"
+    } else {
+        "skills: builtins\n"
     });
 }
 
