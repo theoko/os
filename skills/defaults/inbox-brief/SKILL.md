@@ -1,8 +1,8 @@
 ---
 name: inbox-brief
 description: >-
-  Produce a short morning brief from email.search results for the home UI /
-  chat client. Use when the user asks what matters in mail right now.
+  Produce a short morning brief from email.search peek count. Use when the
+  user asks what matters in mail right now.
 ---
 
 # Inbox brief
