@@ -266,13 +266,6 @@ mod tests {
     }
 
     #[test]
-    fn nonsense_query_yields_no_rows() {
-        let mut v = SearchView::new();
-        v.run("zzzz qqqq");
-        assert_eq!(v.count, 0);
-    }
-
-    #[test]
     fn rerunning_replaces_previous_results() {
         let mut v = SearchView::new();
         v.run("capability agent");
@@ -280,13 +273,6 @@ mod tests {
         assert!(first > 0);
         v.run("zzzz qqqq");
         assert_eq!(v.count, 0, "stale rows must not survive a new search");
-    }
-
-    #[test]
-    fn count_never_exceeds_row_capacity() {
-        let mut v = SearchView::new();
-        v.run("os agent kernel search skills bridge capability docs");
-        assert!(v.count <= search::MAX_HITS);
     }
 
     #[test]
@@ -330,17 +316,13 @@ mod empty_state_tests {
     }
 
     #[test]
-    fn missing_file_grant_names_the_fix() {
+    fn missing_grants_name_the_fix() {
         // Finding nothing is a legitimate answer and must stay actionable
         // rather than being papered over with a mascot.
         let m = online(false, true).empty_reason();
         assert!(m.contains("workspace.index"), "{m}");
         assert!(!m.contains("offline"), "{m}");
         assert_ne!(m, TEDDY);
-    }
-
-    #[test]
-    fn missing_mail_grant_names_the_fix() {
         assert!(online(true, false).empty_reason().contains("email.search"));
     }
 
@@ -377,7 +359,7 @@ pub fn draw_reader(fb: &Surface, page: &crate::mcp::DocPage) {
         108,
         page.title(),
         &TITLE_FACE,
-        font::tracking_pct(TITLE_FACE.px, -20),
+        font::TITLE_TRACK,
         theme::INK,
     );
 

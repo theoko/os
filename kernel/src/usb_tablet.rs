@@ -5,6 +5,7 @@
 //! EHCI first, then talk UHCI.
 
 use crate::pci;
+use crate::skills::copy_field;
 
 const USBCMD: u16 = 0x00;
 const USBSTS: u16 = 0x02;
@@ -61,6 +62,15 @@ fn delay(spins: u32) {
     }
 }
 
+/// Publish `link` in every frame-list slot (UHCI FRAMELIST_PTR).
+unsafe fn fill_fl(fl: *mut u32, link: u32) {
+    for i in 0..1024 {
+        unsafe {
+            fl.add(i).write_volatile(link);
+        }
+    }
+}
+
 /// Disable *every* EHCI via PCI command (no MMIO) so companion UHCIs own the
 /// ports. There is more than one controller under UTM, and leaving either
 /// enabled strands the devices behind it.
@@ -89,7 +99,7 @@ impl UsbTablet {
 
         let controllers = pci::find_all_uhci();
         if controllers.is_empty() {
-            set_err(err, "no-uhci");
+            copy_field(err, "no-uhci");
             return None;
         }
 
@@ -108,7 +118,7 @@ impl UsbTablet {
                 }
             }
         }
-        set_err(err, if saw_device { reason } else { "no-port" });
+        copy_field(err, if saw_device { reason } else { "no-port" });
         None
     }
 
@@ -122,9 +132,7 @@ impl UsbTablet {
         let fl = (phys_page0 + hhdm) as *mut u32;
         let scratch = (phys_page1 + hhdm) as *mut u8;
         unsafe {
-            for i in 0..1024 {
-                fl.add(i).write_volatile(1);
-            }
+            fill_fl(fl, 1);
             for i in 0..4096 {
                 scratch.add(i).write_volatile(0);
             }
@@ -380,16 +388,12 @@ impl UsbTablet {
             // store above is complete before the frame list publishes them.
             core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 
-            for i in 0..1024 {
-                self.dma.fl.add(i).write_volatile(qh_p | 0x2);
-            }
+            fill_fl(self.dma.fl, qh_p | 0x2);
         }
 
         if !self.wait_td(td2) {
             unsafe {
-                for i in 0..1024 {
-                    self.dma.fl.add(i).write_volatile(1);
-                }
+                fill_fl(self.dma.fl, 1);
             }
             // The HC may have fetched the frame pointer just before the
             // unlink; let the current frame drain before scratch is reused.
@@ -406,9 +410,7 @@ impl UsbTablet {
         }
 
         unsafe {
-            for i in 0..1024 {
-                self.dma.fl.add(i).write_volatile(1);
-            }
+            fill_fl(self.dma.fl, 1);
         }
         self.wait_frame_tick();
         Some(())
@@ -509,9 +511,7 @@ impl UsbTablet {
 
         // TD retired — unlink from the frame list before touching toggle/state.
         unsafe {
-            for i in 0..1024 {
-                self.dma.fl.add(i).write_volatile(1);
-            }
+            fill_fl(self.dma.fl, 1);
         }
         // The HC may have fetched this frame's pointer pre-unlink; let the
         // frame drain before the next arm_interrupt_in rewrites the QH/TD.
@@ -579,21 +579,12 @@ impl UsbTablet {
             });
             // TD/QH must be fully written before the frame list points at them.
             core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
-            for i in 0..1024 {
-                self.dma.fl.add(i).write_volatile(qh_p | 0x2);
-            }
+            fill_fl(self.dma.fl, qh_p | 0x2);
         }
     }
 }
 
 const USBINTR_ZERO: u16 = 0x04;
-
-fn set_err(buf: &mut [u8], msg: &str) {
-    buf.fill(0);
-    let b = msg.as_bytes();
-    let n = b.len().min(buf.len().saturating_sub(1));
-    buf[..n].copy_from_slice(&b[..n]);
-}
 
 pub fn alloc_dma_pages(mmap: &limine::response::MemoryMapResponse) -> Option<(u64, u64)> {
     let mut pages = [0u64; 2];

@@ -30,50 +30,59 @@ pub(crate) const BUILTIN: &[SkillRef] = &[
     },
 ];
 
+/// One skill row in a [`SkillPeek`].
+struct Slot {
+    name: [u8; 28],
+    desc: [u8; 40],
+}
+
 /// Names (+ short descs) from builtins or `CALL skills.list`.
 pub struct SkillPeek {
     pub(crate) count: usize,
     /// True when the last fill came from the host bridge.
     pub from_bridge: bool,
-    names: [[u8; 28]; 8],
-    descs: [[u8; 40]; 8],
+    slots: [Slot; 8],
 }
 
 impl SkillPeek {
     pub(crate) fn empty() -> Self {
+        const EMPTY: Slot = Slot {
+            name: [0; 28],
+            desc: [0; 40],
+        };
         Self {
             count: 0,
             from_bridge: false,
-            names: [[0; 28]; 8],
-            descs: [[0; 40]; 8],
+            slots: [EMPTY; 8],
         }
     }
 
     pub fn from_builtin() -> Self {
         let mut peek = Self::empty();
-        for s in BUILTIN.iter().take(peek.names.len()) {
+        for s in BUILTIN.iter().take(peek.slots.len()) {
             peek.push(s.name, s.blurb);
         }
         peek
     }
 
     pub(crate) fn push(&mut self, name: &str, desc: &str) -> bool {
-        if self.count >= self.names.len() {
+        if self.count >= self.slots.len() {
             return false;
         }
-        copy_field(&mut self.names[self.count], name);
-        copy_field(&mut self.descs[self.count], desc);
+        let slot = &mut self.slots[self.count];
+        copy_field(&mut slot.name, name);
+        copy_field(&mut slot.desc, desc);
         self.count += 1;
         true
     }
 
     pub(crate) fn name_at(&self, i: usize) -> &str {
-        str_at(&self.names[i])
+        str_at(&self.slots[i].name)
     }
 
     /// Desc when present; otherwise a source label for empty blurbs.
     pub(crate) fn subtitle_at(&self, i: usize) -> &str {
-        let desc = str_at(&self.descs[i]);
+        let desc = str_at(&self.slots[i].desc);
         if !desc.is_empty() {
             return desc;
         }

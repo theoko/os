@@ -48,9 +48,9 @@ pub fn pace(since: u64, us: u32) -> u64 {
 
 /// A screen entrance: how far it slides and over how many frames.
 pub struct Entrance {
-    pub frames: u32,
+    frames: u32,
     travel_px: i32,
-    pub frame_us: u32,
+    frame_us: u32,
 }
 
 /// Default entrance. Short and small — the point is to soften the cut, not to
@@ -70,6 +70,16 @@ impl Entrance {
         let dy = lerp(self.travel_px, 0, e);
         (dy, e)
     }
+
+    /// Play every frame, calling `frame(dy, alpha)` then pacing.
+    pub fn play(&self, mut frame: impl FnMut(i32, i32)) {
+        let mut mark = rdtsc();
+        for i in 0..=self.frames {
+            let (dy, a) = self.at(i);
+            frame(dy, a);
+            mark = pace(mark, self.frame_us);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -85,6 +95,8 @@ mod tests {
             assert!(v >= prev, "eased curve went backwards at {i}");
             prev = v;
         }
+        assert_eq!(ease_out_cubic(-ONE), 0);
+        assert_eq!(ease_out_cubic(3 * ONE), ONE);
     }
 
     #[test]
@@ -93,14 +105,6 @@ mod tests {
         let first = ease_out_cubic(ONE / 4);
         let last = ONE - ease_out_cubic(3 * ONE / 4);
         assert!(first > last, "curve is not an ease-OUT: {first} vs {last}");
-    }
-
-    #[test]
-    fn ease_clamps_out_of_range_input() {
-        assert_eq!(ease_out_cubic(0), 0);
-        assert_eq!(ease_out_cubic(ONE), ONE);
-        assert_eq!(ease_out_cubic(-ONE), 0);
-        assert_eq!(ease_out_cubic(3 * ONE), ONE);
     }
 
     #[test]

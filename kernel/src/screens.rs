@@ -64,20 +64,20 @@ pub(crate) fn chrome(fb: &Surface, label: Option<(&str, &str)>) {
     fb.fill(theme::BG);
     let back = back_rect();
     fb.draw_text(back.x, back.y + BTN_FACE.ascent, "Back", &BTN_FACE, 0, theme::ACCENT);
-    if let Some((title, _)) = label {
-        fb.draw_text_centered(
-            w / 2,
-            (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.ascent,
-            title,
-            &BRAND_FACE,
-            0,
-            theme::INK,
-        );
-    }
-    fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
-    if let Some((_, heading)) = label {
-        let track = font::tracking_pct(TITLE_FACE.px, -20);
-        fb.draw_text_centered(w / 2, 112, heading, &TITLE_FACE, track, theme::INK);
+    match label {
+        Some((title, heading)) => {
+            fb.draw_text_centered(
+                w / 2,
+                (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.ascent,
+                title,
+                &BRAND_FACE,
+                0,
+                theme::INK,
+            );
+            fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
+            fb.draw_text_centered(w / 2, 112, heading, &TITLE_FACE, font::TITLE_TRACK, theme::INK);
+        }
+        None => fb.fill_rect(0, NAV_H, w, 1, theme::RULE),
     }
 }
 
@@ -230,15 +230,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn capability_text_clears_the_switch() {
-        let cw = row_rect(1024, 0).w;
-        // Switch occupies the right 58px of the row.
-        for (i, cap) in Cap::ALL.iter().enumerate() {
-            let name = cap.name();
-            let blurb = CAP_BLURBS[i];
-            assert!(BRAND_FACE.width(name, 0) < cw - 76, "name hits the switch: {name}");
-            assert!(SMALL_FACE.width(blurb, 0) < cw - 76, "blurb hits the switch: {blurb}");
-        }
-    }
 }

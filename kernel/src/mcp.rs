@@ -55,6 +55,13 @@ struct SearchHit {
     url: [u8; 72],
 }
 
+impl SearchHit {
+    fn set(&mut self, title: &str, url: &str) {
+        copy_field(&mut self.title, title);
+        copy_field(&mut self.url, url);
+    }
+}
+
 /// Short corpus peek from the host bridge.
 ///
 /// Callers must hold [`crate::caps::Cap::SearchQuery`] before calling
@@ -361,10 +368,8 @@ pub(crate) fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> Option<Sear
             if peek.count >= peek.hits.len() {
                 return false;
             }
-            let title = parse_row_field(resp, "title").unwrap_or("?");
-            copy_field(&mut peek.hits[peek.count].title, title);
-            copy_field(
-                &mut peek.hits[peek.count].url,
+            peek.hits[peek.count].set(
+                parse_row_field(resp, "title").unwrap_or("?"),
                 parse_row_field(resp, "url").unwrap_or(""),
             );
             peek.count += 1;

@@ -270,10 +270,11 @@ fn tile_rect(w: i32, i: i32) -> Rect {
 }
 
 /// Top-right Connect pill — primary bridge action beside the status dot.
+const CONNECT: &str = "Connect";
+
 fn connect_rect(w: i32) -> Rect {
-    let label = "Connect";
     let pad = 14;
-    let bw = (BTN_FACE.width(label, 0) + pad * 2).max(88);
+    let bw = (BTN_FACE.width(CONNECT, 0) + pad * 2).max(88);
     let bh = 28;
     Rect::new(w - PAD_X - bw, (NAV_H - bh) / 2, bw, bh)
 }
@@ -286,7 +287,7 @@ fn draw_nav(fb: &Surface, status: BridgeStatus) {
     let cr = connect_rect(w);
     fb.fill_round_rect(cr.x, cr.y, cr.w, cr.h, cr.h / 2, theme::ACCENT);
     let cbase = cr.y + (cr.h - BTN_FACE.px) / 2 + BTN_FACE.ascent;
-    fb.draw_text_centered(cr.x + cr.w / 2, cbase, "Connect", &BTN_FACE, 0, theme::SURFACE);
+    fb.draw_text_centered(cr.x + cr.w / 2, cbase, CONNECT, &BTN_FACE, 0, theme::SURFACE);
 
     let label = "Bridge";
     let dot = match status {
@@ -442,7 +443,7 @@ mod tests {
             "Capabilities",
             "Skills",
             "Knowledge + Email",
-            "Connect",
+            CONNECT,
             "Bridge",
             "Inbox empty",
             "os",

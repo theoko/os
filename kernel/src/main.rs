@@ -112,12 +112,10 @@ unsafe extern "C" fn kmain() -> ! {
                     if let Some((p0, p1)) = usb_tablet::alloc_dma_pages(mmap) {
                         tablet = unsafe { usb_tablet::UsbTablet::init(hhdm, p0, p1, &mut why) };
                     } else {
-                        let m = b"no-dma";
-                        why[..m.len()].copy_from_slice(m);
+                        skills::copy_field(&mut why, "no-dma");
                     }
                 } else {
-                    let m = b"no-mmap";
-                    why[..m.len()].copy_from_slice(m);
+                    skills::copy_field(&mut why, "no-mmap");
                 }
                 if tablet.is_some() {
                     serial_port.write_str("mouse: usb-tablet ready\n");
@@ -451,12 +449,7 @@ fn repaint(
 /// Snapping between screens is what made this feel unlike a desktop; an
 /// eased slide-and-fade costs a handful of blits and reads as intentional.
 fn enter(screen: &fb::Screen) {
-    let mut mark = serial::rdtsc();
-    for i in 0..=anim::SLIDE_IN.frames {
-        let (dy, a) = anim::SLIDE_IN.at(i);
-        screen.present_slide(dy, a, ui::theme::BG);
-        mark = anim::pace(mark, anim::SLIDE_IN.frame_us);
-    }
+    anim::SLIDE_IN.play(|dy, a| screen.present_slide(dy, a, ui::theme::BG));
 }
 
 #[panic_handler]

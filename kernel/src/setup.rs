@@ -215,9 +215,15 @@ impl Setup {
 
     fn draw_done(&mut self, fb: &Surface) {
         let w = fb.width() as i32;
-        let track = font::tracking_pct(TITLE_FACE.px, -20);
         let cy = fb.height() as i32 / 2 - 40;
-        fb.draw_text_centered(w / 2, cy, "You're all set.", &TITLE_FACE, track, theme::INK);
+        fb.draw_text_centered(
+            w / 2,
+            cy,
+            "You're all set.",
+            &TITLE_FACE,
+            font::TITLE_TRACK,
+            theme::INK,
+        );
         fb.draw_text_centered(
             w / 2,
             cy + 40,
@@ -235,9 +241,8 @@ impl Setup {
     /// Title + subtitle. Returns the y where content should start.
     fn header(&mut self, fb: &Surface, title: &str, sub: &str) -> i32 {
         let w = fb.width() as i32;
-        let track = font::tracking_pct(TITLE_FACE.px, -20);
         let y = 132;
-        fb.draw_text_centered(w / 2, y, title, &TITLE_FACE, track, theme::INK);
+        fb.draw_text_centered(w / 2, y, title, &TITLE_FACE, font::TITLE_TRACK, theme::INK);
         fb.draw_text_centered(w / 2, y + 36, sub, &BODY_FACE, 0, theme::MUTED);
         y + 76
     }

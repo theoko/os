@@ -77,6 +77,9 @@ pub(crate) const fn tracking_pct(px: i32, pct_tenths: i32) -> i32 {
     (px * 64 * pct_tenths) / 1000
 }
 
+/// Display title tracking used by setup, chrome, and the reader.
+pub(crate) const TITLE_TRACK: i32 = tracking_pct(TITLE_FACE.px, -20);
+
 #[cfg(test)]
 mod tests {
     use super::*;
