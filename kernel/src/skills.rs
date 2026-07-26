@@ -37,8 +37,8 @@ pub(crate) const BUILTIN: &[SkillRef] = &[
 pub(crate) const NAME_CHARS: usize = 28;
 pub(crate) const DESC_CHARS: usize = 40;
 
-/// One skill row from `CALL skills.list`.
-struct Slot {
+/// One skill row from `CALL skills.list` (fields private; fill via [`SkillPeek::push`]).
+pub struct Slot {
     name: [u8; NAME_CHARS],
     desc: [u8; DESC_CHARS],
 }
@@ -48,49 +48,44 @@ const EMPTY_SLOT: Slot = Slot {
     desc: [0; DESC_CHARS],
 };
 
-enum Kind {
+/// Names (+ short descs) from ISO builtins or a live bridge list.
+pub enum SkillPeek {
     /// [`BUILTIN`] — offline / ERR fallback (not a live empty list).
     Builtin,
-    /// Rows from `CALL skills.list`.
-    Listed { count: usize, slots: [Slot; MAX_LISTED] },
-}
-
-/// Names (+ short descs) from ISO builtins or a live bridge list.
-pub struct SkillPeek {
-    kind: Kind,
+    /// Rows from `CALL skills.list` (empty list stays Listed).
+    Listed {
+        count: usize,
+        slots: [Slot; MAX_LISTED],
+    },
 }
 
 impl SkillPeek {
     /// Empty listed peek ready for [`Self::push`] (bridge fill path).
     pub(crate) fn empty() -> Self {
-        Self {
-            kind: Kind::Listed {
-                count: 0,
-                slots: [EMPTY_SLOT; MAX_LISTED],
-            },
+        Self::Listed {
+            count: 0,
+            slots: [EMPTY_SLOT; MAX_LISTED],
         }
     }
 
     pub fn from_builtin() -> Self {
-        Self {
-            kind: Kind::Builtin,
-        }
+        Self::Builtin
     }
 
     /// True when the last fill came from the host bridge.
     pub fn from_bridge(&self) -> bool {
-        matches!(self.kind, Kind::Listed { .. })
+        matches!(self, Self::Listed { .. })
     }
 
     pub(crate) fn count(&self) -> usize {
-        match &self.kind {
-            Kind::Builtin => BUILTIN.len(),
-            Kind::Listed { count, .. } => *count,
+        match self {
+            Self::Builtin => BUILTIN.len(),
+            Self::Listed { count, .. } => *count,
         }
     }
 
     pub(crate) fn push(&mut self, name: &str, desc: &str) -> bool {
-        let Kind::Listed { count, slots } = &mut self.kind else {
+        let Self::Listed { count, slots } = self else {
             return false;
         };
         if *count >= slots.len() {
@@ -104,9 +99,9 @@ impl SkillPeek {
     }
 
     pub(crate) fn name_at(&self, i: usize) -> &str {
-        match &self.kind {
-            Kind::Builtin => BUILTIN.get(i).map(|s| s.name).unwrap_or(""),
-            Kind::Listed { count, slots } => {
+        match self {
+            Self::Builtin => BUILTIN.get(i).map(|s| s.name).unwrap_or(""),
+            Self::Listed { count, slots } => {
                 if i < *count {
                     str_at(&slots[i].name)
                 } else {
@@ -118,9 +113,9 @@ impl SkillPeek {
 
     /// Desc when present; otherwise a source label for empty blurbs.
     pub(crate) fn subtitle_at(&self, i: usize) -> &str {
-        match &self.kind {
-            Kind::Builtin => BUILTIN.get(i).map(|s| s.blurb).unwrap_or("Shipped with the ISO"),
-            Kind::Listed { count, slots } => {
+        match self {
+            Self::Builtin => BUILTIN.get(i).map(|s| s.blurb).unwrap_or("Shipped with the ISO"),
+            Self::Listed { count, slots } => {
                 if i >= *count {
                     return "From host bridge";
                 }
