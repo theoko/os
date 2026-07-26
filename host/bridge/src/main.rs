@@ -368,7 +368,8 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
         }
         "search.query" => {
             let q = arg_val(args, "q").unwrap_or("");
-            let k = arg_usize(args, "k", 5, 20);
+            // Default matches guest `search::MAX_HITS` (guest always sends k=).
+            let k = arg_usize(args, "k", 3, 20);
             // Email content is opt-in per call. The guest only sets this when
             // the user granted email.search at setup, so holding search.query
             // alone cannot reach mail.

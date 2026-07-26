@@ -74,27 +74,20 @@ enum Phase {
     Offline,
     /// `search.query` was not granted.
     Denied,
-    /// Bridge answered; which scopes were granted at query time.
-    Online { files: bool, mail: bool },
+    /// Bridge answered (zero or more hits).
+    Online,
 }
 
 impl Phase {
-    /// One line explaining an empty result set, naming the fix when there is one.
+    /// One line explaining an empty result set.
     fn empty_reason(self) -> &'static str {
         match self {
             // Idle is exhaustive only; draw never paints empty_reason while idle.
             Phase::Idle => "",
             Phase::Offline => crate::mcp::NO_MATCHES_BRIDGE_OFFLINE,
             Phase::Denied => TEDDY,
-            Phase::Online { files, mail } => {
-                if !files {
-                    return "No matches. Turn on workspace.index in Capabilities to search your files.";
-                }
-                if !mail {
-                    return "No matches in your files. Turn on email.search to include mail.";
-                }
-                "No matches. The bridge searched your files and mail."
-            }
+            // Do not invent a missing-grant cause — scopes already ran (or were off).
+            Phase::Online => "No matches.",
         }
     }
 }
@@ -150,7 +143,6 @@ impl SearchView {
         // Record reachability BEFORE any fallback, so an online bridge that
         // simply found nothing is never reported as a connection failure.
         // Rows are filled once from the COM2 parse — no intermediate peek buffer.
-        use crate::caps::Cap;
         use crate::mcp::DocOutcome;
         match crate::mcp::fetch_search_rows(caps, q, |title, url, cat| {
             if self.count >= search::MAX_HITS {
@@ -163,12 +155,7 @@ impl SearchView {
             DocOutcome::Offline => self.phase = Phase::Offline,
             // Bridge ERR (grant miss, …) — same empty copy as a missing search cap.
             DocOutcome::Err => self.phase = Phase::Denied,
-            DocOutcome::Ok => {
-                self.phase = Phase::Online {
-                    files: caps.allows(Cap::WorkspaceIndex),
-                    mail: caps.allows(Cap::EmailSearch),
-                };
-            }
+            DocOutcome::Ok => self.phase = Phase::Online,
         }
         if self.count == 0 {
             // Nothing from the bridge: try what we shipped with.
@@ -316,37 +303,26 @@ mod empty_state_tests {
     use super::*;
 
     #[test]
-    fn missing_grants_name_the_fix() {
-        // Finding nothing is a legitimate answer and must stay actionable
-        // rather than being papered over with a mascot.
-        let m = Phase::Online { files: false, mail: true }.empty_reason();
-        assert!(m.contains("workspace.index"), "{m}");
+    fn online_empty_does_not_invent_a_grant_fix() {
+        let m = Phase::Online.empty_reason();
+        assert_eq!(m, "No matches.");
+        assert!(!m.contains("workspace.index"), "{m}");
+        assert!(!m.contains("email.search"), "{m}");
         assert!(!m.contains("offline"), "{m}");
         assert_ne!(m, TEDDY);
-        assert!(
-            Phase::Online { files: true, mail: false }
-                .empty_reason()
-                .contains("email.search")
-        );
     }
 
     #[test]
     fn every_reason_is_renderable_ascii() {
         assert_eq!(Phase::Denied.empty_reason(), TEDDY);
         // A bridge that answered with zero hits must not read as offline.
-        assert!(
-            !Phase::Online { files: true, mail: true }
-                .empty_reason()
-                .contains("offline")
-        );
+        assert!(!Phase::Online.empty_reason().contains("offline"));
         let offline = Phase::Offline.empty_reason();
         assert!(offline.contains("offline"));
         assert!(!offline.contains("Teddy"));
         for s in [
             Phase::Offline,
-            Phase::Online { files: false, mail: false },
-            Phase::Online { files: true, mail: false },
-            Phase::Online { files: true, mail: true },
+            Phase::Online,
             Phase::Denied,
         ] {
             let m = s.empty_reason();
