@@ -133,7 +133,7 @@ fn when_online<T>(offline: T, f: impl FnOnce(&Serial, &mut [u8]) -> T) -> T {
     let mut line = [0u8; LINE_BUF];
     let com2 = Serial::com2();
     com2.init();
-    if ping_bridge(&com2, &mut line) != BridgeStatus::Online {
+    if !ping_bridge(&com2, &mut line) {
         offline
     } else {
         f(&com2, &mut line)
@@ -267,19 +267,19 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str, title: &str) -> DocPage {
 /// Turning a switch off should remove the index it built, not just stop
 /// answering from it — otherwise "off" means "hidden", which is not what the
 /// switch says.
-/// Returns `true` when a purge CALL was issued (cap has a forget tool).
+/// Returns `true` when a purge CALL was issued on a live bridge.
 pub fn forget(cap: crate::caps::Cap) -> bool {
     let Some(tool) = cap.forget_tool() else {
         return false;
     };
-    when_online((), |com2, line| {
+    when_online(false, |com2, line| {
         com2.write_str("CALL ");
         com2.write_str(tool);
         com2.write_str("\n");
         // Drain OK/ROW/END (stop on ERR) so the next call starts clean.
         let _ = for_each_ok_rows(com2, line, 8, |_| true);
-    });
-    true
+        true
+    })
 }
 
 /// List playbooks via `CALL skills.list`. Offline → builtins baked into the ISO.
@@ -303,7 +303,7 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
     })
 }
 
-fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
+fn ping_bridge(com2: &Serial, line: &mut [u8]) -> bool {
     for _ in 0..64 {
         if com2.try_read_byte().is_none() {
             break;
@@ -311,14 +311,9 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
     }
     com2.write_str("PING\n");
     let Some(n) = com2.read_line(line, TIMEOUT_PING) else {
-        return BridgeStatus::Offline;
+        return false;
     };
-    let resp = utf8_prefix(&line[..n]);
-    if resp.starts_with("OK pong") {
-        BridgeStatus::Online
-    } else {
-        BridgeStatus::Offline
-    }
+    utf8_prefix(&line[..n]).starts_with("OK pong")
 }
 
 /// Run `search.query`. `q` must be ASCII without spaces (use `-`).

@@ -292,15 +292,14 @@ unsafe extern "C" fn kmain() -> ! {
                                 if let Some(i) = screens::caps_hit(w, mice.x, mice.y) {
                                     let before = setup.caps;
                                     setup.caps.toggle(i);
-                                    for cap in caps::Cap::ALL {
-                                        if before.allows(cap)
-                                            && !setup.caps.allows(cap)
-                                            && mcp::forget(cap)
-                                        {
-                                            serial_port.write_str("caps: revoked ");
-                                            serial_port.write_str(cap.name());
-                                            serial_port.write_str(" - purged\n");
-                                        }
+                                    let cap = caps::Cap::ALL[i];
+                                    if before.allows(cap)
+                                        && !setup.caps.allows(cap)
+                                        && mcp::forget(cap)
+                                    {
+                                        serial_port.write_str("caps: revoked ");
+                                        serial_port.write_str(cap.name());
+                                        serial_port.write_str(" - purged\n");
                                     }
                                     dirty = true;
                                 }
@@ -408,7 +407,7 @@ fn log_skill_source(port: &serial::Serial, peek: &skills::SkillPeek) {
     port.write_str(if peek.from_bridge() {
         "skills: listed from bridge\n"
     } else {
-        "skills: builtins (bridge offline)\n"
+        "skills: builtins\n"
     });
 }
 

@@ -267,7 +267,7 @@ pub fn query_all(
     };
     let q_terms = tokenize(q);
     if q_terms.is_empty() {
-        return crate::text::framed_ok("OK search.query n=0 backend=tfidf-pr".into(), []);
+        return crate::text::framed_ok("OK search.query n=0".into(), []);
     }
     // Default search.query only needs the curated slice — clone only when a
     // scope adds personal docs into the same scoring universe.
@@ -344,7 +344,7 @@ pub fn query_all(
             sanitize(u)
         )
     });
-    crate::text::framed_ok(format!("OK search.query n={n} backend=tfidf-pr"), rows)
+    crate::text::framed_ok(format!("OK search.query n={n}"), rows)
 }
 
 #[cfg(test)]
