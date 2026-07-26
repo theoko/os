@@ -57,23 +57,19 @@ fn read_line_bounded<R: BufRead>(reader: &mut R, line: &mut String) -> std::io::
     Ok(Some(()))
 }
 
-struct Backends {
-    email: String,
-}
-
 fn main() {
     let connect = env::var("OS_MCP_BRIDGE_CONNECT").ok();
     let addr = env::var("OS_MCP_BRIDGE_ADDR").unwrap_or_else(|_| "127.0.0.1:7420".into());
-    let backends = Arc::new(Backends {
-        email: env::var("OS_MCP_EMAIL_BACKEND").unwrap_or_else(|_| "mock".into()),
-    });
+    let email = Arc::new(
+        env::var("OS_MCP_EMAIL_BACKEND").unwrap_or_else(|_| "mock".into()),
+    );
 
     let (defaults, user) = skills::skills_dirs();
     let where_ = connect.as_deref().unwrap_or(addr.as_str());
     eprintln!(
         "os-mcp-bridge {} on {where_} (email={}; skills defaults={} user={})",
         if connect.is_some() { "connecting" } else { "listening" },
-        backends.email,
+        email.as_str(),
         defaults.display(),
         user.display()
     );
@@ -81,22 +77,22 @@ fn main() {
     if let Some(target) = connect {
         // Guest (QEMU/UTM) listens; we dial and retry. One topology everywhere.
         let addr = target.strip_prefix("tcp:").unwrap_or(target.as_str());
-        dial_loop(addr, backends);
+        dial_loop(addr, email);
     } else {
         // Foreground debug only (`make bridge-run` + nc). Bridged runs dial.
-        serve_tcp(&addr, backends);
+        serve_tcp(&addr, email);
     }
 }
 
 /// Dial COM2 (guest TcpServer). Retries until the guest appears, serves one
 /// session, reconnects. QEMU's TcpClient mode does not retry — that is why the
 /// bridge is always the client for interactive runs.
-fn dial_loop(addr: &str, backends: Arc<Backends>) {
+fn dial_loop(addr: &str, email: Arc<String>) {
     loop {
         match TcpStream::connect(addr) {
             Ok(stream) => {
                 eprintln!("connected to tcp:{addr}");
-                if let Err(e) = handle_tcp(stream, &backends) {
+                if let Err(e) = handle_tcp(stream, email.as_str()) {
                     eprintln!("client error: {e}");
                 }
                 eprintln!("guest disconnected — waiting to reconnect");
@@ -108,14 +104,14 @@ fn dial_loop(addr: &str, backends: Arc<Backends>) {
     }
 }
 
-fn serve_tcp(addr: &str, backends: Arc<Backends>) {
+fn serve_tcp(addr: &str, email: Arc<String>) {
     let listener = TcpListener::bind(addr).expect("bind bridge tcp");
     for conn in listener.incoming() {
         match conn {
             Ok(stream) => {
-                let backends = Arc::clone(&backends);
+                let email = Arc::clone(&email);
                 std::thread::spawn(move || {
-                    if let Err(e) = handle_tcp(stream, &backends) {
+                    if let Err(e) = handle_tcp(stream, email.as_str()) {
                         eprintln!("client error: {e}");
                     }
                 });
@@ -125,18 +121,18 @@ fn serve_tcp(addr: &str, backends: Arc<Backends>) {
     }
 }
 
-fn handle_tcp(stream: TcpStream, backends: &Backends) -> std::io::Result<()> {
+fn handle_tcp(stream: TcpStream, email: &str) -> std::io::Result<()> {
     stream.set_read_timeout(Some(std::time::Duration::from_secs(120)))?;
     stream.set_write_timeout(Some(std::time::Duration::from_secs(30)))?;
     let writer = stream.try_clone()?;
     let reader = BufReader::new(stream);
-    handle_client(reader, writer, backends)
+    handle_client(reader, writer, email)
 }
 
 fn handle_client<R: Read, W: Write>(
     mut reader: BufReader<R>,
     mut writer: W,
-    backends: &Backends,
+    email: &str,
 ) -> std::io::Result<()> {
     let mut raw = String::new();
     loop {
@@ -196,7 +192,7 @@ fn handle_client<R: Read, W: Write>(
             continue;
         }
 
-        let reply = dispatch(&line, backends);
+        let reply = dispatch(&line, email);
         if !reply.is_empty() {
             write_reply(&mut writer, &reply)?;
         }
@@ -252,7 +248,7 @@ fn scrub_protocol_line(s: &str) -> String {
     out.trim().to_string()
 }
 
-fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
+fn dispatch(line: &str, email: &str) -> Vec<String> {
     let (cmd, rest) = split_word(line);
     match cmd {
         "PING" => vec!["OK pong".into()],
@@ -260,7 +256,7 @@ fn dispatch(line: &str, backends: &Backends) -> Vec<String> {
         "CALL" => {
             let (tool, rest) = split_word(rest);
             let args = parse_args(rest);
-            call_tool(tool, &args, backends)
+            call_tool(tool, &args, email)
         }
         _ => {
             // Ignore UEFI/Limine console noise on the same COM2 pipe.
@@ -315,9 +311,9 @@ fn forget_file(tool: &str, path: &std::path::Path) -> Vec<String> {
     }
 }
 
-fn call_tool(tool: &str, args: &[(String, String)], backends: &Backends) -> Vec<String> {
+fn call_tool(tool: &str, args: &[(String, String)], email: &str) -> Vec<String> {
     match tool {
-        "email.search" => email_search(args, &backends.email),
+        "email.search" => email_search(args, email),
         "email.send" => vec!["ERR email.send disabled_until_cap_confirm".into()],
         "skills.list" => skills::list_response(),
         "skills.get" => {
@@ -624,15 +620,9 @@ mod tests {
         assert_eq!(r.last().map(String::as_str), Some("END"));
     }
 
-    fn test_backends() -> Backends {
-        Backends {
-            email: "mock".into(),
-        }
-    }
-
     #[test]
     fn dispatch_ping() {
-        assert_eq!(dispatch("PING", &test_backends()), vec!["OK pong".to_string()]);
+        assert_eq!(dispatch("PING", "mock"), vec!["OK pong".to_string()]);
     }
 
     #[test]
@@ -647,14 +637,14 @@ mod tests {
 
     #[test]
     fn dispatch_skills_list() {
-        let r = dispatch("CALL skills.list", &test_backends());
+        let r = dispatch("CALL skills.list", "mock");
         assert!(r[0].starts_with("OK skills.list"));
         assert!(r.iter().any(|l| l.contains("email-triage")));
     }
 
     #[test]
     fn dispatch_search_query() {
-        let r = dispatch("CALL search.query q=capability k=3", &test_backends());
+        let r = dispatch("CALL search.query q=capability k=3", "mock");
         assert!(r[0].starts_with("OK search.query"), "{r:?}");
         assert!(r.iter().any(|l| l.starts_with("ROW ")));
         assert_eq!(r.last().map(String::as_str), Some("END"));
@@ -662,13 +652,13 @@ mod tests {
 
     #[test]
     fn list_includes_search() {
-        let r = dispatch("LIST", &test_backends());
+        let r = dispatch("LIST", "mock");
         assert!(r[0].contains("search.query"));
     }
 
     #[test]
     fn list_matches_tools_table() {
-        let r = dispatch("LIST", &test_backends());
+        let r = dispatch("LIST", "mock");
         assert_eq!(r[0], format!("OK tools={}", TOOLS.join(",")));
     }
 
@@ -679,7 +669,7 @@ mod tests {
                 // Multi-line body protocol lives in handle_client, not call_tool.
                 continue;
             }
-            let r = dispatch(&format!("CALL {tool}"), &test_backends());
+            let r = dispatch(&format!("CALL {tool}"), "mock");
             assert!(
                 !r.first().is_some_and(|s| s.starts_with("ERR unknown_tool ")),
                 "{tool} listed but missing from call_tool: {r:?}"

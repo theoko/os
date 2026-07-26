@@ -341,7 +341,7 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
         return SearchPeek::empty(status, true);
     }
 
-    // Offline: UI falls back to the baked index via SearchView::run(q).
+    // Offline: UI falls back to the baked index via SearchView::fill_local.
     when_online(SearchPeek::empty(BridgeStatus::Offline, false), |com2, line| {
         // CALL search.query q=… k=N [email=1]
         //
