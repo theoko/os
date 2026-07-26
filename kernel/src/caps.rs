@@ -7,7 +7,10 @@
 //! `skills.save` stays host-socket-only (nc / bridge LINE…END); there is no
 //! guest Cap for it — toggling one never gated a CALL.
 
-/// Named capabilities that mirror bridge tools / setup rows.
+/// Named capabilities: UI rows + COM2 scope / forget wiring.
+///
+/// [`Self::label`] is what setup / Capabilities paint. [`Self::name`] is the
+/// stable host-tool verb (serial revoke lines, docs, nc).
 #[derive(Clone, Copy)]
 pub enum Cap {
     EmailSearch = 0,
@@ -29,12 +32,23 @@ impl Cap {
         Cap::AudioTranscribe,
     ];
 
+    /// Host-tool verb (wire / COM1). Not the Capabilities row title.
     pub const fn name(self) -> &'static str {
         match self {
             Cap::EmailSearch => "email.search",
             Cap::SearchQuery => "search.query",
             Cap::WorkspaceIndex => "workspace.index",
             Cap::AudioTranscribe => "audio.transcribe",
+        }
+    }
+
+    /// Short UI title for setup / Capabilities rows (what the grant *does*).
+    pub(crate) const fn label(self) -> &'static str {
+        match self {
+            Cap::EmailSearch => "Inbox",
+            Cap::SearchQuery => "Knowledge",
+            Cap::WorkspaceIndex => "Files",
+            Cap::AudioTranscribe => "Transcripts",
         }
     }
 
@@ -119,14 +133,15 @@ mod tests {
     }
 
     #[test]
-    fn every_cap_has_an_ascii_blurb() {
+    fn every_cap_has_ascii_label_and_blurb() {
         for cap in Cap::ALL {
-            let b = cap.blurb();
-            assert!(!b.is_empty(), "{:?} blurb empty", cap.name());
-            assert!(
-                b.bytes().all(|c| (0x20..=0x7E).contains(&c)),
-                "non-ASCII blurb: {b:?}"
-            );
+            for s in [cap.label(), cap.blurb()] {
+                assert!(!s.is_empty(), "{:?} empty", cap.name());
+                assert!(
+                    s.bytes().all(|c| (0x20..=0x7E).contains(&c)),
+                    "non-ASCII: {s:?}"
+                );
+            }
         }
     }
 

@@ -233,7 +233,7 @@ impl Setup {
     /// Capability toggle at index `i`: titled row + switch + hit zone.
     fn cap_row(&mut self, fb: &Surface, y: i32, i: usize) {
         let r = content_rect(fb.width as i32, y, ROW_H);
-        ui::draw_titled_row(fb, r, Cap::ALL[i].name(), Cap::ALL[i].blurb());
+        ui::draw_titled_row(fb, r, Cap::ALL[i].label(), Cap::ALL[i].blurb());
         ui::draw_switch_in_row(fb, r, self.caps.allows(Cap::ALL[i]));
         self.push_zone(r, Action::Row(i));
     }
@@ -398,7 +398,7 @@ mod tests {
             "Host bridge",
         ];
         for cap in Cap::ALL {
-            all.push(cap.name());
+            all.push(cap.label());
             all.push(cap.blurb());
         }
         for s in all {
@@ -458,11 +458,14 @@ mod layout_tests {
     }
 
     #[test]
-    fn capability_names_and_blurbs_fit_the_column() {
+    fn capability_labels_and_blurbs_fit_the_column() {
         for cap in Cap::ALL {
-            let name = cap.name();
+            let label = cap.label();
             let blurb = cap.blurb();
-            assert!(BRAND_FACE.width(name, 0) < CONTENT_W - 76, "name hits the switch: {name}");
+            assert!(
+                BRAND_FACE.width(label, 0) < CONTENT_W - 76,
+                "label hits the switch: {label}"
+            );
             assert!(SMALL_FACE.width(blurb, 0) < CONTENT_W - 76, "blurb hits the switch: {blurb}");
         }
     }

@@ -30,6 +30,9 @@ when `email.search` is granted.
 3. Three tiles (Search static; Capabilities / Skills show live counts)
 4. Footer: inbox count, active caps, bridge status
 
+Capabilities rows use short human labels (`Inbox`, `Knowledge`, `Files`,
+`Transcripts`); host-tool verbs stay on the wire / COM1 revoke lines.
+
 **Constraint:** proportional Inter atlas is ASCII only (`0x20..=0x7E`).
 Never put em dashes, middots, or curly quotes in on-screen strings — they become `?`.
 

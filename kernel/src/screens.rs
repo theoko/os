@@ -110,7 +110,7 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
     for (i, cap) in Cap::ALL.iter().enumerate() {
         let on = grants.allows(*cap);
         let r = row_rect(w, i);
-        ui::draw_titled_row(fb, r, cap.name(), cap.blurb());
+        ui::draw_titled_row(fb, r, cap.label(), cap.blurb());
         ui::draw_switch_in_row(fb, r, on);
     }
 
@@ -190,6 +190,10 @@ mod tests {
         for s in BUILTIN {
             all.push(s.name);
             all.push(s.blurb);
+        }
+        for cap in Cap::ALL {
+            all.push(cap.label());
+            all.push(cap.blurb());
         }
         for s in all {
             assert!(
