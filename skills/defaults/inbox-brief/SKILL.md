@@ -7,10 +7,13 @@ description: >-
 
 # Inbox brief
 
+`email.search` returns a peek count only (`ROW n=<count>`) — no subject/from
+payloads on the wire.
+
 Format (keep it tight):
 
-- **Urgent** — needs reply today
-- **FYI** — no action
-- **Noise** — skip
+- **Count** — `n` from `ROW n=`
+- **Signal** — high / quiet / empty relative to the user's usual inbox
+- **Next** — one suggested action (open Gmail on the host, grant caps, wait)
 
-Max 5 bullets. Cite subject + from only.
+Do not invent message contents. Max 5 bullets.

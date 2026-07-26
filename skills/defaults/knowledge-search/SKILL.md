@@ -16,7 +16,7 @@ ranking over `{t,u,c,b,pr}` docs, exact-first ladder, no crawler in v1.
 1. Call `search.query` with a short keyword query (`q=`). Optional `k=` (1–20).
 2. Cite `title` + `url` from each ROW.
 3. Prefer corpus hits over guessing architecture/caps policy.
-4. Offline corpus is baked into the guest; the host bridge merges teddy + files + mail when those caps are granted.
+4. Offline corpus is baked into the guest; the host bridge merges teddy + files + audio when those caps are granted.
 
 ## Flow
 

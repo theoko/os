@@ -34,8 +34,8 @@ Guest always knows **builtin** defaults even if the bridge is offline.
 |-------|------|
 | `agent-plan-act` | Baseline plan/act loop |
 | `capability-safe-tools` | Cap discipline |
-| `email-triage` | Inbox via MCP email connector |
-| `inbox-brief` | Short mail brief for UI/chat |
+| `email-triage` | Inbox peek count via MCP email connector |
+| `inbox-brief` | Short mail brief from peek count |
 | `knowledge-search` | Curated corpus via `search.query` (tSearch-style) |
 
 Also see [`docs/search-os-doc-v01.md`](search-os-doc-v01.md).

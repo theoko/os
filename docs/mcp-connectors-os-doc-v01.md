@@ -32,9 +32,9 @@ Guest → host:
 | Request | Meaning |
 |---------|---------|
 | `PING` | Liveness |
-| `CALL email.search q=<gmail query> max=<n>` | Search mail |
+| `CALL email.search [q=…] [max=n]` | Inbox peek count (`ROW n=`); guest omits args |
 | `CALL email.send …` | Always `ERR … disabled_until_cap_confirm` (policy stub) |
-| `CALL search.query q=<keywords> k=<n> …` | Knowledge search (+ optional email/files/audio scopes) |
+| `CALL search.query q=<keywords> [k=n] …` | Knowledge search (+ optional files/audio scopes) |
 | `CALL skills.list` / `skills.save` | Skill playbooks |
 | `CALL doc.read url=…` | Open a result body |
 | `CALL workspace.index` / `audio.transcribe` / `*.forget` | Host indexes + revoke |
