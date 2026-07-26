@@ -65,14 +65,11 @@ fn delay(spins: u32) {
 /// Disable *every* EHCI via PCI command (no MMIO) so companion UHCIs own the
 /// ports. There is more than one controller under UTM, and leaving either
 /// enabled strands the devices behind it.
-fn disable_ehci_pci() -> u32 {
-    let mut n = 0;
+fn disable_ehci_pci() {
     pci::for_each_ehci(|b, s, f| {
         let cmd = pci::read16(b, s, f, 0x04);
         pci::write16(b, s, f, 0x04, cmd & !0x06); // clear Mem Space + Bus Master
-        n += 1;
     });
-    n
 }
 
 /// Outcome of probing one (controller, port) pair.
@@ -90,7 +87,7 @@ impl UsbTablet {
     /// identifies as an absolute tablet. `err` gets a short ASCII reason.
     pub unsafe fn init(hhdm: u64, phys_page0: u64, phys_page1: u64, err: &mut [u8]) -> Option<Self> {
         set_err(err, "start");
-        let _ = disable_ehci_pci();
+        disable_ehci_pci();
 
         let controllers = pci::find_all_uhci();
         if controllers.is_empty() {

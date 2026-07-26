@@ -74,8 +74,9 @@ fn tone_off() {
     }
 }
 
-fn play(notes: &[Note]) {
-    for n in notes {
+/// The boot jingle.
+pub fn startup() {
+    for n in STARTUP {
         if n.hz == 0 {
             tone_off();
         } else {
@@ -84,11 +85,6 @@ fn play(notes: &[Note]) {
         let _ = anim::pace(crate::serial::rdtsc(), n.ms.saturating_mul(1000));
     }
     tone_off();
-}
-
-/// The boot jingle.
-pub fn startup() {
-    play(&STARTUP);
 }
 
 #[cfg(test)]

@@ -128,10 +128,11 @@ impl SearchView {
         }
     }
 
-    /// Run `q` against the in-kernel index only.
+    /// Run `q` against the in-kernel index only (unit tests).
     ///
-    /// The baked corpus is a handful of documents about the OS itself, so a
-    /// question about the user's own work legitimately finds nothing here.
+    /// Production always goes through [`Self::run_via`]; the baked corpus alone
+    /// is still useful for offline assertions.
+    #[cfg(test)]
     fn run(&mut self, q: &str) {
         self.searched = true;
         self.source = Source::offline();
