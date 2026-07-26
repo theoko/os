@@ -38,6 +38,11 @@ pub enum View {
     Status,
     /// A human-in-the-loop skill checklist.
     Playbook,
+    /// Portal config, reached only by the Ctrl+Shift+P chord on Home.
+    ///
+    /// Nothing in the UI points here. It is for whoever set the machine up,
+    /// not for the person it was handed to.
+    PortalConfig,
 }
 
 const NAV_H: i32 = 56;
@@ -460,6 +465,275 @@ pub fn toggle(grants: Caps, i: usize) -> Caps {
     g
 }
 
+// --- portal config: the hidden screen --------------------------------------
+
+use crate::mcp::{ConfigStatus, PortalFamily, PortalSetStatus, UnlockStatus, PASS_MAX};
+
+/// Height of the password field, matching the playbook goal box.
+const PASS_FIELD_H: i32 = 44;
+/// Diameter of one masking dot, and the step between them.
+const DOT_D: i32 = 9;
+const DOT_PITCH: i32 = 16;
+/// Most dots the field draws. A longer secret still types — the row of dots
+/// just stops growing, so it can never run off the end of the box.
+pub const PASS_DOTS: usize = 24;
+
+/// What the screen is currently telling the person.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ConfigNote {
+    /// Nothing to report; the draw code substitutes a state-appropriate hint.
+    None,
+    BadPass,
+    NotConfigured,
+    TooMany,
+    Offline,
+    /// The secret could not be framed onto the wire, so it was never sent.
+    Unsendable,
+    Saved,
+    /// The host's per-connection unlock expired under us.
+    Relocked,
+    Failed,
+}
+
+impl ConfigNote {
+    pub fn text(self) -> &'static str {
+        match self {
+            ConfigNote::None => "",
+            ConfigNote::BadPass => "That password did not match. Try again.",
+            ConfigNote::NotConfigured => "No portal password is set on this Mac yet.",
+            ConfigNote::TooMany => "Too many attempts. Wait a moment, then retry.",
+            ConfigNote::Offline => "Bridge offline - run: make utm-bridged",
+            ConfigNote::Unsendable => "No spaces or line breaks in the password.",
+            ConfigNote::Saved => "Saved.",
+            ConfigNote::Relocked => "The session locked again. Enter the password.",
+            ConfigNote::Failed => "The host refused that change.",
+        }
+    }
+
+    /// Does this need the person to do something? Drives the note's colour.
+    pub fn is_error(self) -> bool {
+        !matches!(self, ConfigNote::None | ConfigNote::Saved)
+    }
+}
+
+/// State behind the hidden portal screen.
+///
+/// The typed secret lives in `pass` and leaves this struct by exactly one
+/// route: [`crate::mcp::config_unlock`], which writes it to COM2 and nowhere
+/// else. The draw code is never given it — only [`Self::mask_len`].
+pub struct PortalConfig {
+    pub status: ConfigStatus,
+    pass: TextField<PASS_MAX>,
+    pub note: ConfigNote,
+}
+
+impl PortalConfig {
+    pub const fn new() -> Self {
+        Self {
+            status: ConfigStatus::offline(),
+            pass: TextField::new(),
+            note: ConfigNote::None,
+        }
+    }
+
+    /// Adopt a fresh `config.status`, dropping anything half-typed.
+    ///
+    /// Unlock is per-connection on the host, so this is the only honest source
+    /// of `locked` — the screen re-reads rather than trusting what it believed
+    /// a moment ago.
+    pub fn refresh(&mut self, status: ConfigStatus) {
+        self.status = status;
+        self.pass.clear();
+        self.note = if status.reachable {
+            ConfigNote::None
+        } else {
+            // Say so up front rather than waiting for a submit to hang.
+            ConfigNote::Offline
+        };
+    }
+
+    /// Feed a key to the password field. True when something changed.
+    pub fn type_key(&mut self, key: crate::keyboard::Key) -> bool {
+        self.pass.apply(key)
+    }
+
+    /// How many dots the field will draw.
+    ///
+    /// This is the *only* thing the renderer learns about the secret. There is
+    /// no accessor that hands the text to drawing code, which is what keeps
+    /// "never echo the password" a property of the type rather than a habit.
+    pub fn mask_len(&self) -> usize {
+        self.pass.len().min(PASS_DOTS)
+    }
+
+    pub fn pass_is_empty(&self) -> bool {
+        self.pass.is_empty()
+    }
+
+    /// Hand the secret to the bridge and fold the reply back in.
+    ///
+    /// Borrowing the secret only for the duration of the call keeps it out of
+    /// every caller's hands — `main.rs` never sees it, so it cannot log it.
+    pub fn submit(&mut self) -> UnlockStatus {
+        let reply = crate::mcp::config_unlock(self.pass.as_str());
+        self.apply_unlock(reply);
+        reply
+    }
+
+    /// Fold an unlock reply into the screen state.
+    pub fn apply_unlock(&mut self, r: UnlockStatus) {
+        // The typed secret is dropped either way: it has done its job, and a
+        // failed attempt should not leave it sitting on screen to be retried
+        // by whoever walks up next.
+        self.pass.clear();
+        self.note = match r {
+            UnlockStatus::Ok => {
+                self.status.locked = false;
+                ConfigNote::None
+            }
+            UnlockStatus::BadPass => ConfigNote::BadPass,
+            UnlockStatus::NotConfigured => ConfigNote::NotConfigured,
+            UnlockStatus::TooMany => ConfigNote::TooMany,
+            UnlockStatus::Offline => ConfigNote::Offline,
+            UnlockStatus::Unsendable => ConfigNote::Unsendable,
+        };
+    }
+
+    /// Fold a `config.portal` reply into the screen state.
+    pub fn apply_portal(&mut self, r: PortalSetStatus) {
+        self.note = match r {
+            PortalSetStatus::Ok(f) => {
+                self.status.family = f;
+                ConfigNote::Saved
+            }
+            PortalSetStatus::Locked => {
+                // The host dropped our unlock. Go back to the password rather
+                // than leaving a picker up that can no longer save anything.
+                self.status.locked = true;
+                self.pass.clear();
+                ConfigNote::Relocked
+            }
+            PortalSetStatus::UnknownFamily => ConfigNote::Failed,
+            PortalSetStatus::Offline => ConfigNote::Offline,
+            PortalSetStatus::Failed => ConfigNote::Failed,
+        };
+    }
+}
+
+impl Default for PortalConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Paint `n` masking dots from `x`, centred on `cy`. Returns the x after them.
+///
+/// Takes a count, never a string: there is no code path from the secret to a
+/// glyph, because the glyph renderer is never called with it.
+fn draw_mask(fb: &Surface, x: i32, cy: i32, n: usize) -> i32 {
+    let mut dx = x;
+    for _ in 0..n {
+        fb.fill_round_rect(dx, cy - DOT_D / 2, DOT_D, DOT_D, DOT_D / 2, theme::INK);
+        dx += DOT_PITCH;
+    }
+    dx
+}
+
+/// The hidden portal screen: password when locked, family picker when not.
+pub fn draw_portal_config(fb: &Surface, cfg: &PortalConfig, caret: bool) {
+    let w = fb.width() as i32;
+    if cfg.status.locked {
+        draw_portal_locked(fb, w, cfg, caret);
+    } else {
+        draw_portal_unlocked(fb, w, cfg);
+    }
+}
+
+fn draw_portal_locked(fb: &Surface, w: i32, cfg: &PortalConfig, caret: bool) {
+    // `chrome` draws the nav "Back" — the visible way home from a screen no
+    // one was told about.
+    chrome(fb, w, "Portal", "This screen is locked");
+
+    let (x, cw) = column(w);
+    let y = TOP;
+    fb.fill_round_rect(x, y, cw, PASS_FIELD_H, 10, theme::RULE);
+    fb.fill_round_rect(x + 1, y + 1, cw - 2, PASS_FIELD_H - 2, 9, theme::BG);
+
+    let base = y + (PASS_FIELD_H - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
+    if cfg.pass_is_empty() {
+        fb.draw_text(x + 16, base, "Password", &SMALL_FACE, 0, theme::MUTED);
+    }
+    let after = draw_mask(fb, x + 16, y + PASS_FIELD_H / 2, cfg.mask_len());
+    if caret {
+        fb.fill_rect(after + 2, y + 12, 2, PASS_FIELD_H - 24, theme::INK);
+    }
+
+    let note = if cfg.note == ConfigNote::None {
+        "Type the password, then press Enter."
+    } else {
+        cfg.note.text()
+    };
+    fb.draw_text(
+        x,
+        y + PASS_FIELD_H + 28,
+        note,
+        &SMALL_FACE,
+        0,
+        if cfg.note.is_error() { theme::ACCENT } else { theme::MUTED },
+    );
+}
+
+fn draw_portal_unlocked(fb: &Surface, w: i32, cfg: &PortalConfig) {
+    chrome(fb, w, "Portal", "Where this machine looks");
+
+    for (i, family) in PortalFamily::ALL.into_iter().enumerate() {
+        let active = family == cfg.status.family;
+        let sub = if active { "Active" } else { "Tap to use" };
+        let (x, y, cw, h) = row(fb, w, i, family.label(), sub, active);
+
+        // Filled dot on the active row, hollow ring otherwise — the same
+        // right-hand slot the capability switches occupy, so the two screens
+        // read as one family.
+        let d = 18;
+        let mx = x + cw - 18 - d;
+        let my = y + (h - d) / 2;
+        fb.fill_round_rect(
+            mx,
+            my,
+            d,
+            d,
+            d / 2,
+            if active { theme::ACCENT } else { theme::RULE },
+        );
+        if !active {
+            fb.fill_round_rect(mx + 3, my + 3, d - 6, d - 6, (d - 6) / 2, theme::BG);
+        }
+    }
+
+    let (x, _) = column(w);
+    let note = if cfg.note == ConfigNote::None {
+        "Pick where this machine looks for portal data."
+    } else {
+        cfg.note.text()
+    };
+    fb.draw_text(
+        x,
+        TOP + PortalFamily::ALL.len() as i32 * (ROW_H + ROW_GAP) + 26,
+        note,
+        &SMALL_FACE,
+        0,
+        if cfg.note.is_error() { theme::ACCENT } else { theme::MUTED },
+    );
+}
+
+/// Which portal family row contains this point, if any.
+pub fn portal_family_hit(w: i32, x: i32, y: i32) -> Option<usize> {
+    (0..PortalFamily::ALL.len()).find(|&i| {
+        let (rx, ry, rw, rh) = row_rect(w, i);
+        x >= rx && x < rx + rw && y >= ry && y < ry + rh
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -655,6 +929,270 @@ mod tests {
                 assert!(BRAND_FACE.width(name, 0) < cw - 76, "name hits the switch: {name}");
                 assert!(SMALL_FACE.width(blurb, 0) < cw - 76, "blurb hits the switch: {blurb}");
             }
+        }
+    }
+}
+
+/// The hidden portal screen.
+///
+/// The load-bearing property is that the password is never painted. These
+/// prove it against the real draw code rather than by reading it: two
+/// different secrets of the same length must produce byte-identical frames.
+#[cfg(test)]
+mod portal_config_tests {
+    use super::*;
+    use crate::keyboard::Key;
+
+    fn unlocked_at(family: PortalFamily) -> PortalConfig {
+        let mut cfg = PortalConfig::new();
+        cfg.refresh(ConfigStatus {
+            reachable: true,
+            family,
+            locked: false,
+            configured: true,
+        });
+        cfg
+    }
+
+    fn locked_with(secret: &str) -> PortalConfig {
+        let mut cfg = PortalConfig::new();
+        cfg.refresh(ConfigStatus {
+            reachable: true,
+            family: PortalFamily::None,
+            locked: true,
+            configured: true,
+        });
+        for b in secret.bytes() {
+            cfg.type_key(Key::Char(b));
+        }
+        cfg
+    }
+
+    /// Render a locked screen carrying `secret` and return the raw pixels.
+    fn frame(secret: &str) -> Vec<u32> {
+        const W: usize = 1024;
+        const H: usize = 768;
+        let cfg = locked_with(secret);
+        let mut buf = vec![0u32; W * H];
+        {
+            let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), W, H) };
+            // Caret fixed: this is about the secret, not the blink phase.
+            draw_portal_config(&fb, &cfg, false);
+        }
+        buf
+    }
+
+    #[test]
+    fn the_password_field_renders_masked() {
+        // Same length, completely different characters. If a single glyph of
+        // the secret reached the framebuffer these frames would differ.
+        assert_eq!(frame("hunter7"), frame("SWORDF1"), "the secret is on screen");
+        assert_eq!(frame("aaaaaaa"), frame("!@#$%^&"), "the secret is on screen");
+    }
+
+    #[test]
+    fn the_mask_still_shows_that_something_was_typed() {
+        // Guard the obvious way to pass the test above: drawing nothing.
+        assert_ne!(frame("hunter7"), frame("hunter"), "the mask ignores length");
+        assert_ne!(frame("a"), frame(""), "typing produced no visible dot");
+    }
+
+    #[test]
+    fn the_mask_is_a_dot_per_character_and_stops_growing() {
+        let cfg = locked_with("hunter2");
+        assert_eq!(cfg.mask_len(), 7);
+        // A very long secret must not run the dots off the end of the box.
+        let long = locked_with(&"x".repeat(PASS_MAX));
+        assert_eq!(long.mask_len(), PASS_DOTS.min(PASS_MAX));
+        let (_, cw) = column(1024);
+        assert!(
+            16 + PASS_DOTS as i32 * DOT_PITCH < cw,
+            "a full row of dots overflows the field"
+        );
+    }
+
+    #[test]
+    fn an_empty_field_draws_no_dots() {
+        assert_eq!(PortalConfig::new().mask_len(), 0);
+    }
+
+    #[test]
+    fn backspace_shortens_the_mask() {
+        let mut cfg = locked_with("abc");
+        assert_eq!(cfg.mask_len(), 3);
+        assert!(cfg.type_key(Key::Backspace));
+        assert_eq!(cfg.mask_len(), 2);
+    }
+
+    #[test]
+    fn a_chord_is_not_typed_into_the_password() {
+        // Otherwise the chord that opens this screen would seed the field.
+        let mut cfg = locked_with("");
+        assert!(!cfg.type_key(Key::Chord(b'P')));
+        assert_eq!(cfg.mask_len(), 0);
+    }
+
+    #[test]
+    fn the_picker_lists_all_three_choices_and_marks_the_active_one() {
+        // Drive the real draw code, then check the rows it registered.
+        const W: i32 = 1024;
+        for active in PortalFamily::ALL {
+            let cfg = unlocked_at(active);
+            let mut buf = vec![0u32; (W * 768) as usize];
+            {
+                let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), W as usize, 768) };
+                draw_portal_config(&fb, &cfg, false);
+            }
+            // Three rows, each hittable at its centre and mapping to its own
+            // index — the order the draw loop uses.
+            for (i, _family) in PortalFamily::ALL.into_iter().enumerate() {
+                let (x, y, w, h) = row_rect(W, i);
+                assert_eq!(
+                    portal_family_hit(W, x + w / 2, y + h / 2),
+                    Some(i),
+                    "row {i} is not clickable"
+                );
+            }
+            assert_eq!(portal_family_hit(W, 512, TOP - 6), None, "hit above the list");
+            // The active family is the one the status carries, and it is the
+            // only row drawn with the accent marker.
+            assert_eq!(cfg.status.family, active);
+            let marked: Vec<_> = PortalFamily::ALL
+                .into_iter()
+                .filter(|f| *f == cfg.status.family)
+                .collect();
+            assert_eq!(marked.len(), 1, "exactly one row must read as active");
+        }
+    }
+
+    #[test]
+    fn all_three_rows_fit_a_768_screen() {
+        let (_, y, _, h) = row_rect(1024, PortalFamily::ALL.len() - 1);
+        assert!(y + h + 40 < 768, "the picker runs off the screen");
+    }
+
+    #[test]
+    fn family_labels_clear_the_marker() {
+        let (_, _, cw, _) = row_rect(1024, 0);
+        for f in PortalFamily::ALL {
+            assert!(
+                BRAND_FACE.width(f.label(), 0) < cw - 76,
+                "label hits the marker: {}",
+                f.label()
+            );
+        }
+    }
+
+    #[test]
+    fn a_bad_password_says_so_and_clears_the_field() {
+        let mut cfg = locked_with("wrong");
+        cfg.apply_unlock(UnlockStatus::BadPass);
+        assert_eq!(cfg.note, ConfigNote::BadPass);
+        assert!(cfg.note.is_error());
+        assert!(cfg.status.locked, "a bad password must not unlock");
+        assert_eq!(cfg.mask_len(), 0, "the failed secret stayed on screen");
+    }
+
+    #[test]
+    fn the_other_unlock_failures_each_get_their_own_message() {
+        for (reply, want) in [
+            (UnlockStatus::NotConfigured, ConfigNote::NotConfigured),
+            (UnlockStatus::TooMany, ConfigNote::TooMany),
+            (UnlockStatus::Offline, ConfigNote::Offline),
+            (UnlockStatus::Unsendable, ConfigNote::Unsendable),
+        ] {
+            let mut cfg = locked_with("secret");
+            cfg.apply_unlock(reply);
+            assert_eq!(cfg.note, want, "{reply:?} produced the wrong message");
+            assert!(cfg.status.locked, "{reply:?} must leave the screen locked");
+        }
+    }
+
+    #[test]
+    fn a_good_password_opens_the_picker() {
+        let mut cfg = locked_with("hunter2");
+        cfg.apply_unlock(UnlockStatus::Ok);
+        assert!(!cfg.status.locked);
+        assert_eq!(cfg.mask_len(), 0, "the secret outlived the unlock");
+        assert!(!cfg.note.is_error());
+    }
+
+    #[test]
+    fn choosing_a_family_reflects_what_the_host_stored() {
+        let mut cfg = unlocked_at(PortalFamily::None);
+        cfg.apply_portal(PortalSetStatus::Ok(PortalFamily::Market));
+        assert_eq!(cfg.status.family, PortalFamily::Market);
+        assert_eq!(cfg.note, ConfigNote::Saved);
+        assert!(!cfg.note.is_error());
+    }
+
+    #[test]
+    fn a_lost_session_sends_us_back_to_the_password() {
+        // Unlock is per-connection on the host; it can vanish under us.
+        let mut cfg = unlocked_at(PortalFamily::Teddy);
+        cfg.apply_portal(PortalSetStatus::Locked);
+        assert!(cfg.status.locked, "a locked reply left the picker up");
+        assert_eq!(cfg.note, ConfigNote::Relocked);
+        assert_eq!(cfg.mask_len(), 0);
+    }
+
+    #[test]
+    fn an_unreachable_bridge_says_so_instead_of_looking_ready() {
+        let mut cfg = PortalConfig::new();
+        cfg.refresh(ConfigStatus::offline());
+        assert!(cfg.status.locked, "an offline bridge must read as locked");
+        assert_eq!(cfg.note, ConfigNote::Offline);
+        assert!(cfg.note.is_error());
+        // And a failed set says it too, rather than hanging.
+        let mut open = unlocked_at(PortalFamily::Teddy);
+        open.apply_portal(PortalSetStatus::Offline);
+        assert_eq!(open.note, ConfigNote::Offline);
+    }
+
+    #[test]
+    fn drawing_both_states_does_not_panic() {
+        for cfg in [locked_with("abc"), unlocked_at(PortalFamily::Teddy)] {
+            for caret in [true, false] {
+                let mut buf = vec![0u32; 1024 * 768];
+                let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), 1024, 768) };
+                draw_portal_config(&fb, &cfg, caret);
+            }
+        }
+    }
+
+    #[test]
+    fn copy_is_ascii_only() {
+        let mut all = vec![
+            "Portal",
+            "This screen is locked",
+            "Where this machine looks",
+            "Password",
+            "Type the password, then press Enter.",
+            "Pick where this machine looks for portal data.",
+            "Active",
+            "Tap to use",
+        ];
+        for n in [
+            ConfigNote::None,
+            ConfigNote::BadPass,
+            ConfigNote::NotConfigured,
+            ConfigNote::TooMany,
+            ConfigNote::Offline,
+            ConfigNote::Unsendable,
+            ConfigNote::Saved,
+            ConfigNote::Relocked,
+            ConfigNote::Failed,
+        ] {
+            all.push(n.text());
+        }
+        for f in PortalFamily::ALL {
+            all.push(f.label());
+        }
+        for s in all {
+            assert!(
+                s.bytes().all(|b| (0x20..=0x7E).contains(&b)),
+                "non-ASCII renders as '?': {s:?}"
+            );
         }
     }
 }
