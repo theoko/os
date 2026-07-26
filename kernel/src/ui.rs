@@ -14,25 +14,25 @@ pub mod theme {
     /// Page — Apple light grey.
     pub const BG: u32 = 0x00F5_F5F7;
     /// Cards, inputs, switch knobs — pure white.
-    pub const SURFACE: u32 = 0x00FF_FFFF;
+    pub(crate) const SURFACE: u32 = 0x00FF_FFFF;
     /// Primary text — Apple's near-black, never pure #000.
-    pub const INK: u32 = 0x001D_1D1F;
+    pub(crate) const INK: u32 = 0x001D_1D1F;
     /// Secondary copy.
-    pub const MUTED: u32 = 0x0086_868B;
+    pub(crate) const MUTED: u32 = 0x0086_868B;
     /// Accent / primary action.
-    pub const ACCENT: u32 = 0x0000_71E3;
+    pub(crate) const ACCENT: u32 = 0x0000_71E3;
     /// Hairline separators.
-    pub const RULE: u32 = 0x00D2_D2D7;
+    pub(crate) const RULE: u32 = 0x00D2_D2D7;
     /// Card / input border.
     pub(super) const CARD_BORDER: u32 = 0x00E5_E5EA;
-    pub const ONLINE: u32 = 0x0034_C759;
-    pub const OFFLINE: u32 = 0x00FF_3B30;
+    pub(crate) const ONLINE: u32 = 0x0034_C759;
+    pub(crate) const OFFLINE: u32 = 0x00FF_3B30;
 }
 
 /// Shared chrome height (home nav, Skills/Caps/Search Back bar).
-pub const NAV_H: i32 = 56;
+pub(crate) const NAV_H: i32 = 56;
 /// Shared horizontal page margin.
-pub const PAD_X: i32 = 28;
+pub(crate) const PAD_X: i32 = 28;
 const CONTENT_MAX: i32 = 920;
 
 /// Pill on/off switch width/height (Capabilities + setup).
@@ -40,7 +40,7 @@ const SWITCH_W: i32 = 40;
 const SWITCH_H: i32 = 22;
 
 /// Pill switch, right-aligned inside a list row (18px pad, vertically centred).
-pub fn draw_switch_in_row(fb: &Surface, row: Rect, on: bool) {
+pub(crate) fn draw_switch_in_row(fb: &Surface, row: Rect, on: bool) {
     let tx = row.x + row.w - 18 - SWITCH_W;
     let ty = row.y + (row.h - SWITCH_H) / 2;
     fb.fill_round_rect(
@@ -81,7 +81,7 @@ impl Rect {
 }
 
 /// First index in `0..count` whose rect contains `(px, py)`.
-pub fn hit_among(
+pub(crate) fn hit_among(
     count: usize,
     px: i32,
     py: i32,
@@ -91,7 +91,7 @@ pub fn hit_among(
 }
 
 /// Hairline card border + white fill rounded rect (search field, tiles, rows).
-pub fn outlined_round_rect(fb: &Surface, r: Rect, radius: i32) {
+pub(crate) fn outlined_round_rect(fb: &Surface, r: Rect, radius: i32) {
     fb.fill_round_rect(r.x, r.y, r.w, r.h, radius, theme::CARD_BORDER);
     fb.fill_round_rect(
         r.x + 1,
@@ -104,7 +104,7 @@ pub fn outlined_round_rect(fb: &Surface, r: Rect, radius: i32) {
 }
 
 /// Bordered list row: title + muted subtitle (Skills / Caps chrome).
-pub fn draw_titled_row(fb: &Surface, r: Rect, title: &str, sub: &str) {
+pub(crate) fn draw_titled_row(fb: &Surface, r: Rect, title: &str, sub: &str) {
     outlined_round_rect(fb, r, 10);
     fb.draw_text(r.x + 18, r.y + 26, title, &BRAND_FACE, 0, theme::INK);
     fb.draw_text(r.x + 18, r.y + 46, sub, &SMALL_FACE, 0, theme::MUTED);
@@ -114,7 +114,7 @@ pub fn draw_titled_row(fb: &Surface, r: Rect, title: &str, sub: &str) {
 ///
 /// `badge`, when set, is drawn muted on the far right inside the field
 /// (e.g. "Offline Ready") so helper copy never sits under the input.
-pub fn draw_query_field(
+pub(crate) fn draw_query_field(
     fb: &Surface,
     r: Rect,
     query: &str,

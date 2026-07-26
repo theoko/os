@@ -72,7 +72,7 @@ impl Face {
 /// Letter-spacing helper: `pct` of the em, in 1/64 px.
 ///
 /// The reference design uses -3% on display type and -1.5% on section heads.
-pub const fn tracking_pct(px: i32, pct_tenths: i32) -> i32 {
+pub(crate) const fn tracking_pct(px: i32, pct_tenths: i32) -> i32 {
     // px * 64 * (pct_tenths / 1000)
     (px * 64 * pct_tenths) / 1000
 }

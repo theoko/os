@@ -54,7 +54,7 @@ pub fn caps_hit(w: i32, x: i32, y: i32) -> Option<usize> {
 }
 
 /// Shared top chrome: Back, optional centered title, rule, optional heading.
-pub fn chrome(fb: &Surface, title: &str, heading: Option<&str>) {
+pub(crate) fn chrome(fb: &Surface, title: &str, heading: Option<&str>) {
     let w = fb.width() as i32;
     fb.fill(theme::BG);
     let back = back_rect();

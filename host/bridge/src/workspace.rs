@@ -156,9 +156,10 @@ fn snippet_of(body: &str) -> String {
 
 /// Walk `roots` and build an index. Returns entries found.
 pub fn build(roots: &[PathBuf]) -> Index {
+    let now = now_secs();
     let mut entries = Vec::new();
     for root in roots {
-        walk(root, root, &mut entries, 0);
+        walk(root, root, &mut entries, 0, now);
         if entries.len() >= MAX_ENTRIES {
             break;
         }
@@ -193,7 +194,7 @@ fn rank(rel: &str, name: &str, mtime: u64, now: u64) -> f64 {
     (pr * recency).clamp(0.0, 1.0)
 }
 
-fn walk(root: &Path, dir: &Path, out: &mut Vec<Entry>, depth: usize) {
+fn walk(root: &Path, dir: &Path, out: &mut Vec<Entry>, depth: usize, now: u64) {
     if depth > 8 || out.len() >= MAX_ENTRIES {
         return;
     }
@@ -207,7 +208,7 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<Entry>, depth: usize) {
         let Ok(ft) = ent.file_type() else { continue };
         if ft.is_dir() {
             if !skipped_dir(name) {
-                walk(root, &path, out, depth + 1);
+                walk(root, &path, out, depth + 1, now);
             }
             continue;
         }
@@ -225,7 +226,7 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<Entry>, depth: usize) {
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
             .unwrap_or(0);
-        let pr = rank(&rel, name, mtime, now_secs());
+        let pr = rank(&rel, name, mtime, now);
         out.push(Entry {
             title: title_of(&body, &path),
             path: rel,

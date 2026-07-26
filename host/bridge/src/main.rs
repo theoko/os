@@ -329,16 +329,15 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
                     let mut store = transcribe::Store::load();
                     let summary = transcribe::summarize(&t.text, 3);
                     let words = t.text.split_whitespace().count();
-                    let title = t.title.clone();
-                    store.upsert(t);
-                    let _ = store.save();
                     let mut rows = vec![format!(
                         "ROW field=title|value={}",
-                        sanitize_field(&title)
+                        sanitize_field(&t.title)
                     )];
                     rows.extend(summary.into_iter().map(|line| {
                         format!("ROW field=summary|value={}", sanitize_field(&line))
                     }));
+                    store.upsert(t);
+                    let _ = store.save();
                     text::framed_ok(
                         format!("OK audio.transcribe words={words} seconds={secs:.0}"),
                         rows,

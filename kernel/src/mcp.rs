@@ -22,7 +22,7 @@ pub enum BridgeStatus {
 }
 
 /// Footer / empty-state hint when COM2 has no host bridge.
-pub const BRIDGE_OFFLINE_HINT: &str = "Bridge offline - run: make utm-bridged";
+pub(crate) const BRIDGE_OFFLINE_HINT: &str = "Bridge offline - run: make utm-bridged";
 
 /// Inbox liveness + unread count for the home status strip.
 /// Row payloads are not retained — the home UI only shows a count.

@@ -133,7 +133,6 @@ unsafe extern "C" fn kmain() -> ! {
                     serial_port.write_str("mouse: ps2 ready\n");
                 } else {
                     serial_port.write_str("mouse: ps2 init soft-fail\n");
-                    mice.present = true;
                 }
 
                 let mut setup = setup::Setup::new();

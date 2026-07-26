@@ -106,7 +106,6 @@ pub struct Mouse {
     pub x: i32,
     pub y: i32,
     buttons: u8,
-    pub present: bool,
     screen_w: i32,
     screen_h: i32,
     prev_buttons: u8,
@@ -123,7 +122,6 @@ impl Mouse {
             x: screen_w / 2,
             y: screen_h / 2,
             buttons: 0,
-            present: false,
             screen_w,
             screen_h,
             prev_buttons: 0,
@@ -183,7 +181,6 @@ impl Mouse {
         if !write_mouse(0xF4) || !mouse_expect_ack() {
             return false;
         }
-        self.present = true;
         true
     }
 
@@ -202,11 +199,10 @@ impl Mouse {
                 if is_mouse {
                     self.aux_seen = true;
                 }
-                // When we've enabled the aux device, accept bytes even if the
-                // controller forgets to set the AUX flag (common under TCG) —
-                // but once the AUX flag has ever worked, trust it, so keyboard
-                // scancodes are not parsed as mouse packets.
-                if !is_mouse && (self.aux_seen || (!self.present && self.packet_i == 0)) {
+                // Accept bytes even if the controller forgets the AUX flag
+                // (common under TCG) — but once the flag has ever worked, trust
+                // it so keyboard scancodes are not parsed as mouse packets.
+                if !is_mouse && self.aux_seen {
                     self.packet_i = 0;
                     continue;
                 }
@@ -231,7 +227,6 @@ impl Mouse {
                 self.x = (self.x + dx).clamp(0, self.screen_w.saturating_sub(1));
                 self.y = (self.y - dy).clamp(0, self.screen_h.saturating_sub(1));
                 self.buttons = flags & 0x07;
-                self.present = true;
                 moved = true;
             }
         }

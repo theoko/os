@@ -52,9 +52,7 @@ impl SkillPeek {
     pub fn from_builtin() -> Self {
         let mut peek = Self::empty();
         for s in BUILTIN.iter().take(peek.names.len()) {
-            copy_field(&mut peek.names[peek.count], s.name);
-            copy_field(&mut peek.descs[peek.count], s.blurb);
-            peek.count += 1;
+            peek.push(s.name, s.blurb);
         }
         peek
     }
