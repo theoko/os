@@ -29,15 +29,37 @@ warn() { printf '  warn  %s\n' "$*" >&2; warns=$((warns + 1)); }
 # Retried: this runs unattended, and a monitor that reports a blip as an
 # outage gets muted, after which it reports nothing at all. One flaky fetch
 # should not wake anyone; a real outage survives three tries.
-fetch() { curl -fsS --max-time 120 --retry 2 --retry-delay 3 --retry-all-errors "$@"; }
+#
+# `fetch <url> <file>` — to a FILE, over HTTP/1.1, failing loudly.
+#
+# Three lessons are baked into that one line. Cloudflare intermittently breaks
+# the stream ("curl: (16) Error in the HTTP2 framing layer"); captured through
+# a command substitution that left a TRUNCATED page in the variable, and a
+# truncated homepage does not contain the link — so a network blip reported
+# itself as "the download page is orphaned", about one run in five. HTTP/1.1
+# avoids the framing bug; writing to a file means a retry restarts cleanly
+# instead of appending to half a page; and grepping a file needs no pipe (a
+# `grep -q` reader exits on the first match, the writer takes SIGPIPE, and
+# `pipefail` calls the whole pipeline failed — the same false alarm in a
+# different disguise).
+#
+# The rule underneath all three: never report something as broken because we
+# could not look at it. A transport failure and a wrong page are different
+# findings and must read differently.
+fetch() {
+  curl -fsS --http1.1 --max-time 120 --retry 3 --retry-delay 2 --retry-all-errors \
+    -o "$2" "$1"
+}
+
+WORK="$(mktemp -d -t os-check)"
+trap 'rm -rf "$WORK"' EXIT
 
 [ "$QUIET" = 1 ] || echo "checking $SITE"
 
 # 1. The page exists and is the download page, not a 404 body served as 200.
-page="$(fetch "$SITE/os.html" || true)"
-if [ -z "$page" ]; then
-  bad "os.html did not respond"
-elif ! printf '%s' "$page" | grep -q 'teddy OS'; then
+if ! fetch "$SITE/os.html" "$WORK/os.html"; then
+  bad "could not fetch os.html (network or CDN — this is not a claim about the page)"
+elif ! grep -q 'teddy OS' "$WORK/os.html"; then
   bad "os.html responded but does not look like the download page"
 else
   ok "os.html"
@@ -46,23 +68,19 @@ fi
 # 2. The way in. This link lives in index.html, which other work deploys by
 #    rsync — losing it is silent, and the page becomes unreachable rather
 #    than broken, which nobody reports.
-# Fetched to a variable, not piped: `grep -q` exits on the first match, curl
-# takes SIGPIPE, and with `pipefail` that curl failure masks grep's success —
-# which reported the link missing when it was there.
-home="$(fetch "$SITE/" || true)"
-if [ -z "$home" ]; then
-  bad "the homepage did not respond"
-elif printf '%s' "$home" | grep -q 'os\.html'; then
+if ! fetch "$SITE/" "$WORK/index.html"; then
+  bad "could not fetch the homepage (network or CDN — this is not a claim about the page)"
+elif grep -q 'os\.html' "$WORK/index.html"; then
   ok "homepage links to os.html"
 else
   bad "the homepage no longer links to os.html — the download page is orphaned"
 fi
 
 # 3. What release is published, and the checksums that go with it.
-info="$(fetch "$SITE/os/BUILD-INFO.txt" || true)"
-commit="$(printf '%s' "$info" | awk '/commit:/{print $2}')"
-sums="$(fetch "$SITE/os/SHA256SUMS" || true)"
-if [ -z "$commit" ] || [ -z "$sums" ]; then
+fetch "$SITE/os/BUILD-INFO.txt" "$WORK/BUILD-INFO.txt" || true
+fetch "$SITE/os/SHA256SUMS" "$WORK/SHA256SUMS" || true
+commit="$(awk '/commit:/{print $2}' "$WORK/BUILD-INFO.txt" 2>/dev/null || true)"
+if [ -z "$commit" ] || [ ! -s "$WORK/SHA256SUMS" ]; then
   bad "BUILD-INFO.txt or SHA256SUMS is missing — cannot verify anything else"
   exit 1
 fi
@@ -70,16 +88,16 @@ ok "published release $commit"
 
 # 4. The images themselves, fetched the way the page links them. This is the
 #    check that matters: it is the exact bytes a visitor receives.
-tmp="$(mktemp -d -t os-check)"
-trap 'rm -rf "$tmp"' EXIT
+tmp="$WORK/images"
+mkdir -p "$tmp"
 for image in os.iso os-arm64.iso; do
-  want="$(printf '%s' "$sums" | awk -v f="$image" '$2 == f {print $1}')"
+  want="$(awk -v f="$image" '$2 == f {print $1}' "$WORK/SHA256SUMS")"
   if [ -z "$want" ]; then
     bad "$image has no entry in SHA256SUMS"
     continue
   fi
-  if ! fetch -o "$tmp/$image" "$SITE/os/$image?v=$commit"; then
-    bad "$image could not be downloaded"
+  if ! fetch "$SITE/os/$image?v=$commit" "$tmp/$image"; then
+    bad "could not download $image (network or CDN — this is not a claim about the image)"
     continue
   fi
   got="$(shasum -a 256 "$tmp/$image" | awk '{print $1}')"
@@ -92,7 +110,10 @@ for image in os.iso os-arm64.iso; do
 
   # The bare URL is what someone gets if they type it or follow an old link.
   # Expected to lag the CDN TTL after a release, so this is a warning.
-  bare="$(fetch -o "$tmp/bare-$image" "$SITE/os/$image" && shasum -a 256 "$tmp/bare-$image" | awk '{print $1}')"
+  bare=""
+  if fetch "$SITE/os/$image" "$tmp/bare-$image"; then
+    bare="$(shasum -a 256 "$tmp/bare-$image" | awk '{print $1}')"
+  fi
   if [ -n "$bare" ] && [ "$bare" != "$want" ]; then
     warn "$image at the un-versioned URL is a cached older build (harmless: the page links the versioned one)"
   fi

@@ -57,7 +57,7 @@ endif
 RUSTUP_BIN := $(patsubst %/,%,$(dir $(CARGO)))
 WITH_RUST := PATH="$(RUSTUP_BIN):$$PATH"
 
-.PHONY: all build kernel arm64-kernel iso arm64-iso iso-arm64 virtualbox-arm64 bridge bridge-run run run-arm64 run-bridged run-best utm utm-run utm-bridged usb usb-list drive linux-vm refresh refresh-install refresh-uninstall test test-all test-host smoke smoke-arm64 smoke-bridge publish-os clean distclean
+.PHONY: all build kernel arm64-kernel iso arm64-iso iso-arm64 virtualbox-arm64 bridge bridge-run run run-arm64 run-bridged run-best utm utm-run utm-bridged usb usb-list drive linux-vm refresh refresh-install refresh-uninstall test test-all test-host smoke smoke-arm64 smoke-bridge publish-os check-published check-published-install check-published-uninstall clean distclean
 
 all: build
 
@@ -281,6 +281,50 @@ limine/limine:
 publish-os:
 	chmod +x scripts/publish-os.sh
 	./scripts/publish-os.sh
+
+# Watch the published download from outside, on a timer.
+#
+# Everything it checks has already broken once: the CDN served an older image
+# than the checksums advertised, and the homepage link lives in a file other
+# work deploys by rsync. Both failures are silent — the page keeps returning
+# 200 while being wrong or unreachable.
+#
+#   make check-published          run it once, now
+#   make check-published-install  every 6h, notifies on failure and recovery
+#   make check-published-uninstall
+check-published:
+	chmod +x scripts/check-published.sh
+	./scripts/check-published.sh
+
+# Installs a COPY of the scripts outside ~/Desktop, and points the timer there.
+#
+# launchd cannot execute anything under ~/Desktop, ~/Documents or ~/Downloads
+# without Full Disk Access: the job loads, dies with "Operation not permitted"
+# (exit 126), and looks installed while doing nothing — into a log it also
+# cannot write, so there is no trace either. `launchctl list` shows exactly
+# that against com.os.refresh, which has never run for this reason.
+#
+# The copy means editing a script does not change what is scheduled: re-run
+# this target to publish the edit.
+MONITOR_DIR := $(HOME)/Library/Application Support/os/monitor
+MONITOR_LOG := $(HOME)/Library/Logs/os-check-published.log
+
+check-published-install:
+	mkdir -p "$(MONITOR_DIR)" $(HOME)/Library/LaunchAgents $(HOME)/Library/Logs
+	cp scripts/check-published.sh scripts/check-published-notify.sh "$(MONITOR_DIR)/"
+	chmod +x "$(MONITOR_DIR)/check-published.sh" "$(MONITOR_DIR)/check-published-notify.sh"
+	sed -e 's#__INSTALL_DIR__#$(MONITOR_DIR)#g' -e 's#__LOG__#$(MONITOR_LOG)#g' \
+		deploy/com.os.check-published.plist > $(HOME)/Library/LaunchAgents/com.os.check-published.plist
+	launchctl unload $(HOME)/Library/LaunchAgents/com.os.check-published.plist 2>/dev/null || true
+	launchctl load $(HOME)/Library/LaunchAgents/com.os.check-published.plist
+	@echo ">>> every 6h — log: $(MONITOR_LOG); notifies only on change"
+	@echo ">>> re-run this target after editing either script (it installs a copy)"
+
+check-published-uninstall:
+	launchctl unload $(HOME)/Library/LaunchAgents/com.os.check-published.plist 2>/dev/null || true
+	rm -f $(HOME)/Library/LaunchAgents/com.os.check-published.plist
+	rm -rf "$(MONITOR_DIR)"
+	@echo ">>> monitor removed"
 
 clean:
 	$(WITH_RUST) $(CARGO) clean

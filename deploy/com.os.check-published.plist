@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.os.check-published</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>__INSTALL_DIR__/check-published-notify.sh</string>
+  </array>
+  <!-- Every 6 hours. The thing being watched changes only when someone
+       publishes, and each run downloads both images (~17 MB), so polling
+       harder would cost bandwidth without finding anything sooner. Six hours
+       also clears the CDN's 4-hour TTL, so a post-release run is not reading
+       a stale edge. -->
+  <key>StartInterval</key>
+  <integer>21600</integer>
+  <!-- Run on load: installing the monitor should tell you the current state
+       immediately. Unlike the refresh timer this only reads public URLs — it
+       publishes nothing and touches no local data. -->
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>__LOG__</string>
+  <key>StandardErrorPath</key>
+  <string>__LOG__</string>
+  <key>ProcessType</key>
+  <string>Background</string>
+</dict>
+</plist>
