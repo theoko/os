@@ -2,8 +2,8 @@
 //!
 //! `teddysearch.com/tsearch/` is a client-side app: it fetches `corpus.json`
 //! and ranks in the browser. There is no server-side query endpoint, so *the
-//! corpus file is the API*. We fetch it, cache it, and rank locally with the
-//! same tf-idf × PageRank the rest of the bridge uses.
+//! corpus file is the API*. Operators curl it into a local cache; the bridge
+//! ranks with the same tf-idf × PageRank the rest of the stack uses.
 //!
 //! Two things make this practical:
 //!
@@ -20,12 +20,8 @@ use std::sync::OnceLock;
 
 use crate::search::{CorpusFile, Doc};
 
-/// Live corpus published by the tsearch front-end (operators curl this into the cache).
-const DEFAULT_URL: &str = "https://teddysearch.com/tsearch/corpus.json";
-
-fn url() -> String {
-    env::var("OS_TSEARCH_URL").unwrap_or_else(|_| DEFAULT_URL.to_string())
-}
+/// Live corpus URL (operators curl this into [`cache_path`]).
+const CORPUS_URL: &str = "https://teddysearch.com/tsearch/corpus.json";
 
 fn cache_path() -> PathBuf {
     crate::paths::env_or_knowledge("OS_TSEARCH_CACHE", "teddysearch.json")
@@ -37,7 +33,7 @@ static CACHE: OnceLock<Vec<Doc>> = OnceLock::new();
 ///
 /// Re-reading 64 MB on every `search.query` would make the search field
 /// unusable; this is why the source is a cache rather than a live call.
-/// Refresh by curling [`DEFAULT_URL`] into `OS_TSEARCH_CACHE` (or the
+/// Refresh by curling [`CORPUS_URL`] into `OS_TSEARCH_CACHE` (or the
 /// Application Support default) before starting the bridge.
 pub fn docs() -> &'static [Doc] {
     CACHE.get_or_init(|| {
@@ -51,7 +47,7 @@ pub fn docs() -> &'static [Doc] {
                 eprintln!(
                     "tsearch: cache unreadable ({e}); curl -o {} {}",
                     path.display(),
-                    url()
+                    CORPUS_URL
                 );
                 Vec::new()
             }
@@ -64,12 +60,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn url_defaults_to_https_and_is_overridable() {
-        assert!(DEFAULT_URL.starts_with("https://"), "corpus must be fetched over TLS");
-        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { env::set_var("OS_TSEARCH_URL", "https://example.test/c.json") };
-        assert_eq!(url(), "https://example.test/c.json");
-        unsafe { env::remove_var("OS_TSEARCH_URL") };
+    fn corpus_url_is_https() {
+        assert!(CORPUS_URL.starts_with("https://"), "corpus must be fetched over TLS");
     }
 
     #[test]

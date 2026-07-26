@@ -5,10 +5,6 @@ use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-struct SkillMeta {
-    description: String,
-}
-
 pub fn skills_dirs() -> (PathBuf, PathBuf) {
     let defaults = env::var("OS_SKILLS_DEFAULTS")
         .map(PathBuf::from)
@@ -19,15 +15,15 @@ pub fn skills_dirs() -> (PathBuf, PathBuf) {
     (defaults, user)
 }
 
-/// Merged skill map (saved overrides default by name).
-fn list_skills(defaults: &Path, user: &Path) -> BTreeMap<String, SkillMeta> {
+/// Merged skill map name → description (saved overrides default by name).
+fn list_skills(defaults: &Path, user: &Path) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
     collect_dir(defaults, &mut map);
     collect_dir(user, &mut map);
     map
 }
 
-fn collect_dir(dir: &Path, map: &mut BTreeMap<String, SkillMeta>) {
+fn collect_dir(dir: &Path, map: &mut BTreeMap<String, String>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -36,16 +32,15 @@ fn collect_dir(dir: &Path, map: &mut BTreeMap<String, SkillMeta>) {
         if !path.is_file() {
             continue;
         }
-        if let Some((name, meta)) = parse_skill(&path) {
-            map.insert(name, meta);
+        if let Some((name, desc)) = parse_skill(&path) {
+            map.insert(name, desc);
         }
     }
 }
 
-fn parse_skill(path: &Path) -> Option<(String, SkillMeta)> {
+fn parse_skill(path: &Path) -> Option<(String, String)> {
     let text = fs::read_to_string(path).ok()?;
-    let (name, description) = parse_frontmatter(&text)?;
-    Some((name, SkillMeta { description }))
+    parse_frontmatter(&text)
 }
 
 fn parse_frontmatter(text: &str) -> Option<(String, String)> {
@@ -107,11 +102,11 @@ pub fn list_response() -> Vec<String> {
     let (defaults, user) = skills_dirs();
     let skills = list_skills(&defaults, &user);
     let n = skills.len();
-    let rows = skills.iter().map(|(name, s)| {
+    let rows = skills.iter().map(|(name, desc)| {
         // Frontmatter names are untrusted text: sanitize like desc so a '|'
         // in a name cannot inject ROW fields.
         let name = sanitize(name);
-        let desc = sanitize(&s.description);
+        let desc = sanitize(desc);
         // Guest only reads name/desc (`from_bridge` is COM2 reachability).
         format!("ROW name={name}|desc={desc}")
     });
