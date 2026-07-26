@@ -42,18 +42,6 @@ impl Row {
         copy_field(&mut self.url, url);
         copy_field(&mut self.cat, cat);
     }
-
-    fn title(&self) -> &str {
-        str_at(&self.title)
-    }
-
-    fn url(&self) -> &str {
-        str_at(&self.url)
-    }
-
-    fn cat(&self) -> &str {
-        str_at(&self.cat)
-    }
 }
 
 /// Shown when something actually broke, as opposed to simply finding nothing.
@@ -162,7 +150,7 @@ impl SearchView {
     }
 
     pub fn at(&self, i: usize) -> (&str, &str) {
-        (self.rows[i].title(), self.rows[i].url())
+        (str_at(&self.rows[i].title), str_at(&self.rows[i].url))
     }
 }
 
@@ -220,9 +208,9 @@ pub fn draw(
         let rect = row_rect(w, i);
         let row = &view.rows[i];
         crate::ui::outlined_round_rect(fb, rect, 10);
-        fb.draw_text(rect.x + 18, rect.y + 26, row.title(), &BRAND_FACE, 0, theme::INK);
+        fb.draw_text(rect.x + 18, rect.y + 26, str_at(&row.title), &BRAND_FACE, 0, theme::INK);
         // Category chip (baked index or bridge `cat=`).
-        let cat = row.cat();
+        let cat = str_at(&row.cat);
         if !cat.is_empty() {
             let cw = SMALL_FACE.width(cat, 0);
             fb.draw_text(
@@ -234,7 +222,7 @@ pub fn draw(
                 fb::ACCENT,
             );
         }
-        fb.draw_text(rect.x + 18, rect.y + 48, row.url(), &SMALL_FACE, 0, theme::MUTED);
+        fb.draw_text(rect.x + 18, rect.y + 48, str_at(&row.url), &SMALL_FACE, 0, theme::MUTED);
     }
 }
 

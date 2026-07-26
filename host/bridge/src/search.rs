@@ -102,15 +102,18 @@ fn corpus_path() -> PathBuf {
 /// Curated corpus, parsed once per process (same idea as teddy's cache).
 static CURATED: OnceLock<Result<Vec<Doc>, String>> = OnceLock::new();
 
-fn load_docs_from_disk() -> Result<Vec<Doc>, String> {
-    let path = corpus_path();
-    let raw = fs::read_to_string(&path).map_err(|e| format!("corpus_missing {}: {e}", path.display()))?;
-    let file: CorpusFile = serde_json::from_str(&raw).map_err(|e| format!("corpus_json: {e}"))?;
-    Ok(file.docs)
-}
-
 fn load_docs() -> Result<&'static [Doc], &'static str> {
-    match CURATED.get_or_init(load_docs_from_disk).as_ref() {
+    match CURATED
+        .get_or_init(|| {
+            let path = corpus_path();
+            let raw = fs::read_to_string(&path)
+                .map_err(|e| format!("corpus_missing {}: {e}", path.display()))?;
+            let file: CorpusFile =
+                serde_json::from_str(&raw).map_err(|e| format!("corpus_json: {e}"))?;
+            Ok(file.docs)
+        })
+        .as_ref()
+    {
         Ok(docs) => Ok(docs.as_slice()),
         Err(e) => Err(e.as_str()),
     }

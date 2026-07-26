@@ -73,11 +73,11 @@ iso: limine/limine kernel
 run: iso
 	$(QEMU) $(QEMU_MACHINE) -cdrom $(IMAGE_NAME).iso -boot d $(QEMUFLAGS) $(QEMU_DEBUG_EXIT) || true
 
-# COM1 = stdio, COM2 = TCP server; host bridge dials (same topology as UTM).
+# COM1 via QEMUFLAGS, COM2 = TCP server; host bridge dials (same as UTM).
 run-bridged: iso bridge
 	OS_MCP_BRIDGE_CONNECT=tcp:$(BRIDGE_ADDR) ./scripts/ensure-bridge.sh
 	$(QEMU) $(QEMU_MACHINE) -cdrom $(IMAGE_NAME).iso -boot d \
-		-serial stdio \
+		$(QEMUFLAGS) \
 		-serial tcp:$(BRIDGE_ADDR),server \
 		$(QEMU_DEBUG_EXIT) || true
 

@@ -283,10 +283,14 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
     match tool {
         "email.search" => {
             // Guest mail peek omits args; defaults are the peek budget.
-            email_search(
-                arg_val(args, "q").unwrap_or("in:inbox"),
-                arg_usize(args, "max", GUEST_MAIL_MAX, 20),
-            )
+            let query = arg_val(args, "q").unwrap_or("in:inbox");
+            let max = arg_usize(args, "max", GUEST_MAIL_MAX, 20);
+            let backend = env::var("OS_MCP_EMAIL_BACKEND").unwrap_or_else(|_| "mock".into());
+            match backend.as_str() {
+                "gog" => email_search_gog(query, max),
+                // Deterministic peek count for CI (no per-message payloads).
+                _ => email_count_ok(GUEST_MAIL_MAX.min(max)),
+            }
         }
         "email.send" => vec![format!("ERR {tool} disabled_until_cap_confirm")],
         "skills.list" => skills::list_response(),
@@ -430,16 +434,6 @@ fn arg_usize(args: &[(String, String)], key: &str, default: usize, max: usize) -
         .and_then(|s| s.parse().ok())
         .unwrap_or(default)
         .clamp(1, max)
-}
-
-fn email_search(query: &str, max: usize) -> Vec<String> {
-    let backend = env::var("OS_MCP_EMAIL_BACKEND").unwrap_or_else(|_| "mock".into());
-
-    match backend.as_str() {
-        "gog" => email_search_gog(query, max),
-        // Deterministic peek count for CI (no per-message payloads).
-        _ => email_count_ok(GUEST_MAIL_MAX.min(max)),
-    }
 }
 
 /// Guest mail peek reads one `ROW n=<count>` (no per-message payloads).

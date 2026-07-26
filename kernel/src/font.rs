@@ -65,19 +65,11 @@ impl Face {
     }
 }
 
-/// Letter-spacing helper: `pct` of the em, in 1/64 px.
-///
-/// The reference design uses -3% on display type and -1.5% on section heads.
-pub(crate) const fn tracking_pct(px: i32, pct_tenths: i32) -> i32 {
-    // px * 64 * (pct_tenths / 1000)
-    (px * 64 * pct_tenths) / 1000
-}
+/// Display title tracking used by setup, chrome, and the reader (−2% of em).
+pub(crate) const TITLE_TRACK: i32 = (TITLE_FACE.px * 64 * -20) / 1000;
 
-/// Display title tracking used by setup, chrome, and the reader.
-pub(crate) const TITLE_TRACK: i32 = tracking_pct(TITLE_FACE.px, -20);
-
-/// Welcome hero tracking (`hello` on the first setup screen).
-pub(crate) const HERO_TRACK: i32 = tracking_pct(HERO_FACE.px, -30);
+/// Welcome hero tracking (`hello` on the first setup screen; −3% of em).
+pub(crate) const HERO_TRACK: i32 = (HERO_FACE.px * 64 * -30) / 1000;
 
 #[cfg(test)]
 mod tests {
