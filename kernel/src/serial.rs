@@ -1,4 +1,8 @@
-//! Early PC UART (COM1 / COM2) for debug + MCP bridge.
+//! Early serial transport for debug + MCP bridge.
+//!
+//! x86 guests use the classic PC UARTs. ARM64 guests use QEMU/armvirt's
+//! PL011-compatible debug UART for COM1; COM2 stays deliberately disabled
+//! until the virtual-machine configuration supplies a second serial device.
 
 /// Line ending used after the hello banner.
 pub const LINE_ENDING: &str = "\n";
@@ -34,26 +38,53 @@ mod port {
     }
 }
 
-/// Classic PC UART.
+/// Early debug or bridge serial device.
 pub struct Serial {
-    #[allow(dead_code)] // read on x86_64 I/O paths
+    #[cfg(target_arch = "x86_64")]
     base: u16,
+    #[cfg(target_arch = "aarch64")]
+    base: Option<usize>,
 }
 
 impl Serial {
+    #[cfg(target_arch = "x86_64")]
     pub const COM1: u16 = 0x3F8;
+    #[cfg(target_arch = "x86_64")]
     pub const COM2: u16 = 0x2F8;
+    #[cfg(target_arch = "aarch64")]
+    pub const PL011_COM1: usize = 0x0900_0000;
 
+    #[cfg(target_arch = "x86_64")]
     pub const fn new(base: u16) -> Self {
         Self { base }
     }
 
+    #[cfg(target_arch = "aarch64")]
+    pub const fn new(base: Option<usize>) -> Self {
+        Self { base }
+    }
+
+    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+    pub const fn new() -> Self {
+        Self {}
+    }
+
     pub const fn com1() -> Self {
-        Self::new(Self::COM1)
+        #[cfg(target_arch = "x86_64")]
+        return Self::new(Self::COM1);
+        #[cfg(target_arch = "aarch64")]
+        return Self::new(Some(Self::PL011_COM1));
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        Self::new()
     }
 
     pub const fn com2() -> Self {
-        Self::new(Self::COM2)
+        #[cfg(target_arch = "x86_64")]
+        return Self::new(Self::COM2);
+        #[cfg(target_arch = "aarch64")]
+        return Self::new(None);
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
+        Self::new()
     }
 
     /// Initialize 115200 8N1. Best-effort; QEMU accepts this.
@@ -67,6 +98,18 @@ impl Serial {
             port::outb(self.base + 3, 0x03);
             port::outb(self.base + 2, 0xC7);
             port::outb(self.base + 4, 0x0B);
+        }
+        #[cfg(target_arch = "aarch64")]
+        if let Some(base) = self.base {
+            // QEMU virt / VirtualBox armvirt PL011 at 24 MHz, 115200 8N1.
+            unsafe {
+                core::ptr::write_volatile((base + 0x30) as *mut u32, 0);
+                core::ptr::write_volatile((base + 0x44) as *mut u32, 0x7ff);
+                core::ptr::write_volatile((base + 0x24) as *mut u32, 13);
+                core::ptr::write_volatile((base + 0x28) as *mut u32, 1);
+                core::ptr::write_volatile((base + 0x2c) as *mut u32, 0x70);
+                core::ptr::write_volatile((base + 0x30) as *mut u32, 0x301);
+            }
         }
     }
 
@@ -82,7 +125,21 @@ impl Serial {
             }
             port::outb(self.base, byte);
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        if let Some(base) = self.base {
+            let mut spins = 0u32;
+            unsafe {
+                while core::ptr::read_volatile((base + 0x18) as *const u32) & (1 << 5) != 0 {
+                    spins += 1;
+                    if spins > 1_000_000 {
+                        break;
+                    }
+                    core::hint::spin_loop();
+                }
+                core::ptr::write_volatile(base as *mut u32, byte as u32);
+            }
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let _ = byte;
     }
 
@@ -109,7 +166,19 @@ impl Serial {
                 None
             }
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        if let Some(base) = self.base {
+            unsafe {
+                if core::ptr::read_volatile((base + 0x18) as *const u32) & (1 << 4) == 0 {
+                    Some(core::ptr::read_volatile(base as *const u32) as u8)
+                } else {
+                    None
+                }
+            }
+        } else {
+            None
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         None
     }
 
@@ -184,7 +253,11 @@ pub fn halt() -> ! {
         unsafe {
             core::arch::asm!("hlt", options(nomem, nostack, preserves_flags));
         }
-        #[cfg(not(target_arch = "x86_64"))]
+        #[cfg(target_arch = "aarch64")]
+        unsafe {
+            core::arch::asm!("wfe", options(nomem, nostack));
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         core::hint::spin_loop();
     }
 }

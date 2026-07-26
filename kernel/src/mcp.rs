@@ -23,12 +23,18 @@ pub enum BridgeStatus {
 pub struct MailRow {
     /// Graph id from the bridge (`id=`), used to open `email://…`.
     pub id: [u8; 20],
+    /// Source URL, so a listed message can be opened rather than only shown.
+    /// Present when the bridge sends one; `id` is the fallback route.
+    pub url: [u8; 72],
     pub from: [u8; 40],
     pub subj: [u8; 72],
 }
 
 pub struct MailPeek {
     pub status: BridgeStatus,
+    /// The host deliberately has no signed-in mailbox; this is distinct from
+    /// an empty inbox and lets the UI offer the right next step.
+    pub needs_connection: bool,
     pub count: usize,
     pub rows: [MailRow; 5],
 }
@@ -37,11 +43,13 @@ impl MailPeek {
     pub const fn empty(status: BridgeStatus) -> Self {
         const EMPTY: MailRow = MailRow {
             id: [0; 20],
+            url: [0; 72],
             from: [0; 40],
             subj: [0; 72],
         };
         Self {
             status,
+            needs_connection: false,
             count: 0,
             rows: [EMPTY; 5],
         }
@@ -57,6 +65,11 @@ impl MailPeek {
 
     pub fn row_id(&self, i: usize) -> &str {
         str_prefix(trim_buf(&self.rows[i].id))
+    }
+
+    /// Source URL the bridge sent for this row, when it sent one.
+    pub fn row_url(&self, i: usize) -> &str {
+        str_prefix(trim_buf(&self.rows[i].url))
     }
 
     /// Build `email://{id}` into `buf`. Empty when the row has no id.
@@ -230,12 +243,17 @@ impl IntentPlan {
     }
 }
 
+/// How long a sentence the agent may say back. One line at BODY size.
+pub const SAY_MAX: usize = 156;
+
 /// Short corpus peek for the home Connectors card.
 pub struct SearchPeek {
     pub status: BridgeStatus,
     pub denied: bool,
     pub count: usize,
-    pub hits: [SearchHit; 3],
+    pub hits: [SearchHit; crate::search::MAX_HITS],
+    /// What the agent understood, in a sentence. Empty when nothing said it.
+    pub say: [u8; SAY_MAX],
 }
 
 impl SearchPeek {
@@ -245,8 +263,14 @@ impl SearchPeek {
             status,
             denied,
             count: 0,
-            hits: [EMPTY; 3],
+            hits: [EMPTY; crate::search::MAX_HITS],
+            say: [0; SAY_MAX],
         }
+    }
+
+    /// The agent's sentence, or empty if it did not produce one.
+    pub fn say(&self) -> &str {
+        str_prefix(trim_buf(&self.say))
     }
 
     pub fn title_at(&self, i: usize) -> &str {
@@ -338,6 +362,10 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
         };
         first = false;
         let resp = str_prefix(&line[..n]);
+        if resp.starts_with("ERR email.search email_not_connected") {
+            peek.needs_connection = true;
+            break;
+        }
         if resp.starts_with("ERR ") || resp == "END" {
             break;
         }
@@ -351,6 +379,10 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
             copy_field(&mut peek.rows[peek.count].id, id);
             copy_field(&mut peek.rows[peek.count].from, from);
             copy_field(&mut peek.rows[peek.count].subj, subj);
+            copy_field(
+                &mut peek.rows[peek.count].url,
+                parse_row_field(resp, "url").unwrap_or(""),
+            );
             peek.count += 1;
         }
     }
@@ -518,7 +550,9 @@ pub struct DocPage {
 }
 
 impl DocPage {
-    pub const MAX: usize = 18;
+    /// Lines held for the reader. Enough that most documents fit entirely
+    /// and scrolling is local; the screen shows ~22 at a time.
+    pub const MAX: usize = 120;
 
     pub const fn empty(status: BridgeStatus, denied: bool) -> Self {
         Self {
@@ -552,7 +586,7 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
 
     com2.write_str("CALL doc.read url=");
     com2.write_str(url);
-    com2.write_str(" lines=18");
+    com2.write_str(" lines=120");
     if caps.allows(crate::caps::Cap::WorkspaceIndex) {
         com2.write_str(" files=1");
     }
@@ -570,7 +604,7 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
 
     let mut page = DocPage::empty(BridgeStatus::Online, false);
     let mut first = true;
-    for _ in 0..40 {
+    for _ in 0..(DocPage::MAX + 8) {
         let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
         let Some(n) = com2.read_line(&mut line, timeout) else {
             break;
@@ -595,6 +629,47 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
         }
     }
     page
+}
+
+/// What the portal source currently holds, locally.
+pub struct PortalStatus {
+    pub reachable: bool,
+    pub cached: bool,
+    pub syncing: bool,
+    pub docs: usize,
+}
+
+/// Read cached-corpus status. Does not cause a fetch.
+pub fn portal_status() -> PortalStatus {
+    let com2 = Serial::com2();
+    com2.init();
+    let mut line = [0u8; LINE_BUF];
+    if matches!(ping_bridge(&com2, &mut line), BridgeStatus::Offline) {
+        return PortalStatus { reachable: false, cached: false, syncing: false, docs: 0 };
+    }
+    com2.write_str("CALL portal.status\n");
+    let mut st = PortalStatus { reachable: true, cached: false, syncing: false, docs: 0 };
+    for _ in 0..8 {
+        let Some(n) = com2.read_line(&mut line, TIMEOUT_REPLY) else {
+            break;
+        };
+        let resp = str_prefix(&line[..n]);
+        if resp == "END" || resp.starts_with("ERR ") {
+            break;
+        }
+        if let Some(rest) = resp.strip_prefix("OK portal.status ") {
+            for field in rest.split_whitespace() {
+                if let Some(v) = field.strip_prefix("n=") {
+                    st.docs = v.parse().unwrap_or(0);
+                } else if let Some(v) = field.strip_prefix("cached=") {
+                    st.cached = v == "1";
+                } else if let Some(v) = field.strip_prefix("syncing=") {
+                    st.syncing = v == "1";
+                }
+            }
+        }
+    }
+    st
 }
 
 /// Ask the bridge to build what a newly granted capability needs.
@@ -927,7 +1002,7 @@ pub fn fetch_skill_body(name: &str, out: &mut [u8]) -> usize {
     let mut in_frontmatter = false;
     let mut saw_fm_open = false;
     let mut wrote = 0usize;
-    for _ in 0..40 {
+    for _ in 0..(DocPage::MAX + 8) {
         let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
         let Some(n) = com2.read_line(&mut line, timeout) else {
             break;
@@ -1084,14 +1159,22 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
         BridgeStatus::Online => {}
     }
 
-    // CALL search.query q=… k=3 [email=1]
+    // CALL agent.act goal=… [email=1] …
     //
-    // The email graph is opt-in per call on the bridge. Ask for it only when
-    // the user granted email.search at setup: holding search.query alone must
-    // not reach mail content.
-    com2.write_str("CALL search.query q=");
+    // Not search.query: what people type is a sentence ("i wanna work on my
+    // paper"), and a keyword index throws away exactly the words that carry
+    // the intent. The agent reads the goal, then falls back to the same scoped
+    // index when the goal is really just keywords — so this is never worse.
+    //
+    // Every source stays opt-in per call. The guest sets a flag only for a
+    // capability granted at setup: holding search alone must not reach mail.
+    // Ask for exactly what this screen can render. It was hardcoded to 3
+    // while `SearchPeek` grew to hold `search::MAX_HITS`, so two rows of
+    // every answer were left on the table.
+    com2.write_str("CALL agent.act max=");
+    com2.write_str(max_rows_str());
+    com2.write_str(" goal=");
     com2.write_str(q);
-    com2.write_str(" k=3");
     if caps.allows(crate::caps::Cap::EmailSearch) {
         com2.write_str(" email=1");
     }
@@ -1103,7 +1186,10 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     if caps.allows(crate::caps::Cap::AudioTranscribe) {
         com2.write_str(" audio=1");
     }
-    // Teddy / remote corpora leave the machine — only with portal.sync.
+    // Teddy / market / portal-backed results are the one source that can leave
+    // the machine — only with portal.sync. Carry the explicit grant through to
+    // the agent; without this, turning on Online services changed the UI but
+    // the agent still searched as if it were denied.
     if caps.allows(crate::caps::Cap::PortalSync) {
         com2.write_str(" portal=1");
     }
@@ -1121,7 +1207,12 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
         if resp.starts_with("ERR ") || resp == "END" {
             break;
         }
-        if resp.starts_with("OK search.query") {
+        if resp.starts_with("OK ") {
+            continue;
+        }
+        // The one sentence explaining what it understood and what it found.
+        if let Some(said) = resp.strip_prefix("SAY ") {
+            copy_field(&mut peek.say, said);
             continue;
         }
         if resp.starts_with("ROW ") && peek.count < peek.hits.len() {
@@ -1132,6 +1223,23 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
         }
     }
     peek
+}
+
+/// `search::MAX_HITS` as a string, without a formatter.
+///
+/// The guest and the bridge have to agree on how many rows an answer holds:
+/// the agent's sentence counts them, so a mismatch makes it say "5 matches"
+/// above three rows.
+fn max_rows_str() -> &'static str {
+    match crate::search::MAX_HITS {
+        1 => "1",
+        2 => "2",
+        3 => "3",
+        4 => "4",
+        5 => "5",
+        6 => "6",
+        _ => "8",
+    }
 }
 
 /// Top hits from the in-kernel index, used when COM2 does not answer.
@@ -1443,5 +1551,19 @@ mod tests {
         assert!(MARKET_PORTALS.contains(&"market.fear_greed"));
         // No loose prefix: unknown market.* must not sneak through.
         assert!(!MARKET_PORTALS.contains(&"market.nope"));
+    }
+}
+
+#[cfg(test)]
+mod row_budget_tests {
+    use super::*;
+
+    #[test]
+    fn the_number_we_ask_for_is_the_number_we_can_hold() {
+        // These drifted apart once already: the request said 3 while the
+        // buffer held 5, so two rows of every answer were discarded unseen.
+        let asked: usize = max_rows_str().parse().expect("a number");
+        assert_eq!(asked, crate::search::MAX_HITS);
+        assert_eq!(asked, SearchPeek::empty(BridgeStatus::Offline, false).hits.len());
     }
 }

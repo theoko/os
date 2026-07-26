@@ -16,3 +16,6 @@
 *~
 utm-diag*.out
 /docs/ui-preview.png
+/.linux-vm/
+.refresh.log
+.refresh-bridge.log

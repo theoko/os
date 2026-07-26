@@ -28,6 +28,16 @@ pub enum Key {
     Backspace,
     Enter,
     Escape,
+    /// Moves the focus ring during setup. `inputdiag::note()` has always told
+    /// people to "Use Tab and Enter"; until this existed that was advice
+    /// nothing implemented.
+    Tab,
+    Up,
+    Down,
+    PageUp,
+    PageDown,
+    Home,
+    End,
 }
 
 /// Scancode set 1, unshifted. Index = make code. 0 means "no character".
@@ -40,7 +50,10 @@ const MAP: [u8; 0x40] = [
 ];
 
 /// Shifted forms for the printable keys we map.
-fn shift_char(c: u8) -> u8 {
+///
+/// Scancode-independent, ASCII in and ASCII out, so the USB HID decoder uses
+/// the same table rather than growing a second one that can drift.
+pub(crate) fn shift_char(c: u8) -> u8 {
     match c {
         b'a'..=b'z' => c - 32,
         b'1' => b'!',
@@ -70,7 +83,9 @@ fn shift_char(c: u8) -> u8 {
 
 pub struct Keyboard {
     shift: bool,
-    /// Set by the 0xE0 prefix; those keys are ignored for now.
+    /// Set by the 0xE0 prefix. Navigation keys arrive this way, and the same
+    /// make codes mean digits on the keypad without it — so the prefix has to
+    /// be tracked, not just swallowed.
     extended: bool,
 }
 
@@ -102,8 +117,16 @@ impl Keyboard {
                 None
             }
             0x0E => Some(Key::Backspace),
+            0x0F => Some(Key::Tab),
             0x1C => Some(Key::Enter),
             0x01 => Some(Key::Escape),
+            // Navigation, only in their extended form.
+            0x48 if extended => Some(Key::Up),
+            0x50 if extended => Some(Key::Down),
+            0x49 if extended => Some(Key::PageUp),
+            0x51 if extended => Some(Key::PageDown),
+            0x47 if extended => Some(Key::Home),
+            0x4F if extended => Some(Key::End),
             _ if extended => None,
             _ => {
                 let c = *MAP.get(code as usize)?;
@@ -112,6 +135,38 @@ impl Keyboard {
                 }
                 Some(Key::Char(if self.shift { shift_char(c) } else { c }))
             }
+        }
+    }
+
+    /// Translate a byte from a serial console into the same UI key type used
+    /// by the PS/2 path. ARM virtual machines can expose a PL011 console long
+    /// before USB/xHCI input exists, so this deliberately accepts only the
+    /// portable terminal subset rather than pretending serial sends PC scan
+    /// codes.
+    pub fn from_serial(byte: u8) -> Option<Key> {
+        match byte {
+            b'\r' | b'\n' => Some(Key::Enter),
+            0x08 | 0x7f => Some(Key::Backspace),
+            0x1b => Some(Key::Escape),
+            0x20..=0x7e => Some(Key::Char(byte)),
+            _ => None,
+        }
+    }
+
+    /// Is there an i8042 controller at all?
+    ///
+    /// A machine without one floats the bus, so every read comes back 0xFF.
+    /// This is worth asking on real hardware: modern laptops route the built-in
+    /// keyboard over USB or I2C-HID and have no i8042 to find, and assuming one
+    /// is present means the UI silently claims a keyboard that is not there.
+    pub fn present() -> bool {
+        #[cfg(target_arch = "x86_64")]
+        {
+            unsafe { port::inb(STATUS) != 0xFF }
+        }
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
         }
     }
 
@@ -135,7 +190,17 @@ impl Keyboard {
                     return Some(k);
                 }
             }
+            None
         }
+        #[cfg(target_arch = "aarch64")]
+        {
+            // PL011 COM1 is a deliberate fallback path, not a substitute for
+            // the eventual USB HID driver. It makes the guest interactive in
+            // QEMU/VirtualBox configurations that redirect COM1 to a host
+            // terminal, without waiting for xHCI endpoint rings and GIC IRQs.
+            crate::serial::Serial::com1().try_read_byte().and_then(Self::from_serial)
+        }
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         None
     }
 }
@@ -238,6 +303,15 @@ mod tests {
     }
 
     #[test]
+    fn serial_console_uses_the_same_ui_keys() {
+        assert_eq!(Keyboard::from_serial(b'a'), Some(Key::Char(b'a')));
+        assert_eq!(Keyboard::from_serial(b'\r'), Some(Key::Enter));
+        assert_eq!(Keyboard::from_serial(0x7f), Some(Key::Backspace));
+        assert_eq!(Keyboard::from_serial(0x1b), Some(Key::Escape));
+        assert_eq!(Keyboard::from_serial(0x00), None);
+    }
+
+    #[test]
     fn extended_keys_are_ignored_not_mistyped() {
         let mut k = kb();
         assert_eq!(k.feed(0xE0), None);
@@ -245,6 +319,16 @@ mod tests {
         assert_eq!(k.feed(0x4B), None, "arrow key must not insert a character");
         // The prefix must not persist.
         assert_eq!(k.feed(0x1E), Some(Key::Char(b'a')));
+    }
+
+    #[test]
+    fn tab_arrives_as_a_key_and_not_as_a_character() {
+        // Scancode 0x0F used to fall through the map and produce nothing,
+        // which is why the "Use Tab and Enter" advice went nowhere.
+        let mut k = kb();
+        assert_eq!(k.feed(0x0F), Some(Key::Tab));
+        let mut f = TextField::<8>::new();
+        assert!(!f.apply(Key::Tab), "Tab must not insert a character");
     }
 
     #[test]
@@ -286,6 +370,53 @@ mod tests {
         let mut f = TextField::<8>::new();
         assert!(!f.apply(Key::Char(0x07)));
         assert!(!f.apply(Key::Char(0xC3)));
+        assert!(f.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod nav_tests {
+    use super::*;
+
+    #[test]
+    fn navigation_keys_need_the_extended_prefix() {
+        let mut k = Keyboard::new();
+        // Without E0, 0x48 is keypad 8 — not Up.
+        assert_ne!(k.feed(0x48), Some(Key::Up));
+        assert_eq!(k.feed(0xE0), None);
+        assert_eq!(k.feed(0x48), Some(Key::Up));
+    }
+
+    #[test]
+    fn all_navigation_keys_decode() {
+        let mut k = Keyboard::new();
+        for (code, want) in [
+            (0x48, Key::Up),
+            (0x50, Key::Down),
+            (0x49, Key::PageUp),
+            (0x51, Key::PageDown),
+            (0x47, Key::Home),
+            (0x4F, Key::End),
+        ] {
+            assert_eq!(k.feed(0xE0), None);
+            assert_eq!(k.feed(code), Some(want), "code {code:#x}");
+        }
+    }
+
+    #[test]
+    fn navigation_release_types_nothing() {
+        let mut k = Keyboard::new();
+        k.feed(0xE0);
+        assert_eq!(k.feed(0x48 | 0x80), None, "key release must not scroll");
+    }
+
+    #[test]
+    fn navigation_keys_are_not_text() {
+        // TextField must ignore them rather than inserting a stray character.
+        let mut f = TextField::<8>::new();
+        for key in [Key::Up, Key::Down, Key::PageUp, Key::PageDown, Key::Home, Key::End] {
+            assert!(!f.apply(key), "{key:?} was treated as text");
+        }
         assert!(f.is_empty());
     }
 }

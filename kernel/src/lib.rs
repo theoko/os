@@ -7,8 +7,11 @@ pub mod agent;
 pub mod anim;
 pub mod beep;
 pub mod caps;
+pub mod fault;
 pub mod fb;
 pub mod font;
+pub mod hid;
+pub mod inputdiag;
 pub mod keyboard;
 pub mod level;
 pub mod mcp;
@@ -22,6 +25,7 @@ pub mod setup;
 pub mod skills;
 pub mod ui;
 pub mod usb_tablet;
+pub mod xhci;
 
 /// Canonical early-boot banner printed to COM1 / framebuffer.
 pub const HELLO_MESSAGE: &str = "os: hello from kernel";

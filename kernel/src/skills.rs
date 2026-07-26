@@ -1,5 +1,7 @@
 //! Builtin skill catalog (always available offline) + optional bridge merge.
 
+use crate::caps::Cap;
+
 /// A skill name shown in the home UI.
 pub struct SkillRef {
     pub name: &'static str,
@@ -37,6 +39,68 @@ pub const BUILTIN: &[SkillRef] = &[
         blurb: "Live market health + fear/greed",
     },
 ];
+
+/// A deliberately small executable view of a playbook.  This is not a YAML
+/// runtime: it is the stable kernel representation the richer host-side skill
+/// format can compile down to.
+#[derive(Clone, Copy)]
+pub struct Workflow {
+    pub title: &'static str,
+    pub required: Option<Cap>,
+    pub steps: &'static [&'static str],
+}
+
+const PLAN_STEPS: &[&str] = &[
+    "State the goal",
+    "Check the capabilities needed",
+    "Make a short plan",
+    "Review before acting",
+    "Report what happened",
+];
+const EMAIL_STEPS: &[&str] = &[
+    "Check email permission",
+    "Search a narrow inbox query",
+    "Rank the urgent messages",
+    "Draft replies for review",
+];
+const SEARCH_STEPS: &[&str] = &[
+    "Choose a short search query",
+    "Search the knowledge corpus",
+    "Read the strongest source",
+    "Use cited results in the plan",
+];
+const SAFE_TOOL_STEPS: &[&str] = &[
+    "Name the task",
+    "Choose the smallest capability",
+    "Check what will be shared",
+    "Ask before a consequential action",
+];
+
+/// Resolve a catalog name into an interactive, review-first workflow.
+pub fn workflow_for(name: &str) -> Workflow {
+    match name {
+        "email-triage" | "inbox-brief" => Workflow {
+            title: "Email triage",
+            required: Some(Cap::EmailSearch),
+            steps: EMAIL_STEPS,
+        },
+        "knowledge-search" => Workflow {
+            title: "Knowledge search",
+            required: Some(Cap::SearchQuery),
+            steps: SEARCH_STEPS,
+        },
+        "capability-safe-tools" => Workflow {
+            title: "Safe tools",
+            required: None,
+            steps: SAFE_TOOL_STEPS,
+        },
+        _ => Workflow {
+            title: "Plan and act",
+            required: None,
+            steps: PLAN_STEPS,
+        },
+    }
+}
 
 /// Names (+ short descs) from builtins or `CALL skills.list`.
 pub struct SkillPeek {
@@ -155,5 +219,14 @@ mod tests {
         assert!(p.is_saved_at(0));
         assert!(!p.is_saved_at(1));
         assert!(!p.is_saved_at(9));
+    }
+
+    #[test]
+    fn workflows_name_the_capability_before_the_action() {
+        let email = workflow_for("email-triage");
+        assert_eq!(email.required, Some(Cap::EmailSearch));
+        assert!(email.steps.len() >= 3);
+        let planning = workflow_for("agent-plan-act");
+        assert_eq!(planning.required, None);
     }
 }

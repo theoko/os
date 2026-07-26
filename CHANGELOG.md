@@ -1,9 +1,81 @@
 ---
-version: 0.9.27
+version: 0.10.0
 ---
 
 # Changelog
 
+## 0.10.0 — 2026-07-25
+
+Crashes now report themselves, the search box understands sentences, and there
+is a supported path onto real x86-64 hardware.
+
+### Crashes say where they happened
+
+The kernel had no interrupt descriptor table. Any CPU exception escalated
+fault → double fault → triple fault, and the machine reset with nothing written
+anywhere — "it just randomly crashes", with no way to find out what. `fault.rs`
+installs handlers for all 32 CPU vectors that print vector, error code, `rip`
+and (for page faults) the faulting address to COM1, then halt where they are.
+Verified in a real boot:
+
+    os: FAULT page fault vec=0xe err=0x2 rip=0xffffffff80005b79 addr=0xdeadbeef
+
+The panic handler also exited silently — fine under QEMU's debug-exit device,
+invisible under UTM, which has none. It now prints file and line first. Stub
+error-code shapes are checked against the PCI spec table at compile time; a
+mismatch there would shift the frame and print a plausible, wrong `rip`.
+
+### The search box reads sentences
+
+`agent.act` replaces `search.query` as what the guest calls. It classifies the
+goal (resume / find / read / catch-up / ask / keywords), strips filler, gathers
+only from granted sources, and returns a sentence plus rows that open. Typing
+"i wanna work on my paper" no longer throws away every word that carried the
+meaning. When the goal really is keywords it falls through to the same scoped
+index as before, so it is never worse than what it replaced.
+
+Two confidently-wrong answers found by running it and fixed: "my paper"
+returned `CHANGELOG.md` and `AGENTS.md` (repo furniture is now excluded from
+the "documents people write" guess), and "what did i miss" returned six-week-old
+notes because `miss` matched "missing" (question words are filler now, and
+catch-up ignores search terms entirely and asks about recency).
+
+The sentence is also no longer allowed to lie: it said "5 matches" above three
+visible rows, because the bridge counted what it found and the guest could only
+hold three. The row limit now flows into the agent before the sentence is
+written, and both sides share `search::MAX_HITS`.
+
+### Real hardware
+
+`make usb` writes the ISO to a USB stick. Every guard is load-bearing since it
+writes a raw block device: refuses internal disks, refuses partitions, refuses
+the running system volume, requires the device to be named and then retyped,
+and re-reads the stick to compare SHA-256 rather than trusting `dd`.
+
+This exists because nothing on an Apple Silicon Mac can virtualise x86 —
+VirtualBox and Parallels both refuse outright, and UTM only works by emulating
+every instruction, which is also why it cannot reach 60fps.
+
+Booting real hardware exposes an honest gap, so the OS now reports it instead
+of hiding it: it drives PS/2 and a UHCI USB tablet, and a modern laptop has
+xHCI and often no i8042 at all. It would boot to a perfect home screen with a
+cursor that never moves. `pci::usb_survey` counts the controllers present and
+the status line says which half is missing. See `docs/install-os-doc-v01.md`.
+
+### Fixes
+
+- `make utm-bridged` aborted with `Connection refused`: the bridge built its
+  12k-document index *before* binding, and `ensure-bridge.sh` reported success
+  after a fixed 0.5s sleep. Prewarm moved to a thread after bind; the script
+  now waits for a real accept. Returns in 0.49s with the port live.
+- Setup's "Go Back" was drawn off-screen on Capabilities — the footer had no
+  clamp, so six rows pushed it past the bottom edge and the only way out of the
+  step was forward. Clamping alone made it overlap the last row instead, so
+  rows now size to the space actually available. Tested at 800x600, 1024x768
+  and 1280x800 that no zone leaves the screen and no two zones overlap.
+- Recent-mail rows on the home screen open. They carry an `email://` id and
+  `doc.read` resolves it behind the email grant.
+- An offline search said "the bridge is offline" twice in two wordings.
 ## 0.9.27 — 2026-07-25
 
 Home goals get a smart host planner:

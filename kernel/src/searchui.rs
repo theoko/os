@@ -181,6 +181,19 @@ pub struct SearchView {
     /// True once a query has been run, so we can tell "no results" from "idle".
     pub searched: bool,
     pub source: Source,
+    /// What the agent understood, in one sentence, shown above the results.
+    say: [u8; crate::mcp::SAY_MAX],
+}
+
+/// Copy a sentence into a fixed buffer, truncating on a character boundary so
+/// a long answer cannot leave half a UTF-8 sequence behind.
+fn set_say(buf: &mut [u8; crate::mcp::SAY_MAX], text: &str) {
+    *buf = [0; crate::mcp::SAY_MAX];
+    let mut end = text.len().min(buf.len());
+    while end > 0 && !text.is_char_boundary(end) {
+        end -= 1;
+    }
+    buf[..end].copy_from_slice(&text.as_bytes()[..end]);
 }
 
 impl SearchView {
@@ -188,6 +201,7 @@ impl SearchView {
         Self {
             rows: [Row::empty(); search::MAX_HITS],
             count: 0,
+            say: [0; crate::mcp::SAY_MAX],
             searched: false,
             source: Source::offline(),
         }
@@ -201,6 +215,7 @@ impl SearchView {
         self.searched = true;
         self.count = 0;
         self.source = Source::offline();
+        set_say(&mut self.say, "Answered from the built-in guide - the bridge is offline.");
         if q.trim().is_empty() {
             return;
         }
@@ -226,6 +241,7 @@ impl SearchView {
             return;
         }
         let peek = crate::mcp::fetch_search_peek(caps, q);
+        set_say(&mut self.say, peek.say());
         let online = matches!(peek.status, crate::mcp::BridgeStatus::Online) && !peek.denied;
         // Record reachability BEFORE any fallback, so an online bridge that
         // simply found nothing is never reported as a connection failure.
@@ -243,17 +259,52 @@ impl SearchView {
             }
         }
         if self.count == 0 {
-            // Nothing from the bridge: try what we shipped with.
+            // Nothing from the bridge: try what we shipped with. `run` rewrites
+            // the sentence, which is right - it describes where these came from.
+            let said = self.say;
             self.run(q);
+            // Keep the bridge's explanation only when there is nothing else to
+            // explain. Preferring it unconditionally printed "Everything is
+            // switched off, so I have nothing to look at" directly above three
+            // built-in documents - the sentence described the bridge's empty
+            // answer while the rows came from the local index.
+            if self.count == 0 && online && !say_str(&said).is_empty() {
+                self.say = said;
+            } else if online {
+                // `run` always blames the bridge, because offline is the only
+                // reason it exists. Here the bridge answered and simply had
+                // nothing - saying it is offline is the same false report this
+                // screen has made before, and it sends people to fix a
+                // connection that is fine.
+                set_say(
+                    &mut self.say,
+                    "Answered from the built-in guide - nothing in your sources matched.",
+                );
+            }
         }
         self.source = source;
     }
+
+    /// The agent's sentence for the current results.
+    pub fn say(&self) -> &str {
+        say_str(&self.say)
+    }
+}
+
+/// Read a NUL-padded sentence back out, stopping at the first invalid byte.
+fn say_str(buf: &[u8; crate::mcp::SAY_MAX]) -> &str {
+    let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+    core::str::from_utf8(&buf[..end]).unwrap_or("")
 }
 
 const PAD_X: i32 = 28;
 const NAV_H: i32 = 56;
 const FIELD_H: i32 = 52;
 const ROW_H: i32 = 64;
+/// Band above the results holding the agent's sentence. Reserved whether or
+/// not there is text, so hit-testing and drawing never disagree about where
+/// row zero starts.
+const SAY_H: i32 = 34;
 const CONTENT_MAX: i32 = 720;
 
 /// Geometry shared by the renderer and hit-testing.
@@ -271,8 +322,14 @@ pub fn back_rect(w: i32) -> (i32, i32, i32, i32) {
 
 /// Bounding box of result row `i`, shared by drawing and hit-testing.
 pub fn row_rect(w: i32, h: i32, i: usize) -> (i32, i32, i32, i32) {
-    let (fx, fy, fw, fh) = field_rect(w, h);
-    (fx, fy + fh + 26 + i as i32 * (ROW_H + 10), fw, ROW_H)
+    let (fx, _, fw, _) = field_rect(w, h);
+    (fx, results_top(w, h) + i as i32 * (ROW_H + 10), fw, ROW_H)
+}
+
+/// Y of the first result row, below the field and the agent's sentence.
+pub fn results_top(w: i32, h: i32) -> i32 {
+    let (_, fy, _, fh) = field_rect(w, h);
+    fy + fh + 26 + SAY_H
 }
 
 /// Which result was clicked, if any.
@@ -323,9 +380,17 @@ pub fn draw(
         fb.fill_rect(cx, fy + 14, 2, fh - 28, theme::INK);
     }
 
+    // What the agent understood. It sits above the results because it is the
+    // answer to "did you get what I meant?" - the rows are the evidence.
+    let say_y = fy + fh + 26;
+    if view.searched && !view.say().is_empty() {
+        fb.draw_text_clipped(fx, say_y + BODY_FACE.baseline(), view.say(), &BODY_FACE, 0, theme::INK, fw);
+    }
+
     // Results.
-    let mut y = fy + fh + 26;
+    let mut y = results_top(w, h);
     if !view.searched {
+        y = say_y;
         fb.draw_text_centered(
             w / 2,
             y + 30,
@@ -337,7 +402,12 @@ pub fn draw(
         return;
     }
     if view.count == 0 {
-        fb.draw_text_centered(w / 2, y + 30, view.source.empty_reason(), &BODY_FACE, 0, theme::MUTED);
+        // Only one explanation. The agent's sentence and `empty_reason` were
+        // both rendered, so an offline search said "the bridge is offline"
+        // twice in two different wordings.
+        if view.say().is_empty() {
+            fb.draw_text_centered(w / 2, y + 30, view.source.empty_reason(), &BODY_FACE, 0, theme::MUTED);
+        }
         return;
     }
 
@@ -582,7 +652,16 @@ mod teddy_tests {
 }
 
 /// Draw a document the user opened from a result.
-pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage) {
+/// Lines visible at once.
+pub const READER_ROWS: usize = 20;
+
+/// Clamp a scroll offset to what the document actually has.
+pub fn clamp_scroll(offset: usize, count: usize) -> usize {
+    let max = count.saturating_sub(READER_ROWS);
+    offset.min(max)
+}
+
+pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage, scroll: usize) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
     fb.fill(theme::BG);
@@ -613,13 +692,25 @@ pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage) {
         return;
     }
 
+    let scroll = clamp_scroll(scroll, page.count);
     let mut y = 156;
-    for i in 0..page.count {
+    for i in scroll..page.count.min(scroll + READER_ROWS) {
         fb.draw_text(fx, y, page.line_at(i), &BODY_FACE, 0, theme::INK);
         y += 26;
-        if y > h - 40 {
+        if y > h - 60 {
             break;
         }
+    }
+
+    // Only say there is more when there is; a permanent hint is noise.
+    if page.count > READER_ROWS {
+        let more = page.count - clamp_scroll(scroll, page.count) - READER_ROWS.min(page.count);
+        let msg = if more > 0 {
+            "More below - arrow keys or Page Down"
+        } else {
+            "End of document - Page Up to go back"
+        };
+        fb.draw_text(fx, h - 30, msg, &SMALL_FACE, 0, theme::MUTED);
     }
     let _ = fw;
 }
@@ -715,5 +806,118 @@ mod honesty_tests {
             audio_in_scope: false,
         };
         assert!(no_audio.empty_reason().contains("audio.transcribe"));
+    }
+}
+
+#[cfg(test)]
+mod scroll_tests {
+    use super::*;
+
+    #[test]
+    fn a_short_document_cannot_scroll() {
+        // Nothing to reveal, so any offset must stay at the top.
+        for off in [0, 1, 5, 999] {
+            assert_eq!(clamp_scroll(off, 3), 0);
+        }
+    }
+
+    #[test]
+    fn scrolling_stops_at_the_last_screenful() {
+        // The final position shows the last READER_ROWS lines, never past them.
+        let count = READER_ROWS + 10;
+        assert_eq!(clamp_scroll(9999, count), 10);
+        assert_eq!(clamp_scroll(4, count), 4);
+    }
+
+    #[test]
+    fn a_document_exactly_one_screen_long_does_not_scroll() {
+        assert_eq!(clamp_scroll(1, READER_ROWS), 0);
+    }
+
+    #[test]
+    fn an_empty_document_is_safe() {
+        assert_eq!(clamp_scroll(5, 0), 0);
+    }
+
+    #[test]
+    fn the_buffer_holds_more_than_one_screen() {
+        // Otherwise scrolling would have nothing to reveal.
+        assert!(
+            crate::mcp::DocPage::MAX > READER_ROWS,
+            "fetching fewer lines than the screen shows makes scrolling pointless"
+        );
+    }
+}
+
+#[cfg(test)]
+mod agent_say_tests {
+    use super::*;
+
+    #[test]
+    fn the_sentence_sits_above_the_first_result() {
+        let (_, ry, _, _) = row_rect(1024, 768, 0);
+        let (_, fy, _, fh) = field_rect(1024, 768);
+        assert!(ry > fy + fh, "results must clear the input field");
+        assert!(
+            ry - (fy + fh) >= SAY_H,
+            "no room reserved for what the agent said"
+        );
+    }
+
+    #[test]
+    fn an_offline_answer_admits_where_it_came_from() {
+        let mut v = SearchView::new();
+        v.run("capability");
+        assert!(v.say().contains("offline"), "{}", v.say());
+    }
+
+    #[test]
+    fn a_long_sentence_is_cut_on_a_character_boundary() {
+        let mut buf = [0u8; crate::mcp::SAY_MAX];
+        let long = "e".repeat(crate::mcp::SAY_MAX + 40);
+        set_say(&mut buf, &long);
+        assert_eq!(say_str(&buf).len(), crate::mcp::SAY_MAX);
+    }
+
+    #[test]
+    fn an_idle_view_says_nothing() {
+        assert!(SearchView::new().say().is_empty());
+    }
+}
+
+#[cfg(test)]
+mod say_matches_rows_tests {
+    use super::*;
+
+    #[test]
+    fn a_reachable_bridge_is_never_reported_as_offline() {
+        // The fallback sentence blamed the bridge unconditionally, so a bridge
+        // that answered correctly and found nothing was reported as down.
+        let mut v = SearchView::new();
+        let mut caps = crate::caps::Caps::none();
+        caps.set(crate::caps::Cap::SearchQuery, true);
+        v.run_via("capability", caps);
+        if v.source.bridge_online {
+            assert!(
+                !v.say().contains("offline"),
+                "bridge was reachable: {}",
+                v.say()
+            );
+        }
+    }
+
+    #[test]
+    fn the_sentence_describes_the_rows_that_are_shown() {
+        // The bridge's "nothing is switched on" was printed above three
+        // built-in documents: the sentence explained one source and the rows
+        // came from another.
+        let mut v = SearchView::new();
+        v.run("capability");
+        assert!(v.count > 0, "the built-in corpus should answer this");
+        assert!(
+            v.say().contains("built-in"),
+            "rows are local, so the sentence must be too: {}",
+            v.say()
+        );
     }
 }

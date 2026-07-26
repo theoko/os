@@ -12,6 +12,40 @@ use crate::font::{BODY_FACE, BRAND_FACE, H2_FACE, SMALL_FACE};
 use crate::mcp::{BridgeStatus, FilePeek, MailPeek};
 use crate::skills::SkillPeek;
 
+/// Where the status dot sits, for drawing and hit-testing.
+pub fn status_dot_rect(w: i32) -> Rect {
+    let d = 10;
+    Rect { x: w - PAD_X - d, y: NAV_H / 2 - d / 2, w: d, h: d }
+}
+
+fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
+    let base = (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline();
+    fb.draw_text(PAD_X, base, "os", &BRAND_FACE, 0, theme::INK);
+
+    // Quiet way to re-enter setup without stealing the search field's hit box.
+    let (sx, sy, _sw, sh) = setup_rect(w);
+    fb.draw_text(
+        sx,
+        sy + (sh - SMALL_FACE.px) / 2 + SMALL_FACE.baseline(),
+        "setup",
+        &SMALL_FACE,
+        0,
+        theme::MUTED,
+    );
+
+    // Just the dot. "bridge connected" was a label that answered half the
+    // question — it said nothing about the portal — and repeated on every
+    // screen. Clicking it opens the full picture instead.
+    let dot = match mail.status {
+        BridgeStatus::Online => theme::ONLINE,
+        BridgeStatus::Offline => theme::OFFLINE,
+    };
+    let r = status_dot_rect(w);
+    fb.fill_round_rect(r.x, r.y, r.w, r.h, r.w / 2, dot);
+
+    fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
+}
+
 /// Palette lifted from the reference site.
 pub mod theme {
     /// Page.
@@ -73,6 +107,8 @@ impl Rect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CtaId {
     Ready,
+    /// Opens the consent screen where a person can connect their own sources.
+    Portal,
     Skills,
 }
 
@@ -101,6 +137,7 @@ pub enum HomeHit {
 #[derive(Clone, Copy, Debug)]
 pub struct CtaTargets {
     pub ready: Rect,
+    pub portal: Rect,
     pub skills: Rect,
 }
 
@@ -110,6 +147,8 @@ impl CtaTargets {
         // (that used to restart setup whenever you clicked the query box).
         if self.ready.w > 0 && self.ready.contains(px, py) {
             Some(CtaId::Ready)
+        } else if self.portal.w > 0 && self.portal.contains(px, py) {
+            Some(CtaId::Portal)
         } else if self.skills.w > 0 && self.skills.contains(px, py) {
             Some(CtaId::Skills)
         } else {
@@ -249,6 +288,29 @@ pub fn draw_home_full(
         theme::MUTED,
     );
 
+    // A search box with no obvious route to personal sources makes the OS
+    // feel like it has forgotten the user. Keep that route beside search,
+    // rather than burying it behind a generic settings label.
+    let portal = portal_rect(w, h);
+    fb.fill_round_rect(portal.x, portal.y, portal.w, portal.h, portal.h / 2, theme::TINT_BORDER);
+    fb.fill_round_rect(
+        portal.x + 1,
+        portal.y + 1,
+        portal.w - 2,
+        portal.h - 2,
+        (portal.h - 2) / 2,
+        theme::TINT_BG,
+    );
+    let portal_base = portal.y + (portal.h - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
+    fb.draw_text_centered(
+        portal.x + portal.w / 2,
+        portal_base,
+        "Connect tSearch account",
+        &SMALL_FACE,
+        0,
+        theme::ACCENT,
+    );
+
     // Destinations, each showing a real number rather than a slogan.
     let mut mbuf = [0u8; 16];
     let mail_label = fmt_count(&mut mbuf, mail.count, "message", "messages");
@@ -269,8 +331,8 @@ pub fn draw_home_full(
         let tx = x0 + (tw + gap) * i as i32;
         fb.fill_round_rect(tx, ty, tw, TILE_H, 12, theme::CARD_BORDER);
         fb.fill_round_rect(tx + 1, ty + 1, tw - 2, TILE_H - 2, 11, theme::BG);
-        fb.draw_text(tx + 18, ty + 34, title, &H2_FACE, 0, theme::INK);
-        fb.draw_text(tx + 18, ty + 58, sub, &SMALL_FACE, 0, theme::MUTED);
+        fb.draw_text_clipped(tx + 18, ty + 34, title, &H2_FACE, 0, theme::INK, tw - 36);
+        fb.draw_text_clipped(tx + 18, ty + 58, sub, &SMALL_FACE, 0, theme::MUTED, tw - 36);
     }
 
     // Last brief stays after Back; mail + files still show below when granted
@@ -297,8 +359,15 @@ pub fn draw_home_full(
     } else if !brief.has_report() && files.count == 0 {
         let empty_mail = match mail.status {
             BridgeStatus::Offline => "Bridge offline - run: make utm-bridged",
-            BridgeStatus::Online if caps.allows(Cap::EmailSearch) => "Inbox empty right now.",
-            BridgeStatus::Online => "Grant Email to show recent mail.",
+            BridgeStatus::Online if !caps.allows(Cap::EmailSearch) => {
+                "Grant Email to show recent mail."
+            }
+            // The bridge is up and the grant is there, but no mail account is
+            // wired on the host — say so instead of blaming an empty inbox.
+            BridgeStatus::Online if mail.needs_connection => {
+                "Connect email on this Mac to show your inbox."
+            }
+            BridgeStatus::Online => "Inbox empty right now.",
         };
         fb.draw_text(x0, y, empty_mail, &SMALL_FACE, 0, theme::MUTED);
         y += 22;
@@ -512,6 +581,21 @@ pub(crate) fn home_column(w: i32) -> (i32, i32) {
 }
 
 /// The home search field, shared by drawing and hit-testing.
+/// Bounding box of recent-mail row `i`, shared by drawing and hit-testing.
+///
+/// These were drawn but unclickable — listed mail you could see and not open.
+pub fn mail_row_rect(w: i32, h: i32, i: usize) -> Rect {
+    let (x0, cw) = home_column(w);
+    let ry = tile_top(h) + TILE_H + 40;
+    // Header at ry, first row 30px below, 38px apart (text + rule + gap).
+    Rect { x: x0, y: ry + 12 + i as i32 * 38, w: cw, h: 32 }
+}
+
+/// Which recent-mail row was clicked, if any.
+pub fn mail_hit(w: i32, h: i32, count: usize, px: i32, py: i32) -> Option<usize> {
+    (0..count.min(3)).find(|&i| mail_row_rect(w, h, i).contains(px, py))
+}
+
 pub fn search_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
     let _ = h;
     let (x, cw) = home_column(w);
@@ -519,7 +603,12 @@ pub fn search_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
 }
 
 pub(crate) fn tile_top(_h: i32) -> i32 {
-    242
+    // Below the portal pill, not through it. The pill spans 222..250 and the
+    // tiles used to start at 242, so its bottom 8px were drawn over the tile
+    // row - and because CtaTargets::hit checks the portal before the cards,
+    // clicking the top edge of the Search tile opened the portal instead.
+    let p = portal_rect(0, 0);
+    p.y + p.h + 16
 }
 
 pub(crate) const TILE_H: i32 = 78;
@@ -536,6 +625,8 @@ pub fn cta_targets(w: i32, h: i32, _skills: &SkillPeek) -> CtaTargets {
             w: sw,
             h: sh,
         },
+        // The route to personal sources still has its own pill beside search.
+        portal: portal_rect(w, h),
         skills: Rect {
             x: 0,
             y: 0,
@@ -543,6 +634,15 @@ pub fn cta_targets(w: i32, h: i32, _skills: &SkillPeek) -> CtaTargets {
             h: 0,
         },
     }
+}
+
+/// The personal-sources action sits directly below the search guidance.
+/// Keeping it above the tiles makes it visible on a 768px guest display.
+pub fn portal_rect(w: i32, h: i32) -> Rect {
+    let (fx, fy, fw, fh) = search_rect(w, h);
+    let pw = 238.min(fw);
+    let ph = 28;
+    Rect { x: fx + fw - pw, y: fy + fh + 38, w: pw, h: ph }
 }
 
 /// Bounding box of home tile `i` (0 = Search, 1 = Capabilities, 2 = Skills).
@@ -671,42 +771,6 @@ pub fn file_targets(
     (rects, n)
 }
 
-fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
-    let base = (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline();
-    fb.draw_text(PAD_X, base, "os", &BRAND_FACE, 0, theme::INK);
-
-    // Quiet way to re-enter setup without stealing the search field's hit box.
-    let (sx, sy, _sw, sh) = setup_rect(w);
-    fb.draw_text(
-        sx,
-        sy + (sh - SMALL_FACE.px) / 2 + SMALL_FACE.baseline(),
-        "setup",
-        &SMALL_FACE,
-        0,
-        theme::MUTED,
-    );
-
-    let (label, dot) = match mail.status {
-        BridgeStatus::Online => ("bridge connected", theme::ONLINE),
-        BridgeStatus::Offline => ("bridge offline", theme::OFFLINE),
-    };
-    let tw = SMALL_FACE.width(label, 0);
-    let sbase = (NAV_H - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
-    fb.draw_text(w - PAD_X - tw, sbase, label, &SMALL_FACE, 0, theme::MUTED);
-
-    let dot_d = 7;
-    fb.fill_round_rect(
-        w - PAD_X - tw - 8 - dot_d,
-        NAV_H / 2 - dot_d / 2,
-        dot_d,
-        dot_d,
-        dot_d / 2,
-        dot,
-    );
-
-    fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
-}
-
 /// Nav "setup" control — restarts the first-boot journey on purpose.
 pub fn setup_rect(_w: i32) -> (i32, i32, i32, i32) {
     let label_w = SMALL_FACE.width("setup", 0);
@@ -744,6 +808,16 @@ mod tests {
             t.ctas.hit(sx + sw / 2, sy + sh / 2),
             Some(CtaId::Ready)
         );
+    }
+
+    #[test]
+    fn personal_portal_action_is_visible_and_clickable() {
+        let mail = MailPeek::empty(BridgeStatus::Offline);
+        let files = FilePeek::empty(BridgeStatus::Offline, false);
+        let t = home_targets(1024, 768, &peek(), &empty_brief(), &mail, &files);
+        let r = portal_rect(1024, 768);
+        assert!(r.y > search_rect(1024, 768).1);
+        assert_eq!(t.ctas.hit(r.x + r.w / 2, r.y + r.h / 2), Some(CtaId::Portal));
     }
 
     #[test]
@@ -804,6 +878,7 @@ mod tests {
     #[test]
     fn copy_is_ascii_only() {
         let mut all = vec![
+            "Connect tSearch account",
             "Search",
             "Capabilities",
             "Skills",
@@ -817,6 +892,7 @@ mod tests {
             "7 read-only",
             "Inbox empty right now.",
             "Grant Email to show recent mail.",
+            "Connect email on this Mac to show your inbox.",
             "Bridge offline - run: make utm-bridged",
             "bridge connected",
             "bridge offline",
@@ -1008,5 +1084,105 @@ mod tests {
         assert_eq!(mail.url_at(0, &mut buf), Some("email://0123456789abcdef"));
         let empty = MailPeek::empty(BridgeStatus::Online);
         assert_eq!(empty.url_at(0, &mut buf), None);
+    }
+}
+
+#[cfg(test)]
+mod mail_click_tests {
+    use super::*;
+
+    #[test]
+    fn mail_rows_are_clickable_at_their_centre() {
+        for i in 0..3 {
+            let r = mail_row_rect(1024, 768, i);
+            assert_eq!(mail_hit(1024, 768, 3, r.x + r.w / 2, r.y + r.h / 2), Some(i));
+        }
+    }
+
+    #[test]
+    fn mail_rows_do_not_overlap_each_other() {
+        for i in 1..3 {
+            let prev = mail_row_rect(1024, 768, i - 1);
+            let cur = mail_row_rect(1024, 768, i);
+            assert!(cur.y >= prev.y + prev.h, "mail row {i} overlaps its predecessor");
+        }
+    }
+
+    #[test]
+    fn rows_beyond_the_message_count_are_not_hittable() {
+        let r = mail_row_rect(1024, 768, 2);
+        assert_eq!(mail_hit(1024, 768, 1, r.x + r.w / 2, r.y + r.h / 2), None);
+    }
+
+    #[test]
+    fn mail_rows_sit_below_the_tiles() {
+        let tile = tile_rect(1024, 768, 0);
+        let first = mail_row_rect(1024, 768, 0);
+        assert!(first.y >= tile.y + tile.h, "mail overlaps the tiles");
+    }
+
+    #[test]
+    fn an_empty_inbox_has_no_targets() {
+        assert_eq!(mail_hit(1024, 768, 0, 512, 700), None);
+    }
+}
+
+#[cfg(test)]
+mod portal_link_tests {
+    use super::*;
+
+    fn skills() -> SkillPeek {
+        SkillPeek::from_builtin()
+    }
+
+    fn overlaps(a: Rect, b: Rect) -> bool {
+        a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    }
+
+    #[test]
+    fn the_portal_link_does_not_sit_on_top_of_any_tile() {
+        // It did: the pill's lower 8px overlapped the tile row, and since the
+        // portal is hit-tested before the cards, the top edge of the Search
+        // tile opened the portal instead of Search.
+        for (w, h) in [(1024, 768), (1280, 800), (1600, 1000)] {
+            let p = portal_rect(w, h);
+            for i in 0..3 {
+                assert!(
+                    !overlaps(p, tile_rect(w, h, i)),
+                    "portal pill overlaps tile {i} at {w}x{h}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_portal_link_clears_the_search_field() {
+        for (w, h) in [(1024, 768), (1280, 800)] {
+            let (_, fy, _, fh) = search_rect(w, h);
+            assert!(portal_rect(w, h).y >= fy + fh, "pill overlaps the field at {w}x{h}");
+        }
+    }
+
+    #[test]
+    fn clicking_the_portal_link_reports_the_portal_and_nothing_else() {
+        let (w, h) = (1280, 800);
+        let p = portal_rect(w, h);
+        let mail = crate::mcp::MailPeek::empty(BridgeStatus::Offline);
+        let files = crate::mcp::FilePeek::empty(BridgeStatus::Offline, false);
+        let brief = crate::agent::Brief::empty();
+        let t = home_targets(w, h, &skills(), &brief, &mail, &files);
+        assert_eq!(
+            t.hit(p.x + p.w / 2, p.y + p.h / 2),
+            Some(HomeHit::Cta(CtaId::Portal))
+        );
+    }
+
+    #[test]
+    fn the_portal_link_stays_inside_the_content_column() {
+        for (w, h) in [(1024, 768), (1280, 800), (1600, 1000)] {
+            let (fx, _, fw, _) = search_rect(w, h);
+            let p = portal_rect(w, h);
+            assert!(p.x >= fx && p.x + p.w <= fx + fw, "pill escapes the column at {w}x{h}");
+        }
     }
 }
