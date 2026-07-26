@@ -4,15 +4,18 @@
 //! live counts, and recent mail when granted. Type is anti-aliased proportional
 //! (see `font.rs`); all copy is ASCII because the atlas covers 0x20..=0x7E only.
 
+use crate::caps::Caps;
 use crate::fb::Surface;
-use crate::font::{BODY_FACE, BRAND_FACE, H2_FACE, SMALL_FACE};
+use crate::font::{BODY_FACE, BRAND_FACE, BTN_FACE, H2_FACE, SMALL_FACE};
 use crate::mcp::{BridgeStatus, MailPeek};
 use crate::skills::SkillPeek;
 
-/// Palette lifted from the reference site.
+/// Apple-inspired light palette.
 pub mod theme {
-    /// Page.
-    pub const BG: u32 = 0x00FF_FFFF;
+    /// Page — Apple light grey.
+    pub const BG: u32 = 0x00F5_F5F7;
+    /// Cards, inputs, switch knobs — pure white.
+    pub const SURFACE: u32 = 0x00FF_FFFF;
     /// Primary text — Apple's near-black, never pure #000.
     pub const INK: u32 = 0x001D_1D1F;
     /// Secondary copy.
@@ -21,8 +24,8 @@ pub mod theme {
     pub const ACCENT: u32 = 0x0000_71E3;
     /// Hairline separators.
     pub const RULE: u32 = 0x00D2_D2D7;
-    /// Card border.
-    pub const CARD_BORDER: u32 = 0x00E8_E8ED;
+    /// Card / input border.
+    pub const CARD_BORDER: u32 = 0x00E5_E5EA;
     /// Accent at 6% over white — the tinted secondary pill.
     pub const TINT_BG: u32 = 0x00F2_F8FD;
     pub const ONLINE: u32 = 0x0034_C759;
@@ -55,7 +58,7 @@ pub fn draw_switch(fb: &Surface, tx: i32, ty: i32, on: bool) {
     } else {
         tx + 3
     };
-    fb.fill_round_rect(kx, ty + 3, knob, knob, knob / 2, theme::BG);
+    fb.fill_round_rect(kx, ty + 3, knob, knob, knob / 2, theme::SURFACE);
 }
 
 
@@ -112,12 +115,15 @@ pub fn outlined_round_rect(
 
 /// Bordered list row: title + muted subtitle (Skills / Caps chrome).
 pub fn draw_titled_row(fb: &Surface, r: Rect, title: &str, sub: &str, border: u32) {
-    outlined_round_rect(fb, r.x, r.y, r.w, r.h, 10, border, theme::BG);
+    outlined_round_rect(fb, r.x, r.y, r.w, r.h, 10, border, theme::SURFACE);
     fb.draw_text(r.x + 18, r.y + 26, title, &BRAND_FACE, 0, theme::INK);
     fb.draw_text(r.x + 18, r.y + 46, sub, &SMALL_FACE, 0, theme::MUTED);
 }
 
 /// Shared search-field chrome used on Home and Search.
+///
+/// `badge`, when set, is drawn muted on the far right inside the field
+/// (e.g. "Offline Ready") so helper copy never sits under the input.
 pub fn draw_query_field(
     fb: &Surface,
     x: i32,
@@ -127,17 +133,24 @@ pub fn draw_query_field(
     query: &str,
     placeholder: &str,
     caret: bool,
+    badge: Option<&str>,
 ) {
-    outlined_round_rect(fb, x, y, w, h, 12, theme::RULE, theme::BG);
+    outlined_round_rect(fb, x, y, w, h, 12, theme::CARD_BORDER, theme::SURFACE);
     let tx = x + 18;
     let base = y + (h - BODY_FACE.px) / 2 + BODY_FACE.baseline();
+    let badge_w = badge.map(|b| SMALL_FACE.width(b, 0) + 18).unwrap_or(0);
     if query.is_empty() {
         fb.draw_text(tx, base, placeholder, &BODY_FACE, 0, theme::MUTED);
     } else {
         fb.draw_text(tx, base, query, &BODY_FACE, 0, theme::INK);
     }
+    if let Some(badge) = badge {
+        let bx = x + w - 18 - SMALL_FACE.width(badge, 0);
+        let bbase = y + (h - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
+        fb.draw_text(bx, bbase, badge, &SMALL_FACE, 0, theme::MUTED);
+    }
     if caret {
-        let cx = tx + BODY_FACE.width(query, 0) + 2;
+        let cx = (tx + BODY_FACE.width(query, 0) + 2).min(x + w - badge_w - 8);
         fb.fill_rect(cx, y + 14, 2, h - 28, theme::INK);
     }
 }
@@ -155,6 +168,8 @@ pub enum CardId {
 pub enum HomeHit {
     /// The primary search field (type or click to open Search).
     SearchField,
+    /// Top-right Connect — re-probe the host bridge.
+    Connect,
     Card(CardId),
 }
 
@@ -184,6 +199,7 @@ impl CardTargets {
 #[derive(Clone, Copy, Debug)]
 pub struct HomeTargets {
     search: Rect,
+    connect: Rect,
     cards: CardTargets,
 }
 
@@ -192,24 +208,19 @@ impl HomeTargets {
         if self.search.contains(px, py) {
             return Some(HomeHit::SearchField);
         }
+        if self.connect.contains(px, py) {
+            return Some(HomeHit::Connect);
+        }
         self.cards.hit(px, py).map(HomeHit::Card)
     }
 }
 
-
-/// The home screen: a launcher, not a landing page.
-///
-/// A search field you can type into immediately, three destinations carrying
-/// live counts, and recent mail when the capability was granted. The previous
-/// version led with a tagline and a primary button whose only effect was to
-/// restart the setup wizard.
-///
-/// `status` is a short footer line (ASCII); empty falls back to the version bar.
+/// The home screen: one focal search field, three equal cards, locked footer.
 pub fn draw_home_full(
     fb: &Surface,
     mail: &MailPeek,
     skills: &SkillPeek,
-    status: &str,
+    grants: Caps,
     query: &str,
     caret: bool,
 ) {
@@ -219,67 +230,40 @@ pub fn draw_home_full(
     fb.fill(theme::BG);
     draw_nav(fb, w, mail);
 
-    let (x0, cw) = home_column(w);
-
-    // The one thing you can do without clicking anything first.
     let r = search_rect(w);
-    let (fx, fy, fw, fh) = (r.x, r.y, r.w, r.h);
-    draw_query_field(fb, fx, fy, fw, fh, query, "Search the knowledge base", caret);
-    fb.draw_text(
-        fx + 2,
-        fy + fh + 22,
-        "Type a query and press Enter. Works with the bridge offline.",
-        &SMALL_FACE,
-        0,
-        theme::MUTED,
+    let badge = match mail.status {
+        BridgeStatus::Online => "Online",
+        BridgeStatus::Offline => "Offline Ready",
+    };
+    draw_query_field(
+        fb,
+        r.x,
+        r.y,
+        r.w,
+        r.h,
+        query,
+        "Search knowledge base...",
+        caret,
+        Some(badge),
     );
 
-    // Destinations, each showing a real number rather than a slogan.
-    let mut mbuf = [0u8; 16];
-    let mail_label = fmt_count(&mut mbuf, mail.count, "message", "messages");
+    let mut gbuf = [0u8; 16];
+    let granted = fmt_n_label(&mut gbuf, grants.granted_count(), "Granted");
     let mut sbuf = [0u8; 16];
-    let skill_label = fmt_count(&mut sbuf, skills.count, "playbook", "playbooks");
-
+    let playbooks = fmt_n_label(&mut sbuf, skills.count, "Playbooks");
     let tiles: [(&str, &str); 3] = [
-        ("Search", "knowledge + email"),
-        ("Capabilities", status),
-        ("Skills", skill_label),
+        ("Search", "Knowledge + Email"),
+        ("Capabilities", granted),
+        ("Skills", playbooks),
     ];
     for (i, (title, sub)) in tiles.iter().enumerate() {
         let r = tile_rect(w, i as i32);
-        outlined_round_rect(fb, r.x, r.y, r.w, r.h, 12, theme::CARD_BORDER, theme::BG);
+        outlined_round_rect(fb, r.x, r.y, r.w, r.h, 16, theme::CARD_BORDER, theme::SURFACE);
         fb.draw_text(r.x + 18, r.y + 34, title, &H2_FACE, 0, theme::INK);
         fb.draw_text(r.x + 18, r.y + 58, sub, &SMALL_FACE, 0, theme::MUTED);
     }
 
-    // Live content instead of marketing copy.
-    let ry = TILE_TOP + TILE_H + 40;
-    if mail.count > 0 {
-        fb.draw_text(x0, ry, "Recent mail", &BRAND_FACE, 0, theme::INK);
-        let mut y = ry + 30;
-        for i in 0..mail.count.min(3) {
-            fb.draw_text(x0, y, mail.row_subj(i), &BODY_FACE, 0, theme::INK);
-            let from = mail.row_from(i);
-            fb.draw_text(x0 + cw - SMALL_FACE.width(from, 0), y, from, &SMALL_FACE, 0, theme::MUTED);
-            y += 12;
-            fb.fill_rect(x0, y, cw, 1, theme::CARD_BORDER);
-            y += 26;
-        }
-    } else {
-        fb.draw_text(
-            x0,
-            ry,
-            match mail.status {
-                BridgeStatus::Online => "Inbox empty, or email.search not granted.",
-                BridgeStatus::Offline => crate::mcp::BRIDGE_OFFLINE_HINT,
-            },
-            &SMALL_FACE,
-            0,
-            theme::MUTED,
-        );
-    }
-
-    fb.draw_text_centered(w / 2, h - 24, mail_label, &SMALL_FACE, 0, theme::MUTED);
+    draw_status_bar(fb, w, h, mail, grants);
 }
 
 /// Render "3 messages" / "1 message" / "none" into a caller-owned buffer.
@@ -305,6 +289,26 @@ fn fmt_count<'a>(buf: &'a mut [u8; 16], n: usize, one: &'static str, many: &'sta
     core::str::from_utf8(&buf[..i]).unwrap_or("")
 }
 
+/// "4 Granted" / "5 Playbooks" — card subtext, never a truncated list.
+fn fmt_n_label<'a>(buf: &'a mut [u8; 16], n: usize, label: &'static str) -> &'a str {
+    let mut i = 0;
+    if n >= 10 {
+        buf[i] = b'0' + ((n / 10) % 10) as u8;
+        i += 1;
+    }
+    buf[i] = b'0' + (n % 10) as u8;
+    i += 1;
+    buf[i] = b' ';
+    i += 1;
+    for &b in label.as_bytes() {
+        if i < buf.len() {
+            buf[i] = b;
+            i += 1;
+        }
+    }
+    core::str::from_utf8(&buf[..i]).unwrap_or("")
+}
+
 /// Centered content column capped at `max` (home uses 920; list screens 720).
 pub(crate) fn content_column(w: i32, max: i32) -> (i32, i32) {
     let cw = (w - PAD_X * 2).min(max);
@@ -318,11 +322,11 @@ fn home_column(w: i32) -> (i32, i32) {
 /// The home search field, shared by drawing and hit-testing.
 pub fn search_rect(w: i32) -> Rect {
     let (x, cw) = home_column(w);
-    Rect::new(x, 132, cw, 52)
+    Rect::new(x, 120, cw, 52)
 }
 
-pub(crate) const TILE_TOP: i32 = 242;
-pub(crate) const TILE_H: i32 = 78;
+pub(crate) const TILE_TOP: i32 = 200;
+pub(crate) const TILE_H: i32 = 88;
 
 /// Bounding box of home tile `i` (0 = Search, 1 = Capabilities, 2 = Skills).
 pub fn tile_rect(w: i32, i: i32) -> Rect {
@@ -330,6 +334,15 @@ pub fn tile_rect(w: i32, i: i32) -> Rect {
     let gap = 16;
     let tw = (cw - gap * 2) / 3;
     Rect::new(x0 + (tw + gap) * i, TILE_TOP, tw, TILE_H)
+}
+
+/// Top-right Connect pill — primary bridge action beside the status dot.
+pub fn connect_rect(w: i32) -> Rect {
+    let label = "Connect";
+    let pad = 14;
+    let bw = (BTN_FACE.width(label, 0) + pad * 2).max(88);
+    let bh = 28;
+    Rect::new(w - PAD_X - bw, (NAV_H - bh) / 2, bw, bh)
 }
 
 fn card_targets(w: i32) -> CardTargets {
@@ -343,6 +356,7 @@ fn card_targets(w: i32) -> CardTargets {
 pub fn home_targets(w: i32) -> HomeTargets {
     HomeTargets {
         search: search_rect(w),
+        connect: connect_rect(w),
         cards: card_targets(w),
     }
 }
@@ -351,25 +365,70 @@ fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
     let base = (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline();
     fb.draw_text(PAD_X, base, "os", &BRAND_FACE, 0, theme::INK);
 
+    let cr = connect_rect(w);
+    fb.fill_round_rect(cr.x, cr.y, cr.w, cr.h, cr.h / 2, theme::ACCENT);
+    let cbase = cr.y + (cr.h - BTN_FACE.px) / 2 + BTN_FACE.baseline();
+    fb.draw_text_centered(cr.x + cr.w / 2, cbase, "Connect", &BTN_FACE, 0, theme::SURFACE);
+
     let (label, dot) = match mail.status {
-        BridgeStatus::Online => ("bridge connected", theme::ONLINE),
-        BridgeStatus::Offline => ("bridge offline", theme::OFFLINE),
+        BridgeStatus::Online => ("Bridge", theme::ONLINE),
+        BridgeStatus::Offline => ("Bridge", theme::OFFLINE),
     };
     let tw = SMALL_FACE.width(label, 0);
-    let sbase = (NAV_H - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
-    fb.draw_text(w - PAD_X - tw, sbase, label, &SMALL_FACE, 0, theme::MUTED);
-
+    let gap = 10;
     let dot_d = 7;
+    let cluster_w = dot_d + 6 + tw;
+    let cluster_x = cr.x - gap - cluster_w;
+    let sbase = (NAV_H - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
     fb.fill_round_rect(
-        w - PAD_X - tw - 8 - dot_d,
+        cluster_x,
         NAV_H / 2 - dot_d / 2,
         dot_d,
         dot_d,
         dot_d / 2,
         dot,
     );
+    fb.draw_text(cluster_x + dot_d + 6, sbase, label, &SMALL_FACE, 0, theme::MUTED);
 
     fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
+}
+
+/// Unified bottom telemetry — no orphaned mid-page status lines.
+fn draw_status_bar(fb: &Surface, w: i32, h: i32, mail: &MailPeek, grants: Caps) {
+    let mut line = [0u8; 96];
+    let mut n = 0;
+    let push = |line: &mut [u8], n: &mut usize, s: &str| {
+        for &b in s.as_bytes() {
+            if *n < line.len() {
+                line[*n] = b;
+                *n += 1;
+            }
+        }
+    };
+    match mail.count {
+        0 => push(&mut line, &mut n, "Inbox empty"),
+        1 => push(&mut line, &mut n, "1 message"),
+        c => {
+            let mut b = [0u8; 16];
+            push(&mut line, &mut n, fmt_count(&mut b, c, "message", "messages"));
+        }
+    }
+    push(&mut line, &mut n, "  |  Caps: ");
+    {
+        let mut b = [0u8; 16];
+        push(&mut line, &mut n, fmt_n_label(&mut b, grants.granted_count(), "Active"));
+    }
+    push(&mut line, &mut n, "  |  Bridge: ");
+    push(
+        &mut line,
+        &mut n,
+        match mail.status {
+            BridgeStatus::Online => "Online",
+            BridgeStatus::Offline => "Offline",
+        },
+    );
+    let text = core::str::from_utf8(&line[..n]).unwrap_or("");
+    fb.draw_text_centered(w / 2, h - 28, text, &SMALL_FACE, 0, theme::MUTED);
 }
 
 
@@ -382,30 +441,31 @@ mod tests {
 
     #[test]
     fn search_field_is_the_primary_target() {
-        // Typing must be reachable without hunting for a card.
         let t = home_targets(1024);
         let r = search_rect(1024);
-        let (fx, fy, fw, fh) = (r.x, r.y, r.w, r.h);
+        assert_eq!(t.search, r);
         assert_eq!(
-            t.search,
-            Rect {
-                x: fx,
-                y: fy,
-                w: fw,
-                h: fh
-            }
-        );
-        assert_eq!(
-            t.hit(fx + fw / 2, fy + fh / 2),
+            t.hit(r.x + r.w / 2, r.y + r.h / 2),
             Some(HomeHit::SearchField)
+        );
+    }
+
+    #[test]
+    fn connect_sits_in_the_nav_bar() {
+        let t = home_targets(1024);
+        let c = connect_rect(1024);
+        assert_eq!(t.connect, c);
+        assert!(c.y + c.h <= NAV_H);
+        assert_eq!(
+            t.hit(c.x + c.w / 2, c.y + c.h / 2),
+            Some(HomeHit::Connect)
         );
     }
 
     #[test]
     fn tiles_do_not_overlap_the_search_field() {
         let r = search_rect(1024);
-        let (fy, fh) = (r.y, r.h);
-        assert!(TILE_TOP >= fy + fh, "tiles collide with the field");
+        assert!(TILE_TOP >= r.y + r.h + 16, "tiles collide with the field");
     }
 
     #[test]
@@ -426,6 +486,7 @@ mod tests {
             let prev = tile_rect(1024, i - 1);
             let cur = tile_rect(1024, i);
             assert!(cur.x >= prev.x + prev.w, "tile {i} overlaps its neighbour");
+            assert_eq!(cur.h, prev.h, "cards must share height");
         }
     }
 
@@ -433,7 +494,7 @@ mod tests {
     fn everything_fits_a_768_screen() {
         let last = tile_rect(1024, 2);
         assert!(last.x + last.w <= 1024 - PAD_X);
-        assert!(last.y + last.h + 120 < 768, "content runs off the screen");
+        assert!(last.y + last.h + 48 < 768, "content runs off the screen");
     }
 
     #[test]
@@ -445,29 +506,29 @@ mod tests {
         let mut b = [0u8; 16];
         assert_eq!(fmt_count(&mut b, 3, "message", "messages"), "3 messages");
         let mut b = [0u8; 16];
-        assert_eq!(fmt_count(&mut b, 12, "message", "messages"), "12 messages");
+        assert_eq!(fmt_n_label(&mut b, 4, "Granted"), "4 Granted");
     }
 
     #[test]
     fn count_cannot_overflow_its_buffer() {
         let mut b = [0u8; 16];
-        let s = fmt_count(&mut b, 99, "playbook", "playbooks");
+        let s = fmt_n_label(&mut b, 99, "Playbooks");
         assert!(s.len() <= 16);
     }
 
     #[test]
     fn copy_is_ascii_only() {
         for s in [
-            "Search the knowledge base",
-            "Type a query and press Enter. Works with the bridge offline.",
+            "Search knowledge base...",
+            "Offline Ready",
+            "Online",
             "Search",
             "Capabilities",
             "Skills",
-            "Recent mail",
-            "Inbox empty, or email.search not granted.",
-            crate::mcp::BRIDGE_OFFLINE_HINT,
-            "bridge connected",
-            "bridge offline",
+            "Knowledge + Email",
+            "Connect",
+            "Bridge",
+            "Inbox empty",
             "os",
         ] {
             assert!(
@@ -483,15 +544,16 @@ mod tests {
         for s in ["Search", "Capabilities", "Skills"] {
             assert!(H2_FACE.width(s, 0) < r.w - 36, "tile title overflows: {s}");
         }
-        assert!(SMALL_FACE.width("knowledge + email", 0) < r.w - 36);
-        assert!(SMALL_FACE.width(Caps::default_grants().footer_status(), 0) < r.w - 36);
+        assert!(SMALL_FACE.width("Knowledge + Email", 0) < r.w - 36);
+        let mut b = [0u8; 16];
+        assert!(SMALL_FACE.width(fmt_n_label(&mut b, 5, "Granted"), 0) < r.w - 36);
     }
 
     #[test]
     fn drawing_the_home_screen_does_not_panic() {
-        // Exercises the offline branch and the count formatting together.
         let mail = MailPeek::empty(BridgeStatus::Offline);
         let _ = home_targets(1024);
         assert_eq!(mail.count, 0);
+        assert_eq!(Caps::default_grants().granted_count(), 2);
     }
 }

@@ -287,7 +287,11 @@ impl Setup {
 
         // Selected rows get an accent hairline; the rest a neutral one.
         let border = if on && !toggle { theme::ACCENT } else { theme::CARD_BORDER };
-        let inner = if on && !toggle { theme::TINT_BG } else { theme::BG };
+        let inner = if on && !toggle {
+            theme::TINT_BG
+        } else {
+            theme::SURFACE
+        };
         ui::outlined_round_rect(fb, x, y, cw, ROW_H, 10, border, inner);
 
         let pad = 18;
@@ -325,7 +329,7 @@ impl Setup {
     fn status_card(&mut self, fb: &Surface, w: i32, y: i32, label: &str, detail: &str, tint: u32) {
         let cw = CONTENT_W.min(w - 80);
         let x = (w - cw) / 2;
-        ui::outlined_round_rect(fb, x, y, cw, ROW_H + 8, 10, theme::CARD_BORDER, theme::BG);
+        ui::outlined_round_rect(fb, x, y, cw, ROW_H + 8, 10, theme::CARD_BORDER, theme::SURFACE);
         let pad = 18;
         let d = 9;
         fb.fill_round_rect(x + pad, y + (ROW_H + 8 - d) / 2, d, d, d / 2, tint);
@@ -340,7 +344,7 @@ impl Setup {
         let x = w / 2 - bw / 2;
         fb.fill_round_rect(x, y, bw, CTA_H, CTA_H / 2, theme::ACCENT);
         let base = y + (CTA_H - BTN_FACE.px) / 2 + BTN_FACE.baseline() - 2;
-        fb.draw_text_centered(w / 2, base, label, &BTN_FACE, 0, theme::BG);
+        fb.draw_text_centered(w / 2, base, label, &BTN_FACE, 0, theme::SURFACE);
         self.push_zone(x, y, bw, CTA_H, Action::Continue);
     }
 

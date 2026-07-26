@@ -97,7 +97,7 @@ unsafe extern "C" fn kmain() -> ! {
 
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
-                ui::draw_home_full(surface, &mail, &skill_peek, "", "", false);
+                ui::draw_home_full(surface, &mail, &skill_peek, grants, "", false);
                 mouse::draw_arrow(surface, cx, cy);
                 screen.present();
                 serial_port.write_str("mouse: pointer painted\n");
@@ -237,7 +237,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     view,
                                     &mail,
                                     &skill_peek,
-                                    skills::str_at(&status_buf),
                                     "",
                                     false,
                                     &sview,
@@ -280,6 +279,19 @@ unsafe extern "C" fn kmain() -> ! {
                                         view = screens::View::Search;
                                         query.clear();
                                         sview = searchui::SearchView::new();
+                                        dirty = true;
+                                    }
+                                    Some(ui::HomeHit::Connect) => {
+                                        serial_port.write_str("ui: connect bridge\n");
+                                        mail = mcp::fetch_mail_peek(grants);
+                                        match mail.status {
+                                            mcp::BridgeStatus::Online => {
+                                                serial_port.write_str("mcp: email connected\n")
+                                            }
+                                            mcp::BridgeStatus::Offline => {
+                                                serial_port.write_str("mcp: email offline\n")
+                                            }
+                                        }
                                         dirty = true;
                                     }
                                     Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
@@ -388,7 +400,6 @@ unsafe extern "C" fn kmain() -> ! {
                                 view,
                                 &mail,
                                 &skill_peek,
-                                skills::str_at(&status_buf),
                                 query.as_str(),
                                 caret,
                                 &sview,
@@ -504,7 +515,6 @@ fn repaint(
     view: screens::View,
     mail: &mcp::MailPeek,
     skills: &skills::SkillPeek,
-    status: &str,
     query: &str,
     caret: bool,
     sview: &searchui::SearchView,
@@ -521,7 +531,7 @@ fn repaint(
         screens::View::Caps => screens::draw_caps(surface, grants),
         screens::View::Reader => searchui::draw_reader(surface, open_title, page),
         screens::View::Home => {
-            ui::draw_home_full(surface, mail, skills, status, query, caret)
+            ui::draw_home_full(surface, mail, skills, grants, query, caret)
         }
     }
     cursor.show_at(surface, x, y);

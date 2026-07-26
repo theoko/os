@@ -74,6 +74,11 @@ impl Caps {
         self.bits & (1 << cap.index()) != 0
     }
 
+    /// How many named capabilities are currently granted.
+    pub fn granted_count(self) -> usize {
+        Cap::ALL.iter().filter(|&&c| self.allows(c)).count()
+    }
+
     pub fn set(&mut self, cap: Cap, on: bool) {
         if on {
             self.bits |= 1 << cap.index();
@@ -82,7 +87,7 @@ impl Caps {
         }
     }
 
-    /// Short ASCII status for the home footer (fits a 1024px row).
+    /// Short ASCII status for serial / legacy chrome (fits a 1024px row).
     pub fn footer_status(self) -> &'static str {
         let e = self.allows(Cap::EmailSearch);
         let s = self.allows(Cap::SearchQuery);
@@ -111,6 +116,7 @@ mod tests {
         assert!(c.allows(Cap::EmailSearch));
         assert!(c.allows(Cap::SearchQuery));
         assert!(!c.allows(Cap::SkillsSave));
+        assert_eq!(c.granted_count(), 2);
     }
 
     #[test]
