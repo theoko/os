@@ -14,6 +14,8 @@ backend / `OS_MCP_SEARCH_BACKEND`, folded five bridge `home()` copies into
 `Cap::name()` (blurbs-only table), and removed the unused `skills.save`
 `call_tool` arm (socket path owns saves). Dropped `skills.get` and the Skills
 row click body probe — Skills UI is list + desc only (`skills.list` / builtins).
+Mail is peek-only (`ROW n=`); no email→search graph. Guest Caps are the four
+`Cap::ALL` verbs — `skills.save` stays host-socket-only (no guest Cap).
 
 ## 0.9.1 — 2026-07-25
 
@@ -24,8 +26,8 @@ click → `skills.get` footer blurbs shipped here; removed in 0.9.2.)
 ## 0.9.0 — 2026-07-25
 
 The OS stopped being a landing page and became something you can use: type a
-query on arrival and get answers from five sources, behind capabilities you
-choose at first boot.
+query on arrival and get answers from the knowledge stack, behind capabilities
+you choose at first boot.
 
 ### It does something now
 
@@ -33,8 +35,8 @@ choose at first boot.
   ran a search and wrote the hits to COM1 — invisible unless you were watching
   a serial console — and there was no keyboard driver to type a query with.
 - Home is a launcher: a field that takes keystrokes immediately, three tiles
-  carrying live counts, recent mail inline. The old hero's primary button only
-  restarted the setup wizard.
+  (Search static; Caps/Skills live counts), inbox count in the footer when
+  granted. The old hero's primary button only restarted the setup wizard.
 - Skills and Capabilities screens; capability switches are live, so grants can
   be changed after setup without reinstalling.
 
@@ -43,23 +45,23 @@ choose at first boot.
 - **Offline corpus** compiled into the kernel by `build.rs` as a fixed-point
   inverted index — no `ln()` or float division at runtime, because the kernel
   never enables the FPU. Search works with no bridge at all.
-- **Your files** — 308 documents indexed from project roots you choose, ranked
-  by recency, depth and README-ness, with backup and vendor trees excluded.
-- **Email**, folded into a sender→message PageRank graph.
-- **teddysearch.com** — 12,448 documents. The site is a client-side app, so the
-  corpus file *is* the API; it is fetched, validated and indexed once.
-- **Transcripts** — `ffmpeg` + `whisper.cpp`, entirely local, so speech is
-  searchable next to everything else.
+- **Your files** — indexed from project roots you choose, ranked by recency,
+  depth and README-ness, with backup and vendor trees excluded (`files=1`).
+- **Email** — inbox peek count only (`email.search` → `ROW n=`); not a search
+  source.
+- **teddysearch.com** — large host corpus; fetched, validated and indexed once.
+- **Transcripts** — `ffmpeg` + `whisper.cpp` on the host (`audio.transcribe
+  path=…`); searchable under `audio=1` when indexed.
 
 ### Consent
 
-Five capabilities, chosen at first boot, off unless they need to be on:
-`email.search`, `search.query`, `skills.save`, `workspace.index`,
-`audio.transcribe`. Each is enforced on the wire, not just in the UI.
+Four guest capabilities (`Cap::ALL`), chosen at first boot:
+`email.search`, `search.query`, `workspace.index`, `audio.transcribe`.
+Each is enforced on the wire, not just in the UI. `skills.save` is
+host-socket-only (no guest Cap).
 
 - The inbox is no longer read before the user consents. It used to be probed at
-  boot with default grants — and once the bridge indexed results, that mail was
-  written to disk.
+  boot with default grants.
 - Personal files and recordings each need their own grant; neither rides along
   on `search.query` or on each other.
 
