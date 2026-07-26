@@ -11,7 +11,7 @@
       "t": "MCP connectors",
       "u": "os://docs/mcp-connectors-os-doc-v01.md",
       "c": "docs",
-      "b": "Host bridge over COM2. Tools email.search email.send skills.list skills.save search.query workspace.index doc.read. Secrets stay in gog keyring. Exact protocol PING CALL.",
+      "b": "Host bridge over COM2. Tools email.search email.send skills.list skills.save search.query workspace.index workspace.forget doc.read audio.transcribe audio.forget. Secrets stay in gog keyring. Exact protocol PING CALL.",
       "pr": 0.9
     },
     {

@@ -1,5 +1,6 @@
 ---
 name: agent-plan-act
+blurb: Plan, act, report
 description: >-
   Default plan/act loop for os agents: clarify goal, list caps, call tools,
   report. Use as the baseline operating skill for agentd.

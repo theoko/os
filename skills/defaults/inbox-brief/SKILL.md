@@ -1,5 +1,6 @@
 ---
 name: inbox-brief
+blurb: Short mail brief
 description: >-
   Produce a short morning brief from email.search peek count. Use when the
   user asks what matters in mail right now.

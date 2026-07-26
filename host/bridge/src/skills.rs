@@ -15,7 +15,10 @@ pub(crate) fn skills_dirs() -> (PathBuf, PathBuf) {
     (defaults, user)
 }
 
-/// Merged skill map name → description (saved overrides default by name).
+/// Merged skill map name → guest Skills-row text (saved overrides default by name).
+///
+/// Prefer frontmatter `blurb:` (≤ guest `DESC_CHARS`) so online rows match the
+/// ISO builtins; fall back to `description:` for user-saved skills without one.
 fn list_skills(defaults: &Path, user: &Path) -> BTreeMap<String, String> {
     let mut map = BTreeMap::new();
     collect_dir(defaults, &mut map);
@@ -33,8 +36,8 @@ fn collect_dir(dir: &Path, map: &mut BTreeMap<String, String>) {
             continue;
         }
         if let Ok(text) = fs::read_to_string(&path) {
-            if let Some((name, desc)) = parse_frontmatter(&text) {
-                map.insert(name, desc);
+            if let Some((name, row)) = parse_frontmatter(&text) {
+                map.insert(name, row);
             }
         }
     }
@@ -46,10 +49,14 @@ fn parse_frontmatter(text: &str) -> Option<(String, String)> {
     let fm = &rest[..end];
     let mut name = None;
     let mut description = String::new();
+    let mut blurb = None;
     let mut in_desc = false;
     for line in fm.lines() {
         if let Some(v) = line.strip_prefix("name:") {
             name = Some(v.trim().trim_matches('"').to_string());
+            in_desc = false;
+        } else if let Some(v) = line.strip_prefix("blurb:") {
+            blurb = Some(v.trim().trim_matches('"').to_string());
             in_desc = false;
         } else if let Some(v) = line.strip_prefix("description:") {
             let v = v.trim();
@@ -68,7 +75,13 @@ fn parse_frontmatter(text: &str) -> Option<(String, String)> {
             description.push_str(t);
         }
     }
-    Some((name?, description))
+    // Guest Skills rows use `blurb:` when present so live `skills.list`
+    // matches offline ISO builtins; long `description:` stays for agents.
+    let row = match blurb.filter(|b| !b.is_empty()) {
+        Some(b) => b,
+        None => description,
+    };
+    Some((name?, row))
 }
 
 pub(crate) fn save_skill(name: &str, body: &str) -> Result<(), String> {
@@ -128,6 +141,14 @@ mod tests {
     }
 
     #[test]
+    fn parse_prefers_blurb_over_description() {
+        let sample = "---\nname: demo\nblurb: Short row\ndescription: >-\n  Long agent prose.\n---\n\n# Demo\n";
+        let (n, d) = parse_frontmatter(sample).unwrap();
+        assert_eq!(n, "demo");
+        assert_eq!(d, "Short row");
+    }
+
+    #[test]
     fn defaults_dir_lists_builtins() {
         let (defaults, user) = skills_dirs();
         assert!(
@@ -138,5 +159,42 @@ mod tests {
         let list = list_skills(&defaults, &user);
         assert!(list.contains_key("email-triage"));
         assert!(list.contains_key("agent-plan-act"));
+    }
+
+    /// Offline ISO `BUILTIN[].blurb` and online `skills.list` must stay twin.
+    #[test]
+    fn default_blurbs_match_kernel_builtins() {
+        let src = fs::read_to_string(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../kernel/src/skills.rs"),
+        )
+        .expect("kernel skills.rs");
+        let mut expected = BTreeMap::new();
+        let mut name = None;
+        for line in src.lines() {
+            let t = line.trim();
+            if let Some(v) = t.strip_prefix("name: \"") {
+                name = Some(v.trim_end_matches("\",").to_string());
+            } else if let Some(v) = t.strip_prefix("blurb: \"") {
+                let blurb = v.trim_end_matches("\",").to_string();
+                let n = name.take().expect("blurb without name in BUILTIN");
+                expected.insert(n, blurb);
+            }
+        }
+        assert_eq!(expected.len(), 5, "unexpected BUILTIN count");
+
+        let (defaults, _) = skills_dirs();
+        let mut defaults_only = BTreeMap::new();
+        collect_dir(&defaults, &mut defaults_only);
+        for (name, blurb) in &expected {
+            assert_eq!(
+                defaults_only.get(name).map(String::as_str),
+                Some(blurb.as_str()),
+                "skill {name}: defaults blurb must match kernel BUILTIN"
+            );
+            assert!(
+                blurb.len() <= DESC_CHARS,
+                "blurb exceeds DESC_CHARS: {blurb}"
+            );
+        }
     }
 }

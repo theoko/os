@@ -1,5 +1,6 @@
 ---
 name: knowledge-search
+blurb: Corpus search
 description: >-
   Search the curated OS knowledge corpus via search.query (tSearch-style
   tf-idf × PageRank). Use when the agent needs docs, skills, or concepts —

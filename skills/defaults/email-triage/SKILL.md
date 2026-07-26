@@ -1,5 +1,6 @@
 ---
 name: email-triage
+blurb: Inbox via MCP email
 description: >-
   Triage inbox via the email MCP connector's peek count. Use when the agent
   should check how full the inbox is — never send without an explicit

@@ -276,10 +276,11 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
     })
 }
 
-/// Run `search.query`. `q` must be ASCII without spaces (use `-`).
+/// Run `search.query` (`q=` keywords; spaces allowed after `=`).
 ///
 /// Caller must hold [`crate::caps::Cap::SearchQuery`]. Scope flags
-/// (`files=1`, `audio=1`) still follow the rest of `caps`.
+/// (`files=1`, `audio=1`) still follow the rest of `caps`. Guest omits `k=`
+/// (bridge default matches [`crate::search::MAX_HITS`]).
 /// Invokes `on_hit(title, url, cat)` for each ROW (stop early by returning `false`).
 /// Offline → UI may fill the baked index; `Err`/`Ok` empty stay empty so the
 /// UI can tell TEDDY / "no matches" from "no bridge".

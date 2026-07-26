@@ -1,5 +1,6 @@
 ---
 name: capability-safe-tools
+blurb: Least-privilege caps
 description: >-
   Always invoke tools through explicit capabilities. Use whenever planning
   actions that touch email, files, search, or the host bridge.
