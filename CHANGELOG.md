@@ -55,9 +55,10 @@ you choose at first boot.
 
 ### Consent
 
-Four guest capabilities (`Cap::ALL`), chosen at first boot:
-`email.search`, `search.query`, `workspace.index`, `audio.transcribe`.
-Each is enforced on the wire, not just in the UI. `skills.save` is
+Four guest capabilities (`Cap::ALL`), chosen at first boot: Inbox/Knowledge
+(`email.search` / `search.query` CALLs) plus Files/Transcripts (`files=1` /
+`audio=1` scopes; host producers `workspace.index` / `audio.transcribe`).
+Grants are enforced on the wire, not just in the UI. `skills.save` is
 host-socket-only (no guest Cap).
 
 - The inbox is no longer read before the user consents. It used to be probed at
