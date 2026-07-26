@@ -196,12 +196,12 @@ impl Setup {
             "Connect the Bridge",
             "Connectors run on the host, never in the kernel.",
         );
-        let (label, detail, tint) = if online {
-            ("Host bridge", "Connected on COM2", theme::ONLINE)
+        let (detail, tint) = if online {
+            ("Connected on COM2", theme::ONLINE)
         } else {
-            ("Host bridge", crate::mcp::BRIDGE_OFFLINE_HINT, theme::OFFLINE)
+            (crate::mcp::BRIDGE_OFFLINE_HINT, theme::OFFLINE)
         };
-        self.status_card(fb, w, top, label, detail, tint);
+        self.status_card(fb, w, top, detail, tint);
         self.footer(fb, w, h, top + ROW_H + 8);
     }
 
@@ -213,8 +213,8 @@ impl Setup {
             "Every tool sits behind a grant. Turn on only what you need.",
         );
         let mut y = top;
-        for (i, cap) in Cap::ALL.iter().enumerate() {
-            self.cap_row(fb, w, y, cap.name(), CAP_BLURBS[i], self.caps[i], Action::Row(i));
+        for i in 0..Cap::ALL.len() {
+            self.cap_row(fb, w, y, i);
             y += ROW_H + 8;
         }
         self.footer(fb, w, h, y);
@@ -278,38 +278,34 @@ impl Setup {
         y + 76
     }
 
-    /// Capability toggle: titled row + switch + hit zone.
-    fn cap_row(
-        &mut self,
-        fb: &Surface,
-        w: i32,
-        y: i32,
-        title: &str,
-        blurb: &str,
-        on: bool,
-        action: Action,
-    ) {
+    /// Capability toggle at index `i`: titled row + switch + hit zone.
+    fn cap_row(&mut self, fb: &Surface, w: i32, y: i32, i: usize) {
         let cw = CONTENT_W.min(w - 80);
         let x = (w - cw) / 2;
-        ui::draw_titled_row(fb, ui::Rect::new(x, y, cw, ROW_H), title, blurb);
+        ui::draw_titled_row(
+            fb,
+            ui::Rect::new(x, y, cw, ROW_H),
+            Cap::ALL[i].name(),
+            CAP_BLURBS[i],
+        );
         let pad = 18;
         ui::draw_switch(
             fb,
             x + cw - pad - ui::SWITCH_W,
             y + (ROW_H - ui::SWITCH_H) / 2,
-            on,
+            self.caps[i],
         );
-        self.push_zone(x, y, cw, ROW_H, action);
+        self.push_zone(x, y, cw, ROW_H, Action::Row(i));
     }
 
-    fn status_card(&mut self, fb: &Surface, w: i32, y: i32, label: &str, detail: &str, tint: u32) {
+    fn status_card(&mut self, fb: &Surface, w: i32, y: i32, detail: &str, tint: u32) {
         let cw = CONTENT_W.min(w - 80);
         let x = (w - cw) / 2;
         ui::outlined_round_rect(fb, x, y, cw, ROW_H + 8, 10);
         let pad = 18;
         let d = 9;
         fb.fill_round_rect(x + pad, y + (ROW_H + 8 - d) / 2, d, d, d / 2, tint);
-        fb.draw_text(x + pad + d + 12, y + 26, label, &BRAND_FACE, 0, theme::INK);
+        fb.draw_text(x + pad + d + 12, y + 26, "Host bridge", &BRAND_FACE, 0, theme::INK);
         fb.draw_text(x + pad + d + 12, y + 46, detail, &SMALL_FACE, 0, theme::MUTED);
     }
 
