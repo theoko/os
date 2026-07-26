@@ -64,14 +64,14 @@ pub(crate) fn draw_switch_in_row(fb: &Surface, row: Rect, on: bool) {
 /// Axis-aligned hit region (inclusive origin, exclusive of `x+w` / `y+h`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rect {
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub h: i32,
+    pub(crate) x: i32,
+    pub(crate) y: i32,
+    pub(crate) w: i32,
+    pub(crate) h: i32,
 }
 
 impl Rect {
-    pub const fn new(x: i32, y: i32, w: i32, h: i32) -> Self {
+    pub(crate) const fn new(x: i32, y: i32, w: i32, h: i32) -> Self {
         Self { x, y, w, h }
     }
 
@@ -125,18 +125,18 @@ pub(crate) fn draw_query_field(
     outlined_round_rect(fb, r, 12);
     let tx = x + 18;
     let base = y + (h - BODY_FACE.px) / 2 + BODY_FACE.ascent;
-    let badge_w = badge.map(|b| SMALL_FACE.width(b, 0) + 18).unwrap_or(0);
+    let badge_tw = badge.map(|b| SMALL_FACE.width(b, 0)).unwrap_or(0);
     if query.is_empty() {
         fb.draw_text(tx, base, placeholder, &BODY_FACE, 0, theme::MUTED);
     } else {
         fb.draw_text(tx, base, query, &BODY_FACE, 0, theme::INK);
     }
     if let Some(badge) = badge {
-        let bx = x + w - 18 - SMALL_FACE.width(badge, 0);
+        let bx = x + w - 18 - badge_tw;
         let bbase = y + (h - SMALL_FACE.px) / 2 + SMALL_FACE.ascent;
         fb.draw_text(bx, bbase, badge, &SMALL_FACE, 0, theme::MUTED);
     }
-    let cx = (tx + BODY_FACE.width(query, 0) + 2).min(x + w - badge_w - 8);
+    let cx = (tx + BODY_FACE.width(query, 0) + 2).min(x + w - badge_tw.saturating_add(18) - 8);
     fb.fill_rect(cx, y + 14, 2, h - 28, theme::INK);
 }
 

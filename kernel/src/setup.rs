@@ -449,24 +449,12 @@ mod layout_tests {
     }
 
     #[test]
-    fn capability_rows_clear_the_footer_at_768() {
+    fn there_is_headroom_for_one_more_capability() {
         // Overlapping rows and the Continue pill would misroute clicks — the
         // exact failure a previous review caught on a short framebuffer.
-        // Setup skills list is capped at 4 (< Cap::ALL.len()), so this also
-        // covers that step's footer clearance.
-        let bottom = rows_bottom(Cap::ALL.len());
-        assert!(
-            bottom < footer_top(768),
-            "{} capability rows reach {bottom}px, footer starts at {}",
-            Cap::ALL.len(),
-            footer_top(768)
-        );
-    }
-
-    #[test]
-    fn there_is_headroom_for_one_more_capability() {
-        // Capabilities have grown 3 -> 5 in this session; make the next
-        // addition fail loudly here rather than silently on screen.
+        // Asserts ALL+1 so the next capability addition fails here, not on
+        // screen; that also covers today's ALL rows and the skills step
+        // (capped at 4 < Cap::ALL.len()).
         assert!(
             rows_bottom(Cap::ALL.len() + 1) < footer_top(768),
             "adding another capability would collide with the footer"

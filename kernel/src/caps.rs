@@ -61,8 +61,11 @@ impl Caps {
     }
 
     /// How many named capabilities are currently granted.
-    pub fn granted_count(self) -> usize {
-        Cap::ALL.iter().filter(|&&c| self.allows(c)).count()
+    ///
+    /// [`Cap`] values are dense bits `0..ALL.len()`, so the popcount of the
+    /// bitset matches an `allows` walk over [`Cap::ALL`].
+    pub const fn granted_count(self) -> usize {
+        self.bits.count_ones() as usize
     }
 
     /// Flip capability `i` in place. Out-of-range is a no-op.

@@ -7,7 +7,7 @@ pub mod anim;
 pub mod beep;
 pub mod caps;
 pub mod fb;
-pub mod font;
+pub(crate) mod font;
 pub mod keyboard;
 pub mod mcp;
 pub mod mouse;

@@ -22,13 +22,12 @@ pub fn skills_dirs() -> (PathBuf, PathBuf) {
     (defaults, user)
 }
 
-/// Defaults dir plus merged skill list (saved overrides default by name).
-fn list_skills() -> (PathBuf, Vec<SkillMeta>) {
-    let (defaults, user) = skills_dirs();
+/// Merged skill list (saved overrides default by name).
+fn list_skills(defaults: &Path, user: &Path) -> Vec<SkillMeta> {
     let mut map: BTreeMap<String, SkillMeta> = BTreeMap::new();
-    collect_dir(&defaults, &mut map);
-    collect_dir(&user, &mut map);
-    (defaults, map.into_values().collect())
+    collect_dir(defaults, &mut map);
+    collect_dir(user, &mut map);
+    map.into_values().collect()
 }
 
 fn collect_dir(dir: &Path, map: &mut BTreeMap<String, SkillMeta>) {
@@ -109,7 +108,8 @@ pub fn save_skill(name: &str, body: &str) -> Result<PathBuf, String> {
 }
 
 pub fn list_response() -> Vec<String> {
-    let (defaults, skills) = list_skills();
+    let (defaults, user) = skills_dirs();
+    let skills = list_skills(&defaults, &user);
     let n = skills.len();
     let rows = skills.iter().map(|s| {
         // Frontmatter names are untrusted text: sanitize like desc so a '|'
@@ -127,8 +127,8 @@ pub fn list_response() -> Vec<String> {
 }
 
 pub fn get_response(name: &str) -> Vec<String> {
-    let (_, skills) = list_skills();
-    let Some(body) = skills
+    let (defaults, user) = skills_dirs();
+    let Some(body) = list_skills(&defaults, &user)
         .into_iter()
         .find(|s| s.name == name)
         .and_then(|s| fs::read_to_string(s.path).ok())
@@ -169,13 +169,13 @@ mod tests {
 
     #[test]
     fn defaults_dir_lists_builtins() {
-        let (defaults, _) = skills_dirs();
+        let (defaults, user) = skills_dirs();
         assert!(
             defaults.join("email-triage/SKILL.md").is_file(),
             "missing {}",
             defaults.display()
         );
-        let (_, list) = list_skills();
+        let list = list_skills(&defaults, &user);
         assert!(list.iter().any(|s| s.name == "email-triage"));
         assert!(list.iter().any(|s| s.name == "agent-plan-act"));
     }

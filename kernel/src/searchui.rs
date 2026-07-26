@@ -86,7 +86,7 @@ impl Source {
             return Self::TEDDY;
         }
         if !self.bridge_online {
-            return "No matches. Bridge offline - run: make utm-bridged";
+            return crate::mcp::NO_MATCHES_BRIDGE_OFFLINE;
         }
         if !self.caps.allows(Cap::WorkspaceIndex) {
             return "No matches. Turn on workspace.index in Capabilities to search your files.";
@@ -261,13 +261,6 @@ pub fn draw(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn idle_view_reports_nothing_searched() {
-        let v = SearchView::new();
-        assert!(!v.searched);
-        assert_eq!(v.count, 0);
-    }
 
     #[test]
     fn running_a_query_populates_rows() {

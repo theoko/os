@@ -107,14 +107,14 @@ impl Surface {
         self.height
     }
 
-    pub fn get_pixel(&self, x: i32, y: i32) -> u32 {
+    pub(crate) fn get_pixel(&self, x: i32, y: i32) -> u32 {
         if x < 0 || y < 0 || (x as usize) >= self.width || (y as usize) >= self.height {
             return 0;
         }
         unsafe { self.pixel(x as usize, y as usize).read_volatile() }
     }
 
-    pub fn put_pixel(&self, x: i32, y: i32, color: u32) {
+    pub(crate) fn put_pixel(&self, x: i32, y: i32, color: u32) {
         if x < 0 || y < 0 || (x as usize) >= self.width || (y as usize) >= self.height {
             return;
         }
@@ -123,7 +123,7 @@ impl Surface {
 
     /// Blend `color` at `a` (0..=255) over whatever is already there.
     #[inline]
-    pub fn blend_pixel(&self, x: i32, y: i32, color: u32, a: u32) {
+    pub(crate) fn blend_pixel(&self, x: i32, y: i32, color: u32, a: u32) {
         if a == 0 || x < 0 || y < 0 || (x as usize) >= self.width || (y as usize) >= self.height {
             return;
         }
@@ -137,7 +137,7 @@ impl Surface {
         unsafe { self.addr.add(y * self.pitch + x * 4).cast::<u32>() }
     }
 
-    pub fn fill(&self, color: u32) {
+    pub(crate) fn fill(&self, color: u32) {
         self.mark_dirty(0, 0, self.width as i32, self.height as i32);
         for y in 0..self.height {
             for x in 0..self.width {
@@ -146,7 +146,7 @@ impl Surface {
         }
     }
 
-    pub fn fill_rect(&self, x: i32, y: i32, w: i32, h: i32, color: u32) {
+    pub(crate) fn fill_rect(&self, x: i32, y: i32, w: i32, h: i32, color: u32) {
         if w <= 0 || h <= 0 {
             return;
         }
@@ -166,7 +166,7 @@ impl Surface {
     ///
     /// Coverage comes from a 4x4 integer supersample in 1/8-px units, so there
     /// are no floats and no `sqrt` — corners test squared distance directly.
-    pub fn fill_round_rect(&self, x: i32, y: i32, w: i32, h: i32, radius: i32, color: u32) {
+    pub(crate) fn fill_round_rect(&self, x: i32, y: i32, w: i32, h: i32, radius: i32, color: u32) {
         if w <= 0 || h <= 0 {
             return;
         }
@@ -295,7 +295,7 @@ impl Surface {
     /// Draw `text` with its baseline at `baseline_y`, pen starting at `x`.
     ///
     /// `tracking64` is inter-glyph spacing in 1/64 px (negative tightens).
-    pub fn draw_text(
+    pub(crate) fn draw_text(
         &self,
         x: i32,
         baseline_y: i32,
@@ -340,7 +340,7 @@ impl Surface {
     }
 
     /// Draw `text` horizontally centred on `cx`.
-    pub fn draw_text_centered(
+    pub(crate) fn draw_text_centered(
         &self,
         cx: i32,
         baseline_y: i32,

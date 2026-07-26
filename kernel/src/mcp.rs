@@ -21,14 +21,25 @@ pub enum BridgeStatus {
     Online,
 }
 
-/// Footer / empty-state hint when COM2 has no host bridge.
-pub(crate) const BRIDGE_OFFLINE_HINT: &str = "Bridge offline - run: make utm-bridged";
+/// Make-target tip shared by footer and empty-state offline copy.
+macro_rules! bridge_offline_tip {
+    () => {
+        "Bridge offline - run: make utm-bridged"
+    };
+}
+
+/// Footer / status-card hint when COM2 has no host bridge.
+pub(crate) const BRIDGE_OFFLINE_HINT: &str = bridge_offline_tip!();
+
+/// Search empty-state line when the bridge is down (same tip, prefixed).
+pub(crate) const NO_MATCHES_BRIDGE_OFFLINE: &str =
+    concat!("No matches. ", bridge_offline_tip!());
 
 /// Inbox liveness + unread count for the home status strip.
 /// Row payloads are not retained — the home UI only shows a count.
 pub struct MailPeek {
     pub status: BridgeStatus,
-    pub count: usize,
+    pub(crate) count: usize,
 }
 
 impl MailPeek {
@@ -201,9 +212,9 @@ fn parse_ok_n(line: &str) -> usize {
 
 /// Lines of a document, for the reader.
 pub struct DocPage {
-    pub status: BridgeStatus,
-    pub denied: bool,
-    pub count: usize,
+    pub(crate) status: BridgeStatus,
+    pub(crate) denied: bool,
+    pub(crate) count: usize,
     title: [u8; 72],
     lines: [[u8; 84]; Self::MAX],
 }
