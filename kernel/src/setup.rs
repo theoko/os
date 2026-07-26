@@ -78,11 +78,6 @@ impl Setup {
         }
     }
 
-    /// Grant set chosen on the Capabilities step.
-    pub fn grants(&self) -> Caps {
-        self.caps
-    }
-
     pub fn is_finished(&self) -> bool {
         self.step == Step::Finished
     }

@@ -213,7 +213,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 log_skill_source(&serial_port, &skill_peek);
                             }
                             if setup.is_finished() {
-                                grants = setup.grants();
+                                grants = setup.caps;
                                 serial_port.write_str("ui: setup done\n");
                                 serial_port.write_str("caps: ");
                                 serial_port.write_u64(grants.granted_count() as u64);

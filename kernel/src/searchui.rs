@@ -405,8 +405,7 @@ pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage) {
     let h = fb.height() as i32;
     screens::chrome(fb, w, "", None);
 
-    let f = field_rect(w);
-    let (fx, fw) = (f.x, f.w);
+    let fx = field_rect(w).x;
     fb.draw_text(fx, 108, title, &TITLE_FACE, font::tracking_pct(TITLE_FACE.px, -20), theme::INK);
 
     if page.denied {
@@ -430,7 +429,6 @@ pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage) {
             break;
         }
     }
-    let _ = fw;
 }
 
 #[cfg(test)]

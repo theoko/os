@@ -60,16 +60,6 @@ impl Caps {
         Self { bits: 0 }
     }
 
-    pub fn from_bools(flags: &[bool]) -> Self {
-        let mut bits = 0u8;
-        for (i, on) in flags.iter().enumerate().take(Cap::ALL.len()) {
-            if *on {
-                bits |= 1 << i;
-            }
-        }
-        Self { bits }
-    }
-
     pub const fn allows(self, cap: Cap) -> bool {
         self.bits & (1 << cap.index()) != 0
     }
@@ -99,14 +89,6 @@ mod tests {
         assert!(c.allows(Cap::SearchQuery));
         assert!(!c.allows(Cap::SkillsSave));
         assert_eq!(c.granted_count(), 2);
-    }
-
-    #[test]
-    fn from_bools_round_trips() {
-        let c = Caps::from_bools(&[false, true, true]);
-        assert!(!c.allows(Cap::EmailSearch));
-        assert!(c.allows(Cap::SearchQuery));
-        assert!(c.allows(Cap::SkillsSave));
     }
 
     #[test]
