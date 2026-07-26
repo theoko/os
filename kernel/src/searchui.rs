@@ -195,7 +195,7 @@ pub fn draw(
     fb: &Surface,
     view: &SearchView,
     query: &str,
-    status: crate::mcp::BridgeStatus,
+    online: bool,
 ) {
     let w = fb.width() as i32;
     screens::chrome(fb, Some(("Search", "What do you want to know?")));
@@ -206,11 +206,10 @@ pub fn draw(
 
     // Results — same geometry as hit-testing (`row_rect`).
     if view.phase == Phase::Idle {
-        let note = match status {
-            crate::mcp::BridgeStatus::Online => {
-                "Answers come from the local index and the host bridge."
-            }
-            crate::mcp::BridgeStatus::Offline => crate::mcp::BRIDGE_OFFLINE_HINT,
+        let note = if online {
+            "Answers come from the local index and the host bridge."
+        } else {
+            crate::mcp::BRIDGE_OFFLINE_HINT
         };
         fb.draw_text_centered(w / 2, row_rect(w, 0).y + 30, note, &SMALL_FACE, 0, theme::MUTED);
         return;

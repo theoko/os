@@ -60,7 +60,7 @@ unsafe extern "C" fn kmain() -> ! {
     // Caps::none(): PING only until the user consents (default_grants would
     // CALL email.search and persist the inbox on the host).
     let mut mail = mcp::fetch_mail_peek(caps::Caps::none());
-    log_bridge_status(&serial_port, mail.bridge_status());
+    log_bridge_status(&serial_port, mail.online());
     serial_port.write_str("skills: builtins ready\n");
     let mut skill_peek = skills::SkillPeek::from_builtin();
     if let Some(resp) = FRAMEBUFFER_REQUEST.get_response() {
@@ -143,7 +143,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut view = screens::View::Home;
                 // First boot: run the setup journey before the home screen.
                 cursor.hide(surface);
-                setup.draw(surface, mail.bridge_status(), &skill_peek);
+                setup.draw(surface, mail.online(), &skill_peek);
                 cursor.show_at(surface, mice.x, mice.y);
                 enter(&screen);
                 serial_port.write_str("ui: setup welcome\n");
@@ -188,7 +188,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 // Still pre-consent: Caps::none() PINGs only
                                 // (setup.caps already has default_grants).
                                 mail = mcp::fetch_mail_peek(caps::Caps::none());
-                                log_bridge_status(&serial_port, mail.bridge_status());
+                                log_bridge_status(&serial_port, mail.online());
                             }
                             if setup.step == setup::Step::Skills && before != setup::Step::Skills {
                                 skill_peek = mcp::fetch_skill_peek();
@@ -218,7 +218,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 moved = false;
                             } else {
                                 cursor.hide(surface);
-                                setup.draw(surface, mail.bridge_status(), &skill_peek);
+                                setup.draw(surface, mail.online(), &skill_peek);
                                 cursor.show_at(surface, mice.x, mice.y);
                                 enter(&screen);
                                 moved = false;
@@ -255,7 +255,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     Some(ui::HomeHit::Connect) => {
                                         serial_port.write_str("ui: connect bridge\n");
                                         mail = mcp::fetch_mail_peek(setup.caps);
-                                        log_bridge_status(&serial_port, mail.bridge_status());
+                                        log_bridge_status(&serial_port, mail.online());
                                         dirty = true;
                                     }
                                     Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
@@ -396,10 +396,11 @@ fn handle_key(
     }
 }
 
-fn log_bridge_status(port: &serial::Serial, status: mcp::BridgeStatus) {
-    port.write_str(match status {
-        mcp::BridgeStatus::Online => "mcp: bridge live\n",
-        mcp::BridgeStatus::Offline => "mcp: bridge still offline\n",
+fn log_bridge_status(port: &serial::Serial, online: bool) {
+    port.write_str(if online {
+        "mcp: bridge live\n"
+    } else {
+        "mcp: bridge still offline\n"
     });
 }
 
@@ -429,7 +430,7 @@ fn repaint(
     cursor.hide(surface);
     match view {
         screens::View::Search => {
-            searchui::draw(surface, sview, query, mail.bridge_status())
+            searchui::draw(surface, sview, query, mail.online())
         }
         screens::View::Skills => screens::draw_skills(surface, skills),
         screens::View::Caps => screens::draw_caps(surface, grants),

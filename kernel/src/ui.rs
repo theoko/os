@@ -7,7 +7,7 @@
 use crate::caps::Caps;
 use crate::fb::Surface;
 use crate::font::{BODY_FACE, BRAND_FACE, BTN_FACE, H2_FACE, SMALL_FACE};
-use crate::mcp::{BridgeStatus, MailPeek};
+use crate::mcp::MailPeek;
 use crate::skills::SkillPeek;
 
 /// Apple-inspired light palette.
@@ -194,14 +194,11 @@ pub fn draw_home_full(
     let w = fb.width() as i32;
 
     fb.fill();
-    let status = mail.bridge_status();
-    draw_nav(fb, status);
+    let online = mail.online();
+    draw_nav(fb, online);
 
     let r = search_rect(w);
-    let badge = match status {
-        BridgeStatus::Online => "Online",
-        BridgeStatus::Offline => "Offline Ready",
-    };
+    let badge = if online { "Online" } else { "Offline Ready" };
     draw_query_field(fb, r, query, "Search knowledge base...", badge);
 
     let n_grants = grants.granted_count();
@@ -276,7 +273,7 @@ fn connect_rect(w: i32) -> Rect {
     Rect::new(w - PAD_X - bw, (NAV_H - NAV_CTRL_H) / 2, bw, NAV_CTRL_H)
 }
 
-fn draw_nav(fb: &Surface, status: BridgeStatus) {
+fn draw_nav(fb: &Surface, online: bool) {
     let w = fb.width() as i32;
     let base = (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.ascent;
     fb.draw_text(PAD_X, base, "os", &BRAND_FACE, 0, theme::INK);
@@ -287,10 +284,7 @@ fn draw_nav(fb: &Surface, status: BridgeStatus) {
     fb.draw_text_centered(cr.x + cr.w / 2, cbase, CONNECT, &BTN_FACE, 0, theme::SURFACE);
 
     let label = "Bridge";
-    let dot = match status {
-        BridgeStatus::Online => theme::ONLINE,
-        BridgeStatus::Offline => theme::OFFLINE,
-    };
+    let dot = if online { theme::ONLINE } else { theme::OFFLINE };
     let tw = SMALL_FACE.width(label, 0);
     let gap = 10;
     let dot_d = 7;
@@ -352,10 +346,7 @@ fn draw_status_bar(fb: &Surface, mail: &MailPeek, grant_count: usize) {
     push(
         &mut line,
         &mut n,
-        match mail.bridge_status() {
-            BridgeStatus::Online => "Online",
-            BridgeStatus::Offline => "Offline",
-        },
+        if mail.online() { "Online" } else { "Offline" },
     );
     let text = core::str::from_utf8(&line[..n]).unwrap_or("");
     fb.draw_text_centered(

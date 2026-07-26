@@ -11,7 +11,6 @@
 use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{self, BODY_FACE, BRAND_FACE, BTN_FACE, HERO_FACE, SMALL_FACE, TITLE_FACE};
-use crate::mcp::BridgeStatus;
 use crate::skills::SkillPeek;
 use crate::ui::{self, theme};
 
@@ -133,13 +132,13 @@ impl Setup {
     }
 
     /// Paint the current step. Records hit zones as a side effect.
-    pub fn draw(&mut self, fb: &Surface, status: BridgeStatus, skills: &SkillPeek) {
+    pub fn draw(&mut self, fb: &Surface, online: bool, skills: &SkillPeek) {
         fb.fill();
         self.reset_zones();
 
         match self.step {
             Step::Welcome => self.draw_welcome(fb),
-            Step::Bridge => self.draw_bridge(fb, status),
+            Step::Bridge => self.draw_bridge(fb, online),
             Step::Capabilities => self.draw_caps(fb),
             Step::Skills => self.draw_skills(fb, skills),
             Step::Done => self.draw_done(fb),
@@ -155,13 +154,13 @@ impl Setup {
         self.primary(fb, cy + 90, "Continue");
     }
 
-    fn draw_bridge(&mut self, fb: &Surface, status: BridgeStatus) {
+    fn draw_bridge(&mut self, fb: &Surface, online: bool) {
         let top = self.header(
             fb,
             "Connect the Bridge",
             "Connectors run on the host, never in the kernel.",
         );
-        self.status_card(fb, top, status);
+        self.status_card(fb, top, online);
         self.footer(fb, top + ROW_H + 8);
     }
 
@@ -245,10 +244,11 @@ impl Setup {
         self.push_zone(r, Action::Row(i));
     }
 
-    fn status_card(&self, fb: &Surface, y: i32, status: BridgeStatus) {
-        let (detail, tint) = match status {
-            BridgeStatus::Online => ("Connected on COM2", theme::ONLINE),
-            BridgeStatus::Offline => (crate::mcp::BRIDGE_OFFLINE_HINT, theme::OFFLINE),
+    fn status_card(&self, fb: &Surface, y: i32, online: bool) {
+        let (detail, tint) = if online {
+            ("Connected on COM2", theme::ONLINE)
+        } else {
+            (crate::mcp::BRIDGE_OFFLINE_HINT, theme::OFFLINE)
         };
         let r = content_rect(fb.width() as i32, y, ROW_H + 8);
         ui::outlined_round_rect(fb, r, 10);

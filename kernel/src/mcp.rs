@@ -15,12 +15,6 @@ const TIMEOUT_REPLY: u32 = 40_000_000;
 /// to 4 UTF-8 bytes each plus framing (~735 bytes) fits with headroom.
 const LINE_BUF: usize = 768;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum BridgeStatus {
-    Offline,
-    Online,
-}
-
 /// Make-target tip shared by footer and empty-state offline copy.
 macro_rules! bridge_offline_tip {
     () => {
@@ -48,11 +42,8 @@ pub enum MailPeek {
 
 impl MailPeek {
     /// Bridge reachability for nav / setup / search chrome.
-    pub const fn bridge_status(self) -> BridgeStatus {
-        match self {
-            Self::Offline => BridgeStatus::Offline,
-            Self::Denied | Self::Ok { .. } => BridgeStatus::Online,
-        }
+    pub const fn online(self) -> bool {
+        !matches!(self, Self::Offline)
     }
 }
 
