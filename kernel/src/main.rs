@@ -12,6 +12,9 @@ use limine::request::{
 
 /// Early-boot COM1 banner (must match `scripts/smoke_common.py` HELLO).
 const HELLO: &str = "os: hello from kernel";
+/// COM1 MCP probe lines (live must match `scripts/smoke_common.py` MCP_BRIDGE).
+const MCP_LIVE: &str = "mcp: bridge live\n";
+const MCP_OFFLINE: &str = "mcp: bridge still offline\n";
 const STACK_SIZE: u64 = 128 * 1024;
 
 #[used]
@@ -62,11 +65,7 @@ unsafe extern "C" fn kmain() -> ! {
     // Caps::none(): PING only until the user consents (default_grants would
     // CALL email.search against the host mailbox).
     let mut mail = mcp::fetch_mail_peek(caps::Caps::none());
-    serial_port.write_str(if mail.online() {
-        "mcp: bridge live\n"
-    } else {
-        "mcp: bridge still offline\n"
-    });
+    serial_port.write_str(if mail.online() { MCP_LIVE } else { MCP_OFFLINE });
     let mut skill_peek = skills::SkillPeek::from_builtins();
     if let Some(resp) = FRAMEBUFFER_REQUEST.get_response() {
         if let Some(fb_info) = resp.framebuffers().next() {
@@ -178,9 +177,9 @@ unsafe extern "C" fn kmain() -> ! {
                                 // (setup.caps already has default_grants).
                                 mail = mcp::fetch_mail_peek(caps::Caps::none());
                                 serial_port.write_str(if mail.online() {
-                                    "mcp: bridge live\n"
+                                    MCP_LIVE
                                 } else {
-                                    "mcp: bridge still offline\n"
+                                    MCP_OFFLINE
                                 });
                             }
                             if setup.step == setup::Step::Skills && before != setup::Step::Skills {
@@ -239,9 +238,9 @@ unsafe extern "C" fn kmain() -> ! {
                                     Some(ui::HomeHit::Connect) => {
                                         mail = mcp::fetch_mail_peek(setup.caps);
                                         serial_port.write_str(if mail.online() {
-                                            "mcp: bridge live\n"
+                                            MCP_LIVE
                                         } else {
-                                            "mcp: bridge still offline\n"
+                                            MCP_OFFLINE
                                         });
                                         dirty = true;
                                     }

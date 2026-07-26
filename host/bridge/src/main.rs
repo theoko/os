@@ -282,10 +282,9 @@ fn forget_file(tool: &str, path: &std::path::Path) -> Vec<String> {
     text::framed_ok(format!("OK {tool}"), [])
 }
 
-/// Mock CI peek count (`email.search`). Gog does not use this as a clamp.
-/// Guest omits args on the wire; `GUEST_MAX_HITS` / `GUEST_DOC_LINES` are
-/// defaults when nc omits `k=` / `lines=`.
-const GUEST_MAIL_MAX: usize = 3;
+/// Mock CI peek count for `email.search` (not a guest clamp; gog reports true `n=`).
+const MOCK_MAIL_PEEK: usize = 3;
+/// Guest omits args on the wire; these are defaults when nc omits `k=` / `lines=`.
 const GUEST_MAX_HITS: usize = 3;
 const GUEST_DOC_LINES: usize = 18;
 
@@ -297,7 +296,7 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
             let backend = env::var("OS_MCP_EMAIL_BACKEND").unwrap_or_else(|_| "mock".into());
             match backend.as_str() {
                 "gog" => email_search_gog(arg_val(args, "q").unwrap_or("in:inbox")),
-                _ => email_count_ok(GUEST_MAIL_MAX),
+                _ => email_count_ok(MOCK_MAIL_PEEK),
             }
         }
         "email.send" => vec![format!("ERR {tool} disabled_until_cap_confirm")],

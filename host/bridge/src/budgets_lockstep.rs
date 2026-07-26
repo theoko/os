@@ -6,7 +6,7 @@
 use std::fs;
 use std::path::PathBuf;
 
-use super::{GUEST_DOC_LINES, GUEST_MAIL_MAX, GUEST_MAX_HITS};
+use super::{GUEST_DOC_LINES, GUEST_MAX_HITS};
 use crate::search::{CAT_CHARS, LINE_CHARS, TITLE_CHARS, URL_CHARS};
 use crate::skills::{DESC_CHARS, GUEST_MAX_LISTED, NAME_CHARS};
 
@@ -54,8 +54,7 @@ fn guest_budgets_match_kernel() {
     assert_eq!(GUEST_MAX_HITS, 3);
     assert_eq!(GUEST_DOC_LINES, usize_const(&mcp, "MAX"));
     assert_eq!(GUEST_DOC_LINES, 18);
-    assert_eq!(GUEST_MAIL_MAX, usize_const(&mcp, "MAIL_PEEK_MAX"));
-    assert_eq!(GUEST_MAIL_MAX, 3);
+    // Mock mail peek is host-only (`MOCK_MAIL_PEEK`); guest parses any `ROW n=`.
     assert_eq!(GUEST_MAX_LISTED, usize_const(&skills, "MAX_LISTED"));
     assert_eq!(GUEST_MAX_LISTED, 6);
 
