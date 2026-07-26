@@ -40,7 +40,7 @@ pub enum MailPeek {
     /// COM2 bridge down.
     Offline,
     /// Bridge up. `inbox: None` = no grant / pre-consent / framed ERR
-    /// (not an empty inbox). `Some(n)` = ROW count from `email.search`.
+    /// (not an empty inbox). `Some(n)` = `ROW n=` from `email.search`.
     Online { inbox: Option<usize> },
 }
 
@@ -97,8 +97,7 @@ fn for_each_ok_rows(
         if resp.starts_with("OK ") {
             continue;
         }
-        // Bare `ROW` (mail peek count) or `ROW k=v|…` (search / doc / skills).
-        if (resp == "ROW" || resp.starts_with("ROW ")) && !on_row(resp) {
+        if resp.starts_with("ROW ") && !on_row(resp) {
             break;
         }
     }
@@ -141,17 +140,19 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
         // Bridge defaults: q=in:inbox, max=MAIL_PEEK_MAX.
         com2.write_str("CALL email.search\n");
 
-        // Count ROWs actually received. ERR is not an empty inbox.
-        let mut count = 0usize;
-        let saw_err = for_each_ok_rows(com2, line, MAIL_PEEK_MAX + FRAMED_PAD, |_| {
-            count += 1;
-            true
+        // One `ROW n=<count>`; ERR is not an empty inbox.
+        let mut n: Option<usize> = None;
+        let saw_err = for_each_ok_rows(com2, line, 1 + FRAMED_PAD, |resp| {
+            if let [Some(s)] = parse_row(resp, ["n"]) {
+                n = s.parse().ok();
+            }
+            false
         });
         if saw_err {
             MailPeek::Online { inbox: None }
         } else {
             MailPeek::Online {
-                inbox: Some(count),
+                inbox: Some(n.unwrap_or(0).min(MAIL_PEEK_MAX)),
             }
         }
     })
@@ -347,11 +348,12 @@ mod tests {
             parse_row(skill, ["name", "desc"]),
             [Some("email-triage"), Some("Inbox via MCP email")]
         );
-        // Single-key extract (doc.read uses `line=` this way).
+        // Single-key extract (doc.read `line=`, mail peek `n=`).
         assert_eq!(
             parse_row("ROW line=hello world", ["line"]),
             [Some("hello world")]
         );
+        assert_eq!(parse_row("ROW n=3", ["n"]), [Some("3")]);
         // Missing required key stays None (call sites skip inventing "?").
         assert_eq!(parse_row("ROW url=https://x", ["title", "url"]), [None, Some("https://x")]);
     }

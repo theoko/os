@@ -358,13 +358,13 @@ fn handle_key(
     serial: &serial::Serial,
 ) -> bool {
     match (*view, key) {
-        (screens::View::Home, keyboard::Key::Enter) => {
+        (screens::View::Home | screens::View::Search, keyboard::Key::Enter) => {
             if query.as_str().trim().is_empty() {
                 return false;
             }
             sview.run_via(query.as_str(), grants);
             *view = screens::View::Search;
-            serial.write_str("search: ran from home\n");
+            serial.write_str("search: ran\n");
             true
         }
         (screens::View::Home, keyboard::Key::Escape) => {
@@ -375,14 +375,6 @@ fn handle_key(
             true
         }
         (screens::View::Home, other) => query.apply(other),
-        (screens::View::Search, keyboard::Key::Enter) => {
-            if query.as_str().trim().is_empty() {
-                return false;
-            }
-            sview.run_via(query.as_str(), grants);
-            serial.write_str("search: ran\n");
-            true
-        }
         (screens::View::Search, other) => match other {
             keyboard::Key::Escape => {
                 *view = screens::View::Home;

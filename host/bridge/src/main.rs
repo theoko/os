@@ -458,11 +458,14 @@ fn email_search(query: &str, max: usize) -> Vec<String> {
     }
 }
 
+/// Guest mail peek reads one `ROW n=<count>` (no per-message payloads).
+fn email_count_ok(n: usize) -> Vec<String> {
+    text::framed_ok("OK email.search".into(), [format!("ROW n={n}")])
+}
+
 fn email_search_mock(_query: &str, max: usize) -> Vec<String> {
-    // Guest mail peek counts bare ROWs; from=/subj= were never parsed.
     const MOCK_HITS: usize = 3;
-    let rows = (0..MOCK_HITS.min(max)).map(|_| "ROW".into());
-    text::framed_ok("OK email.search".into(), rows)
+    email_count_ok(MOCK_HITS.min(max))
 }
 
 fn email_search_gog(query: &str, max: usize) -> Vec<String> {
@@ -489,7 +492,7 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let mut rows = Vec::new();
+    let mut n = 0usize;
 
     if let Ok(val) = serde_json::from_str::<serde_json::Value>(&stdout) {
         let items: &[serde_json::Value] = val
@@ -498,21 +501,14 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
             .or_else(|| val.get("threads").and_then(|t| t.as_array()).map(|a| a.as_slice()))
             .or_else(|| val.get("messages").and_then(|t| t.as_array()).map(|a| a.as_slice()))
             .unwrap_or(&[]);
-
-        for _ in items.iter().take(max) {
-            rows.push("ROW".into());
-        }
+        n = items.len().min(max);
     }
 
-    if rows.is_empty() {
-        for line in stdout.lines().take(max) {
-            if !line.trim().is_empty() {
-                rows.push("ROW".into());
-            }
-        }
+    if n == 0 {
+        n = stdout.lines().filter(|l| !l.trim().is_empty()).take(max).count();
     }
 
-    text::framed_ok("OK email.search".into(), rows)
+    email_count_ok(n)
 }
 
 #[cfg(test)]
@@ -523,7 +519,8 @@ mod tests {
     fn mock_search_returns_rows() {
         let r = email_search_mock("in:inbox", 2);
         assert_eq!(r[0], "OK email.search");
-        assert_eq!(r.iter().filter(|l| l.as_str() == "ROW").count(), 2);
+        assert_eq!(r.iter().filter(|l| l.starts_with("ROW ")).count(), 1);
+        assert!(r.iter().any(|l| l == "ROW n=2"), "{r:?}");
         assert_eq!(r.last().map(String::as_str), Some("END"));
     }
 

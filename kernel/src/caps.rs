@@ -41,10 +41,10 @@ impl Cap {
     /// One-line UI blurb for setup / Capabilities rows.
     pub(crate) const fn blurb(self) -> &'static str {
         match self {
-            Cap::EmailSearch => "Read the inbox through the host bridge",
+            Cap::EmailSearch => "Peek inbox count through the host bridge",
             Cap::SearchQuery => "Query the host knowledge corpus",
             Cap::WorkspaceIndex => "Search your own files on this machine",
-            Cap::AudioTranscribe => "Transcribe recordings and index what was said",
+            Cap::AudioTranscribe => "Search transcripts of your recordings",
         }
     }
 

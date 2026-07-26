@@ -23,7 +23,7 @@ status: active
 ```
 guest SearchView
   ├─ bridge online  -- CALL search.query -->  host/bridge
-  │                        search/corpus.json + teddy / files / mail when granted
+  │                        search/corpus.json + teddy / files / audio when granted
   └─ offline / empty     baked kernel index (search/corpus.json via build.rs)
 ```
 

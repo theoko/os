@@ -76,16 +76,6 @@ enum SearchDone {
     Local,
 }
 
-impl SearchDone {
-    fn from_bridge(o: DocOutcome) -> Self {
-        match o {
-            DocOutcome::Offline => Self::Offline,
-            DocOutcome::Err => Self::Err,
-            DocOutcome::Ok => Self::Framed,
-        }
-    }
-}
-
 /// One line explaining an empty result set for a completed query.
 fn empty_reason(done: SearchDone) -> &'static str {
     match done {
@@ -147,18 +137,18 @@ impl SearchView {
         // Record reachability BEFORE any fallback, so an online bridge that
         // simply found nothing is never reported as a connection failure.
         // Rows are filled once from the COM2 parse — no intermediate peek buffer.
-        self.outcome = Some(SearchDone::from_bridge(crate::mcp::fetch_search_rows(
-            caps,
-            q,
-            |title, url, cat| {
-                if self.count >= search::MAX_HITS {
-                    return false;
-                }
-                self.rows[self.count].set(title, url, cat);
-                self.count += 1;
-                true
-            },
-        )));
+        self.outcome = Some(match crate::mcp::fetch_search_rows(caps, q, |title, url, cat| {
+            if self.count >= search::MAX_HITS {
+                return false;
+            }
+            self.rows[self.count].set(title, url, cat);
+            self.count += 1;
+            true
+        }) {
+            DocOutcome::Offline => SearchDone::Offline,
+            DocOutcome::Err => SearchDone::Err,
+            DocOutcome::Ok => SearchDone::Framed,
+        });
         self.fill_if_offline(q);
     }
 
