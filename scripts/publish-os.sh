@@ -106,12 +106,28 @@ for f in "$X86" "$ARM" SHA256SUMS; do
   printf '  %-16s %s\n' "$f" "HTTP $code"
 done
 
+# A CDN fronts this origin and caches images for hours, so the bare URL can
+# serve the PREVIOUS release long after the upload succeeded — which then fails
+# its own published checksum and reads to a visitor as a tampered download.
+# `os.html` therefore links with ?v=<commit>, and this checks the same URL a
+# visitor will actually fetch. The bare URL is checked too, and only warned
+# about: it is expected to be stale until the edge expires it.
 tmp="$(mktemp -t os-publish-verify)"
-curl -s -o "$tmp" "$URL/$ARM"
+curl -s -o "$tmp" "$URL/$ARM?v=$COMMIT"
 got="$(shasum -a 256 "$tmp" | awk '{print $1}')"
 want="$(awk -v f="$ARM" '$2 == f {print $1}' SHA256SUMS)"
 rm -f "$tmp"
 [ "$got" = "$want" ] || die "the ARM64 image served over HTTPS does not match its published checksum"
+
+tmp="$(mktemp -t os-publish-cache)"
+curl -s -o "$tmp" "$URL/$ARM"
+cached="$(shasum -a 256 "$tmp" | awk '{print $1}')"
+rm -f "$tmp"
+if [ "$cached" != "$want" ]; then
+  echo "  note: the un-versioned URL is still serving a cached older image."
+  echo "        Visitors follow the ?v= link from os.html, so this is cosmetic;"
+  echo "        purge the CDN if you want the bare URL correct immediately."
+fi
 
 step "published $COMMIT"
 echo "  $URL/$X86"
