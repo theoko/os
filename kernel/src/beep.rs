@@ -109,22 +109,14 @@ mod tests {
     }
 
     #[test]
-    fn startup_is_short_enough_not_to_delay_boot() {
+    fn startup_chime_is_short_audible_and_ends_silent() {
         let total: u32 = STARTUP.iter().map(|n| n.ms).sum();
         assert!(total <= 1000, "chime runs {total}ms");
-    }
-
-    #[test]
-    fn startup_notes_are_audible_or_deliberate_rests() {
         for n in STARTUP {
             assert!(n.ms > 0);
             // Human hearing, roughly; anything outside is a bug not a note.
             assert!(n.hz == 0 || (100..=8000).contains(&n.hz), "{} Hz", n.hz);
         }
-    }
-
-    #[test]
-    fn startup_ends_silent() {
         assert_eq!(STARTUP.last().unwrap().hz, 0, "speaker must be left off");
     }
 }

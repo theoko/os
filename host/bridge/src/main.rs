@@ -630,11 +630,6 @@ mod tests {
     }
 
     #[test]
-    fn dispatch_ping() {
-        assert_eq!(dispatch("PING"), vec!["OK pong".to_string()]);
-    }
-
-    #[test]
     fn scrub_recovers_ping_after_uefi_csi() {
         let raw = "\u{1b}[2J\u{1b}[01;01HPING\n";
         assert_eq!(scrub_protocol_line(raw), "PING");
@@ -661,6 +656,7 @@ mod tests {
 
     #[test]
     fn list_matches_tools_table() {
+        assert_eq!(dispatch("PING"), vec!["OK pong".to_string()]);
         let r = dispatch("LIST");
         assert_eq!(r[0], format!("OK tools={}", TOOLS.join(",")));
     }

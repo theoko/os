@@ -100,12 +100,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_url_is_https() {
+    fn url_defaults_to_https_and_is_overridable() {
         assert!(DEFAULT_URL.starts_with("https://"), "corpus must be fetched over TLS");
-    }
-
-    #[test]
-    fn url_is_overridable() {
         let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_TSEARCH_URL", "https://example.test/c.json") };
         assert_eq!(url(), "https://example.test/c.json");

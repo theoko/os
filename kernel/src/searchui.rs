@@ -147,9 +147,8 @@ impl SearchView {
             self.rows[self.count].set(title, url, "bridge");
             self.count += 1;
             true
-        })
-        .is_some()
-        {
+        }) {
+
             use crate::caps::Cap;
             self.phase = Phase::Online {
                 files: caps.allows(Cap::WorkspaceIndex),

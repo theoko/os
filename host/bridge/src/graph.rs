@@ -214,14 +214,10 @@ mod tests {
     }
 
     #[test]
-    fn ids_are_stable_and_distinct() {
+    fn ids_are_stable_distinct_and_boundary_safe() {
         assert_eq!(id_for("a@x", "S"), id_for("a@x", "S"));
         assert_ne!(id_for("a@x", "S"), id_for("b@x", "S"));
         assert_ne!(id_for("a@x", "S"), id_for("a@x", "T"));
-    }
-
-    #[test]
-    fn id_is_not_confused_by_field_boundary() {
         // Without a separator, ("ab","c") and ("a","bc") would collide.
         assert_ne!(id_for("ab", "c"), id_for("a", "bc"));
     }

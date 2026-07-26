@@ -48,19 +48,8 @@ impl MailPeek {
     }
 }
 
-fn parse_row_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
-    let rest = line.strip_prefix("ROW ")?;
-    for part in rest.split('|') {
-        if let Some((k, v)) = part.split_once('=') {
-            if k == key {
-                return Some(v);
-            }
-        }
-    }
-    None
-}
-
-/// One pass over a ROW for two keys (avoids re-splitting the line).
+/// One pass over a ROW for up to two keys (avoids re-splitting the line).
+/// Pass `""` for `kb` when only one key is needed.
 fn parse_row_pair<'a>(line: &'a str, ka: &str, kb: &str) -> (Option<&'a str>, Option<&'a str>) {
     let mut a = None;
     let mut b = None;
@@ -100,14 +89,13 @@ fn for_each_reply(
     }
 }
 
-/// Drain a typical OK / ROW* / END reply. Stops on `ERR` / `END`.
-/// `on_ok` sees each OK header; `on_row` returns `false` to stop early.
-/// Returns whether an `ERR` line was seen.
+/// Drain a typical OK / ROW* / END reply. Skips OK headers; stops on `ERR` /
+/// `END`. `on_row` returns `false` to stop early. Returns whether an `ERR`
+/// line was seen.
 fn for_each_ok_rows(
     com2: &Serial,
     line: &mut [u8],
     max: usize,
-    mut on_ok: impl FnMut(&str),
     mut on_row: impl FnMut(&str) -> bool,
 ) -> bool {
     let mut saw_err = false;
@@ -120,7 +108,6 @@ fn for_each_ok_rows(
             return false;
         }
         if resp.starts_with("OK ") {
-            on_ok(resp);
             return true;
         }
         if resp.starts_with("ROW ") {
@@ -167,13 +154,15 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
 
         // Count comes from the OK header (`n=`); drain ROW/END for wire hygiene.
         let mut peek = MailPeek::empty(BridgeStatus::Online);
-        let _ = for_each_ok_rows(
-            com2,
-            line,
-            16,
-            |ok| peek.count = parse_ok_n(ok),
-            |_| true,
-        );
+        for_each_reply(com2, line, 16, |resp| {
+            if resp.starts_with("ERR ") || resp == "END" {
+                return false;
+            }
+            if resp.starts_with("OK ") {
+                peek.count = parse_ok_n(resp);
+            }
+            true
+        });
         peek
     })
 }
@@ -245,11 +234,11 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
         com2.write_str("\n");
 
         let mut page = DocPage::empty(BridgeStatus::Online);
-        page.denied = for_each_ok_rows(com2, line, 40, |_| {}, |resp| {
+        page.denied = for_each_ok_rows(com2, line, 40, |resp| {
             if page.count >= DocPage::MAX {
                 return false;
             }
-            let text = parse_row_field(resp, "line").unwrap_or("");
+            let text = parse_row_pair(resp, "line", "").0.unwrap_or("");
             copy_field(&mut page.lines[page.count], text);
             page.count += 1;
             true
@@ -289,7 +278,7 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
 
         let mut peek = crate::skills::SkillPeek::empty();
         peek.from_bridge = true;
-        let _ = for_each_ok_rows(com2, line, 24, |_| {}, |resp| {
+        let _ = for_each_ok_rows(com2, line, 24, |resp| {
             let (name, desc) = parse_row_pair(resp, "name", "desc");
             peek.push(name.unwrap_or("?"), desc.unwrap_or(""))
         });
@@ -326,15 +315,15 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
 /// Caller must hold [`crate::caps::Cap::SearchQuery`]. Scope flags
 /// (`email=1`, `files=1`, …) still follow the rest of `caps`.
 /// Invokes `on_hit(title, url)` for each ROW (stop early by returning `false`).
-/// Returns [`None`] when the bridge is offline; [`Some`] when it answered
+/// Returns `false` when the bridge is offline; `true` when it answered
 /// (even with zero hits — so the UI can tell "no matches" from "no bridge").
 pub(crate) fn fetch_search_rows(
     caps: crate::caps::Caps,
     q: &str,
     mut on_hit: impl FnMut(&str, &str) -> bool,
-) -> Option<()> {
+) -> bool {
     // Offline: UI falls back to the baked index via SearchView::fill_local.
-    when_online(None, |com2, line| {
+    when_online(false, |com2, line| {
         // CALL search.query q=… k=N [email=1]
         //
         // The email graph is opt-in per call on the bridge. Ask for it only when
@@ -351,7 +340,7 @@ pub(crate) fn fetch_search_rows(
         com2.write_str("\n");
 
         let mut n = 0usize;
-        let _ = for_each_ok_rows(com2, line, 16, |_| {}, |resp| {
+        let _ = for_each_ok_rows(com2, line, 16, |resp| {
             if n >= crate::search::MAX_HITS {
                 return false;
             }
@@ -360,7 +349,7 @@ pub(crate) fn fetch_search_rows(
             n += 1;
             cont
         });
-        Some(())
+        true
     })
 }
 
@@ -389,6 +378,6 @@ mod tests {
             (Some("email-triage"), Some("Inbox via MCP email"))
         );
         // Unread keys must not disturb neighbors.
-        assert_eq!(parse_row_field(skill, "src"), Some("default"));
+        assert_eq!(parse_row_pair(skill, "src", "").0, Some("default"));
     }
 }

@@ -224,13 +224,9 @@ mod tests {
     }
 
     #[test]
-    fn title_prefers_speech_over_filename() {
+    fn title_prefers_speech_else_falls_back_to_filename() {
         let t = title_for(Path::new("/x/rec01.wav"), "the quarterly review meeting began with revenue");
         assert!(t.starts_with("the quarterly review"), "{t}");
-    }
-
-    #[test]
-    fn title_falls_back_when_speech_is_too_short() {
         assert_eq!(title_for(Path::new("/x/rec01.wav"), "ok"), "rec01");
     }
 

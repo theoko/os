@@ -447,13 +447,9 @@ mod tests {
     }
 
     #[test]
-    fn blend_endpoints_are_exact() {
+    fn blend_endpoints_and_midpoint() {
         assert_eq!(blend(0x00FF_FFFF, 0x0000_0000, 0), 0x00FF_FFFF);
         assert_eq!(blend(0x00FF_FFFF, 0x0000_0000, 255), 0x0000_0000);
-    }
-
-    #[test]
-    fn blend_midpoint_is_grey() {
         let m = blend(0x00FF_FFFF, 0x0000_0000, 128);
         assert_eq!(m & 0xff, (m >> 8) & 0xff, "channels should stay neutral");
         assert!((0x76..=0x80).contains(&(m & 0xff)), "got {:06X}", m);

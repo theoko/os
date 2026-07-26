@@ -51,29 +51,16 @@ fn wait_obf_set(spins: u32) -> bool {
     }
 }
 
-fn write_cmd(cmd: u8) -> bool {
+fn write_i8042(port: u16, byte: u8) -> bool {
     if !wait_ibf_clear() {
         return false;
     }
     #[cfg(target_arch = "x86_64")]
     unsafe {
-        port::outb(STATUS, cmd);
+        port::outb(port, byte);
     }
     #[cfg(not(target_arch = "x86_64"))]
-    let _ = cmd;
-    true
-}
-
-fn write_data(data: u8) -> bool {
-    if !wait_ibf_clear() {
-        return false;
-    }
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        port::outb(DATA, data);
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    let _ = data;
+    let _ = (port, byte);
     true
 }
 
@@ -93,7 +80,7 @@ fn read_data(spins: u32) -> Option<u8> {
 }
 
 fn write_mouse(byte: u8) -> bool {
-    write_cmd(0xD4) && write_data(byte)
+    write_i8042(STATUS, 0xD4) && write_i8042(DATA, byte)
 }
 
 fn mouse_expect_ack() -> bool {
@@ -152,7 +139,7 @@ impl Mouse {
 
     /// Best-effort PS/2 enable. Returns whether streaming was enabled.
     pub fn init(&mut self) -> bool {
-        if !write_cmd(0xA8) {
+        if !write_i8042(STATUS, 0xA8) {
             return false;
         }
         // Drain any stale output (boot-time keyboard/self-test bytes) so the
@@ -162,7 +149,7 @@ impl Mouse {
                 break;
             }
         }
-        if !write_cmd(0x20) {
+        if !write_i8042(STATUS, 0x20) {
             return false;
         }
         let mut status = match read_data(SPIN) {
@@ -171,7 +158,7 @@ impl Mouse {
         };
         status |= 0x02;
         status &= !0x20;
-        if !write_cmd(0x60) || !write_data(status) {
+        if !write_i8042(STATUS, 0x60) || !write_i8042(DATA, status) {
             return false;
         }
         if !write_mouse(0xF6) || !mouse_expect_ack() {
