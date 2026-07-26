@@ -177,10 +177,19 @@ fn parse_ok_n(line: &str) -> usize {
     n
 }
 
+/// How `doc.read` finished (replaces parallel `status` + `denied` bits).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum DocOutcome {
+    Offline,
+    /// Bridge returned `ERR` (grant miss, not found, …).
+    Err,
+    /// Bridge returned a framed OK (zero or more lines).
+    Ok,
+}
+
 /// Lines of a document, for the reader.
 pub struct DocPage {
-    pub(crate) status: BridgeStatus,
-    pub(crate) denied: bool,
+    pub(crate) outcome: DocOutcome,
     pub(crate) count: usize,
     title: [u8; 72],
     lines: [[u8; 84]; Self::MAX],
@@ -189,10 +198,9 @@ pub struct DocPage {
 impl DocPage {
     pub(crate) const MAX: usize = 18;
 
-    pub const fn empty(status: BridgeStatus) -> Self {
+    pub const fn empty(outcome: DocOutcome) -> Self {
         Self {
-            status,
-            denied: false,
+            outcome,
             count: 0,
             title: [0; 72],
             lines: [[0; 84]; Self::MAX],
@@ -214,7 +222,7 @@ impl DocPage {
 /// per source: a caller that could not have found a document must not be able
 /// to read it by knowing its URL. `title` is the search-hit label (not on the wire).
 pub fn fetch_doc(caps: crate::caps::Caps, url: &str, title: &str) -> DocPage {
-    let mut page = when_online(DocPage::empty(BridgeStatus::Offline), |com2, line| {
+    let mut page = when_online(DocPage::empty(DocOutcome::Offline), |com2, line| {
         com2.write_str("CALL doc.read url=");
         com2.write_str(url);
         com2.write_str(" lines=");
@@ -222,8 +230,8 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str, title: &str) -> DocPage {
         write_scope_flags(com2, caps);
         com2.write_str("\n");
 
-        let mut page = DocPage::empty(BridgeStatus::Online);
-        page.denied = for_each_ok_rows(com2, line, 40, |resp| {
+        let mut page = DocPage::empty(DocOutcome::Ok);
+        let (saw_err, _) = for_each_ok_rows(com2, line, 40, |resp| {
             if page.count >= DocPage::MAX {
                 return false;
             }
@@ -231,8 +239,10 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str, title: &str) -> DocPage {
             copy_field(&mut page.lines[page.count], text);
             page.count += 1;
             true
-        })
-        .0;
+        });
+        if saw_err {
+            page.outcome = DocOutcome::Err;
+        }
         page
     });
     copy_field(&mut page.title, title);

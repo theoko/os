@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 
 struct SkillMeta {
     description: String,
-    path: PathBuf,
 }
 
 pub fn skills_dirs() -> (PathBuf, PathBuf) {
@@ -119,12 +118,8 @@ pub fn list_response() -> Vec<String> {
         // in a name cannot inject ROW fields.
         let name = sanitize(name);
         let desc = sanitize(&s.description);
-        let src = if s.path.starts_with(&defaults) {
-            "default"
-        } else {
-            "saved"
-        };
-        format!("ROW name={name}|src={src}|desc={desc}")
+        // Guest only reads name/desc (`from_bridge` is COM2 reachability).
+        format!("ROW name={name}|desc={desc}")
     });
     crate::text::framed_ok(format!("OK skills.list n={n}"), rows)
 }

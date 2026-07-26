@@ -354,17 +354,20 @@ pub fn draw_reader(fb: &Surface, page: &crate::mcp::DocPage) {
         theme::INK,
     );
 
-    if page.denied {
-        fb.draw_text(fx, 160, TEDDY, &BODY_FACE, 0, theme::MUTED);
-        return;
-    }
-    if page.count == 0 {
-        let msg = match page.status {
-            crate::mcp::BridgeStatus::Online => "Nothing readable here.",
-            crate::mcp::BridgeStatus::Offline => crate::mcp::BRIDGE_OFFLINE_HINT,
-        };
-        fb.draw_text(fx, 160, msg, &BODY_FACE, 0, theme::MUTED);
-        return;
+    match page.outcome {
+        crate::mcp::DocOutcome::Err => {
+            fb.draw_text(fx, 160, TEDDY, &BODY_FACE, 0, theme::MUTED);
+            return;
+        }
+        crate::mcp::DocOutcome::Offline => {
+            fb.draw_text(fx, 160, crate::mcp::BRIDGE_OFFLINE_HINT, &BODY_FACE, 0, theme::MUTED);
+            return;
+        }
+        crate::mcp::DocOutcome::Ok if page.count == 0 => {
+            fb.draw_text(fx, 160, "Nothing readable here.", &BODY_FACE, 0, theme::MUTED);
+            return;
+        }
+        crate::mcp::DocOutcome::Ok => {}
     }
 
     let mut y = 156;
