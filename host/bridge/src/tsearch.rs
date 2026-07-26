@@ -163,7 +163,7 @@ pub struct Index {
     postings: Vec<(usize, f64)>,
 }
 
-pub struct Term {
+struct Term {
     word: String,
     idf: f64,
     start: usize,

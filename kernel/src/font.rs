@@ -24,9 +24,9 @@ pub(crate) struct Glyph {
 pub struct Face {
     pub(crate) glyphs: &'static [Glyph],
     pub(crate) bitmap: &'static [u8],
-    pub ascent: i32,
-    pub descent: i32,
-    pub px: i32,
+    pub(crate) ascent: i32,
+    pub(crate) descent: i32,
+    pub(crate) px: i32,
 }
 
 /// Codepoint range covered by every face.
@@ -64,7 +64,7 @@ impl Face {
     }
 
     /// Width of `text` in whole px.
-    pub fn width(&self, text: &str, tracking64: i32) -> i32 {
+    pub(crate) fn width(&self, text: &str, tracking64: i32) -> i32 {
         (self.width64(text, tracking64) + 32) >> 6
     }
 }

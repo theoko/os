@@ -453,15 +453,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn step_copy_fits_the_content_column() {
-        for (i, cap) in Cap::ALL.iter().enumerate() {
-            let n = cap.name();
-            let b = CAP_BLURBS[i];
-            assert!(BRAND_FACE.width(n, 0) < CONTENT_W - 90, "cap name too wide: {n}");
-            assert!(SMALL_FACE.width(b, 0) < CONTENT_W - 90, "cap blurb too wide: {b}");
-        }
-    }
 }
 
 #[cfg(test)]

@@ -46,7 +46,7 @@ pub struct Caps {
 
 impl Caps {
     /// Defaults match the setup assistant: read tools on, disk writes off.
-    pub const fn default_grants() -> Self {
+    pub(crate) const fn default_grants() -> Self {
         Self {
             bits: (1 << Cap::EmailSearch as usize) | (1 << Cap::SearchQuery as usize),
         }

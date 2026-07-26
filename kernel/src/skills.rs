@@ -40,7 +40,7 @@ pub struct SkillPeek {
 }
 
 impl SkillPeek {
-    pub fn empty() -> Self {
+    pub(crate) fn empty() -> Self {
         Self {
             count: 0,
             from_bridge: false,
@@ -57,7 +57,7 @@ impl SkillPeek {
         peek
     }
 
-    pub fn push(&mut self, name: &str, desc: &str) -> bool {
+    pub(crate) fn push(&mut self, name: &str, desc: &str) -> bool {
         if self.count >= self.names.len() {
             return false;
         }
@@ -67,12 +67,12 @@ impl SkillPeek {
         true
     }
 
-    pub fn name_at(&self, i: usize) -> &str {
+    pub(crate) fn name_at(&self, i: usize) -> &str {
         str_at(&self.names[i])
     }
 
     /// Desc when present; otherwise a source label for empty blurbs.
-    pub fn subtitle_at(&self, i: usize) -> &str {
+    pub(crate) fn subtitle_at(&self, i: usize) -> &str {
         let desc = str_at(&self.descs[i]);
         if !desc.is_empty() {
             return desc;

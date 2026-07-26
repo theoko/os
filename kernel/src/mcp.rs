@@ -135,18 +135,12 @@ fn for_each_ok_rows(
     saw_err
 }
 
-fn open_com2(line: &mut [u8]) -> (Serial, BridgeStatus) {
-    let com2 = Serial::com2();
-    com2.init();
-    let status = ping_bridge(&com2, line);
-    (com2, status)
-}
-
 /// Ping COM2; if Online, run `f`. Otherwise return `offline`.
 fn when_online<T>(offline: T, f: impl FnOnce(&Serial, &mut [u8]) -> T) -> T {
     let mut line = [0u8; LINE_BUF];
-    let (com2, status) = open_com2(&mut line);
-    if status != BridgeStatus::Online {
+    let com2 = Serial::com2();
+    com2.init();
+    if ping_bridge(&com2, &mut line) != BridgeStatus::Online {
         offline
     } else {
         f(&com2, &mut line)
@@ -215,7 +209,7 @@ pub struct DocPage {
 }
 
 impl DocPage {
-    pub const MAX: usize = 18;
+    pub(crate) const MAX: usize = 18;
 
     pub const fn empty(status: BridgeStatus) -> Self {
         Self {
@@ -227,11 +221,11 @@ impl DocPage {
         }
     }
 
-    pub fn title(&self) -> &str {
+    pub(crate) fn title(&self) -> &str {
         str_at(&self.title)
     }
 
-    pub fn line_at(&self, i: usize) -> &str {
+    pub(crate) fn line_at(&self, i: usize) -> &str {
         str_at(&self.lines[i])
     }
 }

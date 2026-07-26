@@ -49,7 +49,7 @@ pub fn pace(since: u64, us: u32) -> u64 {
 /// A screen entrance: how far it slides and over how many frames.
 pub struct Entrance {
     pub frames: u32,
-    pub travel_px: i32,
+    pub(crate) travel_px: i32,
     pub frame_us: u32,
 }
 

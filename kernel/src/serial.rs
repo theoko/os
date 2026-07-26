@@ -20,7 +20,7 @@ impl Serial {
         Self::new(Self::COM1)
     }
 
-    pub const fn com2() -> Self {
+    pub(crate) const fn com2() -> Self {
         Self::new(Self::COM2)
     }
 
@@ -84,7 +84,7 @@ impl Serial {
     }
 
     /// Non-blocking read: `None` if no byte waiting.
-    pub fn try_read_byte(&self) -> Option<u8> {
+    pub(crate) fn try_read_byte(&self) -> Option<u8> {
         #[cfg(target_arch = "x86_64")]
         unsafe {
             if port::inb(self.base + 5) & 0x01 != 0 {
@@ -108,7 +108,7 @@ impl Serial {
     /// no peer, or firmware noise), give up after `MAX_OVERRUN` discarded
     /// bytes so we never spin forever — the old buffer-full early return was
     /// the previous escape hatch for that case.
-    pub fn read_line(&self, buf: &mut [u8], timeout_spins: u32) -> Option<usize> {
+    pub(crate) fn read_line(&self, buf: &mut [u8], timeout_spins: u32) -> Option<usize> {
         const MAX_OVERRUN: usize = 4096;
         let mut n = 0usize;
         let mut spins = 0u32;

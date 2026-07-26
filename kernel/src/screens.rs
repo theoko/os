@@ -54,12 +54,12 @@ pub fn caps_hit(w: i32, x: i32, y: i32) -> Option<usize> {
 }
 
 /// Shared top chrome: Back, optional centered title, rule, optional heading.
-pub(crate) fn chrome(fb: &Surface, title: &str, heading: Option<&str>) {
+pub(crate) fn chrome(fb: &Surface, title: Option<&str>, heading: Option<&str>) {
     let w = fb.width() as i32;
     fb.fill(theme::BG);
     let back = back_rect();
     fb.draw_text(back.x, back.y + BTN_FACE.ascent, "Back", &BTN_FACE, 0, theme::ACCENT);
-    if !title.is_empty() {
+    if let Some(title) = title {
         fb.draw_text_centered(
             w / 2,
             (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.ascent,
@@ -86,7 +86,7 @@ fn row(fb: &Surface, w: i32, i: usize, title: &str, sub: &str) -> ui::Rect {
 /// Skills the agent can load — names from bridge `skills.list`, else builtins.
 pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
     let w = fb.width() as i32;
-    chrome(fb, "Skills", Some("Playbooks the agent can load"));
+    chrome(fb, Some("Skills"), Some("Playbooks the agent can load"));
 
     let n = peek.count.min(6);
     for i in 0..n {
@@ -114,7 +114,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
 /// Live capability switches. Clicking a row toggles the grant.
 pub fn draw_caps(fb: &Surface, grants: Caps) {
     let w = fb.width() as i32;
-    chrome(fb, "Capabilities", Some("What the agent may do"));
+    chrome(fb, Some("Capabilities"), Some("What the agent may do"));
 
     for (i, cap) in Cap::ALL.iter().enumerate() {
         let on = grants.allows(*cap);

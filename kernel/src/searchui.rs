@@ -213,7 +213,7 @@ pub fn draw(
     status: crate::mcp::BridgeStatus,
 ) {
     let w = fb.width() as i32;
-    screens::chrome(fb, "Search", Some("What do you want to know?"));
+    screens::chrome(fb, Some("Search"), Some("What do you want to know?"));
 
     // Input field.
     let f = field_rect(w);
@@ -401,7 +401,7 @@ mod empty_state_tests {
 pub fn draw_reader(fb: &Surface, page: &crate::mcp::DocPage) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
-    screens::chrome(fb, "", None);
+    screens::chrome(fb, None, None);
 
     let fx = field_rect(w).x;
     fb.draw_text(

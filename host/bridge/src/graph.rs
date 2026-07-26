@@ -24,7 +24,7 @@ use std::path::PathBuf;
 
 /// One indexed message.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Message {
+pub(crate) struct Message {
     /// Stable identity: sender + subject, hashed. Re-ingesting is idempotent.
     pub id: String,
     pub from: String,
@@ -37,7 +37,7 @@ pub struct Message {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Graph {
     #[serde(default)]
-    pub messages: Vec<Message>,
+    pub(crate) messages: Vec<Message>,
 }
 
 /// Where the index lives. Never inside the repo.

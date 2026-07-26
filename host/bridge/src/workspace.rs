@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-pub struct Entry {
+pub(crate) struct Entry {
     pub title: String,
     /// Path relative to the root it was found under.
     pub path: String,
@@ -33,7 +33,7 @@ pub struct Entry {
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Index {
     #[serde(default)]
-    pub entries: Vec<Entry>,
+    pub(crate) entries: Vec<Entry>,
 }
 
 /// Directories that never contain anything worth searching.
@@ -63,7 +63,7 @@ const TEXT_EXTS: &[&str] = &["md", "txt", "rst", "org"];
 const MAX_BYTES: u64 = 512 * 1024;
 
 /// Hard cap on entries so a stray root cannot produce an unbounded index.
-pub const MAX_ENTRIES: usize = 4000;
+const MAX_ENTRIES: usize = 4000;
 
 pub fn index_path() -> PathBuf {
     crate::paths::env_or_knowledge("OS_WORKSPACE_INDEX", "workspace.json")
@@ -151,7 +151,11 @@ fn snippet_of(body: &str) -> String {
             break;
         }
     }
-    out.chars().take(240).collect::<String>().trim().to_string()
+    let mut s: String = out.chars().take(240).collect();
+    while s.ends_with(char::is_whitespace) {
+        s.pop();
+    }
+    s
 }
 
 /// Walk `roots` and build an index. Returns entries found.
@@ -215,13 +219,14 @@ fn walk(root: &Path, dir: &Path, out: &mut Vec<Entry>, depth: usize, now: u64) {
         if !ft.is_file() || skipped_file(name) || !is_text(&path) {
             continue;
         }
-        if fs::metadata(&path).map(|m| m.len() > MAX_BYTES).unwrap_or(true) {
+        let Ok(meta) = fs::metadata(&path) else { continue };
+        if meta.len() > MAX_BYTES {
             continue;
         }
         let Ok(body) = fs::read_to_string(&path) else { continue };
         let rel = path.strip_prefix(root).unwrap_or(&path).to_string_lossy().to_string();
-        let mtime = fs::metadata(&path)
-            .and_then(|m| m.modified())
+        let mtime = meta
+            .modified()
             .ok()
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
             .map(|d| d.as_secs())
