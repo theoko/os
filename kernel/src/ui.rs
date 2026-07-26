@@ -160,14 +160,14 @@ pub enum HomeHit {
 
 /// Hit targets for the three destination tiles.
 #[derive(Clone, Copy, Debug)]
-pub struct CardTargets {
-    pub search: Rect,
-    pub capabilities: Rect,
-    pub skills: Rect,
+struct CardTargets {
+    search: Rect,
+    capabilities: Rect,
+    skills: Rect,
 }
 
 impl CardTargets {
-    pub fn hit(self, px: i32, py: i32) -> Option<CardId> {
+    fn hit(self, px: i32, py: i32) -> Option<CardId> {
         if self.search.contains(px, py) {
             Some(CardId::Search)
         } else if self.capabilities.contains(px, py) {
@@ -183,8 +183,8 @@ impl CardTargets {
 /// Combined home hit-test (search field preferred over tiles).
 #[derive(Clone, Copy, Debug)]
 pub struct HomeTargets {
-    pub search: Rect,
-    pub cards: CardTargets,
+    search: Rect,
+    cards: CardTargets,
 }
 
 impl HomeTargets {
@@ -311,7 +311,7 @@ pub(crate) fn content_column(w: i32, max: i32) -> (i32, i32) {
     ((w - cw) / 2, cw)
 }
 
-pub(crate) fn home_column(w: i32) -> (i32, i32) {
+fn home_column(w: i32) -> (i32, i32) {
     content_column(w, CONTENT_MAX)
 }
 

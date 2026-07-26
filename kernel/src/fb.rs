@@ -91,32 +91,6 @@ impl Surface {
         }
     }
 
-    /// # Safety
-    /// `addr` must be a valid writable framebuffer for the given geometry.
-    ///
-    /// All drawing here composes pixels as XRGB (red at bit 16, green at 8,
-    /// blue at 0). `mask_shifts` = Limine's `(red, green, blue)` mask shifts;
-    /// a framebuffer with any other channel order is rejected rather than
-    /// silently rendering with swapped colours.
-    pub unsafe fn new(
-        addr: *mut u8,
-        width: u64,
-        height: u64,
-        pitch: u64,
-        bpp: u16,
-        mask_shifts: (u8, u8, u8),
-    ) -> Option<Self> {
-        if !mode_ok(width, height, pitch, bpp, mask_shifts) {
-            return None;
-        }
-        Some(Self::from_parts(
-            addr,
-            width as usize,
-            height as usize,
-            pitch as usize,
-        ))
-    }
-
     /// A surface over caller-owned RAM, for off-screen rasterisation.
     ///
     /// # Safety
@@ -609,10 +583,13 @@ pub struct Screen {
 
 impl Screen {
     /// # Safety
-    /// Same contract as [`Surface::new`].
+    /// `addr` must be a valid writable framebuffer for the given geometry.
     ///
-    /// Returns `None` when the mode is unsupported *or* larger than the back
-    /// buffer; callers should fall back to drawing directly.
+    /// Drawing composes XRGB (R16/G8/B0). `mask_shifts` is Limine's
+    /// `(red, green, blue)` order; other channel layouts are rejected.
+    ///
+    /// Returns `None` when the mode is unsupported. Modes larger than the
+    /// back buffer still succeed, but draw straight into video memory.
     pub unsafe fn new(
         addr: *mut u8,
         width: u64,

@@ -23,7 +23,7 @@ const PIT_HZ: u32 = 1_193_182;
 ///
 /// A divisor of 0 would mean "65536" and a silent/garbage tone, so the low end
 /// is clamped to 1.
-pub fn divisor_for(hz: u32) -> u16 {
+fn divisor_for(hz: u32) -> u16 {
     if hz == 0 {
         return u16::MAX;
     }
@@ -74,8 +74,7 @@ fn tone_off() {
     }
 }
 
-/// Play a sequence, leaving the speaker off afterwards.
-pub fn play(notes: &[Note]) {
+fn play(notes: &[Note]) {
     for n in notes {
         if n.hz == 0 {
             tone_off();
