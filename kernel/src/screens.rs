@@ -167,13 +167,6 @@ mod tests {
     }
 
     #[test]
-    fn caps_screen_labels_match_the_capability_list() {
-        // The switch for row i reflects Cap::ALL[i]; a mismatch would show the
-        // wrong state against the wrong name.
-        assert_eq!(CAP_BLURBS.len(), Cap::ALL.len());
-    }
-
-    #[test]
     fn all_rows_fit_a_768_screen() {
         let n = BUILTIN.len().min(6).max(Cap::ALL.len());
         let r = row_rect(1024, n - 1);

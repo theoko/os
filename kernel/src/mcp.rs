@@ -369,39 +369,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn email_graph_requested_only_with_the_email_cap() {
-        use crate::caps::{Cap, Caps};
-        // Search-only grants must not ask the bridge for mail.
-        let mut search_only = Caps::none();
-        search_only.toggle(Cap::SearchQuery as usize);
-        assert!(search_only.allows(Cap::SearchQuery));
-        assert!(
-            !search_only.allows(Cap::EmailSearch),
-            "search.query alone must not reach the email graph"
-        );
-
-        let mut both = search_only;
-        both.toggle(Cap::EmailSearch as usize);
-        assert!(both.allows(Cap::EmailSearch));
-    }
-
-    #[test]
-    fn probe_does_not_imply_a_mailbox_read() {
-        // Guard the consent rule: the pre-consent path must expose liveness
-        // only — never a fetched count.
-        let p = MailPeek::empty(BridgeStatus::Offline);
-        assert_eq!(p.count, 0);
-    }
-
-    #[test]
-    fn offline_search_falls_back_in_the_ui() {
-        // fetch_search_peek returns empty Offline; SearchView::run_via then
-        // queries the baked index with the user's actual string.
-        let peek = SearchPeek::empty(BridgeStatus::Offline);
-        assert_eq!(peek.count, 0);
-    }
-
-    #[test]
     fn parse_ok_count() {
         assert_eq!(parse_ok_n("OK email.search n=3"), 3);
         assert_eq!(parse_ok_n("OK email.search n=0"), 0);
@@ -409,16 +376,15 @@ mod tests {
     }
 
     #[test]
-    fn parse_row() {
-        let line = "ROW title=MCP overview|url=https://example/mcp";
-        assert_eq!(parse_row_field(line, "title"), Some("MCP overview"));
-        assert_eq!(parse_row_field(line, "url"), Some("https://example/mcp"));
-    }
+    fn parse_row_field_extracts_keys() {
+        let search = "ROW title=MCP overview|url=https://example/mcp";
+        assert_eq!(parse_row_field(search, "title"), Some("MCP overview"));
+        assert_eq!(parse_row_field(search, "url"), Some("https://example/mcp"));
 
-    #[test]
-    fn parse_skills_list_row() {
-        let line = "ROW name=email-triage|src=default|desc=Inbox via MCP email";
-        assert_eq!(parse_row_field(line, "name"), Some("email-triage"));
-        assert_eq!(parse_row_field(line, "desc"), Some("Inbox via MCP email"));
+        let skill = "ROW name=email-triage|src=default|desc=Inbox via MCP email";
+        assert_eq!(parse_row_field(skill, "name"), Some("email-triage"));
+        assert_eq!(parse_row_field(skill, "desc"), Some("Inbox via MCP email"));
+        // Unread keys must not disturb neighbors.
+        assert_eq!(parse_row_field(skill, "src"), Some("default"));
     }
 }

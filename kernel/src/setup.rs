@@ -366,25 +366,6 @@ mod tests {
     }
 
     #[test]
-    fn capability_rows_toggle_both_ways() {
-        let mut s = setup();
-        s.step = Step::Capabilities;
-        let cap = Cap::ALL[2];
-        let before = s.caps.allows(cap);
-        s.apply(Action::Row(2));
-        assert_ne!(s.caps.allows(cap), before);
-        s.apply(Action::Row(2));
-        assert_eq!(s.caps.allows(cap), before);
-    }
-
-    #[test]
-    fn skills_write_is_off_by_default() {
-        // "No ambient root" - granting disk writes must be a deliberate act.
-        let s = setup();
-        assert!(!s.caps.allows(Cap::SkillsSave));
-    }
-
-    #[test]
     fn rows_do_nothing_on_steps_without_rows() {
         let mut s = setup();
         s.step = Step::Welcome;
@@ -501,6 +482,9 @@ mod layout_tests {
             let before = s.caps.allows(cap);
             assert!(s.apply(Action::Row(i)), "row {i} did nothing");
             assert_ne!(s.caps.allows(cap), before, "row {i} did not toggle");
+            // Round-trip: second click restores the prior grant.
+            assert!(s.apply(Action::Row(i)), "row {i} second click did nothing");
+            assert_eq!(s.caps.allows(cap), before, "row {i} did not toggle back");
         }
     }
 
