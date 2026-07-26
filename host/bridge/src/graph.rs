@@ -118,6 +118,9 @@ impl Graph {
             });
             added += 1;
         }
+        if added == 0 {
+            return 0;
+        }
         self.rank();
         if self.messages.len() > Self::MAX_MESSAGES {
             self.messages

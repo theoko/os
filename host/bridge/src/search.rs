@@ -130,10 +130,10 @@ fn load_docs_from_disk() -> Result<Vec<Doc>, String> {
     Ok(file.docs)
 }
 
-fn load_docs() -> Result<&'static [Doc], String> {
-    match CURATED.get_or_init(load_docs_from_disk) {
+fn load_docs() -> Result<&'static [Doc], &'static str> {
+    match CURATED.get_or_init(load_docs_from_disk).as_ref() {
         Ok(docs) => Ok(docs.as_slice()),
-        Err(e) => Err(e.clone()),
+        Err(e) => Err(e.as_str()),
     }
 }
 
@@ -200,7 +200,7 @@ fn search_tfidf(
     scored
 }
 
-fn snip(body: &str, q_terms: &[String]) -> String {
+fn snip<'a>(body: &'a str, q_terms: &[String]) -> &'a str {
     let lower = body.to_lowercase();
     // `find` returns a byte offset into `lower`; that only maps back onto
     // `body` when lowercasing didn't change byte lengths. Otherwise anchor at
@@ -217,7 +217,7 @@ fn snip(body: &str, q_terms: &[String]) -> String {
     let start = floor_char_boundary(body, best.saturating_sub(40));
     let end = floor_char_boundary(body, (best + 80).min(body.len()));
     // Callers run `sanitize` (ASCII + pipe scrub + cap); keep the raw window here.
-    body[start..end].to_string()
+    &body[start..end]
 }
 
 /// Largest char boundary <= i (stable substitute for `str::floor_char_boundary`).
@@ -247,10 +247,15 @@ pub fn query_all(
     include_files: bool,
     include_audio: bool,
 ) -> Vec<String> {
-    let mut docs = match load_docs() {
-        Ok(d) => d.to_vec(),
+    let curated = match load_docs() {
+        Ok(d) => d,
         Err(e) => return vec![format!("ERR search.query {e}")],
     };
+    let q_terms = tokenize(q);
+    if q_terms.is_empty() {
+        return crate::text::framed_ok("OK search.query n=0 backend=tfidf-pr".into(), []);
+    }
+    let mut docs = curated.to_vec();
     if include_files {
         docs.extend(workspace_docs());
     }
@@ -260,7 +265,6 @@ pub fn query_all(
     if include_email {
         docs.extend(email_docs());
     }
-    let q_terms = tokenize(q);
     // Local indices into `docs`; teddy indices into the cached corpus — never
     // clone 64 MB bodies into the local vec just to re-address them.
     enum Src {
@@ -274,15 +278,19 @@ pub fn query_all(
     // The big corpus is scored from its prebuilt index, then merged. Scoring it
     // inline would re-tokenise 12k documents on every keystroke.
     // Empty teddy index: `search` returns nothing; merge is a no-op.
-    let tdocs = crate::tsearch::docs();
-    if cat.is_none() {
+    // Skip loading the ~64 MB cache when a category filter excludes it.
+    let tdocs = if cat.is_none() {
         let teddy = crate::tsearch::index();
+        let tdocs = crate::tsearch::docs();
         for (score, i) in teddy.search_tokens(&q_terms, k) {
             hits.push((score, Src::Teddy(i)));
         }
         hits.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
         hits.truncate(k);
-    }
+        tdocs
+    } else {
+        &[]
+    };
     let n = hits.len();
     let rows = hits.into_iter().map(|(score, src)| {
         let (t, c, b, u) = match src {
@@ -305,7 +313,7 @@ pub fn query_all(
             sanitize(t),
             sanitize(c),
             score,
-            sanitize(&snip(b, &q_terms)),
+            sanitize(snip(b, &q_terms)),
             sanitize(u)
         )
     });

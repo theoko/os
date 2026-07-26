@@ -33,7 +33,12 @@ pub fn sanitize(s: &str, max: usize, ascii_only: bool, trim: bool) -> String {
         .take(max)
         .collect();
     if trim {
-        out = out.trim().to_string();
+        let end = out.trim_end().len();
+        out.truncate(end);
+        let lead = out.len() - out.trim_start().len();
+        if lead > 0 {
+            out.drain(..lead);
+        }
     }
     out
 }

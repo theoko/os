@@ -146,12 +146,12 @@ fn handle_client<R: Read, W: Write>(
         // so a client that never sends LINE/END cannot desync the protocol.
         if line.starts_with("CALL skills.save ") {
             let args = parse_args(line.trim_start_matches("CALL skills.save "));
-            let name = arg_val(&args, "name").unwrap_or("").to_string();
+            let name = arg_val(&args, "name").unwrap_or("");
             let reply = if let Some(desc) = arg_val(&args, "desc") {
                 let body = format!(
                     "---\nname: {name}\ndescription: {desc}\n---\n\n# {name}\n\n(edit me)\n"
                 );
-                save_skill_reply(&name, &body)
+                save_skill_reply(name, &body)
             } else {
                 let mut body = String::new();
                 let mut ended = false;
@@ -179,7 +179,7 @@ fn handle_client<R: Read, W: Write>(
                     // Disconnect mid-body: do not write a truncated skill.
                     vec!["ERR skills.save truncated_body".into()]
                 } else {
-                    save_skill_reply(&name, &body)
+                    save_skill_reply(name, &body)
                 }
             };
             write_reply(&mut writer, &reply)?;
@@ -418,15 +418,12 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
 ///
 /// Only sender and subject are kept — never the body.
 fn ingest_rows(rows: &[String]) {
-    let msgs: Vec<(&str, &str)> = rows
-        .iter()
-        .filter_map(|r| {
-            let from = parse_row_field(r, "from")?;
-            let subj = parse_row_field(r, "subj").unwrap_or("");
-            Some((from, subj))
-        })
-        .collect();
-    if msgs.is_empty() {
+    let mut msgs = rows.iter().filter_map(|r| {
+        let from = parse_row_field(r, "from")?;
+        let subj = parse_row_field(r, "subj").unwrap_or("");
+        Some((from, subj))
+    }).peekable();
+    if msgs.peek().is_none() {
         return;
     }
     let mut g = graph::Graph::load_or_empty();

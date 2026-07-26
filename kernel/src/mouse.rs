@@ -9,8 +9,8 @@ use crate::fb::Surface;
 use crate::port;
 
 const DATA: u16 = 0x60;
+/// i8042 status (read) and command (write) share this port.
 const STATUS: u16 = 0x64;
-const CMD: u16 = 0x64;
 
 /// Keep PS/2 probes short so a missing controller can't stall the UI.
 const SPIN: u32 = 20_000;
@@ -57,7 +57,7 @@ fn write_cmd(cmd: u8) -> bool {
     }
     #[cfg(target_arch = "x86_64")]
     unsafe {
-        port::outb(CMD, cmd);
+        port::outb(STATUS, cmd);
     }
     #[cfg(not(target_arch = "x86_64"))]
     let _ = cmd;
