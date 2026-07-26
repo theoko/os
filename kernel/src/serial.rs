@@ -4,7 +4,6 @@ use crate::port;
 
 /// Classic PC UART.
 pub struct Serial {
-    #[allow(dead_code)] // read on x86_64 I/O paths
     base: u16,
 }
 

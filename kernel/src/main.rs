@@ -3,13 +3,15 @@
 
 use core::hint::black_box;
 
-use kernel::{anim, beep, caps, fb, keyboard, mcp, mouse, screens, searchui, serial, setup, skills, ui, usb_tablet, HELLO_MESSAGE};
+use kernel::{anim, beep, caps, fb, keyboard, mcp, mouse, screens, searchui, serial, setup, skills, ui, usb_tablet};
 use limine::BaseRevision;
 use limine::request::{
     FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
     StackSizeRequest,
 };
 
+/// Early-boot COM1 banner (must match `scripts/smoke_common.py` HELLO).
+const HELLO: &str = "os: hello from kernel";
 const STACK_SIZE: u64 = 128 * 1024;
 
 #[used]
@@ -54,7 +56,7 @@ unsafe extern "C" fn kmain() -> ! {
 
     let serial_port = serial::Serial::com1();
     serial_port.init();
-    serial_port.write_str(HELLO_MESSAGE);
+    serial_port.write_str(HELLO);
     serial_port.write_str("\n");
 
     // Caps::none(): PING only until the user consents (default_grants would

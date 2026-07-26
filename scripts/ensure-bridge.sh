@@ -6,8 +6,8 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
-# shellcheck source=rust-path.sh
-source "$ROOT/scripts/rust-path.sh"
+# Prepend common rustup / Homebrew cargo locations (macOS + Linux CI).
+export PATH="/opt/homebrew/opt/rustup/bin:${HOME}/.cargo/bin:/opt/homebrew/bin:${PATH}"
 
 CONNECT="${OS_MCP_BRIDGE_CONNECT:-tcp:127.0.0.1:7420}"
 ADDR="${CONNECT#tcp:}"
