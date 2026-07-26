@@ -34,7 +34,7 @@ const ROW_GAP: i32 = 8;
 
 /// Back affordance used by Skills, Caps, Search, and Reader.
 fn back_rect() -> ui::Rect {
-    ui::Rect::new(PAD_X, (NAV_H - 24) / 2, 72, 28)
+    ui::Rect::new(PAD_X, (NAV_H - ui::NAV_CTRL_H) / 2, 72, ui::NAV_CTRL_H)
 }
 
 /// Whether `(x, y)` hits the shared Back control (`main` is a separate binary).
@@ -168,6 +168,8 @@ mod tests {
         let b = back_rect();
         let (w, h) = (b.w, b.h);
         assert!(w >= 44 && h >= 24, "back target too small to hit");
+        assert_eq!(h, ui::NAV_CTRL_H);
+        assert_eq!(b.y, (NAV_H - ui::NAV_CTRL_H) / 2);
     }
 
     #[test]

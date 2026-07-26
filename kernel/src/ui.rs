@@ -30,6 +30,8 @@ pub mod theme {
 
 /// Shared chrome height (home nav, Skills/Caps/Search Back bar).
 pub(crate) const NAV_H: i32 = 56;
+/// Connect pill / Back control height (vertically centred in [`NAV_H`]).
+pub(crate) const NAV_CTRL_H: i32 = 28;
 
 /// Search field height on Home and Search.
 pub(crate) const FIELD_H: i32 = 52;
@@ -267,8 +269,7 @@ const CONNECT: &str = "Connect";
 fn connect_rect(w: i32) -> Rect {
     let pad = 14;
     let bw = (BTN_FACE.width(CONNECT, 0) + pad * 2).max(88);
-    let bh = 28;
-    Rect::new(w - PAD_X - bw, (NAV_H - bh) / 2, bw, bh)
+    Rect::new(w - PAD_X - bw, (NAV_H - NAV_CTRL_H) / 2, bw, NAV_CTRL_H)
 }
 
 fn draw_nav(fb: &Surface, status: BridgeStatus) {

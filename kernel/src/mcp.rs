@@ -338,15 +338,10 @@ pub(crate) fn fetch_search_rows(
         write_scope_flags(com2, caps);
         com2.write_str("\n");
 
-        let mut n = 0usize;
         let _ = for_each_ok_rows(com2, line, 16, |resp| {
-            if n >= crate::search::MAX_HITS {
-                return false;
-            }
             let (title, url) = parse_row_pair(resp, "title", "url");
-            let cont = on_hit(title.unwrap_or("?"), url.unwrap_or(""));
-            n += 1;
-            cont
+            // Caller enforces MAX_HITS (returns false to stop).
+            on_hit(title.unwrap_or("?"), url.unwrap_or(""))
         });
         true
     })
