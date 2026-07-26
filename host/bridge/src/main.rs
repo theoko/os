@@ -13,6 +13,7 @@ mod search;
 mod skills;
 mod transcribe;
 mod tsearch;
+mod update;
 mod workspace;
 
 use std::env;
@@ -728,6 +729,8 @@ fn call_tool(
         },
         // Local only: reports what is cached, never fetches. The status dot
         // must not become a reason to hit the network.
+        // Report whether a newer build is published. Never applies one.
+        "update.check" => update::check(arg_val(args, "running")),
         "portal.status" => {
             let n = tsearch::docs().len();
             let cached = tsearch::is_available();

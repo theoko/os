@@ -29,3 +29,4 @@ BUILD-INFO.txt
 # Monitor state/logs, written by the installed copy.
 .check-published.log
 .check-published.state
+manifest.json
