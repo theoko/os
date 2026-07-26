@@ -236,6 +236,88 @@ impl Mouse {
     }
 }
 
+/// A small fixed-point spring between raw pointer input and the drawn cursor.
+///
+/// Input remains exact for hit-testing.  Only the visual pointer eases toward
+/// it, at most once per 60 Hz frame, so a slow hand feels fluid without making
+/// a fast user wait for the cursor to catch up.
+pub struct CursorMotion {
+    x: i32,
+    y: i32,
+    target_x: i32,
+    target_y: i32,
+    follow: i32,
+}
+
+const MOTION_ONE: i32 = 1 << 16;
+/// Soft follow — chill game-pad glide for precise moves.
+const GENTLE_FOLLOW: i32 = 14_000;
+/// Still catches up on flicks, without snapping like a desktop OS.
+const FAST_FOLLOW: i32 = 42_000;
+const FAST_INPUT_PX: i32 = 48;
+
+impl CursorMotion {
+    pub const fn new(x: i32, y: i32) -> Self {
+        Self {
+            x: x << 16,
+            y: y << 16,
+            target_x: x << 16,
+            target_y: y << 16,
+            follow: GENTLE_FOLLOW,
+        }
+    }
+
+    /// Aim for an input position. Swift, expert-like movements get a stronger
+    /// follow factor; precise movement retains a softer game-like glide.
+    pub fn set_target(&mut self, x: i32, y: i32) {
+        let tx = x << 16;
+        let ty = y << 16;
+        let distance = ((tx - self.target_x).abs() + (ty - self.target_y).abs()) >> 16;
+        self.target_x = tx;
+        self.target_y = ty;
+        self.follow = if distance >= FAST_INPUT_PX {
+            FAST_FOLLOW
+        } else {
+            GENTLE_FOLLOW
+        };
+    }
+
+    /// Interactions snap, so the visible pointer and the clicked target agree.
+    pub fn snap(&mut self, x: i32, y: i32) {
+        self.x = x << 16;
+        self.y = y << 16;
+        self.target_x = self.x;
+        self.target_y = self.y;
+    }
+
+    pub fn active(&self) -> bool {
+        self.x != self.target_x || self.y != self.target_y
+    }
+
+    /// Advance one 60 Hz frame. Returns a new whole-pixel cursor position only
+    /// when one needs painting.
+    pub fn step(&mut self) -> Option<(i32, i32)> {
+        if !self.active() {
+            return None;
+        }
+        let old_x = self.x >> 16;
+        let old_y = self.y >> 16;
+        self.x = follow(self.x, self.target_x, self.follow);
+        self.y = follow(self.y, self.target_y, self.follow);
+        let x = self.x >> 16;
+        let y = self.y >> 16;
+        (x != old_x || y != old_y).then_some((x, y))
+    }
+}
+
+fn follow(current: i32, target: i32, amount: i32) -> i32 {
+    let delta = target - current;
+    if delta.abs() <= 512 {
+        return target;
+    }
+    current + ((delta as i64 * amount as i64) / MOTION_ONE as i64) as i32
+}
+
 /// Arrow outline in 1/8-px units, tip at (0,0) — a real polygon so the cursor
 /// is anti-aliased like the rest of the UI instead of a stair-stepped bitmap.
 const ARROW: [(i32, i32); 7] = [
@@ -264,23 +346,39 @@ pub struct Cursor {
     y: i32,
     saved: [u32; SAVE_LEN],
     has_saved: bool,
+    /// `Surface::draw_count` when `saved` was captured.
+    ///
+    /// The saved pixels only describe the surface while nothing else draws.
+    /// A repaint under a visible cursor invalidates them, and painting them
+    /// back then punches a cursor-shaped hole in the new frame — the nav
+    /// "os" losing its 's', a switch knob smearing, letters vanishing from a
+    /// heading the pointer happened to cross.
+    saved_at: u32,
 }
 
 impl Cursor {
-    pub const fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             x: 0,
             y: 0,
             saved: [0; SAVE_LEN],
             has_saved: false,
+            saved_at: 0,
         }
     }
 
     pub fn hide(&mut self, fb: &Surface) {
-        if self.has_saved {
-            restore(fb, self.x, self.y, &self.saved);
-            self.has_saved = false;
+        if !self.has_saved {
+            return;
         }
+        self.has_saved = false;
+        // Someone drew since the copy was taken, so it describes a frame that
+        // no longer exists. Whatever they drew is already correct underneath —
+        // dropping the copy is right, restoring it would corrupt them.
+        if fb.draw_count() != self.saved_at {
+            return;
+        }
+        restore(fb, self.x, self.y, &self.saved);
     }
 
     pub fn show_at(&mut self, fb: &Surface, x: i32, y: i32) {
@@ -290,6 +388,10 @@ impl Cursor {
         save(fb, x, y, &mut self.saved);
         self.has_saved = true;
         draw_arrow(fb, x, y);
+        // Stamped after the arrow: drawing it is the last legitimate change to
+        // this footprint, so anything counted beyond here came from a repaint
+        // and means the copy is stale.
+        self.saved_at = fb.draw_count();
     }
 }
 
@@ -302,7 +404,11 @@ fn save(fb: &Surface, x: i32, y: i32, out: &mut [u32; SAVE_LEN]) {
 }
 
 fn restore(fb: &Surface, x: i32, y: i32, saved: &[u32; SAVE_LEN]) {
-    fb.mark_dirty(x, y, SAVE_W as i32, SAVE_H as i32);
+    // Mark where the pixels are actually written, not where the hotspot is:
+    // the box starts one pixel up and left of (x, y) to cover the keyline.
+    // Marking (x, y) left that column and row repaired in the back buffer but
+    // never blitted, so the old keyline stayed on screen as a 1px trail.
+    fb.mark_dirty(x - 1, y - 1, SAVE_W as i32, SAVE_H as i32);
     for row in 0..SAVE_H {
         for col in 0..SAVE_W {
             fb.put_pixel(
@@ -427,5 +533,89 @@ mod tests {
         let w = ARROW.iter().map(|p| p.0).max().unwrap();
         let h = ARROW.iter().map(|p| p.1).max().unwrap();
         assert!(h > w, "arrow should be taller than it is wide");
+    }
+
+    #[test]
+    fn cursor_motion_glides_then_lands_exactly() {
+        let mut motion = CursorMotion::new(10, 10);
+        motion.set_target(110, 10);
+        let first = motion.step().expect("first frame should move");
+        assert!(first.0 > 10 && first.0 < 110, "first frame should ease, not jump");
+        for _ in 0..32 {
+            motion.step();
+            if !motion.active() {
+                break;
+            }
+        }
+        assert!(!motion.active(), "motion should settle rather than drift forever");
+    }
+
+    #[test]
+    fn cursor_motion_click_snap_has_no_visual_lag() {
+        let mut motion = CursorMotion::new(0, 0);
+        motion.set_target(100, 100);
+        motion.snap(100, 100);
+        assert!(!motion.active());
+        assert_eq!(motion.step(), None);
+    }
+
+    /// A repaint under a visible cursor must not be damaged when it moves.
+    ///
+    /// Observed as the pointer eating holes in whatever it crossed: the nav
+    /// "os" losing its 's', letters disappearing from a heading. The cursor
+    /// had copied the pixels beneath it, the screen repainted underneath, and
+    /// moving away stamped that stale copy back over the new frame.
+    #[test]
+    fn moving_off_a_repainted_screen_does_not_erase_it() {
+        const W: usize = 96;
+        const H: usize = 64;
+        let mut buf = vec![0x00FF_FFFFu32; W * H];
+        let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), W, H) };
+
+        let mut cursor = Cursor::new();
+        cursor.show_at(&fb, 20, 20);
+
+        // Something repaints the whole screen while the cursor is visible —
+        // exactly what a screen transition or a live toggle does.
+        const INK: u32 = 0x001D_1D1F;
+        fb.fill_rect(0, 0, W as i32, H as i32, INK);
+
+        // Now the pointer moves away.
+        cursor.show_at(&fb, 60, 40);
+
+        // Every pixel the old cursor covered must still be the repaint, not
+        // the page colour it copied beforehand.
+        for row in 0..SAVE_H {
+            for col in 0..SAVE_W {
+                let (x, y) = (20 - 1 + col as i32, 20 - 1 + row as i32);
+                assert_eq!(
+                    fb.get_pixel(x, y),
+                    INK,
+                    "({x},{y}) was restored from a stale copy — the cursor ate the repaint"
+                );
+            }
+        }
+    }
+
+    /// The restored footprint has to be advertised where it is actually
+    /// written, or `present` never blits the edge and a 1px trail survives.
+    #[test]
+    fn restoring_marks_the_pixels_it_writes() {
+        const W: usize = 96;
+        const H: usize = 64;
+        let mut buf = vec![0x00FF_FFFFu32; W * H];
+        let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), W, H) };
+
+        let mut cursor = Cursor::new();
+        cursor.show_at(&fb, 30, 30);
+        fb.clear_dirty();
+        cursor.hide(&fb);
+
+        let (x0, y0, x1, y1) = fb.dirty_rect().expect("hiding the cursor dirties the screen");
+        assert!(x0 <= 29 && y0 <= 29, "dirty rect starts at ({x0},{y0}), misses the keyline");
+        assert!(
+            x1 >= 30 + SAVE_W as i32 - 1 && y1 >= 30 + SAVE_H as i32 - 1,
+            "dirty rect ends at ({x1},{y1}), short of the restored box"
+        );
     }
 }

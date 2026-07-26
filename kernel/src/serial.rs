@@ -50,6 +50,9 @@ mod port {
 /// Which PL011 base this machine actually has.
 ///
 /// Defaults to QEMU's so behaviour is unchanged until `detect_pl011` runs.
+/// Nothing writes through this address without `pl011_present` agreeing that a
+/// PL011 is really there, so an undetected machine stays silent instead of
+/// aborting.
 #[cfg(target_arch = "aarch64")]
 static PL011_BASE: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(Serial::PL011_COM1);
@@ -59,21 +62,77 @@ pub fn pl011_base() -> usize {
     PL011_BASE.load(core::sync::atomic::Ordering::Relaxed)
 }
 
+/// Can this virtual address be dereferenced at all?
+///
+/// `AT S1E1R` runs the translation-table walk the MMU would run, without
+/// performing the access, and reports the outcome in PAR_EL1. An unmapped
+/// address therefore *reports* a fault instead of *taking* one.
+///
+/// Every probe below goes through this, because a UART probe that can fault is
+/// worse than no probe. Limine hands the kernel over with the MMU on and its
+/// higher-half direct map covering RAM, not device MMIO: on QEMU `virt` the
+/// PL011's raw physical address is not a pointer, and touching it takes a
+/// synchronous data abort. There is no vector table yet, so the CPU lands at
+/// VBAR+0x200 in unmapped memory and stops — a completely silent death, after
+/// Limine has printed "Loading executable" and before the kernel can say
+/// anything at all. (An earlier comment here claimed such an access "simply
+/// goes nowhere". Measured on QEMU, it does not: PC=0x200, X09=0x09000030.)
+#[cfg(all(target_arch = "aarch64", target_os = "none"))]
+fn va_mapped(va: usize) -> bool {
+    let par: u64;
+    unsafe {
+        core::arch::asm!(
+            "at s1e1r, {va}",
+            "isb",
+            "mrs {par}, par_el1",
+            va = in(reg) va as u64,
+            par = out(reg) par,
+            options(nostack),
+        );
+    }
+    // PAR_EL1.F: set means the walk faulted, i.e. nothing is mapped there.
+    par & 1 == 0
+}
+
+/// Hosted builds (the unit-test target) have no EL1 and no device memory, so
+/// no candidate address is ever probeable.
+#[cfg(all(target_arch = "aarch64", not(target_os = "none")))]
+fn va_mapped(_va: usize) -> bool {
+    false
+}
+
 /// Does a PL011 answer at `base`?
 ///
 /// Identified by the PrimeCell peripheral ID registers, which are constant for
 /// the part. Reading a plausible-looking value out of unmapped space is how a
-/// probe talks itself into the wrong address, so check all four.
+/// probe talks itself into the wrong address, so check all four — and refuse
+/// to read at all unless the page is mapped.
 #[cfg(target_arch = "aarch64")]
 fn is_pl011(base: usize) -> bool {
     const PERIPH_ID: [(usize, u8); 4] =
         [(0xFE0, 0x11), (0xFE4, 0x10), (0xFE8, 0x14), (0xFEC, 0x00)];
+    // Ask the MMU to translate before touching the device. Reading an
+    // unmapped candidate is a synchronous abort into vectors that do not
+    // exist yet, which is a silent death, not a failed probe.
+    if !pl011_page_mapped(base) {
+        return false;
+    }
     PERIPH_ID.iter().all(|(off, want)| {
-        // SAFETY: device memory the firmware has already mapped; a read of a
-        // wrong-but-mapped address returns a value that fails this check.
+        // SAFETY: `pl011_page_mapped` just proved this page translates; a read
+        // of a wrong-but-mapped address returns a value that fails this check.
         let v = unsafe { core::ptr::read_volatile((base + off) as *const u32) };
         (v & 0xFF) as u8 == *want
     })
+}
+
+/// Is the whole PL011 register window at `base` reachable?
+///
+/// The ID registers live at the top of the device's 4 KiB page; checking the
+/// first and last address any probe touches covers every read below even if a
+/// candidate base is not page-aligned.
+#[cfg(target_arch = "aarch64")]
+fn pl011_page_mapped(base: usize) -> bool {
+    va_mapped(base) && va_mapped(base + 0xFF4)
 }
 
 /// Find the UART before anything tries to log through it.
@@ -356,8 +415,18 @@ impl Serial {
     }
 }
 
+/// PrimeCell identity check used by `init`, covering the PCellID registers as
+/// well as the peripheral IDs.
+///
+/// Like `is_pl011` this refuses to read an address the MMU cannot translate.
+/// `com1()` hands `init` whichever base detection settled on — including the
+/// unverified QEMU default when detection found nothing — so this is the last
+/// gate before the kernel writes to something that may not be there.
 #[cfg(target_arch = "aarch64")]
 fn pl011_present(base: usize) -> bool {
+    if !pl011_page_mapped(base) {
+        return false;
+    }
     unsafe {
         core::ptr::read_volatile((base + 0xFE0) as *const u32) & 0xFF == 0x11
             && core::ptr::read_volatile((base + 0xFE4) as *const u32) & 0xFF == 0x10

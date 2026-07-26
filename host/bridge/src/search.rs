@@ -227,7 +227,6 @@ fn sanitize(s: &str) -> String {
 /// for the same reason as email: holding `search.query` grants the built-in
 /// corpus, not a personal file tree.
 #[allow(clippy::too_many_arguments)]
-#[allow(clippy::too_many_arguments)]
 pub fn query_all(
     q: &str,
     k: usize,
@@ -249,29 +248,34 @@ pub fn query_all(
     }
     let mut hits = search_tfidf(&docs, q, k, cat);
     // The big corpus is scored from its prebuilt index, then merged. Scoring it
-    // inline would re-tokenise 12k documents on every keystroke.
-    // Portals are the only source that leaves this machine, so they need the
-    // grant that says so.
-    let teddy = crate::tsearch::index();
-    if include_portal && !teddy.is_empty() && cat.is_none() {
-        let tdocs = crate::tsearch::docs();
-        for (score, i) in teddy.search(q, k) {
-            docs.push(Doc {
-                t: tdocs[i].t.clone(),
-                u: tdocs[i].u.clone(),
-                c: if tdocs[i].c.is_empty() {
-                    "teddy".into()
-                } else {
-                    tdocs[i].c.clone()
-                },
-                b: tdocs[i].b.clone(),
-                pr: tdocs[i].pr,
-            });
-            // `docs` just grew by one; that entry is what this score refers to.
-            hits.push((score, docs.len() - 1));
-        }
-        hits.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
-        hits.truncate(k);
+    // inline would re-tokenise 12k documents on every keystroke. Portals are the
+    // only source that leaves this machine, so they need the grant that says so.
+    // Docs and index are taken under a single `with_docs_index` borrow: both come
+    // from the same resident corpus, so a sync or forget running concurrently
+    // cannot swap one out from under the other mid-query.
+    if include_portal && cat.is_none() {
+        crate::tsearch::with_docs_index(|tdocs, teddy| {
+            if teddy.is_empty() {
+                return;
+            }
+            for (score, i) in teddy.search(tdocs, q, k) {
+                docs.push(Doc {
+                    t: tdocs[i].t.clone(),
+                    u: tdocs[i].u.clone(),
+                    c: if tdocs[i].c.is_empty() {
+                        "teddy".into()
+                    } else {
+                        tdocs[i].c.clone()
+                    },
+                    b: tdocs[i].b.clone(),
+                    pr: tdocs[i].pr,
+                });
+                // `docs` just grew by one; that entry is what this score refers to.
+                hits.push((score, docs.len() - 1));
+            }
+            hits.sort_by(|a, b| b.0.partial_cmp(&a.0).unwrap_or(std::cmp::Ordering::Equal));
+            hits.truncate(k);
+        });
     }
     let n = hits.len();
     let mut out = vec![format!("OK search.query n={n} backend=tfidf-pr")];
@@ -459,22 +463,35 @@ mod tests {
     }
 }
 
-/// Body text for a document URL, from the built-in corpus or teddy.
+/// Body text for a built-in corpus URL (`os://…` / curated cards).
 ///
-/// These sources carry their text in the index, so reading needs no file
-/// access — and no capability beyond the one that found them.
-pub fn body_for(url: &str, max_lines: usize) -> Option<Vec<String>> {
+/// Teddy / portal corpus hits are separate — they need `portal=1` at read time,
+/// same consent bit as `search.query … portal=1`.
+pub fn body_for_builtin(url: &str, max_lines: usize) -> Option<Vec<String>> {
     let body = load_docs()
         .ok()?
         .into_iter()
         .find(|d| d.u == url)
-        .map(|d| d.b)
-        .or_else(|| {
-            crate::tsearch::docs()
-                .iter()
-                .find(|d| d.u == url)
-                .map(|d| d.b.clone())
-        })?;
+        .map(|d| d.b)?;
+    Some(wrap_body(&body, max_lines))
+}
+
+/// Body text from the teddy corpus cache, if that URL is present.
+pub fn body_for_portal(url: &str, max_lines: usize) -> Option<Vec<String>> {
+    let body = crate::tsearch::docs()
+        .iter()
+        .find(|d| d.u == url)
+        .map(|d| d.b.clone())?;
+    Some(wrap_body(&body, max_lines))
+}
+
+/// True when the teddy cache has this URL (used to distinguish portal deny
+/// from a plain missing body).
+pub fn portal_has_url(url: &str) -> bool {
+    crate::tsearch::docs().iter().any(|d| d.u == url)
+}
+
+fn wrap_body(body: &str, max_lines: usize) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     for word in body.split_whitespace() {
@@ -482,7 +499,7 @@ pub fn body_for(url: &str, max_lines: usize) -> Option<Vec<String>> {
             out.push(format!("ROW line={}", sanitize(&cur)));
             cur.clear();
             if out.len() >= max_lines {
-                return Some(out);
+                return out;
             }
         }
         if !cur.is_empty() {
@@ -493,5 +510,5 @@ pub fn body_for(url: &str, max_lines: usize) -> Option<Vec<String>> {
     if !cur.is_empty() {
         out.push(format!("ROW line={}", sanitize(&cur)));
     }
-    Some(out)
+    out
 }

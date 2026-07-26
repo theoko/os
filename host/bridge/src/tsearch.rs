@@ -10,7 +10,8 @@
 //! * The corpus already uses the `{t,u,c,b,pr}` schema this bridge parses —
 //!   the local `search/corpus.json` was modelled on it — so no translation.
 //! * It is ~64 MB and ~12k documents, far too large to re-read per query, so
-//!   it is parsed once per process and held behind a `OnceLock`.
+//!   it is parsed once and held in process memory. Memory is a `Mutex` (not
+//!   `OnceLock`) so `forget` can purge it when the user revokes portal.sync.
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -19,7 +20,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex};
 
 /// Live corpus published by the tsearch front-end.
 pub const DEFAULT_URL: &str = "https://teddysearch.com/tsearch/corpus.json";
@@ -169,76 +170,129 @@ pub fn sync() -> Result<(usize, String), String> {
     }
 
     fs::rename(&tmp, &path).map_err(|e| format!("rename: {e}"))?;
+    // Replace in-memory state so the next search sees the new corpus without
+    // restarting the bridge (OnceLock could not do this after a revoke/resync).
+    publish(Arc::new(Corpus::from_docs(parsed.docs)));
     Ok((n, parsed.crawled_at))
 }
 
-/// Parsed corpus, reloadable.
+/// In-memory corpus + index. `None` means "load from disk on next use".
 ///
-/// This was a OnceLock. A sync writes a new file, but the lock had already
-/// resolved — to an EMPTY vec when the bridge started before any corpus
-/// existed — so the freshly downloaded corpus stayed invisible until the
+/// This was a pair of `OnceLock`s. A sync writes a new file, but the lock had
+/// already resolved — to an EMPTY corpus when the bridge started before any
+/// corpus existed — so the freshly downloaded corpus stayed invisible until the
 /// bridge was restarted. The status screen said "Downloaded, but empty" and
-/// searches found nothing, which is exactly what it looked like.
-static CACHE: RwLock<Option<Arc<Vec<RawDoc>>>> = RwLock::new(None);
+/// searches found nothing, which is exactly what it looked like. Docs and index
+/// are held together so a swap can never leave an index describing a corpus
+/// that is no longer resident.
+static CORPUS: Mutex<Option<Arc<Corpus>>> = Mutex::new(None);
 
-/// Cached corpus documents, parsed once per process.
-///
-/// Re-reading 64 MB on every `search.query` would make the search field
-/// unusable; this is why the source is a cache rather than a live call.
-pub fn docs() -> Arc<Vec<RawDoc>> {
-    if let Ok(guard) = CACHE.read() {
-        if let Some(d) = guard.as_ref() {
-            return Arc::clone(d);
-        }
-    }
-    let arc = Arc::new(load_corpus());
-    if let Ok(mut guard) = CACHE.write() {
-        *guard = Some(Arc::clone(&arc));
-    }
-    arc
+struct Corpus {
+    docs: Arc<Vec<RawDoc>>,
+    index: Arc<Index>,
 }
 
-/// Read the cached corpus from disk without publishing it.
-///
-/// Split out so a background refresh can build a replacement while readers
-/// keep serving the current one.
-fn load_corpus() -> Vec<RawDoc> {
-    match fs::read_to_string(cache_path()) {
-        Ok(raw) => match serde_json::from_str::<CorpusFile>(&raw) {
-            Ok(c) => c.docs,
+impl Corpus {
+    fn empty() -> Self {
+        let docs = Arc::new(Vec::new());
+        let index = Arc::new(Index::build(&docs));
+        Self { docs, index }
+    }
+
+    /// Build a corpus *and* its index off the documents just parsed, without
+    /// touching what is currently published. A background refresh uses this to
+    /// prepare a replacement while readers keep serving the resident one.
+    fn from_docs(docs: Vec<RawDoc>) -> Self {
+        let docs = Arc::new(docs);
+        let index = Arc::new(Index::build(&docs));
+        Self { docs, index }
+    }
+
+    fn from_disk() -> Self {
+        let Ok(raw) = fs::read_to_string(cache_path()) else {
+            return Self::empty();
+        };
+        match serde_json::from_str::<CorpusFile>(&raw) {
+            Ok(c) => Self::from_docs(c.docs),
             Err(e) => {
                 eprintln!("tsearch: cache unreadable ({e}); run CALL tsearch.sync");
-                Vec::new()
+                Self::empty()
             }
-        },
-        Err(_) => Vec::new(),
+        }
     }
 }
 
 /// Publish a corpus and its index together.
 ///
-/// Together matters: swapping the corpus first leaves a window where the index
-/// describes documents that are no longer there.
-fn publish(docs: Arc<Vec<RawDoc>>, idx: Arc<Index>) {
-    if let Ok(mut g) = CACHE.write() {
-        *g = Some(docs);
+/// Together matters: swapping the documents first would leave a window in which
+/// the index describes documents that are no longer resident. `Corpus` owns
+/// both, so a single store swaps them atomically and that window cannot open.
+/// Build the replacement first (`Corpus::from_docs`, off the query path) and
+/// publish the finished pair — never publish an empty one to force a rebuild.
+fn publish(c: Arc<Corpus>) {
+    if let Ok(mut g) = CORPUS.lock() {
+        *g = Some(c);
     }
-    if let Ok(mut g) = INDEX.write() {
-        *g = Some(idx);
+}
+
+fn loaded() -> Arc<Corpus> {
+    let mut g = CORPUS.lock().unwrap_or_else(|e| e.into_inner());
+    if g.is_none() {
+        *g = Some(Arc::new(Corpus::from_disk()));
     }
+    Arc::clone(g.as_ref().unwrap())
 }
 
 /// Drop the parsed corpus and its index so the next read picks up new content.
 ///
-/// Called after a sync and after a purge; without it either leaves the process
-/// serving whatever it happened to parse first.
+/// The reload entry point for anything that changes the cache file behind the
+/// bridge's back. The two in-tree paths no longer need it — `sync` publishes
+/// the copy it just parsed and `forget` publishes an empty one — but a corpus
+/// that only becomes visible after a restart is the bug this module exists to
+/// prevent, so the hook stays public.
+#[allow(dead_code)]
 pub fn invalidate() {
-    if let Ok(mut g) = CACHE.write() {
+    if let Ok(mut g) = CORPUS.lock() {
         *g = None;
     }
-    if let Ok(mut g) = INDEX.write() {
-        *g = None;
-    }
+}
+
+/// Drop in-memory state so the next access reloads from disk (or emptiness).
+#[cfg(test)]
+pub fn clear_memory() {
+    invalidate();
+}
+
+/// Delete the on-disk teddy corpus and purge the in-memory index.
+///
+/// Revoking `portal.sync` must not leave a 12k-doc cache behind a switch that
+/// reads as off — "hidden" is not "forgotten".
+pub fn forget() -> Result<&'static str, String> {
+    let path = cache_path();
+    let _ = fs::remove_file(path.with_extension("part"));
+    let status = match fs::remove_file(&path) {
+        Ok(()) => "removed",
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => "nothing_to_remove",
+        Err(e) => return Err(format!("{e}")),
+    };
+    // Publish empty immediately so concurrent searches cannot resurrect the
+    // old Arc while disk is already gone.
+    publish(Arc::new(Corpus::empty()));
+    Ok(status)
+}
+
+/// Cached corpus documents for the current process.
+///
+/// Re-reading 64 MB on every `search.query` would make the search field
+/// unusable; this is why the source is a memory cache rather than a live call.
+pub fn docs() -> Arc<Vec<RawDoc>> {
+    Arc::clone(&loaded().docs)
+}
+
+/// Borrow docs + index under one load — prefer this on the search hot path.
+pub fn with_docs_index<R>(f: impl FnOnce(&[RawDoc], &Index) -> R) -> R {
+    let c = loaded();
+    f(&c.docs, &c.index)
 }
 
 pub fn is_available() -> bool {
@@ -300,8 +354,36 @@ mod tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_TSEARCH_CACHE", "/nonexistent/os-teddy/none.json") };
+        clear_memory();
         assert!(!is_available());
+        assert!(docs().is_empty());
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
+        clear_memory();
+    }
+
+    #[test]
+    fn forget_deletes_disk_and_memory() {
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = env::temp_dir().join(format!("os-teddy-forget-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("teddy.json");
+        fs::write(
+            &path,
+            r#"{"crawled_at":"now","docs":[{"t":"Keep","u":"u","c":"web","b":"body","pr":0.5}]}"#,
+        )
+        .unwrap();
+        unsafe { env::set_var("OS_TSEARCH_CACHE", &path) };
+        clear_memory();
+        assert_eq!(docs().len(), 1);
+        assert!(!index().is_empty());
+        assert_eq!(forget().unwrap(), "removed");
+        assert!(!path.is_file());
+        assert!(docs().is_empty());
+        assert!(index().is_empty());
+        assert_eq!(forget().unwrap(), "nothing_to_remove");
+        unsafe { env::remove_var("OS_TSEARCH_CACHE") };
+        clear_memory();
+        let _ = fs::remove_dir_all(&dir);
     }
 
     #[test]
@@ -332,8 +414,8 @@ mod tests {
 ///
 /// `search_tfidf` re-tokenises every document and rebuilds the df map per
 /// query. That is fine for the ~16-document built-in corpus and hopeless for
-/// 12k: measured at 5.6 s per search. The corpus only changes on sync, so the
-/// tokenisation and idf are computed once and queries walk postings instead.
+/// 12k: measured at 5.6 s per search. The corpus only changes on sync/forget,
+/// so tokenisation and idf are computed then and queries walk postings.
 pub struct Index {
     /// Sorted by term, so lookup is a binary search.
     terms: Vec<Term>,
@@ -347,7 +429,8 @@ pub struct Term {
     len: usize,
 }
 
-static INDEX: RwLock<Option<Arc<Index>>> = RwLock::new(None);
+// No separate INDEX cache: the index is a field of `Corpus`, so `invalidate`
+// and `publish` swap it with the docs it was built from.
 
 /// Tokeniser shared with the rest of the bridge.
 fn tok(text: &str) -> Vec<String> {
@@ -359,24 +442,13 @@ fn tok(text: &str) -> Vec<String> {
 }
 
 pub fn index() -> Arc<Index> {
-    if let Ok(guard) = INDEX.read() {
-        if let Some(i) = guard.as_ref() {
-            return Arc::clone(i);
-        }
-    }
-    let built = build_index(&docs());
-    let arc = Arc::new(built);
-    if let Ok(mut guard) = INDEX.write() {
-        *guard = Some(Arc::clone(&arc));
-    }
-    arc
+    Arc::clone(&loaded().index)
 }
 
-/// Build a tf-idf index over `docs` without touching the published caches.
-fn build_index(docs: &[RawDoc]) -> Index {
-    {
+impl Index {
+    /// Build a tf-idf index over `docs` without touching what is published.
+    fn build(docs: &[RawDoc]) -> Self {
         let n = docs.len() as f64;
-        // term -> doc -> tf
         let mut acc: HashMap<String, HashMap<usize, f64>> = HashMap::new();
         let mut lens = vec![0usize; docs.len()];
         for (i, d) in docs.iter().enumerate() {
@@ -409,16 +481,13 @@ fn build_index(docs: &[RawDoc]) -> Index {
                 len: per_doc.len(),
             });
         }
-        Index { terms, postings }
+        Self { terms, postings }
     }
-}
 
-impl Index {
     pub fn is_empty(&self) -> bool {
         self.terms.is_empty()
     }
 
-    #[allow(dead_code)] // used by the bridge's startup prewarm log
     pub fn term_count(&self) -> usize {
         self.terms.len()
     }
@@ -434,12 +503,11 @@ impl Index {
     ///
     /// Mirrors the built-in scorer: tf-idf blended with PageRank, plus the
     /// exact-AND bonus for documents carrying every query term.
-    pub fn search(&self, query: &str, k: usize) -> Vec<(f64, usize)> {
+    pub fn search(&self, docs: &[RawDoc], query: &str, k: usize) -> Vec<(f64, usize)> {
         let q = tok(query);
         if q.is_empty() || self.terms.is_empty() {
             return Vec::new();
         }
-        let docs = docs();
         let mut score: HashMap<usize, f64> = HashMap::new();
         let mut hits: HashMap<usize, usize> = HashMap::new();
         let mut seen = 0usize;
@@ -454,7 +522,7 @@ impl Index {
         let mut out: Vec<(f64, usize)> = score
             .into_iter()
             .map(|(doc, mut s)| {
-                let pr = docs[doc].pr.clamp(0.0, 1.0);
+                let pr = docs.get(doc).map(|d| d.pr.clamp(0.0, 1.0)).unwrap_or(0.0);
                 s *= 1.0 + 4.0 * pr;
                 if seen > 0 && hits.get(&doc).copied().unwrap_or(0) >= seen {
                     s *= 1.35;
@@ -483,8 +551,16 @@ mod index_tests {
             .lock()
             .unwrap_or_else(|e| e.into_inner());
         unsafe { env::set_var("OS_TSEARCH_CACHE", "/nonexistent/os-teddy/none.json") };
+        clear_memory();
+        // is_available() consults the filesystem on every call, so it is the
+        // assertion that cannot pass for the wrong reason...
         assert!(!is_available());
+        // ...and with the resident copy dropped, neither can these: they must
+        // not panic when there is nothing to index.
+        assert!(docs().is_empty());
+        assert!(index().is_empty());
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };
+        clear_memory();
     }
 
     #[test]
@@ -592,23 +668,24 @@ pub fn sync_background() -> &'static str {
     std::thread::spawn(|| {
         match sync() {
             Ok((n, at)) => {
-                // Make the new corpus visible without a restart - and without
-                // making somebody's next search pay for it.
+                // The whole point: the new corpus is visible without a restart
+                // — and without making somebody's next search pay for it.
                 //
-                // `invalidate()` alone left the caches empty, so the very next
-                // query rebuilt a 12k-document index inline. That takes ~10s,
-                // which is longer than the guest waits for a reply, so the
-                // guest concluded the bridge was offline and silently answered
-                // from the ISO's built-in corpus instead. Connecting a portal
-                // account appeared to break search.
+                // What this used to do was `invalidate()`, which left nothing
+                // resident, so the very next query rebuilt a 12k-document
+                // index inline. That takes ~10s, longer than the guest waits
+                // for a reply, so the guest concluded the bridge was offline
+                // and silently answered from the ISO's built-in corpus
+                // instead: connecting a portal account appeared to break
+                // search.
                 //
-                // Warming here keeps the stall on this thread, where nobody is
-                // waiting. Queries arriving during the rebuild still serve the
-                // old corpus, which is stale by seconds rather than absent.
-                let fresh = Arc::new(load_corpus());
-                let idx = Arc::new(build_index(&fresh));
-                let warmed = idx.term_count();
-                publish(fresh, idx);
+                // `sync` has already published the copy it just parsed, index
+                // and all, built on *this* thread where nobody is waiting.
+                // Queries arriving during that rebuild kept serving the old
+                // corpus — stale by seconds rather than absent — and there is
+                // nothing left to invalidate here. Reading the term count back
+                // is just the log line; it rebuilds nothing.
+                let warmed = index().term_count();
                 eprintln!("tsearch: synced {n} docs (crawled {at}), {warmed} terms ready");
             }
             Err(e) => eprintln!("tsearch: sync failed: {e}"),
@@ -706,9 +783,14 @@ mod refresh_tests {
         // seconds, longer than the guest waits. The guest declared the bridge
         // offline and answered from the ISO instead, so connecting a portal
         // account looked like it broke search.
-        let before = Arc::new(vec![doc("u", "old title", "old body")]);
-        let idx = Arc::new(build_index(&before));
-        publish(Arc::clone(&before), idx);
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        publish(Arc::new(Corpus::from_docs(vec![doc(
+            "u",
+            "old title",
+            "old body",
+        )])));
 
         // A reader during a refresh still gets the previous corpus.
         assert_eq!(docs().len(), 1, "publishing must not empty the cache");
@@ -719,18 +801,52 @@ mod refresh_tests {
 
     #[test]
     fn an_index_built_off_line_matches_one_built_through_the_cache() {
-        // build_index was extracted so a refresh can build without publishing.
-        // If the extracted path diverged, a synced corpus would be searched by
-        // an index describing something else.
+        // Index::build is callable without publishing, so a refresh can build
+        // its replacement off the query path. If that path diverged, a synced
+        // corpus would be searched by an index describing something else.
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let corpus = vec![
             doc("a", "alpha beta", "gamma"),
             doc("b", "beta delta", "alpha"),
         ];
-        let direct = build_index(&corpus);
-        publish(Arc::new(corpus.clone()), Arc::new(build_index(&corpus)));
+        let direct = Index::build(&corpus);
+        publish(Arc::new(Corpus::from_docs(corpus.clone())));
         let through_cache = index();
         assert_eq!(direct.term_count(), through_cache.term_count());
         assert_eq!(direct.terms.len(), through_cache.terms.len());
+        invalidate();
+    }
+
+    #[test]
+    fn the_published_index_always_describes_the_published_docs() {
+        // The other half of the same guarantee: docs and index are swapped as
+        // one `Corpus`, so a hit's document id can never point past the corpus
+        // that is actually resident.
+        let _env = crate::graph::ENV_LOCK
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        publish(Arc::new(Corpus::from_docs(vec![
+            doc("a", "alpha", "one"),
+            doc("b", "beta", "two"),
+            doc("c", "gamma", "three"),
+        ])));
+        // Replace it with a smaller, entirely different corpus: an index left
+        // over from the previous one would index out of range here.
+        publish(Arc::new(Corpus::from_docs(vec![doc(
+            "z", "omega", "final",
+        )])));
+
+        with_docs_index(|tdocs, ix| {
+            assert_eq!(tdocs.len(), 1, "old corpus still resident");
+            assert!(ix.find("alpha").is_none(), "index outlived its documents");
+            let hits = ix.search(tdocs, "omega", 5);
+            assert_eq!(hits.len(), 1);
+            assert!(hits.iter().all(|&(_, i)| i < tdocs.len()));
+            assert_eq!(tdocs[hits[0].1].u, "z");
+        });
+
         invalidate();
     }
 }

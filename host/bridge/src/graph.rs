@@ -57,6 +57,9 @@ fn home() -> PathBuf {
 }
 
 /// Cheap stable id. Not cryptographic — only needs to dedupe re-ingests.
+///
+/// Exposed so `email.search` ROWs can carry the same `id=` that `doc.read
+/// email://…` and the knowledge graph already use.
 pub fn id_for(from: &str, subject: &str) -> String {
     let mut h: u64 = 0xcbf29ce484222325;
     for b in from
@@ -115,6 +118,20 @@ impl Graph {
         fs::write(&path, raw).map_err(|e| format!("write {}: {e}", path.display()))?;
         Ok(path)
     }
+}
+
+/// Delete the on-disk mail graph. Revoking Email must forget what it built,
+/// matching `workspace.forget` / `portal.forget`.
+pub fn forget() -> Result<&'static str, String> {
+    let path = graph_path();
+    match fs::remove_file(&path) {
+        Ok(()) => Ok("removed"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("nothing_to_remove"),
+        Err(e) => Err(format!("remove {}: {e}", path.display())),
+    }
+}
+
+impl Graph {
 
     /// Cap on retained messages. Without this the index grows forever: the
     /// mock backend alone appends a fresh row for every distinct query.
@@ -336,6 +353,22 @@ mod tests {
             .expect("missing is not corrupt")
             .messages
             .is_empty());
+        unsafe { env::remove_var("OS_GRAPH_PATH") };
+    }
+
+    #[test]
+    fn forget_deletes_disk_graph() {
+        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = std::env::temp_dir().join(format!("os-graph-forget-{}", std::process::id()));
+        let path = dir.join("emails.json");
+        unsafe { env::set_var("OS_GRAPH_PATH", &path) };
+        let mut g = Graph::default();
+        g.ingest(&[msg("a@x", "Q2")]);
+        g.save().expect("save");
+        assert_eq!(forget().expect("forget"), "removed");
+        assert!(!path.exists());
+        assert_eq!(forget().expect("idempotent"), "nothing_to_remove");
+        let _ = fs::remove_dir_all(&dir);
         unsafe { env::remove_var("OS_GRAPH_PATH") };
     }
 }

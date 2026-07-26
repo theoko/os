@@ -108,6 +108,287 @@ the status line says which half is missing. See `docs/install-os-doc-v01.md`.
 - Recent-mail rows on the home screen open. They carry an `email://` id and
   `doc.read` resolves it behind the email grant.
 - An offline search said "the bridge is offline" twice in two wordings.
+## 0.9.27 — 2026-07-25
+
+Home goals get a smart host planner:
+
+- Bridge `intent.resolve` classifies the act (open / search / mail), expands
+  synonyms (`paper` → thesis/draft/…), and ranks the workspace index when
+  `files=1`.
+- Guest `run_goal` prefers that plan + pre-ranked Doc hits, then falls through
+  to `search.query`. Offline still uses local keywords. No LLM in the kernel.
+- Smoke: paper-style ask ranks the seeded workspace file.
+
+## 0.9.26 — 2026-07-25
+
+Home field is agentic (plan / act / Brief):
+
+- Enter on Home runs `agent::run_goal` under current caps — not bare search.
+- Filler words drop (`i wanna work on my paper` → query `paper`); granted
+  search / files / mail tools act; Doc rows open in the Reader.
+- No LLM in the kernel. Missing grants stay `Need`. Path/media Enter still
+  goes to Search / transcribe.
+
+## 0.9.25 — 2026-07-25
+
+Home Recent files opens in the Reader:
+
+- Bridge `workspace.recent` (needs `files=1`) returns top-ranked index rows
+  with `file://` URLs for the guest Home strip.
+- Guest peeks after Your files is granted; clicking a row opens `doc.read`
+  the same way Search / mail already do. Cap refuse never opens COM2.
+- Smoke: deny without `files=1`, allow after `workspace.index`.
+
+## 0.9.24 — 2026-07-25
+
+Open calendar events from Brief:
+
+- `calendar.list` ROWs carry stable `id=` (same hash as mail); `doc.read
+  cal://{id}` needs `email=1` and returns mock event body.
+- Guest arms Event report lines on Brief; click opens the Reader (same path
+  as home mail). Cap refuse never opens COM2.
+- Smoke: list id → deny/allow `doc.read cal://`.
+
+## 0.9.23 — 2026-07-25
+
+`email.send` mock + explicit confirm:
+
+- New Caps **Send mail** (`Cap::EmailSend`, default off) — separate from Email
+  read. Bridge needs `email=1` and `confirm=1`; mock queues only (no gog).
+- Inbox Brief arms a draft and shows **Confirm send**; that click CALLs with
+  `confirm=1`. Cap refusal never opens COM2. Playbooks stay Info-only.
+- Smoke: deny without bits, mock allow with both.
+
+## 0.9.22 — 2026-07-25
+
+Home Recent mail opens in the Reader:
+
+- `email.search` ROWs carry stable `id=` matching the mail graph /
+  `doc.read email://…` (mock + gog).
+- Guest `MailPeek` stores the id; clicking a home mail row opens the same
+  Reader path Search already uses. Cap refuse still needs `email=1`.
+- Smoke opens mail via the ROW id; unit tests cover hit geometry + URL build.
+
+## 0.9.21 — 2026-07-25
+
+Calendar is not ambient:
+
+- Bridge `calendar.list` requires `email=1` (same consent as `email.search`);
+  mock demo ROW when allowed. Smoke + unit cover deny/allow.
+- Guest `fetch_calendar_peek` refuses without `Cap::EmailSearch` (no COM2).
+  Morning / inbox / playbook act surface `Event` lines when Email is on.
+- Caps Email detail: "Read inbox and calendar".
+
+## 0.9.20 — 2026-07-25
+
+Saved playbooks CALL granted tools:
+
+- After the plan preview, `run_playbook_allowed` issues MCP peeks for tools
+  named in the body that are already on (`email.search`, `search.query`,
+  portal health). Cap refusal never opens COM2.
+- Path/URL/write tools stay Info-only (`audio.transcribe`, `doc.read`,
+  `skills.save`, …). Markdown is still not executable; `email.send` stays off.
+- Skills chrome copy matches: saved rows run under current grants.
+
+## 0.9.19 — 2026-07-25
+
+Chill 60 fps game loop:
+
+- Main loop always paces at 60 Hz (`anim::FRAME_US_60`) so the UI keeps a
+  quiet pulse when the pointer is still — not only when something moves.
+- Soft nav hairline breath, ~1.2 Hz caret blink on Home/Search, gentler
+  screen entrances (12 frames / 22 px), softer pointer glide, chillier
+  startup chime.
+- Ambient chrome stays cheap (1 px rule + dirty present); no inference in
+  the kernel.
+
+## 0.9.18 — 2026-07-25
+
+The UI adapts to how advanced you are — by choice, not profiling:
+
+- Setup **Experience** step: Guided vs Advanced (explicit; reboot resets).
+- Guided keeps plain-language Caps blurbs and longer hints; Advanced shows
+  wire tool names and shorter chrome (home/search placeholders, Caps footer,
+  setup Bridge/Skills/Done copy).
+- Morning brief shortens its plan checklist in Advanced.
+- Default grants stay privacy-first at every level. Re-running setup keeps
+  the last Experience selection highlighted.
+
+## 0.9.17 — 2026-07-25
+
+Save skills revoke forgets what it wrote:
+
+- Bridge `skills.forget` deletes the user skills tree only (defaults stay);
+  idempotent `removed` / `nothing_to_remove`.
+- Guest Caps: turning **Save skills** off calls `skills.forget` and refreshes
+  the Skills peek so `src=saved` rows disappear.
+- Smoke: save → get → forget → list; Caps copy names the revoke consequence.
+
+## 0.9.16 — 2026-07-25
+
+Saved-skill playbook plan preview (still no auto-CALL):
+
+- Unknown / saved skills open a **Playbook plan** Brief; the click path
+  fetches the body and names mentioned tools (`email.search`, …) plus
+  missing grants. Markdown stays non-executable.
+- Starter `skills.save` bodies include suggested tools so the preview is
+  useful out of the box; smoke checks `skills.get`.
+- Caps / morning brief: Recordings copy points at the Search media path.
+
+## 0.9.15 — 2026-07-25
+
+Recordings path picker on Search + mock transcribe for CI:
+
+- Guest `mcp::transcribe` sends `CALL audio.transcribe … audio=1`; cap denial
+  never opens COM2. Search/home Enter on an absolute media path runs it, then
+  searches the file stem.
+- Grant/setup serial notes that Search is the path picker (no warm without a
+  path). Field placeholder mentions `/path.wav`.
+- Bridge `OS_TRANSCRIBE_BACKEND=mock` returns deterministic text without
+  whisper; smoke exercises the allow path end-to-end.
+
+## 0.9.14 — 2026-07-25
+
+Morning brief files lane + open the built-in corpus:
+
+- `plan_act` notes when Your files is on (Search to open `file://` hits),
+  same no-COM2 pattern as Recordings.
+- Smoke + unit: `doc.read os://…` returns curated body text with no wire
+  bit (`portal` / `files` / … stay off). Completes search→open for docs.
+
+## 0.9.13 — 2026-07-25
+
+Open recordings completes the search→open trilogy:
+
+- Smoke: `doc.read audio://` deny/allow with seeded transcript text before
+  `audio.forget`; unit test covers the allow path.
+- Teddy corpus bodies need `portal=1` on `doc.read` (`needs_portal_cap`);
+  built-in `os://` corpus stays ungated. Reader maps portal / missing
+  transcript denials honestly.
+- Morning `plan_act` notes when Recordings is on (Search to open audio hits).
+
+## 0.9.12 — 2026-07-25
+
+Open what you find — files and mail, not just locate them:
+
+- Smoke: `workspace.index` / `search.query files=1` / `doc.read` / forget;
+  `doc.read email://` needs `email=1` and shows from/subject/snippet.
+- Guest `fetch_doc` sends `email=1`; reader denials name the missing grant
+  instead of blanket Teddy.
+- Caps: Your files detail is "project folders you choose", not the whole machine.
+
+## 0.9.11 — 2026-07-25
+
+Recordings honesty and saved-skill Brief:
+
+- Search tile subtitle includes `audio` when Recordings is granted; empty
+  search ladder names `audio.transcribe` after files and mail.
+- Every Skills row opens Brief — saved/unknown show playbook body instead of
+  a footer blurb.
+- Smoke seeds a transcript store, asserts `search.query … audio=1`, then
+  `audio.forget` (no live whisper).
+
+## 0.9.10 — 2026-07-25
+
+Email consent matches the other personal-data grants:
+
+- Bridge `email.search` requires `email=1` (`needs_email_cap`); guest peeks
+  send the bit and use `max=5` to match the inbox Brief plan.
+- `email.forget` deletes the mail knowledge graph; Caps revoke of Email
+  purges and refreshes the home peek.
+- Home empty-mail copy splits granted+empty vs not granted.
+- Smoke asserts LIST / deny / allow / forget for email.
+
+## 0.9.9 — 2026-07-25
+
+Guest finally writes playbooks when Save skills is on:
+
+- `mcp::save_skill` sends `CALL skills.save … skills=1` (one-line `desc=`
+  form); cap denial never opens COM2.
+- Skills screen **Save starter** CTA + `capability-safe-tools` prove the
+  write; list rows surface `src=saved`.
+- Skills tile subtitle is `N writable` / `N read-only`; smoke round-trips
+  an allowed save and checks `skills.list`.
+
+## 0.9.8 — 2026-07-25
+
+Consent on the wire for skills and markets in CI:
+
+- `skills.save` requires `skills=1` (`needs_skills_cap`); denied saves still
+  drain `LINE`…`END` so the peer cannot desync.
+- Smoke-bridge lists and cap-checks `market.*` alongside teddy, with a
+  best-effort live `market.health portal=1`.
+- Docs: mcp connectors and search name the real cap table + market portals.
+
+## 0.9.7 — 2026-07-25
+
+Market portals reach the guest:
+
+- Skill `market-portals` calls `market.health` / `market.fear_greed` under
+  `portal.sync`; morning brief peeks both teddy and market health.
+- Grant warm includes `market.health`; Search tile says `online` for the
+  portal grant; Caps copy names teddy and markets.
+- Home stacks Last brief above Recent mail (brief no longer hides the inbox).
+- Setup/Skills list seven builtins.
+
+## 0.9.6 — 2026-07-25
+
+Home keeps the agent report:
+
+- After Back from Brief, a **Last brief** strip shows the heading and top
+  lines; tap it to reopen. The launcher no longer pretends nothing ran.
+- Search tile subtitle follows grants (`docs`, `mail`, `files`, `teddy`)
+  instead of the hardcoded "knowledge + email".
+
+## 0.9.5 — 2026-07-25
+
+Revoking Online services forgets what it built:
+
+- Bridge `portal.forget` deletes the teddy corpus cache and portal snapshots,
+  and clears in-memory tsearch state (no more OnceLock that outlived revoke).
+- Guest Caps toggle calls `portal.forget` on revoke, matching workspace/audio.
+- Setup Skills lists all six builtins (teddy-portals was previously hidden).
+- Smoke asserts `portal.forget`.
+
+## 0.9.4 — 2026-07-25
+
+Online services means both teddy paths are ready, not merely permitted:
+
+- Setup finish and live Caps grant run `tsearch.sync` then warm `teddy.health`.
+- Guest portal allowlist matches the bridge (`teddy.*` + `market.*`); no loose
+  `market.` prefix.
+- Cap copy names teddy; smoke-bridge asserts LIST + `needs_portal_cap`, and
+  best-effort live `teddy.health portal=1`.
+
+## 0.9.3 — 2026-07-25
+
+Teddy is two connectors, not one:
+
+- **Teddy API** — `tsearch.sync` + `search.query portal=1` over
+  `teddysearch.com/tsearch/corpus.json` (corpus file is the API).
+- **Teddy portals** — live HTTPS tools `teddy.health`, `teddy.fear_greed`,
+  `teddy.gex` on the same host. Cap-gated with `portal=1` (markets too).
+
+Guest skill `teddy-portals` runs both paths under `portal.sync` and paints a
+Brief. LIST exposes the new tools.
+
+## 0.9.2 — 2026-07-25
+
+Skills act. Clicking a builtin playbook runs a fixed guest plan under the
+current grants and opens a Brief: plan steps, then tagged outcomes — or the
+name of the switch still blocking the call. No inference in the kernel.
+
+- **Skill runner** (`agent.rs`): `inbox-brief`, `email-triage`,
+  `knowledge-search`, `agent-plan-act`, `capability-safe-tools`,
+  and (0.9.3) `teddy-portals`.
+- After setup, `agent-plan-act` runs immediately so the first screen is a
+  report, not an empty launcher.
+- Capabilities tile opens the live switches (it only rewrote the footer
+  before). Search field no longer restarts setup; a quiet nav **setup**
+  control does that on purpose.
+- Grants tell the truth: privacy-first defaults, `from_bools` keyed by
+  `Cap::ALL`, workspace/portal build-on-grant, teddy scoped to `portal=1`,
+  tsearch prewarm restored on the bridge.
 
 ## 0.9.1 — 2026-07-25
 

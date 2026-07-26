@@ -12,6 +12,7 @@ use crate::caps::Caps;
 use crate::fb::Surface;
 use crate::font::{self, BODY_FACE, BRAND_FACE, BTN_FACE, HERO_FACE, SMALL_FACE, TITLE_FACE};
 use crate::keyboard::Key;
+use crate::level::Level;
 use crate::mcp::{BridgeStatus, MailPeek};
 use crate::skills::SkillPeek;
 use crate::ui::theme;
@@ -44,6 +45,8 @@ impl Zone {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Step {
     Welcome,
+    /// Explicit Guided vs Advanced — copy adapts; grants stay privacy-first.
+    Experience,
     Region,
     Bridge,
     Capabilities,
@@ -58,10 +61,10 @@ pub const REGIONS: [&str; 4] = ["United States", "United Kingdom", "Greece", "Ja
 /// Capabilities the agent may be granted up front. Mirrors [`Cap`] / bridge tools.
 /// Screen rows come straight from `Cap::ALL`, so a label can never drift from
 /// the capability it grants — they used to be two lists kept in step by hand.
-pub fn cap_rows() -> impl Iterator<Item = (&'static str, &'static str)> {
+pub fn cap_rows(level: Level) -> impl Iterator<Item = (&'static str, &'static str)> {
     crate::caps::Cap::ALL
         .iter()
-        .map(|c| (c.label(), c.detail()))
+        .map(move |c| (c.label(), c.blurb(level)))
 }
 
 /// Number of capability rows.
@@ -72,6 +75,7 @@ const NO_FOCUS: usize = usize::MAX;
 
 pub struct Setup {
     pub step: Step,
+    pub level: Level,
     pub region: usize,
     pub caps: [bool; N_CAPS],
     zones: [Zone; MAX_ZONES],
@@ -86,13 +90,15 @@ impl Setup {
     pub const fn new() -> Self {
         Self {
             step: Step::Welcome,
+            level: Level::Guided,
             region: 0,
             // Privacy first: nothing is on that reads personal data, writes
             // to disk, or leaves the machine. Only the docs that ship with the
             // OS are searchable out of the box.
             //
-            // Order matches caps::Cap::ALL.
-            caps: [false, true, false, false, false, false],
+            // Order matches caps::Cap::ALL. Level never changes these defaults.
+            // Email / Send mail / docs / files / recordings / save / portals
+            caps: [false, false, true, false, false, false, false],
             zones: [Zone {
                 x: 0,
                 y: 0,
@@ -105,6 +111,13 @@ impl Setup {
             keyboard_focus: false,
             was_down: false,
         }
+    }
+
+    /// Restart the journey but keep the last Experience choice selected.
+    pub fn restart(level: Level) -> Self {
+        let mut s = Self::new();
+        s.level = level;
+        s
     }
 
     /// Grant set chosen on the Capabilities step.
@@ -191,7 +204,8 @@ impl Setup {
         match action {
             Action::Continue => {
                 self.step = match self.step {
-                    Step::Welcome => Step::Region,
+                    Step::Welcome => Step::Experience,
+                    Step::Experience => Step::Region,
                     Step::Region => Step::Bridge,
                     Step::Bridge => Step::Capabilities,
                     Step::Capabilities => Step::Skills,
@@ -204,7 +218,8 @@ impl Setup {
             }
             Action::Back => {
                 self.step = match self.step {
-                    Step::Welcome | Step::Region => Step::Welcome,
+                    Step::Welcome | Step::Experience => Step::Welcome,
+                    Step::Region => Step::Experience,
                     Step::Bridge => Step::Region,
                     Step::Capabilities => Step::Bridge,
                     Step::Skills => Step::Capabilities,
@@ -215,6 +230,13 @@ impl Setup {
                 true
             }
             Action::Row(i) => match self.step {
+                Step::Experience => {
+                    if i < Level::ALL.len() {
+                        self.level = Level::ALL[i];
+                        return true;
+                    }
+                    false
+                }
                 Step::Region => {
                     if i < REGIONS.len() {
                         self.region = i;
@@ -243,6 +265,7 @@ impl Setup {
 
         match self.step {
             Step::Welcome => self.draw_welcome(fb, w, h),
+            Step::Experience => self.draw_experience(fb, w, h),
             Step::Region => self.draw_region(fb, w, h),
             Step::Bridge => self.draw_bridge(fb, w, h, mail),
             Step::Capabilities => self.draw_caps(fb, w, h),
@@ -284,6 +307,32 @@ impl Setup {
         self.primary(fb, w, cy + 90, "Continue");
     }
 
+    fn draw_experience(&mut self, fb: &Surface, w: i32, h: i32) {
+        let top = self.header(
+            fb,
+            w,
+            h,
+            "How should it feel?",
+            "You choose. Grants stay off until you turn them on.",
+        );
+        let mut y = top;
+        for (i, level) in Level::ALL.iter().enumerate() {
+            self.row(
+                fb,
+                w,
+                y,
+                ROW_H,
+                level.label(),
+                Some(level.detail()),
+                self.level == *level,
+                false,
+                Action::Row(i),
+            );
+            y += ROW_H + 8;
+        }
+        self.footer(fb, w, h, y, true);
+    }
+
     fn draw_region(&mut self, fb: &Surface, w: i32, h: i32) {
         let top = self.header(
             fb,
@@ -303,37 +352,37 @@ impl Setup {
 
     fn draw_bridge(&mut self, fb: &Surface, w: i32, h: i32, mail: &MailPeek) {
         let online = matches!(mail.status, BridgeStatus::Online);
-        let top = self.header(
-            fb,
-            w,
-            h,
-            "Connect the Bridge",
-            "Connectors run on the host, never in the kernel.",
-        );
+        let sub = if self.level.is_guided() {
+            "Connectors run on the host, never in the kernel."
+        } else {
+            "Host MCP on COM2. Probe only until you grant."
+        };
+        let top = self.header(fb, w, h, "Connect the Bridge", sub);
         let (label, detail, tint) = if online {
             ("Host bridge", "Connected on COM2", theme::ONLINE)
-        } else {
+        } else if self.level.is_guided() {
             (
                 "Host bridge",
                 "Offline - start it with 'make bridge-run'",
                 theme::OFFLINE,
             )
+        } else {
+            ("Host bridge", "Offline - make bridge-run", theme::OFFLINE)
         };
         self.status_card(fb, w, top, label, detail, tint);
         self.footer(fb, w, h, top + ROW_H + 8, true);
     }
 
     fn draw_caps(&mut self, fb: &Surface, w: i32, h: i32) {
-        let top = self.header(
-            fb,
-            w,
-            h,
-            "Capabilities",
-            "Every tool sits behind a grant. Turn on only what you need.",
-        );
+        let sub = if self.level.is_guided() {
+            "Every tool sits behind a grant. Turn on only what you need."
+        } else {
+            "Consent switches. Defaults stay privacy-first."
+        };
+        let top = self.header(fb, w, h, "Capabilities", sub);
         let mut y = top;
-        let pitch = row_pitch(top, h, cap_rows().count(), true);
-        for (i, (name, blurb)) in cap_rows().enumerate() {
+        let pitch = row_pitch(top, h, cap_rows(self.level).count(), true);
+        for (i, (name, blurb)) in cap_rows(self.level).enumerate() {
             let on = self.caps[i];
             self.row(
                 fb,
@@ -352,19 +401,22 @@ impl Setup {
     }
 
     fn draw_skills(&mut self, fb: &Surface, w: i32, h: i32, skills: &SkillPeek) {
-        let top = self.header(
-            fb,
-            w,
-            h,
-            "Default Skills",
-            if skills.from_bridge {
+        let sub = if skills.from_bridge {
+            if self.level.is_guided() {
                 "Live from the host bridge. Tap Continue when ready."
             } else {
-                "Markdown playbooks the agent can load. Editable later."
-            },
-        );
+                "skills.list from bridge."
+            }
+        } else if self.level.is_guided() {
+            "Markdown playbooks the agent can load. Editable later."
+        } else {
+            "Builtin playbooks (bridge offline)."
+        };
+        let top = self.header(fb, w, h, "Default Skills", sub);
         let mut y = top;
-        let n = skills.count.min(4);
+        // All builtins fit at ROW_H=46 on a 768 screen (see layout_tests); on a
+        // shorter one row_pitch tightens them so the footer stays reachable.
+        let n = skills.count.min(7);
         let pitch = row_pitch(top, h, n, true);
         for i in 0..n {
             let desc = skills.desc_at(i);
@@ -393,7 +445,7 @@ impl Setup {
         fb.draw_text_centered(
             w / 2,
             cy + 40,
-            "Capabilities granted. Skills loaded.",
+            self.level.done_subtitle(),
             &BODY_FACE,
             0,
             theme::MUTED,
@@ -624,6 +676,7 @@ mod tests {
         let mut s = setup();
         let order = [
             Step::Welcome,
+            Step::Experience,
             Step::Region,
             Step::Bridge,
             Step::Capabilities,
@@ -641,7 +694,7 @@ mod tests {
     #[test]
     fn back_walks_the_journey_in_reverse() {
         let mut s = setup();
-        for _ in 0..4 {
+        for _ in 0..5 {
             s.apply(Action::Continue);
         }
         assert_eq!(s.step, Step::Skills);
@@ -649,6 +702,30 @@ mod tests {
         assert_eq!(s.step, Step::Capabilities);
         s.apply(Action::Back);
         assert_eq!(s.step, Step::Bridge);
+    }
+
+    #[test]
+    fn experience_selection_sticks() {
+        let mut s = setup();
+        s.step = Step::Experience;
+        assert_eq!(s.level, Level::Guided);
+        assert!(s.apply(Action::Row(1)));
+        assert_eq!(s.level, Level::Advanced);
+        assert!(!s.apply(Action::Row(99)));
+        assert_eq!(s.level, Level::Advanced);
+    }
+
+    #[test]
+    fn level_never_changes_default_grants() {
+        use crate::caps::Cap;
+        for level in Level::ALL {
+            let mut s = setup();
+            s.level = level;
+            let g = s.grants();
+            assert!(g.allows(Cap::SearchQuery));
+            assert!(!g.allows(Cap::EmailSearch));
+            assert!(!g.allows(Cap::PortalSync));
+        }
     }
 
     #[test]
@@ -773,20 +850,26 @@ mod tests {
         let mut s = setup();
         s.push_zone(0, 0, 100, 100, Action::Continue);
         assert!(s.pointer(10, 10, 1), "press should act");
-        assert_eq!(s.step, Step::Region);
+        assert_eq!(s.step, Step::Experience);
         // Still held: must not keep advancing.
         assert!(!s.pointer(10, 10, 1));
-        assert_eq!(s.step, Step::Region);
+        assert_eq!(s.step, Step::Experience);
         // Release then press again.
         assert!(!s.pointer(10, 10, 0));
         assert!(s.pointer(10, 10, 1));
-        assert_eq!(s.step, Step::Bridge);
+        assert_eq!(s.step, Step::Region);
     }
 
+    /// Every step must be reachable by keyboard alone — a machine whose
+    /// pointer never arrives has to be finishable anyway.
+    ///
+    /// The list is the whole journey on purpose: it caught the merge that put
+    /// `Experience` in front of `Region` without anyone updating the path.
     #[test]
     fn enter_can_complete_the_default_path_without_a_pointer() {
         let mut s = setup();
         for expected in [
+            Step::Experience,
             Step::Region,
             Step::Bridge,
             Step::Capabilities,
@@ -837,28 +920,39 @@ mod tests {
     fn copy_is_ascii_only() {
         let mut all: Vec<&str> = vec![
             "hello",
+            "How should it feel?",
+            "You choose. Grants stay off until you turn them on.",
             "Select Your Region",
             "This sets formatting defaults. It does not leave the machine.",
             "Connect the Bridge",
             "Connectors run on the host, never in the kernel.",
+            "Host MCP on COM2. Probe only until you grant.",
             "Offline - start it with 'make bridge-run'",
+            "Offline - make bridge-run",
             "Connected on COM2",
             "Capabilities",
             "Every tool sits behind a grant. Turn on only what you need.",
+            "Consent switches. Defaults stay privacy-first.",
             "Default Skills",
             "Markdown playbooks the agent can load. Editable later.",
             "Live from the host bridge. Tap Continue when ready.",
+            "skills.list from bridge.",
+            "Builtin playbooks (bridge offline).",
             "You're all set.",
-            "Capabilities granted. Skills loaded.",
             "Continue",
             "Go Back",
             "Start",
             "Host bridge",
         ];
         all.extend(REGIONS);
-        for (n, b) in cap_rows() {
-            all.push(n);
-            all.push(b);
+        for level in Level::ALL {
+            all.push(level.label());
+            all.push(level.detail());
+            all.push(level.done_subtitle());
+            for (n, b) in cap_rows(level) {
+                all.push(n);
+                all.push(b);
+            }
         }
         for s in all {
             assert!(
@@ -870,14 +964,21 @@ mod tests {
 
     #[test]
     fn step_copy_fits_the_content_column() {
-        for (n, b) in cap_rows() {
+        for level in Level::ALL {
+            for (n, b) in cap_rows(level) {
+                assert!(
+                    BRAND_FACE.width(n, 0) < CONTENT_W - 90,
+                    "cap name too wide: {n}"
+                );
+                assert!(
+                    SMALL_FACE.width(b, 0) < CONTENT_W - 90,
+                    "cap blurb too wide: {b}"
+                );
+            }
             assert!(
-                BRAND_FACE.width(n, 0) < CONTENT_W - 90,
-                "cap name too wide: {n}"
-            );
-            assert!(
-                SMALL_FACE.width(b, 0) < CONTENT_W - 90,
-                "cap blurb too wide: {b}"
+                BRAND_FACE.width(level.label(), 0) < CONTENT_W - 60,
+                "level too wide: {}",
+                level.label()
             );
         }
         for r in REGIONS {
@@ -895,8 +996,15 @@ mod layout_tests {
 
     /// Mirrors the constants in `draw_caps` / `row`.
     fn rows_bottom(n: usize) -> i32 {
-        // header() returns 132 + 76; rows are ROW_H apart with an 8px gap.
-        (132 + 76) + (n as i32) * (ROW_H + 8) - 8
+        // header() returns 132 + 76; draw_caps then asks row_pitch how tall
+        // each row may be, so the mirror has to ask the same question.
+        let top = 132 + 76;
+        top + (n as i32) * row_pitch(top, 768, n, true) - ROW_GAP
+    }
+
+    /// Mirrors `footer`: pushed below the content, clamped onto the screen.
+    fn footer_y(h: i32, content_bottom: i32) -> i32 {
+        (content_bottom + 24).min(h - footer_height(false) - EDGE_MARGIN).max(0)
     }
 
     /// Mirrors `footer`.
@@ -919,41 +1027,39 @@ mod layout_tests {
 
     #[test]
     fn back_link_sits_above_the_continue_button_on_a_short_screen() {
-        let continue_y = footer_top(768);
-        let back_y = continue_y - 32;
-        assert!(back_y >= rows_bottom(N_CAPS) + 24);
-        assert!(continue_y + CTA_H <= 768);
+        // The way back is now the nav "Back" (`nav_back`), which no list can
+        // push off the bottom — `footer_visibility_tests` walks every step and
+        // proves it. What still has to hold on a short screen is the other
+        // half: Continue clears the last capability row and stays on screen.
+        let bottom = rows_bottom(N_CAPS);
+        let continue_y = footer_y(768, bottom);
+        assert!(continue_y >= bottom, "Continue overlaps the last row");
+        assert!(continue_y + CTA_H <= 768, "Continue falls off a 768px screen");
     }
 
     #[test]
     fn skills_rows_also_clear_the_footer() {
-        let bottom = rows_bottom(4); // draw_skills caps the list at 4
-        assert!(bottom < footer_top(768));
+        let bottom = rows_bottom(7); // draw_skills shows up to seven builtins
+        assert!(
+            bottom < footer_top(768),
+            "7 skill rows reach {bottom}px, footer starts at {}",
+            footer_top(768)
+        );
     }
 
     #[test]
     fn the_capability_list_is_at_its_layout_limit() {
-        // Six rows is what fits above the footer at 768px, and we are at six.
-        // A seventh needs the step to scroll or paginate — shrinking the rows
-        // to squeeze it in would push the blurbs into the switches.
-        //
-        // This is deliberately a hard stop: the previous version of this test
-        // demanded room for one more, and the honest answer is that there
-        // isn't any. Add scrolling before adding a capability.
+        // Seven single-line rows fit above the footer at 768px (Send mail).
+        // An eighth would need scroll/paginate — do not shrink rows to squeeze.
+        assert_eq!(N_CAPS, 7, "update this guard when Caps grow again");
         assert!(
             rows_bottom(N_CAPS) < footer_top(768),
             "{} capability rows already collide with the footer",
             N_CAPS
         );
-        // Single-line rows fit more than the old stacked ones. Recomputed
-        // rather than relaxed: this is the count that actually fits.
         assert!(
-            rows_bottom(7) < footer_top(768),
-            "a 7th row no longer fits — the guard is stale"
-        );
-        assert!(
-            rows_bottom(9) >= footer_top(768),
-            "layout gained room for a 9th row — update this guard deliberately"
+            rows_bottom(8) >= footer_top(768),
+            "layout gained room for an 8th row — update this guard deliberately"
         );
     }
 
@@ -970,14 +1076,17 @@ mod layout_tests {
 
     #[test]
     fn capability_names_and_blurbs_fit_the_column() {
-        for (name, blurb) in cap_rows() {
-            // Label and consequence share one baseline, so they must fit
-            // side by side without reaching the switch.
-            let used = BRAND_FACE.width(name, 0) + 12 + SMALL_FACE.width(blurb, 0);
-            assert!(
-                used < CONTENT_W - 80,
-                "row {name:?} overruns the switch: {used}px"
-            );
+        for level in Level::ALL {
+            for (name, blurb) in cap_rows(level) {
+                // Label and consequence share one baseline, so they must fit
+                // side by side without reaching the switch.
+                let used = BRAND_FACE.width(name, 0) + 12 + SMALL_FACE.width(blurb, 0);
+                assert!(
+                    used < CONTENT_W - 80,
+                    "row {name:?} ({}) overruns the switch: {used}px",
+                    level.label()
+                );
+            }
         }
     }
 }

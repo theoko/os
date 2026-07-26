@@ -30,6 +30,14 @@ pub const BUILTIN: &[SkillRef] = &[
         name: "knowledge-search",
         blurb: "Corpus search",
     },
+    SkillRef {
+        name: "teddy-portals",
+        blurb: "Teddy API + live portals",
+    },
+    SkillRef {
+        name: "market-portals",
+        blurb: "Live market health + fear/greed",
+    },
 ];
 
 /// A deliberately small executable view of a playbook.  This is not a YAML
@@ -101,6 +109,8 @@ pub struct SkillPeek {
     pub from_bridge: bool,
     pub names: [[u8; 28]; 8],
     pub descs: [[u8; 40]; 8],
+    /// `true` when the bridge ROW said `src=saved` (user-written playbook).
+    pub saved: [bool; 8],
 }
 
 impl SkillPeek {
@@ -110,6 +120,7 @@ impl SkillPeek {
             from_bridge: false,
             names: [[0; 28]; 8],
             descs: [[0; 40]; 8],
+            saved: [false; 8],
         }
     }
 
@@ -118,17 +129,23 @@ impl SkillPeek {
         for s in BUILTIN.iter().take(peek.names.len()) {
             copy_field(&mut peek.names[peek.count], s.name);
             copy_field(&mut peek.descs[peek.count], s.blurb);
+            peek.saved[peek.count] = false;
             peek.count += 1;
         }
         peek
     }
 
     pub fn push(&mut self, name: &str, desc: &str) -> bool {
+        self.push_src(name, desc, false)
+    }
+
+    pub fn push_src(&mut self, name: &str, desc: &str, saved: bool) -> bool {
         if self.count >= self.names.len() {
             return false;
         }
         copy_field(&mut self.names[self.count], name);
         copy_field(&mut self.descs[self.count], desc);
+        self.saved[self.count] = saved;
         self.count += 1;
         true
     }
@@ -139,6 +156,10 @@ impl SkillPeek {
 
     pub fn desc_at(&self, i: usize) -> &str {
         str_at(&self.descs[i])
+    }
+
+    pub fn is_saved_at(&self, i: usize) -> bool {
+        i < self.count && self.saved[i]
     }
 }
 
@@ -167,8 +188,16 @@ mod tests {
     #[test]
     fn builtins_present() {
         let p = SkillPeek::from_builtin();
-        assert!(p.count >= 5);
+        assert!(p.count >= 7);
         assert_eq!(p.name_at(0), "agent-plan-act");
+        assert!(
+            BUILTIN.iter().any(|s| s.name == "teddy-portals"),
+            "teddy API + portals skill must ship in the ISO"
+        );
+        assert!(
+            BUILTIN.iter().any(|s| s.name == "market-portals"),
+            "market portals skill must ship in the ISO"
+        );
         assert!(!p.from_bridge);
     }
 
@@ -180,6 +209,16 @@ mod tests {
         }
         assert!(!p.push("overflow", "no"));
         assert_eq!(p.count, 8);
+    }
+
+    #[test]
+    fn saved_flag_tracks_src() {
+        let mut p = SkillPeek::empty();
+        assert!(p.push_src("guest-starter", "from guest", true));
+        assert!(p.push_src("email-triage", "builtin", false));
+        assert!(p.is_saved_at(0));
+        assert!(!p.is_saved_at(1));
+        assert!(!p.is_saved_at(9));
     }
 
     #[test]

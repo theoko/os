@@ -27,6 +27,18 @@ QEMU ?= qemu-system-x86_64
 QEMUFLAGS ?= -m 512M -serial stdio -display none
 QEMU_DEBUG_EXIT := -device isa-debug-exit,iobase=0xf4,iosize=0x04
 
+# ARM64 is UEFI-only: there is no BIOS path and no isa-debug-exit device, so
+# the arm64 smoke asserts on serial output alone and stops the VM by timeout.
+QEMU_ARM64 ?= qemu-system-aarch64
+ARM64_FIRMWARE ?= $(firstword $(wildcard \
+	/opt/homebrew/share/qemu/edk2-aarch64-code.fd \
+	/usr/local/share/qemu/edk2-aarch64-code.fd \
+	/usr/share/qemu/edk2-aarch64-code.fd))
+# `ramfb` is what gives Limine a framebuffer to hand the kernel on `virt`.
+# The serial is firmware/Limine output only: the guest's own PL011 stays dark
+# until the kernel maps device MMIO (Limine's HHDM covers RAM, not MMIO).
+ARM64_QEMUFLAGS ?= -M virt -cpu cortex-a72 -m 512M -device ramfb -serial stdio
+
 CARGO ?= $(firstword $(wildcard \
 	/opt/homebrew/opt/rustup/bin/cargo \
 	$(HOME)/.cargo/bin/cargo \
@@ -45,7 +57,7 @@ endif
 RUSTUP_BIN := $(patsubst %/,%,$(dir $(CARGO)))
 WITH_RUST := PATH="$(RUSTUP_BIN):$$PATH"
 
-.PHONY: all build kernel arm64-kernel iso arm64-iso iso-arm64 virtualbox-arm64 bridge bridge-run run run-bridged run-best utm utm-run utm-bridged usb usb-list drive linux-vm refresh refresh-install refresh-uninstall test test-host smoke smoke-bridge clean distclean
+.PHONY: all build kernel arm64-kernel iso arm64-iso iso-arm64 virtualbox-arm64 bridge bridge-run run run-arm64 run-bridged run-best utm utm-run utm-bridged usb usb-list drive linux-vm refresh refresh-install refresh-uninstall test test-all test-host smoke smoke-arm64 smoke-bridge clean distclean
 
 all: build
 
@@ -93,6 +105,10 @@ arm64-iso: limine/limine arm64-kernel
 	cp -f $(ARM64_KERNEL_ELF) arm64_iso_root/boot/kernel
 	cp -f limine.conf arm64_iso_root/boot/limine/
 	cp -f limine/limine-uefi-cd.bin arm64_iso_root/boot/limine/
+	# El Torito boots from the FAT image above; this copy is what makes the
+	# same ISO bootable once written to a USB stick, where firmware looks for
+	# a real EFI system partition path instead.
+	cp -f limine/BOOTAA64.EFI arm64_iso_root/EFI/BOOT/
 	xorriso -as mkisofs -R -r -J \
 		--efi-boot boot/limine/limine-uefi-cd.bin \
 		-efi-boot-part --efi-boot-image --protective-msdos-label \
@@ -111,6 +127,18 @@ virtualbox-arm64: iso-arm64
 
 run: iso
 	$(QEMU) -M q35 -cdrom $(IMAGE_NAME).iso -boot d $(QEMUFLAGS) $(QEMU_DEBUG_EXIT) || true
+
+# Boot the ARM64 ISO under QEMU's `virt` machine. Needs edk2 firmware because
+# Limine on aarch64 is UEFI-only; without it the machine sits at a blank
+# console with no indication why.
+run-arm64: arm64-iso
+ifeq ($(ARM64_FIRMWARE),)
+	@echo "error: edk2-aarch64-code.fd not found — install qemu (brew install qemu)" >&2; exit 1
+else
+	$(QEMU_ARM64) $(ARM64_QEMUFLAGS) \
+		-drive if=pflash,format=raw,readonly=on,file=$(ARM64_FIRMWARE) \
+		-cdrom $(ARM64_IMAGE_NAME).iso || true
+endif
 
 # COM1 = stdio, COM2 = TCP client → host MCP bridge (start bridge first, or use smoke-bridge).
 run-bridged: iso bridge
@@ -194,6 +222,9 @@ refresh-uninstall:
 
 test: test-host smoke smoke-bridge
 
+# Everything `test` covers, plus proof the same sources boot on aarch64.
+test-all: test arm64-kernel smoke-arm64
+
 test-host:
 	$(WITH_RUST) $(CARGO) test -p kernel --target $$($(RUSTC) -vV | awk '/^host:/{print $$2}') --lib
 	$(WITH_RUST) $(CARGO) test -p os-mcp-bridge
@@ -201,6 +232,12 @@ test-host:
 smoke: iso
 	chmod +x scripts/smoke-qemu.sh
 	./scripts/smoke-qemu.sh
+
+# Boots the same kernel sources on aarch64. Kept out of `test` because it needs
+# edk2 firmware that not every host has; `make test-all` runs both.
+smoke-arm64: arm64-iso
+	chmod +x scripts/smoke-arm64.sh
+	./scripts/smoke-arm64.sh
 
 smoke-bridge: iso bridge
 	chmod +x scripts/smoke-bridge.sh
@@ -223,6 +260,7 @@ limine/limine:
 clean:
 	$(WITH_RUST) $(CARGO) clean
 	rm -rf iso_root $(IMAGE_NAME).iso serial.out .smoke-*
+	rm -rf arm64_iso_root $(ARM64_IMAGE_NAME).iso
 
 distclean: clean
 	rm -rf limine edk2-ovmf

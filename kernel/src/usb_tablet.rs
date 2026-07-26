@@ -114,6 +114,16 @@ impl UsbTablet {
             for port in 0..2u16 {
                 match unsafe { Self::init_on(io, port, hhdm, phys_page0, phys_page1) } {
                     Probe::Bound(t) => {
+                        // Every failed probe used the same two DMA pages and
+                        // left Run/Stop set. A zombie UHCI keeps walking that
+                        // frame list while the live tablet reuses the pages →
+                        // memory corruption → triple-fault (no IDT) → reboot.
+                        let keep = t.io;
+                        for &(_, _, _, other) in controllers.iter() {
+                            if other != keep {
+                                stop_uhci_at(other);
+                            }
+                        }
                         set_err(err, "ok");
                         return Some(t);
                     }
@@ -125,6 +135,10 @@ impl UsbTablet {
                     Probe::Empty => {}
                 }
             }
+        }
+        // Belt: halt every UHCI we may have started during the walk.
+        for &(_, _, _, io) in controllers.iter() {
+            stop_uhci_at(io);
         }
         set_err(err, if saw_device { reason } else { "no-port" });
         None
@@ -165,18 +179,22 @@ impl UsbTablet {
 
         me.hc_reset();
         if !me.port_enable(port) {
+            me.hc_stop();
             return Probe::Empty;
         }
         // Port reset returns the device to the default address.
         me.addr = 0;
         if me.set_address(1).is_none() {
+            me.hc_stop();
             return Probe::NotTablet("set-addr");
         }
         me.addr = 1;
         if let Err(r) = me.identify() {
+            me.hc_stop();
             return Probe::NotTablet(r);
         }
         if me.set_configuration(1).is_none() {
+            me.hc_stop();
             return Probe::NotTablet("set-cfg");
         }
         // HID: prefer Report protocol; ignore failures (some firmwares NAK).
@@ -232,6 +250,25 @@ impl UsbTablet {
         self.outw(FRNUM, 0);
         self.outw(USBCMD, 0x0001 | 0x0080); // RS | MaxPacket
         delay(20_000);
+    }
+
+    /// Unlink the frame list and clear Run/Stop. Required on every failed
+    /// probe: `hc_reset` points FLBASEADD at shared DMA pages and sets RS.
+    fn hc_stop(&mut self) {
+        unsafe {
+            for i in 0..1024 {
+                self.dma.fl.add(i).write_volatile(1);
+            }
+        }
+        core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
+        self.outw(USBCMD, 0);
+        for _ in 0..100_000 {
+            // USBSTS.HCHalted
+            if self.inw(USBSTS) & 0x0020 != 0 {
+                break;
+            }
+            delay(50);
+        }
     }
 
     /// Reset and enable a single port. False if nothing is connected there.
@@ -638,6 +675,24 @@ impl UsbTablet {
 }
 
 const USBINTR_ZERO: u16 = 0x04;
+
+/// Halt a UHCI by I/O base without a live `UsbTablet` (sibling controllers
+/// after a successful bind, or leftovers after a failed walk).
+fn stop_uhci_at(io: u16) {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        pci::outw(io + USBCMD, 0);
+        for _ in 0..100_000 {
+            if pci::inw(io + USBSTS) & 0x0020 != 0 {
+                break;
+            }
+            delay(50);
+        }
+        pci::outw(io + USBINTR_ZERO, 0);
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = io;
+}
 
 fn set_err(buf: &mut [u8], msg: &str) {
     buf.fill(0);

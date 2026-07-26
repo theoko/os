@@ -1,4 +1,4 @@
-//! The Skills and Capabilities screens.
+//! The Skills, Capabilities, and Brief screens.
 //!
 //! Both cards on the home page used to just log to COM1. They now open real
 //! views that share the search screen's chrome: a Back affordance, a title,
@@ -6,11 +6,16 @@
 //!
 //! Capabilities is not merely a report — the switches are live, so grants
 //! chosen during setup can be changed afterwards without reinstalling.
+//!
+//! Brief is where a skill actually runs: plan lines, then results (or the
+//! name of the switch still standing in the way).
 
+use crate::agent::Brief;
 use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{self, BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
 use crate::keyboard::TextField;
+use crate::level::Level;
 use crate::searchui::back_rect;
 use crate::setup::{N_CAPS, cap_rows};
 #[cfg(test)]
@@ -27,10 +32,17 @@ pub enum View {
     Caps,
     /// Reading a document opened from a search result.
     Reader,
+    /// A skill just ran; show its plan and outcomes.
+    Brief,
     /// Connection status for every source, opened from the nav dot.
     Status,
     /// A human-in-the-loop skill checklist.
     Playbook,
+    /// Portal config, reached only by the Ctrl+Shift+P chord on Home.
+    ///
+    /// Nothing in the UI points here. It is for whoever set the machine up,
+    /// not for the person it was handed to.
+    PortalConfig,
 }
 
 const NAV_H: i32 = 56;
@@ -106,42 +118,252 @@ fn row(
 }
 
 /// Skills the agent can load — names from bridge `skills.list`, else builtins.
-pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
+///
+/// When `Save skills` is granted, a footer CTA writes `guest-starter` via
+/// `skills.save skills=1` so the cap is felt on this screen, not only in Brief.
+pub fn draw_skills(fb: &Surface, peek: &SkillPeek, caps: Caps) {
     let w = fb.width() as i32;
-    chrome(fb, w, "Skills", "Playbooks the agent can load");
+    let heading = if caps.allows(Cap::SkillsSave) {
+        "Run a playbook, or save a starter"
+    } else {
+        "Tap a playbook to run it"
+    };
+    chrome(fb, w, "Skills", heading);
 
-    let n = peek.count.min(6);
+    let n = peek.count.min(7);
     for i in 0..n {
+        let name = peek.name_at(i);
         let desc = peek.desc_at(i);
-        let sub = if desc.is_empty() {
-            if peek.from_bridge {
-                "From host bridge"
-            } else {
-                "Shipped with the ISO"
-            }
-        } else {
+        let sub = if !desc.is_empty() {
             desc
+        } else if peek.is_saved_at(i) {
+            "Saved - CALL granted tools"
+        } else if crate::agent::is_runnable(name) {
+            "Tap to run under current grants"
+        } else if peek.from_bridge {
+            "From host bridge"
+        } else {
+            "Shipped with the ISO"
         };
-        row(fb, w, i, peek.name_at(i), sub, false);
+        let accent = crate::agent::is_runnable(name) || peek.is_saved_at(i);
+        row(fb, w, i, name, sub, accent);
+    }
+
+    let mut note_row = n;
+    if caps.allows(Cap::SkillsSave) {
+        row(
+            fb,
+            w,
+            n,
+            "Save starter",
+            "Write guest-starter to the host",
+            true,
+        );
+        note_row = n + 1;
     }
 
     let (x, cw) = column(w);
-    let note = if peek.from_bridge {
-        "Listed live from the host bridge (skills.list)."
+    let note = if caps.allows(Cap::SkillsSave) {
+        "Saved playbooks CALL granted tools. Save starter needs the bridge."
+    } else if peek.from_bridge {
+        "Builtins run under grants. Saved CALL only tools you already turned on."
     } else if peek.count > 0 {
-        "Compiled into the ISO. Saved skills live on the host."
+        "Tap a playbook: builtins run; saved CALL only granted tools."
     } else {
         "No skills loaded."
     };
     fb.draw_text(
         x,
-        TOP + n as i32 * (ROW_H + ROW_GAP) + 26,
+        TOP + note_row as i32 * (ROW_H + ROW_GAP) + 26,
         note,
         &SMALL_FACE,
         0,
         theme::MUTED,
     );
     let _ = cw;
+}
+
+/// Show the outcome of a skill run: plan, then tagged result lines.
+pub fn draw_brief(fb: &Surface, brief: &Brief) {
+    let w = fb.width() as i32;
+    let h = fb.height() as i32;
+    let heading = if brief.heading().is_empty() {
+        brief.skill_name()
+    } else {
+        brief.heading()
+    };
+    chrome(fb, w, "Brief", heading);
+
+    let (x, cw) = column(w);
+    let mut y = TOP - 24;
+
+    if brief.denied {
+        let mut msg = [0u8; 64];
+        let prefix = b"Blocked: grant ";
+        let mut n = 0;
+        for &b in prefix {
+            msg[n] = b;
+            n += 1;
+        }
+        for &b in brief.deny_name().as_bytes() {
+            if n < msg.len() {
+                msg[n] = b;
+                n += 1;
+            }
+        }
+        let s = core::str::from_utf8(&msg[..n]).unwrap_or("Blocked by caps");
+        fb.draw_text(x, y, s, &SMALL_FACE, 0, theme::ACCENT);
+        y += 22;
+    }
+
+    if brief.plan_n > 0 {
+        fb.draw_text(x, y, "Plan", &BRAND_FACE, 0, theme::INK);
+        y += 22;
+        for i in 0..brief.plan_n {
+            let mut step = [0u8; 56];
+            let mut n = 0;
+            step[n] = b'0' + (i as u8 + 1);
+            n += 1;
+            step[n] = b'.';
+            n += 1;
+            step[n] = b' ';
+            n += 1;
+            for &b in brief.plan_at(i).as_bytes() {
+                if n < step.len() {
+                    step[n] = b;
+                    n += 1;
+                }
+            }
+            let s = core::str::from_utf8(&step[..n]).unwrap_or(brief.plan_at(i));
+            fb.draw_text(x, y, s, &SMALL_FACE, 0, theme::MUTED);
+            y += 18;
+        }
+        y += 10;
+    }
+
+    if brief.count > 0 {
+        fb.draw_text(x, y, "Report", &BRAND_FACE, 0, theme::INK);
+        y += 8;
+        for i in 0..brief.count {
+            let (rx, ry, rw, rh) = (
+                x,
+                y + 8 + i as i32 * (ROW_H - 10),
+                cw,
+                ROW_H - 14,
+            );
+            fb.fill_round_rect(rx, ry, rw, rh, 10, theme::CARD_BORDER);
+            fb.fill_round_rect(rx + 1, ry + 1, rw - 2, rh - 2, 9, theme::BG);
+            let tag = brief.lines[i].tag();
+            let accent = matches!(tag, "Urgent" | "Reply" | "Need" | "Event" | "Doc");
+            fb.draw_text(
+                rx + 16,
+                ry + 22,
+                tag,
+                &BRAND_FACE,
+                0,
+                if accent { theme::ACCENT } else { theme::MUTED },
+            );
+            fb.draw_text(
+                rx + 16,
+                ry + 42,
+                brief.lines[i].text(),
+                &SMALL_FACE,
+                0,
+                theme::INK,
+            );
+            let _ = rh;
+        }
+    }
+
+    if brief.send_ready {
+        let (sx, sy, sw, sh) = brief_send_rect(w, h);
+        fb.fill_round_rect(sx, sy, sw, sh, 10, theme::ACCENT);
+        fb.fill_round_rect(sx + 1, sy + 1, sw - 2, sh - 2, 9, theme::BG);
+        fb.draw_text(sx + 18, sy + 26, "Confirm send", &BRAND_FACE, 0, theme::ACCENT);
+        let mut sub = [0u8; 64];
+        let mut n = 0;
+        let prefix = b"To ";
+        for &b in prefix {
+            sub[n] = b;
+            n += 1;
+        }
+        for &b in brief.draft_to().as_bytes().iter().take(28) {
+            if n < sub.len() {
+                sub[n] = b;
+                n += 1;
+            }
+        }
+        let s = core::str::from_utf8(&sub[..n]).unwrap_or("Draft ready");
+        fb.draw_text(sx + 18, sy + 46, s, &SMALL_FACE, 0, theme::MUTED);
+    }
+}
+
+/// Confirm send CTA on Brief — only when a draft was armed.
+pub fn brief_send_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
+    let (x, cw) = column(w);
+    (x, h - 96, cw, ROW_H)
+}
+
+pub fn brief_send_hit(w: i32, h: i32, ready: bool, x: i32, y: i32) -> bool {
+    if !ready {
+        return false;
+    }
+    let (rx, ry, rw, rh) = brief_send_rect(w, h);
+    x >= rx && x < rx + rw && y >= ry && y < ry + rh
+}
+
+/// Y of the first Report row card — must match [`draw_brief`].
+fn brief_report_top(brief: &Brief) -> i32 {
+    let mut y = TOP - 24;
+    if brief.denied {
+        y += 22;
+    }
+    if brief.plan_n > 0 {
+        y += 22 + brief.plan_n as i32 * 18 + 10;
+    }
+    if brief.count > 0 {
+        y += 8; // "Report" heading
+    }
+    y
+}
+
+/// Hit an armed Event report row → index into [`Brief::event_url_at`].
+pub fn brief_event_hit(w: i32, brief: &Brief, x: i32, y: i32) -> Option<usize> {
+    brief_armed_hit(w, brief, x, y, brief.event_n, |b, i| b.event_line_at(i))
+}
+
+/// Hit an armed Doc report row → index into [`Brief::doc_url_at`].
+pub fn brief_doc_hit(w: i32, brief: &Brief, x: i32, y: i32) -> Option<usize> {
+    brief_armed_hit(w, brief, x, y, brief.doc_n, |b, i| b.doc_line_at(i))
+}
+
+fn brief_armed_hit(
+    w: i32,
+    brief: &Brief,
+    x: i32,
+    y: i32,
+    n: usize,
+    line_at: fn(&Brief, usize) -> Option<usize>,
+) -> Option<usize> {
+    if n == 0 || brief.count == 0 {
+        return None;
+    }
+    let (col_x, cw) = column(w);
+    let top = brief_report_top(brief);
+    for i in 0..n {
+        let Some(line_i) = line_at(brief, i) else {
+            continue;
+        };
+        if line_i >= brief.count {
+            continue;
+        }
+        let ry = top + 8 + line_i as i32 * (ROW_H - 10);
+        let rh = ROW_H - 14;
+        if x >= col_x && x < col_x + cw && y >= ry && y < ry + rh {
+            return Some(i);
+        }
+    }
+    None
 }
 
 /// Click target for advancing a workflow. Back uses the common chrome target.
@@ -252,18 +474,28 @@ pub fn draw_playbook(
 
 /// Which skill row contains this point, if any.
 pub fn skills_hit(w: i32, count: usize, x: i32, y: i32) -> Option<usize> {
-    (0..count.min(6)).find(|&i| {
+    (0..count.min(7)).find(|&i| {
         let (rx, ry, rw, rh) = row_rect(w, i);
         x >= rx && x < rx + rw && y >= ry && y < ry + rh
     })
 }
 
-/// Live capability switches. Clicking a row toggles the grant.
-pub fn draw_caps(fb: &Surface, grants: Caps) {
-    let w = fb.width() as i32;
-    chrome(fb, w, "Capabilities", "What the agent may do");
+/// True when the click landed on the Save starter CTA (row after the list).
+pub fn skills_save_hit(w: i32, count: usize, can_save: bool, x: i32, y: i32) -> bool {
+    if !can_save {
+        return false;
+    }
+    let i = count.min(7);
+    let (rx, ry, rw, rh) = row_rect(w, i);
+    x >= rx && x < rx + rw && y >= ry && y < ry + rh
+}
 
-    for (i, (name, blurb)) in cap_rows().enumerate() {
+/// Live capability switches. Clicking a row toggles the grant.
+pub fn draw_caps(fb: &Surface, grants: Caps, level: Level) {
+    let w = fb.width() as i32;
+    chrome(fb, w, "Capabilities", level.caps_subtitle());
+
+    for (i, (name, blurb)) in cap_rows(level).enumerate() {
         let on = Cap::ALL.get(i).map(|c| grants.allows(*c)).unwrap_or(false);
         let (x, y, cw, h) = row(fb, w, i, name, blurb, false);
 
@@ -289,7 +521,7 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
     fb.draw_text(
         x,
         TOP + N_CAPS as i32 * (ROW_H + ROW_GAP) + 26,
-        "Tap a row to grant or revoke. Takes effect immediately.",
+        level.caps_footer(),
         &SMALL_FACE,
         0,
         theme::MUTED,
@@ -303,6 +535,275 @@ pub fn toggle(grants: Caps, i: usize) -> Caps {
         g.set(*c, !g.allows(*c));
     }
     g
+}
+
+// --- portal config: the hidden screen --------------------------------------
+
+use crate::mcp::{ConfigStatus, PortalFamily, PortalSetStatus, UnlockStatus, PASS_MAX};
+
+/// Height of the password field, matching the playbook goal box.
+const PASS_FIELD_H: i32 = 44;
+/// Diameter of one masking dot, and the step between them.
+const DOT_D: i32 = 9;
+const DOT_PITCH: i32 = 16;
+/// Most dots the field draws. A longer secret still types — the row of dots
+/// just stops growing, so it can never run off the end of the box.
+pub const PASS_DOTS: usize = 24;
+
+/// What the screen is currently telling the person.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ConfigNote {
+    /// Nothing to report; the draw code substitutes a state-appropriate hint.
+    None,
+    BadPass,
+    NotConfigured,
+    TooMany,
+    Offline,
+    /// The secret could not be framed onto the wire, so it was never sent.
+    Unsendable,
+    Saved,
+    /// The host's per-connection unlock expired under us.
+    Relocked,
+    Failed,
+}
+
+impl ConfigNote {
+    pub fn text(self) -> &'static str {
+        match self {
+            ConfigNote::None => "",
+            ConfigNote::BadPass => "That password did not match. Try again.",
+            ConfigNote::NotConfigured => "No portal password is set on this Mac yet.",
+            ConfigNote::TooMany => "Too many attempts. Wait a moment, then retry.",
+            ConfigNote::Offline => "Bridge offline - run: make utm-bridged",
+            ConfigNote::Unsendable => "No spaces or line breaks in the password.",
+            ConfigNote::Saved => "Saved.",
+            ConfigNote::Relocked => "The session locked again. Enter the password.",
+            ConfigNote::Failed => "The host refused that change.",
+        }
+    }
+
+    /// Does this need the person to do something? Drives the note's colour.
+    pub fn is_error(self) -> bool {
+        !matches!(self, ConfigNote::None | ConfigNote::Saved)
+    }
+}
+
+/// State behind the hidden portal screen.
+///
+/// The typed secret lives in `pass` and leaves this struct by exactly one
+/// route: [`crate::mcp::config_unlock`], which writes it to COM2 and nowhere
+/// else. The draw code is never given it — only [`Self::mask_len`].
+pub struct PortalConfig {
+    pub status: ConfigStatus,
+    pass: TextField<PASS_MAX>,
+    pub note: ConfigNote,
+}
+
+impl PortalConfig {
+    pub const fn new() -> Self {
+        Self {
+            status: ConfigStatus::offline(),
+            pass: TextField::new(),
+            note: ConfigNote::None,
+        }
+    }
+
+    /// Adopt a fresh `config.status`, dropping anything half-typed.
+    ///
+    /// Unlock is per-connection on the host, so this is the only honest source
+    /// of `locked` — the screen re-reads rather than trusting what it believed
+    /// a moment ago.
+    pub fn refresh(&mut self, status: ConfigStatus) {
+        self.status = status;
+        self.pass.clear();
+        self.note = if status.reachable {
+            ConfigNote::None
+        } else {
+            // Say so up front rather than waiting for a submit to hang.
+            ConfigNote::Offline
+        };
+    }
+
+    /// Feed a key to the password field. True when something changed.
+    pub fn type_key(&mut self, key: crate::keyboard::Key) -> bool {
+        self.pass.apply(key)
+    }
+
+    /// How many dots the field will draw.
+    ///
+    /// This is the *only* thing the renderer learns about the secret. There is
+    /// no accessor that hands the text to drawing code, which is what keeps
+    /// "never echo the password" a property of the type rather than a habit.
+    pub fn mask_len(&self) -> usize {
+        self.pass.len().min(PASS_DOTS)
+    }
+
+    pub fn pass_is_empty(&self) -> bool {
+        self.pass.is_empty()
+    }
+
+    /// Hand the secret to the bridge and fold the reply back in.
+    ///
+    /// Borrowing the secret only for the duration of the call keeps it out of
+    /// every caller's hands — `main.rs` never sees it, so it cannot log it.
+    pub fn submit(&mut self) -> UnlockStatus {
+        let reply = crate::mcp::config_unlock(self.pass.as_str());
+        self.apply_unlock(reply);
+        reply
+    }
+
+    /// Fold an unlock reply into the screen state.
+    pub fn apply_unlock(&mut self, r: UnlockStatus) {
+        // The typed secret is dropped either way: it has done its job, and a
+        // failed attempt should not leave it sitting on screen to be retried
+        // by whoever walks up next.
+        self.pass.clear();
+        self.note = match r {
+            UnlockStatus::Ok => {
+                self.status.locked = false;
+                ConfigNote::None
+            }
+            UnlockStatus::BadPass => ConfigNote::BadPass,
+            UnlockStatus::NotConfigured => ConfigNote::NotConfigured,
+            UnlockStatus::TooMany => ConfigNote::TooMany,
+            UnlockStatus::Offline => ConfigNote::Offline,
+            UnlockStatus::Unsendable => ConfigNote::Unsendable,
+        };
+    }
+
+    /// Fold a `config.portal` reply into the screen state.
+    pub fn apply_portal(&mut self, r: PortalSetStatus) {
+        self.note = match r {
+            PortalSetStatus::Ok(f) => {
+                self.status.family = f;
+                ConfigNote::Saved
+            }
+            PortalSetStatus::Locked => {
+                // The host dropped our unlock. Go back to the password rather
+                // than leaving a picker up that can no longer save anything.
+                self.status.locked = true;
+                self.pass.clear();
+                ConfigNote::Relocked
+            }
+            PortalSetStatus::UnknownFamily => ConfigNote::Failed,
+            PortalSetStatus::Offline => ConfigNote::Offline,
+            PortalSetStatus::Failed => ConfigNote::Failed,
+        };
+    }
+}
+
+impl Default for PortalConfig {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// Paint `n` masking dots from `x`, centred on `cy`. Returns the x after them.
+///
+/// Takes a count, never a string: there is no code path from the secret to a
+/// glyph, because the glyph renderer is never called with it.
+fn draw_mask(fb: &Surface, x: i32, cy: i32, n: usize) -> i32 {
+    let mut dx = x;
+    for _ in 0..n {
+        fb.fill_round_rect(dx, cy - DOT_D / 2, DOT_D, DOT_D, DOT_D / 2, theme::INK);
+        dx += DOT_PITCH;
+    }
+    dx
+}
+
+/// The hidden portal screen: password when locked, family picker when not.
+pub fn draw_portal_config(fb: &Surface, cfg: &PortalConfig, caret: bool) {
+    let w = fb.width() as i32;
+    if cfg.status.locked {
+        draw_portal_locked(fb, w, cfg, caret);
+    } else {
+        draw_portal_unlocked(fb, w, cfg);
+    }
+}
+
+fn draw_portal_locked(fb: &Surface, w: i32, cfg: &PortalConfig, caret: bool) {
+    // `chrome` draws the nav "Back" — the visible way home from a screen no
+    // one was told about.
+    chrome(fb, w, "Portal", "This screen is locked");
+
+    let (x, cw) = column(w);
+    let y = TOP;
+    fb.fill_round_rect(x, y, cw, PASS_FIELD_H, 10, theme::RULE);
+    fb.fill_round_rect(x + 1, y + 1, cw - 2, PASS_FIELD_H - 2, 9, theme::BG);
+
+    let base = y + (PASS_FIELD_H - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
+    if cfg.pass_is_empty() {
+        fb.draw_text(x + 16, base, "Password", &SMALL_FACE, 0, theme::MUTED);
+    }
+    let after = draw_mask(fb, x + 16, y + PASS_FIELD_H / 2, cfg.mask_len());
+    if caret {
+        fb.fill_rect(after + 2, y + 12, 2, PASS_FIELD_H - 24, theme::INK);
+    }
+
+    let note = if cfg.note == ConfigNote::None {
+        "Type the password, then press Enter."
+    } else {
+        cfg.note.text()
+    };
+    fb.draw_text(
+        x,
+        y + PASS_FIELD_H + 28,
+        note,
+        &SMALL_FACE,
+        0,
+        if cfg.note.is_error() { theme::ACCENT } else { theme::MUTED },
+    );
+}
+
+fn draw_portal_unlocked(fb: &Surface, w: i32, cfg: &PortalConfig) {
+    chrome(fb, w, "Portal", "Where this machine looks");
+
+    for (i, family) in PortalFamily::ALL.into_iter().enumerate() {
+        let active = family == cfg.status.family;
+        let sub = if active { "Active" } else { "Tap to use" };
+        let (x, y, cw, h) = row(fb, w, i, family.label(), sub, active);
+
+        // Filled dot on the active row, hollow ring otherwise — the same
+        // right-hand slot the capability switches occupy, so the two screens
+        // read as one family.
+        let d = 18;
+        let mx = x + cw - 18 - d;
+        let my = y + (h - d) / 2;
+        fb.fill_round_rect(
+            mx,
+            my,
+            d,
+            d,
+            d / 2,
+            if active { theme::ACCENT } else { theme::RULE },
+        );
+        if !active {
+            fb.fill_round_rect(mx + 3, my + 3, d - 6, d - 6, (d - 6) / 2, theme::BG);
+        }
+    }
+
+    let (x, _) = column(w);
+    let note = if cfg.note == ConfigNote::None {
+        "Pick where this machine looks for portal data."
+    } else {
+        cfg.note.text()
+    };
+    fb.draw_text(
+        x,
+        TOP + PortalFamily::ALL.len() as i32 * (ROW_H + ROW_GAP) + 26,
+        note,
+        &SMALL_FACE,
+        0,
+        if cfg.note.is_error() { theme::ACCENT } else { theme::MUTED },
+    );
+}
+
+/// Which portal family row contains this point, if any.
+pub fn portal_family_hit(w: i32, x: i32, y: i32) -> Option<usize> {
+    (0..PortalFamily::ALL.len()).find(|&i| {
+        let (rx, ry, rw, rh) = row_rect(w, i);
+        x >= rx && x < rx + rw && y >= ry && y < ry + rh
+    })
 }
 
 #[cfg(test)]
@@ -372,26 +873,88 @@ mod tests {
 
     #[test]
     fn all_rows_fit_a_768_screen() {
-        let n = BUILTIN.len().min(6).max(N_CAPS);
-        let (_, y, _, h) = row_rect(1024, n - 1);
+        // Seven skill rows + Save starter CTA + a short note must clear 768.
+        let n = BUILTIN.len().min(7).max(N_CAPS);
+        let (_, y, _, h) = row_rect(1024, n); // CTA under a full list
         assert!(y + h + 40 < 768, "rows run off the screen: {}", y + h);
+    }
+
+    #[test]
+    fn skills_save_hit_only_when_writable() {
+        let n = 3;
+        let (x, y, w, h) = row_rect(1024, n);
+        assert!(skills_save_hit(1024, n, true, x + w / 2, y + h / 2));
+        assert!(!skills_save_hit(1024, n, false, x + w / 2, y + h / 2));
+        assert!(!skills_save_hit(1024, n, true, x + w / 2, y - 4));
+    }
+
+    #[test]
+    fn brief_send_hit_only_when_armed() {
+        let (x, y, w, h) = brief_send_rect(1024, 768);
+        assert!(brief_send_hit(1024, 768, true, x + w / 2, y + h / 2));
+        assert!(!brief_send_hit(1024, 768, false, x + w / 2, y + h / 2));
+        assert!(!brief_send_hit(1024, 768, true, x + w / 2, y - 4));
+    }
+
+    #[test]
+    fn brief_event_rows_are_hittable() {
+        let mut brief = Brief::empty();
+        brief.push_report("Event", "Demo event - tomorrow");
+        brief.arm_event("0123456789abcdef", 0);
+        let top = brief_report_top(&brief);
+        let (x, cw) = column(1024);
+        let ry = top + 8;
+        assert_eq!(
+            brief_event_hit(1024, &brief, x + cw / 2, ry + 10),
+            Some(0)
+        );
+        assert_eq!(brief_event_hit(1024, &Brief::empty(), x + cw / 2, ry + 10), None);
+    }
+
+    #[test]
+    fn brief_doc_rows_are_hittable() {
+        let mut brief = Brief::empty();
+        brief.push_report("Goal", "work on paper");
+        brief.push_report("Doc", "thesis-draft.md");
+        brief.arm_doc("file://docs/thesis-draft.md", 1);
+        let top = brief_report_top(&brief);
+        let (x, cw) = column(1024);
+        let ry = top + 8 + 1 * (ROW_H - 10);
+        assert_eq!(
+            brief_doc_hit(1024, &brief, x + cw / 2, ry + 10),
+            Some(0)
+        );
+        assert_eq!(brief_doc_hit(1024, &Brief::empty(), x + cw / 2, ry + 10), None);
     }
 
     #[test]
     fn copy_is_ascii_only() {
         let mut all = vec![
-            "Playbooks the agent can load",
-            "What the agent may do",
-            "Compiled into the ISO. Saved skills live on the host.",
-            "Listed live from the host bridge (skills.list).",
-            "Tap a row to grant or revoke. Takes effect immediately.",
+            "Tap a playbook to run it",
+            "Run a playbook, or save a starter",
+            "Tap a playbook: builtins run; saved CALL only granted tools.",
+            "Builtins run under grants. Saved CALL only tools you already turned on.",
+            "Saved playbooks CALL granted tools. Save starter needs the bridge.",
+            "Playbook body unavailable.",
             "No skills loaded.",
             "Skills",
             "Capabilities",
+            "Brief",
             "Back",
             "From host bridge",
             "Shipped with the ISO",
+            "Saved - CALL granted tools",
+            "Save starter",
+            "Write guest-starter to the host",
+            "Tap to run under current grants",
+            "Confirm send",
+            "Plan",
+            "Report",
         ];
+        for level in Level::ALL {
+            all.push(level.caps_subtitle());
+            all.push(level.caps_footer());
+        }
         for s in BUILTIN {
             all.push(s.name);
             all.push(s.blurb);
@@ -408,7 +971,7 @@ mod tests {
     fn skill_text_fits_its_row() {
         let (_, _, cw, _) = row_rect(1024, 0);
         let peek = SkillPeek::from_builtin();
-        for i in 0..peek.count.min(6) {
+        for i in 0..peek.count.min(7) {
             assert!(
                 BRAND_FACE.width(peek.name_at(i), 0) < cw - 36,
                 "name overflows: {}",
@@ -439,14 +1002,280 @@ mod tests {
     fn capability_text_clears_the_switch() {
         let (_, _, cw, _) = row_rect(1024, 0);
         // Switch occupies the right 58px of the row.
-        for (name, blurb) in cap_rows() {
+        for level in Level::ALL {
+            for (name, blurb) in cap_rows(level) {
+                assert!(
+                    BRAND_FACE.width(name, 0) < cw - 76,
+                    "name hits the switch: {name}"
+                );
+                assert!(
+                    SMALL_FACE.width(blurb, 0) < cw - 76,
+                    "blurb hits the switch: {blurb}"
+                );
+            }
+        }
+    }
+}
+
+/// The hidden portal screen.
+///
+/// The load-bearing property is that the password is never painted. These
+/// prove it against the real draw code rather than by reading it: two
+/// different secrets of the same length must produce byte-identical frames.
+#[cfg(test)]
+mod portal_config_tests {
+    use super::*;
+    use crate::keyboard::Key;
+
+    fn unlocked_at(family: PortalFamily) -> PortalConfig {
+        let mut cfg = PortalConfig::new();
+        cfg.refresh(ConfigStatus {
+            reachable: true,
+            family,
+            locked: false,
+            configured: true,
+        });
+        cfg
+    }
+
+    fn locked_with(secret: &str) -> PortalConfig {
+        let mut cfg = PortalConfig::new();
+        cfg.refresh(ConfigStatus {
+            reachable: true,
+            family: PortalFamily::None,
+            locked: true,
+            configured: true,
+        });
+        for b in secret.bytes() {
+            cfg.type_key(Key::Char(b));
+        }
+        cfg
+    }
+
+    /// Render a locked screen carrying `secret` and return the raw pixels.
+    fn frame(secret: &str) -> Vec<u32> {
+        const W: usize = 1024;
+        const H: usize = 768;
+        let cfg = locked_with(secret);
+        let mut buf = vec![0u32; W * H];
+        {
+            let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), W, H) };
+            // Caret fixed: this is about the secret, not the blink phase.
+            draw_portal_config(&fb, &cfg, false);
+        }
+        buf
+    }
+
+    #[test]
+    fn the_password_field_renders_masked() {
+        // Same length, completely different characters. If a single glyph of
+        // the secret reached the framebuffer these frames would differ.
+        assert_eq!(frame("hunter7"), frame("SWORDF1"), "the secret is on screen");
+        assert_eq!(frame("aaaaaaa"), frame("!@#$%^&"), "the secret is on screen");
+    }
+
+    #[test]
+    fn the_mask_still_shows_that_something_was_typed() {
+        // Guard the obvious way to pass the test above: drawing nothing.
+        assert_ne!(frame("hunter7"), frame("hunter"), "the mask ignores length");
+        assert_ne!(frame("a"), frame(""), "typing produced no visible dot");
+    }
+
+    #[test]
+    fn the_mask_is_a_dot_per_character_and_stops_growing() {
+        let cfg = locked_with("hunter2");
+        assert_eq!(cfg.mask_len(), 7);
+        // A very long secret must not run the dots off the end of the box.
+        let long = locked_with(&"x".repeat(PASS_MAX));
+        assert_eq!(long.mask_len(), PASS_DOTS.min(PASS_MAX));
+        let (_, cw) = column(1024);
+        assert!(
+            16 + PASS_DOTS as i32 * DOT_PITCH < cw,
+            "a full row of dots overflows the field"
+        );
+    }
+
+    #[test]
+    fn an_empty_field_draws_no_dots() {
+        assert_eq!(PortalConfig::new().mask_len(), 0);
+    }
+
+    #[test]
+    fn backspace_shortens_the_mask() {
+        let mut cfg = locked_with("abc");
+        assert_eq!(cfg.mask_len(), 3);
+        assert!(cfg.type_key(Key::Backspace));
+        assert_eq!(cfg.mask_len(), 2);
+    }
+
+    #[test]
+    fn a_chord_is_not_typed_into_the_password() {
+        // Otherwise the chord that opens this screen would seed the field.
+        let mut cfg = locked_with("");
+        assert!(!cfg.type_key(Key::Chord(b'P')));
+        assert_eq!(cfg.mask_len(), 0);
+    }
+
+    #[test]
+    fn the_picker_lists_all_three_choices_and_marks_the_active_one() {
+        // Drive the real draw code, then check the rows it registered.
+        const W: i32 = 1024;
+        for active in PortalFamily::ALL {
+            let cfg = unlocked_at(active);
+            let mut buf = vec![0u32; (W * 768) as usize];
+            {
+                let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), W as usize, 768) };
+                draw_portal_config(&fb, &cfg, false);
+            }
+            // Three rows, each hittable at its centre and mapping to its own
+            // index — the order the draw loop uses.
+            for (i, _family) in PortalFamily::ALL.into_iter().enumerate() {
+                let (x, y, w, h) = row_rect(W, i);
+                assert_eq!(
+                    portal_family_hit(W, x + w / 2, y + h / 2),
+                    Some(i),
+                    "row {i} is not clickable"
+                );
+            }
+            assert_eq!(portal_family_hit(W, 512, TOP - 6), None, "hit above the list");
+            // The active family is the one the status carries, and it is the
+            // only row drawn with the accent marker.
+            assert_eq!(cfg.status.family, active);
+            let marked: Vec<_> = PortalFamily::ALL
+                .into_iter()
+                .filter(|f| *f == cfg.status.family)
+                .collect();
+            assert_eq!(marked.len(), 1, "exactly one row must read as active");
+        }
+    }
+
+    #[test]
+    fn all_three_rows_fit_a_768_screen() {
+        let (_, y, _, h) = row_rect(1024, PortalFamily::ALL.len() - 1);
+        assert!(y + h + 40 < 768, "the picker runs off the screen");
+    }
+
+    #[test]
+    fn family_labels_clear_the_marker() {
+        let (_, _, cw, _) = row_rect(1024, 0);
+        for f in PortalFamily::ALL {
             assert!(
-                BRAND_FACE.width(name, 0) < cw - 76,
-                "name hits the switch: {name}"
+                BRAND_FACE.width(f.label(), 0) < cw - 76,
+                "label hits the marker: {}",
+                f.label()
             );
+        }
+    }
+
+    #[test]
+    fn a_bad_password_says_so_and_clears_the_field() {
+        let mut cfg = locked_with("wrong");
+        cfg.apply_unlock(UnlockStatus::BadPass);
+        assert_eq!(cfg.note, ConfigNote::BadPass);
+        assert!(cfg.note.is_error());
+        assert!(cfg.status.locked, "a bad password must not unlock");
+        assert_eq!(cfg.mask_len(), 0, "the failed secret stayed on screen");
+    }
+
+    #[test]
+    fn the_other_unlock_failures_each_get_their_own_message() {
+        for (reply, want) in [
+            (UnlockStatus::NotConfigured, ConfigNote::NotConfigured),
+            (UnlockStatus::TooMany, ConfigNote::TooMany),
+            (UnlockStatus::Offline, ConfigNote::Offline),
+            (UnlockStatus::Unsendable, ConfigNote::Unsendable),
+        ] {
+            let mut cfg = locked_with("secret");
+            cfg.apply_unlock(reply);
+            assert_eq!(cfg.note, want, "{reply:?} produced the wrong message");
+            assert!(cfg.status.locked, "{reply:?} must leave the screen locked");
+        }
+    }
+
+    #[test]
+    fn a_good_password_opens_the_picker() {
+        let mut cfg = locked_with("hunter2");
+        cfg.apply_unlock(UnlockStatus::Ok);
+        assert!(!cfg.status.locked);
+        assert_eq!(cfg.mask_len(), 0, "the secret outlived the unlock");
+        assert!(!cfg.note.is_error());
+    }
+
+    #[test]
+    fn choosing_a_family_reflects_what_the_host_stored() {
+        let mut cfg = unlocked_at(PortalFamily::None);
+        cfg.apply_portal(PortalSetStatus::Ok(PortalFamily::Market));
+        assert_eq!(cfg.status.family, PortalFamily::Market);
+        assert_eq!(cfg.note, ConfigNote::Saved);
+        assert!(!cfg.note.is_error());
+    }
+
+    #[test]
+    fn a_lost_session_sends_us_back_to_the_password() {
+        // Unlock is per-connection on the host; it can vanish under us.
+        let mut cfg = unlocked_at(PortalFamily::Teddy);
+        cfg.apply_portal(PortalSetStatus::Locked);
+        assert!(cfg.status.locked, "a locked reply left the picker up");
+        assert_eq!(cfg.note, ConfigNote::Relocked);
+        assert_eq!(cfg.mask_len(), 0);
+    }
+
+    #[test]
+    fn an_unreachable_bridge_says_so_instead_of_looking_ready() {
+        let mut cfg = PortalConfig::new();
+        cfg.refresh(ConfigStatus::offline());
+        assert!(cfg.status.locked, "an offline bridge must read as locked");
+        assert_eq!(cfg.note, ConfigNote::Offline);
+        assert!(cfg.note.is_error());
+        // And a failed set says it too, rather than hanging.
+        let mut open = unlocked_at(PortalFamily::Teddy);
+        open.apply_portal(PortalSetStatus::Offline);
+        assert_eq!(open.note, ConfigNote::Offline);
+    }
+
+    #[test]
+    fn drawing_both_states_does_not_panic() {
+        for cfg in [locked_with("abc"), unlocked_at(PortalFamily::Teddy)] {
+            for caret in [true, false] {
+                let mut buf = vec![0u32; 1024 * 768];
+                let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), 1024, 768) };
+                draw_portal_config(&fb, &cfg, caret);
+            }
+        }
+    }
+
+    #[test]
+    fn copy_is_ascii_only() {
+        let mut all = vec![
+            "Portal",
+            "This screen is locked",
+            "Where this machine looks",
+            "Password",
+            "Type the password, then press Enter.",
+            "Pick where this machine looks for portal data.",
+            "Active",
+            "Tap to use",
+        ];
+        for n in [
+            ConfigNote::None,
+            ConfigNote::BadPass,
+            ConfigNote::NotConfigured,
+            ConfigNote::TooMany,
+            ConfigNote::Offline,
+            ConfigNote::Unsendable,
+            ConfigNote::Saved,
+            ConfigNote::Relocked,
+            ConfigNote::Failed,
+        ] {
+            all.push(n.text());
+        }
+        for f in PortalFamily::ALL {
+            all.push(f.label());
+        }
+        for s in all {
             assert!(
-                SMALL_FACE.width(blurb, 0) < cw - 76,
-                "blurb hits the switch: {blurb}"
+                s.bytes().all(|b| (0x20..=0x7E).contains(&b)),
+                "non-ASCII renders as '?': {s:?}"
             );
         }
     }
