@@ -96,7 +96,7 @@ impl UsbTablet {
 
         let mut saw_device = false;
         let mut reason = "not-tablet";
-        for &(_b, _s, _f, io) in controllers.iter() {
+        for &io in controllers.iter() {
             for port in 0..2u16 {
                 match unsafe { Self::init_on(io, port, hhdm, phys_page0, phys_page1) } {
                     Probe::Bound(t) => {

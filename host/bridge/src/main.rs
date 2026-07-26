@@ -646,12 +646,6 @@ mod tests {
     }
 
     #[test]
-    fn list_includes_search() {
-        let r = dispatch("LIST");
-        assert!(r[0].contains("search.query"));
-    }
-
-    #[test]
     fn list_matches_tools_table() {
         let r = dispatch("LIST");
         assert_eq!(r[0], format!("OK tools={}", TOOLS.join(",")));

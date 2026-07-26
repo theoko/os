@@ -88,7 +88,7 @@ fn usb_prog_if(bus: u8, slot: u8, func: u8) -> Option<u8> {
     }
 }
 
-/// UHCI = class 0x0C, subclass 0x03, prog-if 0x00.
+/// UHCI = class 0x0C, subclass 0x03, prog-if 0x00. Returns I/O bases only.
 pub(crate) fn find_all_uhci() -> heapless_vec::UhciList {
     let mut out = heapless_vec::UhciList::new();
     for_each_fn(|bus, slot, func| {
@@ -100,7 +100,7 @@ pub(crate) fn find_all_uhci() -> heapless_vec::UhciList {
             let io = (bar4 & 0xFFE0) as u16;
             let cmd = read16(bus, slot, func, 0x04);
             write16(bus, slot, func, 0x04, cmd | 0x05);
-            out.push((bus, slot, func, io));
+            out.push(io);
         }
     });
     out
@@ -119,29 +119,29 @@ pub(crate) fn for_each_ehci(mut f: impl FnMut(u8, u8, u8)) {
     });
 }
 
-/// Tiny fixed vec so we don't need alloc — max 8 UHCI controllers.
+/// Tiny fixed vec so we don't need alloc — max 8 UHCI I/O bases.
 pub(crate) mod heapless_vec {
     pub struct UhciList {
-        data: [(u8, u8, u8, u16); 8],
+        data: [u16; 8],
         len: usize,
     }
     impl UhciList {
         pub const fn new() -> Self {
             Self {
-                data: [(0, 0, 0, 0); 8],
+                data: [0; 8],
                 len: 0,
             }
         }
-        pub fn push(&mut self, v: (u8, u8, u8, u16)) {
+        pub fn push(&mut self, io: u16) {
             if self.len < self.data.len() {
-                self.data[self.len] = v;
+                self.data[self.len] = io;
                 self.len += 1;
             }
         }
         pub fn is_empty(&self) -> bool {
             self.len == 0
         }
-        pub fn iter(&self) -> impl Iterator<Item = &(u8, u8, u8, u16)> {
+        pub fn iter(&self) -> impl Iterator<Item = &u16> {
             self.data[..self.len].iter()
         }
     }

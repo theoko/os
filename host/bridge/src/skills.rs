@@ -86,13 +86,6 @@ fn parse_frontmatter(text: &str) -> Option<(String, String)> {
     Some((name?, description))
 }
 
-fn get_skill_body(name: &str) -> Option<String> {
-    list_skills()
-        .into_iter()
-        .find(|s| s.name == name)
-        .and_then(|s| fs::read_to_string(s.path).ok())
-}
-
 pub fn save_skill(name: &str, body: &str) -> Result<PathBuf, String> {
     if name.is_empty()
         || !name
@@ -134,19 +127,21 @@ pub fn list_response() -> Vec<String> {
 }
 
 pub fn get_response(name: &str) -> Vec<String> {
-    match get_skill_body(name) {
-        Some(body) => {
-            // LINE payload is the whole rest of the line, not a ROW with
-            // '|'-separated fields — preserve it verbatim so save→get
-            // round-trips; only strip control chars that would break the
-            // line framing (keep tabs for markdown code blocks).
-            let lines = body
-                .lines()
-                .map(|line| format!("LINE {}", strip_line_controls(line)));
-            crate::text::framed_ok("OK skills.get".into(), lines)
-        }
-        None => vec!["ERR skills.get not_found".into()],
-    }
+    let Some(body) = list_skills()
+        .into_iter()
+        .find(|s| s.name == name)
+        .and_then(|s| fs::read_to_string(s.path).ok())
+    else {
+        return vec!["ERR skills.get not_found".into()];
+    };
+    // LINE payload is the whole rest of the line, not a ROW with
+    // '|'-separated fields — preserve it verbatim so save→get
+    // round-trips; only strip control chars that would break the
+    // line framing (keep tabs for markdown code blocks).
+    let lines = body
+        .lines()
+        .map(|line| format!("LINE {}", strip_line_controls(line)));
+    crate::text::framed_ok("OK skills.get".into(), lines)
 }
 
 fn sanitize(s: &str) -> String {
