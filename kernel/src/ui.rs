@@ -40,8 +40,15 @@ const CONTENT_MAX: i32 = 920;
 pub const SWITCH_W: i32 = 40;
 pub const SWITCH_H: i32 = 22;
 
+/// Pill switch, right-aligned inside a list row (18px pad, vertically centred).
+pub fn draw_switch_in_row(fb: &Surface, row: Rect, on: bool) {
+    let tx = row.x + row.w - 18 - SWITCH_W;
+    let ty = row.y + (row.h - SWITCH_H) / 2;
+    draw_switch(fb, tx, ty, on);
+}
+
 /// Draw a pill switch with its origin at `(tx, ty)`.
-pub fn draw_switch(fb: &Surface, tx: i32, ty: i32, on: bool) {
+fn draw_switch(fb: &Surface, tx: i32, ty: i32, on: bool) {
     fb.fill_round_rect(
         tx,
         ty,

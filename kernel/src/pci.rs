@@ -36,12 +36,12 @@ fn write32(bus: u8, slot: u8, func: u8, offset: u8, val: u32) {
     let _ = (bus, slot, func, offset, val);
 }
 
-pub fn read16(bus: u8, slot: u8, func: u8, offset: u8) -> u16 {
+pub(crate) fn read16(bus: u8, slot: u8, func: u8, offset: u8) -> u16 {
     let v = read32(bus, slot, func, offset & 0xFC);
     ((v >> (8 * (offset as u32 & 2))) & 0xFFFF) as u16
 }
 
-pub fn write16(bus: u8, slot: u8, func: u8, offset: u8, val: u16) {
+pub(crate) fn write16(bus: u8, slot: u8, func: u8, offset: u8, val: u16) {
     let aligned = offset & 0xFC;
     let shift = 8 * (offset as u32 & 2);
     let mut v = read32(bus, slot, func, aligned);
@@ -89,7 +89,7 @@ fn usb_prog_if(bus: u8, slot: u8, func: u8) -> Option<u8> {
 }
 
 /// UHCI = class 0x0C, subclass 0x03, prog-if 0x00.
-pub fn find_all_uhci() -> heapless_vec::UhciList {
+pub(crate) fn find_all_uhci() -> heapless_vec::UhciList {
     let mut out = heapless_vec::UhciList::new();
     for_each_fn(|bus, slot, func| {
         if usb_prog_if(bus, slot, func) != Some(0x00) {
@@ -111,7 +111,7 @@ pub fn find_all_uhci() -> heapless_vec::UhciList {
 /// q35 with `-usb` builds an ICH9 set at 00:1d.x, and UTM adds a *second*
 /// explicit `ich9-usb-ehci1`. Disabling only the first leaves the other still
 /// owning its ports, so its UHCI companions see nothing.
-pub fn for_each_ehci(mut f: impl FnMut(u8, u8, u8)) {
+pub(crate) fn for_each_ehci(mut f: impl FnMut(u8, u8, u8)) {
     for_each_fn(|bus, slot, func| {
         if usb_prog_if(bus, slot, func) == Some(0x20) {
             f(bus, slot, func);
@@ -120,7 +120,7 @@ pub fn for_each_ehci(mut f: impl FnMut(u8, u8, u8)) {
 }
 
 /// Tiny fixed vec so we don't need alloc — max 8 UHCI controllers.
-pub mod heapless_vec {
+pub(crate) mod heapless_vec {
     pub struct UhciList {
         data: [(u8, u8, u8, u16); 8],
         len: usize,

@@ -93,8 +93,9 @@ unsafe extern "C" fn kmain() -> ! {
 
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
+                let mut cursor = mouse::Cursor::new();
                 ui::draw_home_full(surface, &mail, &skill_peek, caps::Caps::none(), "");
-                mouse::draw_arrow(surface, cx, cy);
+                cursor.show_at(surface, cx, cy);
                 screen.present();
                 serial_port.write_str("mouse: pointer painted\n");
 
@@ -136,14 +137,12 @@ unsafe extern "C" fn kmain() -> ! {
                     mice.present = true;
                 }
 
-                let mut cursor = mouse::Cursor::new();
                 let mut prev_buttons = 0u8;
                 let mut setup = setup::Setup::new();
                 let mut kb = keyboard::Keyboard::new();
                 let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut sview = searchui::SearchView::new();
                 let mut page = mcp::DocPage::empty(mcp::BridgeStatus::Offline);
-                let mut open_title = [0u8; searchui::QUERY_MAX];
                 let mut view = screens::View::Home;
                 // First boot: run the setup journey before the home screen.
                 cursor.hide(surface);
@@ -174,10 +173,7 @@ unsafe extern "C" fn kmain() -> ! {
                     let w = surface.width() as i32;
                     let mut moved = false;
                     if let Some(ref mut t) = tablet {
-                        if t.poll() {
-                            mice.x = t.x;
-                            mice.y = t.y;
-                            mice.buttons = t.buttons;
+                        if t.poll(&mut mice) {
                             moved = true;
                         }
                     } else if mice.poll() {
@@ -186,7 +182,9 @@ unsafe extern "C" fn kmain() -> ! {
 
                     if !setup.is_finished() {
                         let before = setup.step;
-                        if setup.pointer(mice.x, mice.y, mice.buttons) {
+                        if mouse::click_edge(mice.buttons, prev_buttons)
+                            && setup.click(mice.x, mice.y)
+                        {
                             // Entering the Bridge step: re-probe COM2 so the
                             // status card reflects a bridge that came up after boot.
                             if setup.step == setup::Step::Bridge && before != setup::Step::Bridge {
@@ -221,7 +219,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     &skill_peek,
                                     "",
                                     &sview,
-                                    "",
                                     &page,
                                     setup.caps,
                                 );
@@ -250,7 +247,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 dirty = true;
                             }
                         }
-                        if click_edge(mice.buttons, prev_buttons) {
+                        if mouse::click_edge(mice.buttons, prev_buttons) {
                             if on_home {
                                 let targets = ui::HomeTargets::new(w);
                                 match targets.hit(mice.x, mice.y) {
@@ -292,9 +289,11 @@ unsafe extern "C" fn kmain() -> ! {
                                 dirty = true;
                             } else if view == screens::View::Search {
                                 if let Some(i) = sview.hit(w, mice.x, mice.y) {
-                                    let row = &sview.rows[i];
-                                    skills::copy_field(&mut open_title, row.title());
-                                    page = mcp::fetch_doc(setup.caps, row.url());
+                                    page = mcp::fetch_doc(
+                                        setup.caps,
+                                        sview.title_at(i),
+                                        sview.url_at(i),
+                                    );
                                     view = screens::View::Reader;
                                     serial_port.write_str("ui: open doc\n");
                                     dirty = true;
@@ -331,7 +330,6 @@ unsafe extern "C" fn kmain() -> ! {
                                 &skill_peek,
                                 query.as_str(),
                                 &sview,
-                                skills::str_at(&open_title),
                                 &page,
                                 setup.caps,
                             );
@@ -359,11 +357,6 @@ unsafe extern "C" fn kmain() -> ! {
     // Only the framebuffer-missing/unsupported paths reach here — that is a
     // boot failure, and the smoke test must see it as one.
     serial::exit_qemu(false);
-}
-
-/// Rising edge on the primary mouse button.
-fn click_edge(buttons: u8, prev: u8) -> bool {
-    buttons & 1 != 0 && prev & 1 == 0
 }
 
 /// Keyboard for Home / Search (and Escape-to-home elsewhere).
@@ -444,7 +437,6 @@ fn repaint(
     skills: &skills::SkillPeek,
     query: &str,
     sview: &searchui::SearchView,
-    open_title: &str,
     page: &mcp::DocPage,
     grants: caps::Caps,
 ) {
@@ -455,7 +447,7 @@ fn repaint(
         }
         screens::View::Skills => screens::draw_skills(surface, skills),
         screens::View::Caps => screens::draw_caps(surface, grants),
-        screens::View::Reader => searchui::draw_reader(surface, open_title, page),
+        screens::View::Reader => searchui::draw_reader(surface, page),
         screens::View::Home => ui::draw_home_full(surface, mail, skills, grants, query),
     }
     cursor.show_at(surface, x, y);

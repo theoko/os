@@ -33,15 +33,15 @@ fn divisor_for(hz: u32) -> u16 {
 
 /// One note. `hz == 0` is a rest.
 #[derive(Clone, Copy)]
-pub struct Note {
-    pub hz: u32,
-    pub ms: u32,
+struct Note {
+    hz: u32,
+    ms: u32,
 }
 
 /// Startup chime: an original rising figure that resolves up an octave.
 ///
 /// Kept under a second so it never delays the first frame noticeably.
-pub const STARTUP: [Note; 6] = [
+const STARTUP: [Note; 6] = [
     Note { hz: 523, ms: 90 },  // C5
     Note { hz: 659, ms: 90 },  // E5
     Note { hz: 784, ms: 90 },  // G5

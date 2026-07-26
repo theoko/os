@@ -210,6 +210,7 @@ pub struct DocPage {
     pub status: BridgeStatus,
     pub denied: bool,
     pub count: usize,
+    title: [u8; 72],
     lines: [[u8; 84]; Self::MAX],
 }
 
@@ -217,7 +218,17 @@ impl DocPage {
     pub const MAX: usize = 18;
 
     pub const fn empty(status: BridgeStatus) -> Self {
-        Self { status, denied: false, count: 0, lines: [[0; 84]; Self::MAX] }
+        Self {
+            status,
+            denied: false,
+            count: 0,
+            title: [0; 72],
+            lines: [[0; 84]; Self::MAX],
+        }
+    }
+
+    pub fn title(&self) -> &str {
+        str_at(&self.title)
     }
 
     pub fn line_at(&self, i: usize) -> &str {
@@ -230,8 +241,10 @@ impl DocPage {
 /// The same grants are sent as for the query, because the bridge checks scope
 /// per source: a caller that could not have found a document must not be able
 /// to read it by knowing its URL.
-pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
-    when_online(DocPage::empty(BridgeStatus::Offline), |com2, line| {
+pub fn fetch_doc(caps: crate::caps::Caps, title: &str, url: &str) -> DocPage {
+    let mut offline = DocPage::empty(BridgeStatus::Offline);
+    copy_field(&mut offline.title, title);
+    when_online(offline, |com2, line| {
         com2.write_str("CALL doc.read url=");
         com2.write_str(url);
         com2.write_str(" lines=18");
@@ -239,6 +252,7 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
         com2.write_str("\n");
 
         let mut page = DocPage::empty(BridgeStatus::Online);
+        copy_field(&mut page.title, title);
         page.denied = for_each_ok_rows(com2, line, 40, "OK doc.read", |resp| {
             if page.count >= DocPage::MAX {
                 return false;

@@ -17,7 +17,7 @@ use crate::ui::{self, theme};
 
 /// Where a click landed.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Action {
+enum Action {
     Continue,
     Back,
     /// Capability row toggle (setup Skills rows are paint-only).
@@ -58,8 +58,6 @@ pub struct Setup {
     pub caps: Caps,
     zones: [Zone; MAX_ZONES],
     n_zones: usize,
-    /// Edge detection: a held button must not advance every frame.
-    was_down: bool,
 }
 
 impl Setup {
@@ -74,7 +72,6 @@ impl Setup {
                 action: Action::Continue,
             }; MAX_ZONES],
             n_zones: 0,
-            was_down: false,
         }
     }
 
@@ -100,17 +97,11 @@ impl Setup {
             .map(|z| z.action)
     }
 
-    /// Feed pointer state. Returns true when the screen needs redrawing.
+    /// Apply a click at `(x, y)`. Returns true when the screen needs redrawing.
     ///
-    /// Only the press *edge* counts — holding the button down must not run the
-    /// whole journey in a few frames.
-    pub fn pointer(&mut self, x: i32, y: i32, buttons: u8) -> bool {
-        let down = buttons & 0x01 != 0;
-        let pressed = down && !self.was_down;
-        self.was_down = down;
-        if !pressed {
-            return false;
-        }
+    /// Rising-edge filtering lives in the main loop (`mouse::click_edge`) so
+    /// setup does not keep a parallel button latch.
+    pub fn click(&mut self, x: i32, y: i32) -> bool {
         match self.hit(x, y) {
             Some(action) => self.apply(action),
             None => false,
@@ -268,13 +259,7 @@ impl Setup {
         let x = (w - cw) / 2;
         let r = ui::Rect::new(x, y, cw, ROW_H);
         ui::draw_titled_row(fb, r, Cap::ALL[i].name(), CAP_BLURBS[i]);
-        let pad = 18;
-        ui::draw_switch(
-            fb,
-            x + cw - pad - ui::SWITCH_W,
-            y + (ROW_H - ui::SWITCH_H) / 2,
-            self.caps.allows(Cap::ALL[i]),
-        );
+        ui::draw_switch_in_row(fb, r, self.caps.allows(Cap::ALL[i]));
         self.push_zone(r, Action::Row(i));
     }
 
@@ -418,25 +403,18 @@ mod tests {
     }
 
     #[test]
-    fn held_button_advances_only_once() {
+    fn click_on_a_zone_applies_its_action() {
         let mut s = setup();
         s.push_zone(ui::Rect::new(0, 0, 100, 100), Action::Continue);
-        assert!(s.pointer(10, 10, 1), "press should act");
+        assert!(s.click(10, 10), "press should act");
         assert_eq!(s.step, Step::Bridge);
-        // Still held: must not keep advancing.
-        assert!(!s.pointer(10, 10, 1));
-        assert_eq!(s.step, Step::Bridge);
-        // Release then press again.
-        assert!(!s.pointer(10, 10, 0));
-        assert!(s.pointer(10, 10, 1));
-        assert_eq!(s.step, Step::Capabilities);
     }
 
     #[test]
     fn clicks_outside_any_zone_are_ignored() {
         let mut s = setup();
         s.push_zone(ui::Rect::new(0, 0, 50, 50), Action::Continue);
-        assert!(!s.pointer(400, 400, 1));
+        assert!(!s.click(400, 400));
         assert_eq!(s.step, Step::Welcome);
     }
 

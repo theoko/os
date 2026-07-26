@@ -23,14 +23,14 @@ pub const QUERY_MAX: usize = 64;
 /// reused on the next call, so borrowing from it would dangle. Copying into
 /// fixed slots keeps the whole path free of unsafe lifetime tricks.
 #[derive(Clone, Copy)]
-pub struct Row {
+struct Row {
     title: [u8; 56],
     url: [u8; 72],
     cat: &'static str,
 }
 
 impl Row {
-    pub const fn empty() -> Self {
+    const fn empty() -> Self {
         Self { title: [0; 56], url: [0; 72], cat: "" }
     }
 
@@ -40,11 +40,11 @@ impl Row {
         self.cat = cat;
     }
 
-    pub fn title(&self) -> &str {
+    fn title(&self) -> &str {
         str_at(&self.title)
     }
 
-    pub fn url(&self) -> &str {
+    fn url(&self) -> &str {
         str_at(&self.url)
     }
 
@@ -58,28 +58,28 @@ impl Row {
 /// A bridge that answers "no matches" is NOT an offline bridge — reporting it
 /// as one sent people looking for a connection problem that did not exist.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub struct Source {
+struct Source {
     /// COM2 answered.
-    pub bridge_online: bool,
+    bridge_online: bool,
     /// The bridge answered with ERR, or the capability was refused.
-    pub errored: bool,
+    errored: bool,
     /// The caller held workspace.index, so the user's own files were in scope.
-    pub files_in_scope: bool,
+    files_in_scope: bool,
     /// The caller held email.search.
-    pub mail_in_scope: bool,
+    mail_in_scope: bool,
 }
 
 impl Source {
-    pub const fn offline() -> Self {
+    const fn offline() -> Self {
         Self { bridge_online: false, errored: false, files_in_scope: false, mail_in_scope: false }
     }
 
     /// Shown when something actually broke, as opposed to simply finding
     /// nothing. Named for the search engine this OS queries.
-    pub const TEDDY: &'static str = "Teddy is looking into it.";
+    const TEDDY: &'static str = "Teddy is looking into it.";
 
     /// One line explaining an empty result set, naming the fix when there is one.
-    pub fn empty_reason(self) -> &'static str {
+    fn empty_reason(self) -> &'static str {
         // A failure is not the same as an empty result set, and only the
         // former gets the friendly line.
         if self.errored {
@@ -99,7 +99,7 @@ impl Source {
 }
 
 pub struct SearchView {
-    pub rows: [Row; search::MAX_HITS],
+    rows: [Row; search::MAX_HITS],
     count: usize,
     /// True once a query has been run, so we can tell "no results" from "idle".
     searched: bool,
@@ -174,6 +174,14 @@ impl SearchView {
     /// Which drawn result contains `(x, y)`, if any.
     pub fn hit(&self, w: i32, x: i32, y: i32) -> Option<usize> {
         crate::ui::hit_among(self.count, x, y, |i| row_rect(w, i))
+    }
+
+    pub fn title_at(&self, i: usize) -> &str {
+        self.rows[i].title()
+    }
+
+    pub fn url_at(&self, i: usize) -> &str {
+        self.rows[i].url()
     }
 }
 
@@ -390,13 +398,20 @@ mod teddy_tests {
 }
 
 /// Draw a document the user opened from a result.
-pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage) {
+pub fn draw_reader(fb: &Surface, page: &crate::mcp::DocPage) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
     screens::chrome(fb, "", None);
 
     let fx = field_rect(w).x;
-    fb.draw_text(fx, 108, title, &TITLE_FACE, font::tracking_pct(TITLE_FACE.px, -20), theme::INK);
+    fb.draw_text(
+        fx,
+        108,
+        page.title(),
+        &TITLE_FACE,
+        font::tracking_pct(TITLE_FACE.px, -20),
+        theme::INK,
+    );
 
     if page.denied {
         fb.draw_text(fx, 160, Source::TEDDY, &BODY_FACE, 0, theme::MUTED);
@@ -465,6 +480,6 @@ mod reader_tests {
         let mut v = SearchView::new();
         v.run("capability agent");
         assert!(v.count > 0);
-        assert!(!v.rows[0].url().is_empty(), "offline results must be openable too");
+        assert!(!v.url_at(0).is_empty(), "offline results must be openable too");
     }
 }

@@ -51,9 +51,9 @@ pub struct UsbTablet {
     /// Max packet size for the interrupt endpoint (minus one goes in the TD).
     max_packet: u8,
     data_toggle: bool,
-    pub x: i32,
-    pub y: i32,
-    pub buttons: u8,
+    x: i32,
+    y: i32,
+    buttons: u8,
     ready: bool,
     screen_w: i32,
     screen_h: i32,
@@ -534,7 +534,7 @@ impl UsbTablet {
         self.screen_h = h;
     }
 
-    pub fn poll(&mut self) -> bool {
+    pub fn poll(&mut self, mice: &mut crate::mouse::Mouse) -> bool {
         if !self.ready {
             return false;
         }
@@ -596,12 +596,19 @@ impl UsbTablet {
         let ay = u16::from_le_bytes([report[3], report[4]]) as i32;
         let ax = ax.clamp(0, 32767);
         let ay = ay.clamp(0, 32767);
-        let nx = (ax * (self.screen_w - 1)) / 32767;
-        let ny = (ay * (self.screen_h - 1)) / 32767;
+        let nx = ((ax * (self.screen_w - 1)) / 32767)
+            .clamp(0, self.screen_w.saturating_sub(1));
+        let ny = ((ay * (self.screen_h - 1)) / 32767)
+            .clamp(0, self.screen_h.saturating_sub(1));
         let moved = nx != self.x || ny != self.y || buttons != self.buttons;
-        self.x = nx.clamp(0, self.screen_w.saturating_sub(1));
-        self.y = ny.clamp(0, self.screen_h.saturating_sub(1));
+        self.x = nx;
+        self.y = ny;
         self.buttons = buttons;
+        if moved {
+            mice.x = nx;
+            mice.y = ny;
+            mice.buttons = buttons;
+        }
         moved
     }
 

@@ -219,6 +219,11 @@ impl Mouse {
     }
 }
 
+/// Rising edge on the primary mouse button.
+pub fn click_edge(buttons: u8, prev: u8) -> bool {
+    buttons & 1 != 0 && prev & 1 == 0
+}
+
 /// Arrow outline in 1/8-px units, tip at (0,0) — a real polygon so the cursor
 /// is anti-aliased like the rest of the UI instead of a stair-stepped bitmap.
 const ARROW: [(i32, i32); 7] = [
@@ -339,7 +344,7 @@ fn ensure_mask() {
 }
 
 /// Paint a pointer (no save buffer) — safe during the first UI frame.
-pub fn draw_arrow(fb: &Surface, x: i32, y: i32) {
+fn draw_arrow(fb: &Surface, x: i32, y: i32) {
     // Ink body under a white keyline, so the pointer stays legible on both the
     // white page and the blue CTA.
     const INK: u32 = 0x001D_1D1F;
@@ -372,6 +377,14 @@ pub fn draw_arrow(fb: &Surface, x: i32, y: i32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn click_edge_is_rising_primary_only() {
+        assert!(click_edge(1, 0));
+        assert!(!click_edge(1, 1), "held must not retrigger");
+        assert!(!click_edge(0, 1));
+        assert!(!click_edge(2, 0), "secondary alone is not a click");
+    }
 
     #[test]
     fn arrow_tip_is_at_origin() {

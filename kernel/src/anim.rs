@@ -10,7 +10,7 @@
 use crate::serial::{rdtsc, ASSUMED_HZ};
 
 /// Fixed-point one.
-pub const ONE: i32 = 1 << 16;
+const ONE: i32 = 1 << 16;
 
 /// Cubic ease-out: fast departure, gentle arrival.
 ///

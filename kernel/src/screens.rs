@@ -132,10 +132,7 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
     for (i, cap) in Cap::ALL.iter().enumerate() {
         let on = grants.allows(*cap);
         let r = row(fb, w, i, cap.name(), CAP_BLURBS[i]);
-
-        let tx = r.x + r.w - 18 - ui::SWITCH_W;
-        let ty = r.y + (r.h - ui::SWITCH_H) / 2;
-        ui::draw_switch(fb, tx, ty, on);
+        ui::draw_switch_in_row(fb, r, on);
     }
 
     let (x, _) = column(w);
