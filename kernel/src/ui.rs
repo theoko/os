@@ -201,7 +201,7 @@ pub fn draw_home(
     let mut gbuf = [0u8; 16];
     let granted = fmt_n_label(&mut gbuf, n_grants, "Granted");
     let mut sbuf = [0u8; 16];
-    let playbooks = fmt_n_label(&mut sbuf, skills.count(), "Playbooks");
+    let playbooks = fmt_n_label(&mut sbuf, skills.count, "Playbooks");
     let tiles: [(&str, &str); 3] = [
         ("Search", "Knowledge corpus"),
         ("Capabilities", granted),

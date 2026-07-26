@@ -7,7 +7,7 @@
 use crate::caps::{Cap, Caps};
 use crate::fb::{self, Surface};
 use crate::font::{self, BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
-use crate::skills::SkillPeek;
+use crate::skills::{str_at, SkillPeek};
 #[cfg(test)]
 use crate::skills::BUILTIN;
 use crate::ui::{self, theme, NAV_H, PAD_X};
@@ -78,15 +78,20 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
     let w = fb.width() as i32;
     chrome(fb, Some(("Skills", "Playbooks the agent can load")));
 
-    let n = peek.count();
+    let n = peek.count;
     for i in 0..n {
-        ui::draw_titled_row(fb, row_rect(w, i), peek.name_at(i), peek.desc_at(i));
+        ui::draw_titled_row(
+            fb,
+            row_rect(w, i),
+            str_at(&peek.slots[i].name),
+            str_at(&peek.slots[i].desc),
+        );
     }
 
     let (x, _) = ui::content_column(w, ui::LIST_CONTENT_MAX);
-    let note = if !peek.is_live() {
+    let note = if !peek.live {
         "Compiled into the ISO. Saved skills live on the host."
-    } else if peek.count() == 0 {
+    } else if peek.count == 0 {
         "Bridge listed no skills."
     } else {
         "Listed live from the host bridge (skills.list)."
@@ -202,16 +207,16 @@ mod tests {
     fn skill_text_fits_its_row() {
         let cw = row_rect(1024, 0).w;
         let peek = SkillPeek::from_builtins();
-        for i in 0..peek.count() {
+        for i in 0..peek.count {
+            let name = str_at(&peek.slots[i].name);
+            let desc = str_at(&peek.slots[i].desc);
             assert!(
-                BRAND_FACE.width(peek.name_at(i), 0) < cw - 36,
-                "name overflows: {}",
-                peek.name_at(i)
+                BRAND_FACE.width(name, 0) < cw - 36,
+                "name overflows: {name}"
             );
             assert!(
-                SMALL_FACE.width(peek.desc_at(i), 0) < cw - 36,
-                "blurb overflows: {}",
-                peek.desc_at(i)
+                SMALL_FACE.width(desc, 0) < cw - 36,
+                "blurb overflows: {desc}"
             );
         }
     }

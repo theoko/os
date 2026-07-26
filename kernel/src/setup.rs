@@ -11,7 +11,7 @@
 use crate::caps::{Cap, Caps};
 use crate::fb::{self, Surface};
 use crate::font::{self, BODY_FACE, BRAND_FACE, BTN_FACE, HERO_FACE, SMALL_FACE, TITLE_FACE};
-use crate::skills::SkillPeek;
+use crate::skills::{str_at, SkillPeek};
 use crate::ui::{self, theme};
 
 /// Where a click landed.
@@ -183,21 +183,21 @@ impl Setup {
         let top = self.header(
             fb,
             "Default Skills",
-            if !skills.is_live() {
+            if !skills.live {
                 "Markdown playbooks the agent can load. Editable later."
-            } else if skills.count() == 0 {
+            } else if skills.count == 0 {
                 "Bridge listed no skills. Tap Continue when ready."
             } else {
                 "Live from the host bridge. Tap Continue when ready."
             },
         );
         let mut y = top;
-        for i in 0..skills.count() {
+        for i in 0..skills.count {
             ui::draw_titled_row(
                 fb,
                 content_rect(w, y, ROW_H),
-                skills.name_at(i),
-                skills.desc_at(i),
+                str_at(&skills.slots[i].name),
+                str_at(&skills.slots[i].desc),
             );
             y += ROW_H + 8;
         }

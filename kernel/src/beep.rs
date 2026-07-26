@@ -83,7 +83,7 @@ pub fn startup() {
         }
         let _ = anim::pace(crate::serial::rdtsc(), n.ms.saturating_mul(1000));
     }
-    tone_off();
+    // STARTUP ends on hz=0, which already tone_off'd in-loop.
 }
 
 #[cfg(test)]

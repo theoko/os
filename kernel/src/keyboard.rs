@@ -19,13 +19,12 @@ pub enum Key {
     Escape,
 }
 
-/// Scancode set 1, unshifted. Index = make code. 0 means "no character".
-const MAP: [u8; 0x40] = [
+/// Scancode set 1, unshifted. Index = make code through space (`0x39`). 0 = none.
+const MAP: [u8; 0x3A] = [
     0, 0, b'1', b'2', b'3', b'4', b'5', b'6', b'7', b'8', b'9', b'0', b'-', b'=', 0, 0,
     b'q', b'w', b'e', b'r', b't', b'y', b'u', b'i', b'o', b'p', b'[', b']', 0, 0,
     b'a', b's', b'd', b'f', b'g', b'h', b'j', b'k', b'l', b';', b'\'', b'`', 0, b'\\',
-    b'z', b'x', b'c', b'v', b'b', b'n', b'm', b',', b'.', b'/', 0, b'*', 0, b' ', 0, 0,
-    0, 0, 0, 0,
+    b'z', b'x', b'c', b'v', b'b', b'n', b'm', b',', b'.', b'/', 0, b'*', 0, b' ',
 ];
 
 /// Shifted forms for the printable keys we map.

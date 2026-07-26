@@ -38,9 +38,9 @@ pub(crate) const NAME_CHARS: usize = 28;
 pub(crate) const DESC_CHARS: usize = 40;
 
 /// One skill row (fill via [`SkillPeek::push`]).
-struct Slot {
-    name: [u8; NAME_CHARS],
-    desc: [u8; DESC_CHARS],
+pub(crate) struct Slot {
+    pub(crate) name: [u8; NAME_CHARS],
+    pub(crate) desc: [u8; DESC_CHARS],
 }
 
 const EMPTY_SLOT: Slot = Slot {
@@ -53,9 +53,9 @@ const EMPTY_SLOT: Slot = Slot {
 /// One slot buffer for both sources. `live` is true after a framed
 /// `skills.list` (including empty); false after ISO fill (offline / ERR).
 pub struct SkillPeek {
-    live: bool,
-    count: usize,
-    slots: [Slot; MAX_LISTED],
+    pub(crate) live: bool,
+    pub(crate) count: usize,
+    pub(crate) slots: [Slot; MAX_LISTED],
 }
 
 impl SkillPeek {
@@ -79,15 +79,6 @@ impl SkillPeek {
         p
     }
 
-    /// True after a framed `skills.list` (empty list stays live).
-    pub(crate) fn is_live(&self) -> bool {
-        self.live
-    }
-
-    pub(crate) fn count(&self) -> usize {
-        self.count
-    }
-
     pub(crate) fn push(&mut self, name: &str, desc: &str) -> bool {
         if self.count >= self.slots.len() {
             return false;
@@ -97,22 +88,6 @@ impl SkillPeek {
         copy_field(&mut slot.desc, desc);
         self.count += 1;
         true
-    }
-
-    pub(crate) fn name_at(&self, i: usize) -> &str {
-        if i < self.count {
-            str_at(&self.slots[i].name)
-        } else {
-            ""
-        }
-    }
-
-    pub(crate) fn desc_at(&self, i: usize) -> &str {
-        if i < self.count {
-            str_at(&self.slots[i].desc)
-        } else {
-            ""
-        }
     }
 }
 
@@ -151,9 +126,9 @@ mod tests {
     #[test]
     fn builtins_present() {
         let p = SkillPeek::from_builtins();
-        assert_eq!(p.count(), BUILTIN.len());
-        assert_eq!(p.name_at(0), "agent-plan-act");
-        assert!(!p.is_live());
+        assert_eq!(p.count, BUILTIN.len());
+        assert_eq!(str_at(&p.slots[0].name), "agent-plan-act");
+        assert!(!p.live);
     }
 
     #[test]
@@ -163,15 +138,15 @@ mod tests {
             assert!(p.push("n", "d"), "slot {i}");
         }
         assert!(!p.push("overflow", "no"));
-        assert_eq!(p.count(), MAX_LISTED);
-        assert!(p.is_live());
+        assert_eq!(p.count, MAX_LISTED);
+        assert!(p.live);
     }
 
     #[test]
     fn blank_live_stays_live() {
         let p = SkillPeek::blank(true);
-        assert_eq!(p.count(), 0);
-        assert!(p.is_live(), "framed empty list is not ISO builtins");
+        assert_eq!(p.count, 0);
+        assert!(p.live, "framed empty list is not ISO builtins");
     }
 
     #[test]

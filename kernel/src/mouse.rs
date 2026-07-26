@@ -17,11 +17,12 @@ const STATUS: u16 = 0x64;
 const SPIN: u32 = 20_000;
 
 
-fn wait_ibf_clear() -> bool {
+fn write_i8042(io: u16, byte: u8) -> bool {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         for _ in 0..SPIN {
             if port::inb(STATUS) & 0x02 == 0 {
+                port::outb(io, byte);
                 return true;
             }
             core::hint::spin_loop();
@@ -30,48 +31,21 @@ fn wait_ibf_clear() -> bool {
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
+        let _ = (io, byte);
         false
     }
 }
 
-fn wait_obf_set(spins: u32) -> bool {
+fn read_data(spins: u32) -> Option<u8> {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         for _ in 0..spins {
             if port::inb(STATUS) & 0x01 != 0 {
-                return true;
+                return Some(port::inb(DATA));
             }
             core::hint::spin_loop();
         }
-        false
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    {
-        let _ = spins;
-        false
-    }
-}
-
-fn write_i8042(port: u16, byte: u8) -> bool {
-    if !wait_ibf_clear() {
-        return false;
-    }
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        port::outb(port, byte);
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    let _ = (port, byte);
-    true
-}
-
-fn read_data(spins: u32) -> Option<u8> {
-    if !wait_obf_set(spins) {
-        return None;
-    }
-    #[cfg(target_arch = "x86_64")]
-    unsafe {
-        Some(port::inb(DATA))
+        None
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
@@ -129,8 +103,9 @@ impl Mouse {
     pub(crate) fn apply_abs(&mut self, ax: i32, ay: i32, buttons: u8) -> bool {
         let ax = ax.clamp(0, 32767);
         let ay = ay.clamp(0, 32767);
-        let nx = ((ax * (self.screen_w - 1)) / 32767).clamp(0, self.screen_w.saturating_sub(1));
-        let ny = ((ay * (self.screen_h - 1)) / 32767).clamp(0, self.screen_h.saturating_sub(1));
+        // ax/ay in 0..=32767 ⇒ product fits the screen (mode_ok requires w,h > 0).
+        let nx = (ax * (self.screen_w - 1)) / 32767;
+        let ny = (ay * (self.screen_h - 1)) / 32767;
         let moved = nx != self.x || ny != self.y || buttons != self.buttons;
         self.x = nx;
         self.y = ny;
