@@ -99,9 +99,8 @@ def check_smoke(
 
 
 def _root_and_iso() -> tuple[Path, Path]:
-    root = Path(os.environ.get("OS_SMOKE_ROOT", Path(__file__).resolve().parent.parent))
-    iso_name = os.environ.get("OS_SMOKE_ISO", "os.iso")
-    iso = root / iso_name
+    root = Path(__file__).resolve().parent.parent
+    iso = root / "os.iso"
     if not iso.is_file():
         print(f"error: {iso.name} missing — run 'make iso' first", file=sys.stderr)
         sys.exit(1)

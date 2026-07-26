@@ -176,7 +176,7 @@ EXTRA_ARGS = [
 cfg.setdefault("QEMU", {})["AdditionalArguments"] = list(EXTRA_ARGS)
 # Always wire COM2 as TcpServer. Host bridge dials (make utm-bridged). No
 # WaitForConnection — plain `make utm` must boot without a dialer attached.
-addr = os.environ.get("OS_MCP_BRIDGE_ADDR", "127.0.0.1:7420")
+addr = os.environ["OS_MCP_BRIDGE_ADDR"]
 _port = addr.rsplit(":", 1)[-1]
 cfg["Serial"] = [
     {"Mode": "Ptty", "Target": "Auto"},

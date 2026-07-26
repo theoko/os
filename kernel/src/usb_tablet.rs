@@ -9,6 +9,7 @@ use crate::skills::copy_field;
 
 const USBCMD: u16 = 0x00;
 const USBSTS: u16 = 0x02;
+const USBINTR: u16 = 0x04;
 const FRNUM: u16 = 0x06;
 const FLBASEADD: u16 = 0x08;
 const SOFMOD: u16 = 0x0C;
@@ -205,7 +206,7 @@ impl UsbTablet {
             }
             delay(50);
         }
-        self.outw(USBINTR_ZERO, 0); // defined below as 0x04 — disable IRQs
+        self.outw(USBINTR, 0); // disable IRQs
         self.outw(USBSTS, 0xFFFF);
         self.outw(SOFMOD, 64);
         unsafe {
@@ -583,8 +584,6 @@ impl UsbTablet {
         }
     }
 }
-
-const USBINTR_ZERO: u16 = 0x04;
 
 pub fn alloc_dma_pages(mmap: &limine::response::MemoryMapResponse) -> Option<(u64, u64)> {
     let mut pages = [0u64; 2];
