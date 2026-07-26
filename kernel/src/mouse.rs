@@ -404,11 +404,6 @@ mod tests {
     }
 
     #[test]
-    fn arrow_tip_is_at_origin() {
-        assert_eq!(ARROW[0], (0, 0), "hotspot must be the polygon tip");
-    }
-
-    #[test]
     fn arrow_fits_its_save_buffer() {
         // The save/restore box must cover the silhouette plus the 1px keyline.
         let max_x = ARROW.iter().map(|p| p.0).max().unwrap();

@@ -311,9 +311,9 @@ fn forget_file(tool: &str, path: &std::path::Path) -> Vec<String> {
 fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
     match tool {
         "email.search" => {
-            email_search(arg_val(args, "q").unwrap_or("in:inbox"), arg_usize(args, "max", 5, 20))
+            email_search(tool, arg_val(args, "q").unwrap_or("in:inbox"), arg_usize(args, "max", 5, 20))
         }
-        "email.send" => vec!["ERR email.send disabled_until_cap_confirm".into()],
+        "email.send" => vec![format!("ERR {tool} disabled_until_cap_confirm")],
         "skills.list" => skills::list_response(),
         "skills.get" => {
             let name = arg_val(args, "name").unwrap_or("");
@@ -324,10 +324,10 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
             // Reads media and puts the words in a searchable index, so it
             // needs the grant just like workspace.index does.
             if !arg_flag(args, "audio") {
-                return vec!["ERR audio.transcribe needs_audio_cap".into()];
+                return vec![format!("ERR {tool} needs_audio_cap")];
             }
             let Some(path) = arg_val(args, "path") else {
-                return vec!["ERR audio.transcribe missing_path".into()];
+                return vec![format!("ERR {tool} missing_path")];
             };
             match transcribe::transcribe(std::path::Path::new(path)) {
                 Ok((t, secs)) => {
@@ -344,30 +344,28 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
                     store.upsert(t);
                     let _ = store.save();
                     text::framed_ok(
-                        format!("OK audio.transcribe words={words} seconds={secs:.0}"),
+                        format!("OK {tool} words={words} seconds={secs:.0}"),
                         rows,
                     )
                 }
-                Err(e) => vec![format!("ERR audio.transcribe {e}")],
+                Err(e) => vec![format!("ERR {tool} {e}")],
             }
         }
         "tsearch.sync" => match tsearch::sync() {
-            Ok((n, at)) => text::framed_ok(format!("OK tsearch.sync n={n} crawled={at}"), []),
-            Err(e) => vec![format!("ERR tsearch.sync {e}")],
+            Ok((n, at)) => text::framed_ok(format!("OK {tool} n={n} crawled={at}"), []),
+            Err(e) => vec![format!("ERR {tool} {e}")],
         },
         // Revoking a grant should remove what it produced, not merely hide it.
         // Read one indexed document back, so a result can be opened rather
         // than merely located.
         "doc.read" => {
             let Some(url) = arg_val(args, "url") else {
-                return vec!["ERR doc.read missing_url".into()];
+                return vec![format!("ERR {tool} missing_url")];
             };
             let max = arg_usize(args, "lines", 24, 200);
             match read_doc(url, max, arg_flag(args, "files"), arg_flag(args, "audio")) {
-                Ok(lines) => {
-                    text::framed_ok(format!("OK doc.read n={}", lines.len()), lines)
-                }
-                Err(e) => vec![format!("ERR doc.read {e}")],
+                Ok(lines) => text::framed_ok(format!("OK {tool} n={}", lines.len()), lines),
+                Err(e) => vec![format!("ERR {tool} {e}")],
             }
         }
         "workspace.forget" => forget_file(tool, &workspace::index_path()),
@@ -376,17 +374,17 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
             // Building the index reads the user's files, so it needs the same
             // grant as searching them.
             if !arg_flag(args, "files") {
-                return vec!["ERR workspace.index needs_workspace_cap".into()];
+                return vec![format!("ERR {tool} needs_workspace_cap")];
             }
             let roots = workspace::roots();
             let ix = workspace::build(&roots);
             let n = ix.entries.len();
             match ix.save() {
                 Ok(p) => text::framed_ok(
-                    format!("OK workspace.index n={n} path={}", p.display()),
+                    format!("OK {tool} n={n} path={}", p.display()),
                     [],
                 ),
-                Err(e) => vec![format!("ERR workspace.index {e}")],
+                Err(e) => vec![format!("ERR {tool} {e}")],
             }
         }
         "search.query" => {
@@ -402,7 +400,7 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
             // enabling workspace.index must not surface transcripts.
             let with_audio = arg_flag(args, "audio");
             if q.is_empty() {
-                vec!["ERR search.query missing_q".into()]
+                vec![format!("ERR {tool} missing_q")]
             } else {
                 search::query_all(q, k, cat, with_email, with_files, with_audio)
             }
@@ -485,7 +483,8 @@ fn read_doc(
             .ok_or("no such transcript")?
     } else {
         // Corpus and teddysearch documents carry their body in the index.
-        return search::body_for(url, max).ok_or_else(|| "no readable body".into());
+        let body = search::body_for(url).ok_or("no readable body")?;
+        return Ok(search::wrap_lines(body, 78, max));
     };
 
     Ok(search::wrap_lines(&body, 78, max))
@@ -509,12 +508,12 @@ fn arg_usize(args: &[(String, String)], key: &str, default: usize, max: usize) -
         .clamp(1, max)
 }
 
-fn email_search(query: &str, max: usize) -> Vec<String> {
+fn email_search(tool: &str, query: &str, max: usize) -> Vec<String> {
     let backend = env::var("OS_MCP_EMAIL_BACKEND").unwrap_or_else(|_| "mock".into());
 
     let out = match backend.as_str() {
-        "gog" => email_search_gog(query, max),
-        _ => email_search_mock(query, max),
+        "gog" => email_search_gog(tool, query, max),
+        _ => email_search_mock(tool, query, max),
     };
     // Fold what we just fetched into the knowledge graph. Hooked here rather
     // than inside a backend so every backend feeds it. Best effort: failing to
@@ -523,7 +522,7 @@ fn email_search(query: &str, max: usize) -> Vec<String> {
     out
 }
 
-fn email_search_mock(query: &str, max: usize) -> Vec<String> {
+fn email_search_mock(tool: &str, query: &str, max: usize) -> Vec<String> {
     let query = sanitize_field(query);
     let samples = [
         ("Alice Chen", "Q2 planning notes"),
@@ -535,10 +534,10 @@ fn email_search_mock(query: &str, max: usize) -> Vec<String> {
         .iter()
         .take(n)
         .map(|(from, subj)| format!("ROW from={from}|subj={subj}"));
-    text::framed_ok(format!("OK email.search n={n}"), rows)
+    text::framed_ok(format!("OK {tool} n={n}"), rows)
 }
 
-fn email_search_gog(query: &str, max: usize) -> Vec<String> {
+fn email_search_gog(tool: &str, query: &str, max: usize) -> Vec<String> {
     // `--` stops flag parsing so an untrusted query cannot inject gog flags.
     let output = Command::new("gog")
         .args([
@@ -556,9 +555,9 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
         Ok(o) if o.status.success() => o,
         Ok(o) => {
             let brief = text::stderr_brief(&o.stderr, "gog_failed", 80);
-            return vec![format!("ERR email.search {brief}")];
+            return vec![format!("ERR {tool} {brief}")];
         }
-        Err(_) => return vec!["ERR email.search gog_missing".into()],
+        Err(_) => return vec![format!("ERR {tool} gog_missing")],
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -601,7 +600,7 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
     }
 
     let n = rows.len();
-    text::framed_ok(format!("OK email.search n={n}"), rows)
+    text::framed_ok(format!("OK {tool} n={n}"), rows)
 }
 
 fn sanitize_field(s: &str) -> String {
@@ -614,7 +613,7 @@ mod tests {
 
     #[test]
     fn mock_search_returns_rows() {
-        let r = email_search_mock("in:inbox", 2);
+        let r = email_search_mock("email.search", "in:inbox", 2);
         assert!(r[0].starts_with("OK email.search n=2"));
         assert!(r.iter().any(|l| l.starts_with("ROW ")));
         assert_eq!(r.last().map(String::as_str), Some("END"));

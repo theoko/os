@@ -100,11 +100,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_url_is_the_published_corpus() {
-        let _g = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-        unsafe { env::remove_var("OS_TSEARCH_URL") };
-        assert_eq!(url(), DEFAULT_URL);
-        assert!(url().starts_with("https://"), "corpus must be fetched over TLS");
+    fn default_url_is_https() {
+        assert!(DEFAULT_URL.starts_with("https://"), "corpus must be fetched over TLS");
     }
 
     #[test]

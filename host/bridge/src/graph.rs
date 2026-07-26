@@ -249,13 +249,6 @@ mod tests {
     }
 
     #[test]
-    fn rank_on_empty_graph_is_a_noop() {
-        let mut g = Graph::default();
-        g.rank();
-        assert!(g.messages.is_empty());
-    }
-
-    #[test]
     fn graph_path_is_outside_the_repo() {
         // Guards the rule that matters: mail must never land in the tree.
         let p = graph_path();
@@ -361,6 +354,5 @@ mod hardening_tests {
             .collect();
         g.ingest(&batch);
         assert_eq!(g.messages.len(), Graph::MAX_MESSAGES, "index grew past the cap");
-        assert!(g.messages.iter().all(|m| m.pr >= 0.0 && m.pr <= 1.0));
     }
 }

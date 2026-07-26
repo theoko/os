@@ -141,14 +141,16 @@ pub fn transcribe(path: &Path) -> Result<(Transcript, f64), String> {
 
 /// A readable title: the first clause of speech, falling back to the filename.
 fn title_for(path: &Path, text: &str) -> String {
-    let first: String = text
-        .split_whitespace()
-        .take(9)
-        .collect::<Vec<_>>()
-        .join(" ")
-        .chars()
-        .take(70)
-        .collect();
+    let mut first = String::new();
+    for (i, w) in text.split_whitespace().take(9).enumerate() {
+        if i > 0 {
+            first.push(' ');
+        }
+        first.push_str(w);
+    }
+    if first.chars().count() > 70 {
+        first = first.chars().take(70).collect();
+    }
     if first.len() >= 12 {
         first
     } else {

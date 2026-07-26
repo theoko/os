@@ -237,8 +237,11 @@ fn build_corpus(manifest_dir: &Path) -> String {
     for d in &docs {
         let t = d["t"].as_str().unwrap_or("");
         let b = d["b"].as_str().unwrap_or("");
-        let mut toks = fold_tok(t);
-        toks.extend(fold_tok(t));
+        // Title counts twice (same as host `title_body_tokens`); tokenize once.
+        let title = fold_tok(t);
+        let mut toks = Vec::with_capacity(title.len() * 2 + 8);
+        toks.extend_from_slice(&title);
+        toks.extend(title);
         toks.extend(fold_tok(b));
         doc_tokens.push(toks);
     }

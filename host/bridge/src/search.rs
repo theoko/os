@@ -335,9 +335,10 @@ mod tests {
 /// Body text for a document URL, from the built-in corpus or teddysearch.
 ///
 /// These sources carry their text in the index, so reading needs no file
-/// access — and no capability beyond the one that found them.
-pub fn body_for(url: &str, max_lines: usize) -> Option<Vec<String>> {
-    let body = load_docs()
+/// access — and no capability beyond the one that found them. Callers wrap
+/// with [`wrap_lines`] (same path as `file://` / `audio://`).
+pub fn body_for(url: &str) -> Option<&'static str> {
+    load_docs()
         .ok()?
         .iter()
         .find(|d| d.u == url)
@@ -347,8 +348,7 @@ pub fn body_for(url: &str, max_lines: usize) -> Option<Vec<String>> {
                 .iter()
                 .find(|d| d.u == url)
                 .map(|d| d.b.as_str())
-        })?;
-    Some(wrap_lines(body, 78, max_lines))
+        })
 }
 
 /// Hard-wrap text into `ROW line=...` entries the guest can render directly.

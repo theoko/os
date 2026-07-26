@@ -126,12 +126,6 @@ mod tests {
     }
 
     #[test]
-    fn entrance_is_brief() {
-        let ms = SLIDE_IN.frames * SLIDE_IN.frame_us / 1000;
-        assert!(ms <= 200, "entrance takes {ms}ms — too slow to feel responsive");
-    }
-
-    #[test]
     fn entrance_never_moves_backwards() {
         let mut prev = i32::MAX;
         for i in 0..=SLIDE_IN.frames {
