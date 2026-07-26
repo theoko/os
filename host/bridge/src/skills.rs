@@ -74,7 +74,7 @@ fn parse_frontmatter(text: &str) -> Option<(String, String)> {
     Some((name?, description))
 }
 
-pub fn save_skill(name: &str, body: &str) -> Result<PathBuf, String> {
+pub fn save_skill(name: &str, body: &str) -> Result<(), String> {
     if name.is_empty()
         || !name
             .chars()
@@ -95,7 +95,7 @@ pub fn save_skill(name: &str, body: &str) -> Result<PathBuf, String> {
         )
         .map_err(|e| e.to_string())?;
     }
-    Ok(path)
+    Ok(())
 }
 
 pub fn list_response() -> Vec<String> {

@@ -58,20 +58,8 @@ fn is_media(path: &Path) -> bool {
         .unwrap_or(false)
 }
 
-/// Media duration in seconds, best effort.
-fn duration_secs(path: &Path) -> f64 {
-    let out = Command::new("ffprobe")
-        .args(["-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0"])
-        .arg(path)
-        .output();
-    match out {
-        Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().parse().unwrap_or(0.0),
-        _ => 0.0,
-    }
-}
-
-/// Transcribe `path`. Returns the transcript and duration (seconds) without storing.
-pub fn transcribe(path: &Path) -> Result<(Transcript, f64), String> {
+/// Transcribe `path`. Returns the transcript without storing.
+pub fn transcribe(path: &Path) -> Result<Transcript, String> {
     if !path.is_file() {
         return Err(format!("no such file: {}", path.display()));
     }
@@ -129,14 +117,11 @@ pub fn transcribe(path: &Path) -> Result<(Transcript, f64), String> {
         return Err("no speech detected".into());
     }
 
-    Ok((
-        Transcript {
-            source: path.to_string_lossy().to_string(),
-            title: title_for(path, &text),
-            text,
-        },
-        duration_secs(path),
-    ))
+    Ok(Transcript {
+        source: path.to_string_lossy().to_string(),
+        title: title_for(path, &text),
+        text,
+    })
 }
 
 /// A readable title: the first clause of speech, falling back to the filename.

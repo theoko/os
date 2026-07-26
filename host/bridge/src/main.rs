@@ -202,7 +202,7 @@ fn write_reply<W: Write>(writer: &mut W, reply: &[String]) -> std::io::Result<()
 
 fn save_skill_reply(name: &str, body: &str) -> Vec<String> {
     match skills::save_skill(name, body) {
-        Ok(path) => vec![format!("OK skills.save path={}", path.display())],
+        Ok(_) => vec!["OK skills.save".into()],
         Err(e) => vec![format!("ERR skills.save {e}")],
     }
 }
@@ -294,15 +294,14 @@ fn parse_args(rest: &str) -> Vec<(String, String)> {
     out
 }
 
-/// Delete a capability-produced store. Missing file is success (`nothing_to_remove`).
+/// Delete a capability-produced store. Missing file is success.
 fn forget_file(tool: &str, path: &std::path::Path) -> Vec<String> {
     match std::fs::remove_file(path) {
-        Ok(()) => text::framed_ok(format!("OK {tool} removed"), []),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-            text::framed_ok(format!("OK {tool} nothing_to_remove"), [])
-        }
-        Err(e) => vec![format!("ERR {tool} {e}")],
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Err(e) => return vec![format!("ERR {tool} {e}")],
     }
+    text::framed_ok(format!("OK {tool}"), [])
 }
 
 fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
@@ -323,10 +322,9 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
                 return vec![format!("ERR {tool} missing_path")];
             };
             match transcribe::transcribe(std::path::Path::new(path)) {
-                Ok((t, secs)) => {
+                Ok(t) => {
                     let mut store = transcribe::Store::load();
                     let summary = transcribe::summarize(&t.text);
-                    let words = t.text.split_whitespace().count();
                     let mut rows = vec![format!(
                         "ROW field=title|value={}",
                         sanitize_field(&t.title)
@@ -336,10 +334,7 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
                     }));
                     store.upsert(t);
                     let _ = store.save();
-                    text::framed_ok(
-                        format!("OK {tool} words={words} seconds={secs:.0}"),
-                        rows,
-                    )
+                    text::framed_ok(format!("OK {tool} n={}", rows.len()), rows)
                 }
                 Err(e) => vec![format!("ERR {tool} {e}")],
             }
@@ -369,10 +364,7 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
             let ix = workspace::build(&roots);
             let n = ix.entries.len();
             match ix.save() {
-                Ok(p) => text::framed_ok(
-                    format!("OK {tool} n={n} path={}", p.display()),
-                    [],
-                ),
+                Ok(_) => text::framed_ok(format!("OK {tool} n={n}"), []),
                 Err(e) => vec![format!("ERR {tool} {e}")],
             }
         }

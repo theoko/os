@@ -76,28 +76,8 @@ fn parse_row_pair<'a>(line: &'a str, ka: &str, kb: &str) -> (Option<&'a str>, Op
     (a, b)
 }
 
-/// Walk COM2 reply lines after a CALL. First line waits [`TIMEOUT_REPLY`];
-/// later lines use [`TIMEOUT_LINE`]. Callback returns `false` to stop.
-fn for_each_reply(
-    com2: &Serial,
-    line: &mut [u8],
-    max: usize,
-    mut f: impl FnMut(&str) -> bool,
-) {
-    let mut first = true;
-    for _ in 0..max {
-        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
-        let Some(n) = com2.read_line(line, timeout) else {
-            break;
-        };
-        first = false;
-        if !f(utf8_prefix(&line[..n])) {
-            break;
-        }
-    }
-}
-
 /// Drain a typical OK / ROW* / END reply. Stops on `ERR` / `END`.
+/// First line waits [`TIMEOUT_REPLY`]; later lines use [`TIMEOUT_LINE`].
 /// `on_row` returns `false` to stop early. Returns `(saw_err, n)` where `n`
 /// is the `n=` count from the OK header (0 if absent).
 fn for_each_ok_rows(
@@ -108,23 +88,29 @@ fn for_each_ok_rows(
 ) -> (bool, usize) {
     let mut saw_err = false;
     let mut ok_n = 0usize;
-    for_each_reply(com2, line, max, |resp| {
+    let mut first = true;
+    for _ in 0..max {
+        let timeout = if first { TIMEOUT_REPLY } else { TIMEOUT_LINE };
+        let Some(n) = com2.read_line(line, timeout) else {
+            break;
+        };
+        first = false;
+        let resp = utf8_prefix(&line[..n]);
         if resp.starts_with("ERR ") {
             saw_err = true;
-            return false;
+            break;
         }
         if resp == "END" {
-            return false;
+            break;
         }
         if resp.starts_with("OK ") {
             ok_n = parse_ok_n(resp);
-            return true;
+            continue;
         }
-        if resp.starts_with("ROW ") {
-            return on_row(resp);
+        if resp.starts_with("ROW ") && !on_row(resp) {
+            break;
         }
-        true
-    });
+    }
     (saw_err, ok_n)
 }
 
@@ -291,8 +277,7 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
         let _ = for_each_ok_rows(com2, line, 24, |resp| {
             let (name, desc) = parse_row_pair(resp, "name", "desc");
             peek.push(name.unwrap_or("?"), desc.unwrap_or(""))
-        })
-        .0;
+        });
 
         if peek.count() == 0 {
             // Bridge answered but listed nothing — still show ISO defaults.
@@ -377,12 +362,12 @@ mod tests {
             (Some("MCP overview"), Some("https://example/mcp"))
         );
 
-        let skill = "ROW name=email-triage|src=default|desc=Inbox via MCP email";
+        let skill = "ROW name=email-triage|desc=Inbox via MCP email";
         assert_eq!(
             parse_row_pair(skill, "name", "desc"),
             (Some("email-triage"), Some("Inbox via MCP email"))
         );
-        // Unread keys must not disturb neighbors.
-        assert_eq!(parse_row_pair(skill, "src", "").0, Some("default"));
+        // Single-key extract (doc.read uses `line=` this way).
+        assert_eq!(parse_row_pair(skill, "desc", "").0, Some("Inbox via MCP email"));
     }
 }
