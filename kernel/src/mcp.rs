@@ -31,7 +31,7 @@ pub(crate) const BRIDGE_OFFLINE_HINT: &str = bridge_offline_tip!();
 pub(crate) const NO_MATCHES_BRIDGE_OFFLINE: &str =
     concat!("No matches. ", bridge_offline_tip!());
 
-/// Host mock / gog default peek count (guest omits `max=` on the wire).
+/// Mock bridge peek count (CI). Gog reports the true match count instead.
 /// Bridge twin: `GUEST_MAIL_MAX`.
 pub(crate) const MAIL_PEEK_MAX: usize = 3;
 const _: () = assert!(MAIL_PEEK_MAX == 3);
@@ -147,7 +147,7 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
             return MailPeek::Online { inbox: None };
         }
 
-        // Guest omits args; host gog defaults q=in:inbox / max=MAIL_PEEK_MAX.
+        // Guest omits args; host gog defaults q=in:inbox (mock uses MAIL_PEEK_MAX).
         com2.write_str("CALL email.search\n");
 
         // One `ROW n=<count>`; missing/ERR is not an empty inbox.

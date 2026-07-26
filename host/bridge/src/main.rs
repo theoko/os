@@ -282,7 +282,9 @@ fn forget_file(tool: &str, path: &std::path::Path) -> Vec<String> {
     text::framed_ok(format!("OK {tool}"), [])
 }
 
-/// Guest peek budgets (guest omits these args on the wire).
+/// Mock CI peek count (`email.search`). Gog does not use this as a clamp.
+/// Guest omits args on the wire; `GUEST_MAX_HITS` / `GUEST_DOC_LINES` are
+/// defaults when nc omits `k=` / `lines=`.
 const GUEST_MAIL_MAX: usize = 3;
 const GUEST_MAX_HITS: usize = 3;
 const GUEST_DOC_LINES: usize = 18;
@@ -290,13 +292,11 @@ const GUEST_DOC_LINES: usize = 18;
 fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
     match tool {
         "email.search" => {
-            // Guest mail peek omits args; mock is a fixed peek count.
+            // Peek is `ROW n=<count>` only — no message ROWs. Mock uses a fixed
+            // CI count; gog reports the true match count (no leftover max= clamp).
             let backend = env::var("OS_MCP_EMAIL_BACKEND").unwrap_or_else(|_| "mock".into());
             match backend.as_str() {
-                "gog" => email_search_gog(
-                    arg_val(args, "q").unwrap_or("in:inbox"),
-                    arg_usize(args, "max", GUEST_MAIL_MAX, 20),
-                ),
+                "gog" => email_search_gog(arg_val(args, "q").unwrap_or("in:inbox")),
                 _ => email_count_ok(GUEST_MAIL_MAX),
             }
         }
@@ -459,7 +459,7 @@ fn email_count_ok(n: usize) -> Vec<String> {
     text::framed_ok("OK email.search".into(), [format!("ROW n={n}")])
 }
 
-fn email_search_gog(query: &str, max: usize) -> Vec<String> {
+fn email_search_gog(query: &str) -> Vec<String> {
     // `--` stops flag parsing so an untrusted query cannot inject gog flags.
     let output = Command::new("gog")
         .args([
@@ -492,11 +492,12 @@ fn email_search_gog(query: &str, max: usize) -> Vec<String> {
             .or_else(|| val.get("threads").and_then(|t| t.as_array()).map(|a| a.as_slice()))
             .or_else(|| val.get("messages").and_then(|t| t.as_array()).map(|a| a.as_slice()))
             .unwrap_or(&[]);
-        n = items.len().min(max);
+        // Count-only peek: report how many hits gog returned (do not re-clamp).
+        n = items.len();
     }
 
     if n == 0 {
-        n = stdout.lines().filter(|l| !l.trim().is_empty()).take(max).count();
+        n = stdout.lines().filter(|l| !l.trim().is_empty()).count();
     }
 
     email_count_ok(n)

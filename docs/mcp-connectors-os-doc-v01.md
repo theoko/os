@@ -32,7 +32,7 @@ Guest → host:
 | Request | Meaning |
 |---------|---------|
 | `PING` | Liveness |
-| `CALL email.search [q=…] [max=n]` | Inbox peek count (`ROW n=`); guest omits args |
+| `CALL email.search [q=…]` | Inbox peek count (`ROW n=`); guest omits args; gog reports true match count |
 | `CALL email.send …` | Always `ERR … disabled_until_cap_confirm` (policy stub) |
 | `CALL search.query q=<keywords> [k=n] …` | Knowledge search (+ optional files/audio scopes) |
 | `CALL skills.list` / `skills.save` | Skill playbooks |

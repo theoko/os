@@ -11,7 +11,7 @@ description: >-
 ## Rules
 
 1. Call `email.search` (cap required). Guest peeks with a bare CALL; host may
-   accept optional `q=` / `max=` for nc/gog.
+   accept optional `q=` for nc/gog (count-only `ROW n=`).
 2. Read `ROW n=<count>` only — no per-message payloads on the wire. Do not
    invent subjects, senders, or bodies.
 3. Propose next actions from the count (open host Gmail, wait, draft offline).
