@@ -231,7 +231,7 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, bridge_note: &str) {
 
     for i in 0..view.count {
         let r = &view.rows[i];
-        crate::ui::outlined_round_rect(fb, fx, y, fw, ROW_H, 10, theme::CARD_BORDER, theme::SURFACE);
+        crate::ui::outlined_round_rect(fb, fx, y, fw, ROW_H, 10);
         fb.draw_text(fx + 18, y + 26, r.title(), &BRAND_FACE, 0, theme::INK);
         // Category chip, right-aligned.
         let cw = SMALL_FACE.width(r.cat(), 0);

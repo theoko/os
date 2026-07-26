@@ -245,13 +245,7 @@ impl Setup {
             } else {
                 desc
             };
-            ui::draw_titled_row(
-                fb,
-                ui::Rect::new(x, y, cw, ROW_H),
-                skills.name_at(i),
-                sub,
-                theme::CARD_BORDER,
-            );
+            ui::draw_titled_row(fb, ui::Rect::new(x, y, cw, ROW_H), skills.name_at(i), sub);
             y += ROW_H + 8;
         }
         self.footer(fb, w, h, y);
@@ -297,13 +291,7 @@ impl Setup {
     ) {
         let cw = CONTENT_W.min(w - 80);
         let x = (w - cw) / 2;
-        ui::draw_titled_row(
-            fb,
-            ui::Rect::new(x, y, cw, ROW_H),
-            title,
-            blurb,
-            theme::CARD_BORDER,
-        );
+        ui::draw_titled_row(fb, ui::Rect::new(x, y, cw, ROW_H), title, blurb);
         let pad = 18;
         ui::draw_switch(
             fb,
@@ -317,7 +305,7 @@ impl Setup {
     fn status_card(&mut self, fb: &Surface, w: i32, y: i32, label: &str, detail: &str, tint: u32) {
         let cw = CONTENT_W.min(w - 80);
         let x = (w - cw) / 2;
-        ui::outlined_round_rect(fb, x, y, cw, ROW_H + 8, 10, theme::CARD_BORDER, theme::SURFACE);
+        ui::outlined_round_rect(fb, x, y, cw, ROW_H + 8, 10);
         let pad = 18;
         let d = 9;
         fb.fill_round_rect(x + pad, y + (ROW_H + 8 - d) / 2, d, d, d / 2, tint);

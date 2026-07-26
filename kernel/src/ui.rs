@@ -89,31 +89,22 @@ pub fn hit_among(
     (0..count).find(|&i| rect_at(i).contains(px, py))
 }
 
-/// Hairline border + fill rounded rect (search field, tiles, rows).
-pub fn outlined_round_rect(
-    fb: &Surface,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
-    radius: i32,
-    border: u32,
-    fill: u32,
-) {
-    fb.fill_round_rect(x, y, w, h, radius, border);
+/// Hairline card border + white fill rounded rect (search field, tiles, rows).
+pub fn outlined_round_rect(fb: &Surface, x: i32, y: i32, w: i32, h: i32, radius: i32) {
+    fb.fill_round_rect(x, y, w, h, radius, theme::CARD_BORDER);
     fb.fill_round_rect(
         x + 1,
         y + 1,
         w - 2,
         h - 2,
         radius.saturating_sub(1),
-        fill,
+        theme::SURFACE,
     );
 }
 
 /// Bordered list row: title + muted subtitle (Skills / Caps chrome).
-pub fn draw_titled_row(fb: &Surface, r: Rect, title: &str, sub: &str, border: u32) {
-    outlined_round_rect(fb, r.x, r.y, r.w, r.h, 10, border, theme::SURFACE);
+pub fn draw_titled_row(fb: &Surface, r: Rect, title: &str, sub: &str) {
+    outlined_round_rect(fb, r.x, r.y, r.w, r.h, 10);
     fb.draw_text(r.x + 18, r.y + 26, title, &BRAND_FACE, 0, theme::INK);
     fb.draw_text(r.x + 18, r.y + 46, sub, &SMALL_FACE, 0, theme::MUTED);
 }
@@ -132,7 +123,7 @@ pub fn draw_query_field(
     placeholder: &str,
     badge: Option<&str>,
 ) {
-    outlined_round_rect(fb, x, y, w, h, 12, theme::CARD_BORDER, theme::SURFACE);
+    outlined_round_rect(fb, x, y, w, h, 12);
     let tx = x + 18;
     let base = y + (h - BODY_FACE.px) / 2 + BODY_FACE.baseline();
     let badge_w = badge.map(|b| SMALL_FACE.width(b, 0) + 18).unwrap_or(0);
@@ -228,7 +219,7 @@ pub fn draw_home_full(
     ];
     for (i, (title, sub)) in tiles.iter().enumerate() {
         let r = tile_rect(w, i as i32);
-        outlined_round_rect(fb, r.x, r.y, r.w, r.h, 16, theme::CARD_BORDER, theme::SURFACE);
+        outlined_round_rect(fb, r.x, r.y, r.w, r.h, 16);
         fb.draw_text(r.x + 18, r.y + 34, title, &H2_FACE, 0, theme::INK);
         fb.draw_text(r.x + 18, r.y + 58, sub, &SMALL_FACE, 0, theme::MUTED);
     }

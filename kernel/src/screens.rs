@@ -81,7 +81,7 @@ pub fn chrome(fb: &Surface, w: i32, title: &str, heading: Option<&str>) {
 /// A bordered row with a title and a subtitle.
 fn row(fb: &Surface, w: i32, i: usize, title: &str, sub: &str) -> ui::Rect {
     let r = row_rect(w, i);
-    ui::draw_titled_row(fb, r, title, sub, theme::CARD_BORDER);
+    ui::draw_titled_row(fb, r, title, sub);
     r
 }
 
