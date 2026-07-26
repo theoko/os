@@ -16,10 +16,10 @@ const CMD: u16 = 0x64;
 const SPIN: u32 = 20_000;
 
 
-fn wait_ibf_clear(spins: u32) -> bool {
+fn wait_ibf_clear() -> bool {
     #[cfg(target_arch = "x86_64")]
     unsafe {
-        for _ in 0..spins {
+        for _ in 0..SPIN {
             if port::inb(STATUS) & 0x02 == 0 {
                 return true;
             }
@@ -29,7 +29,6 @@ fn wait_ibf_clear(spins: u32) -> bool {
     }
     #[cfg(not(target_arch = "x86_64"))]
     {
-        let _ = spins;
         false
     }
 }
@@ -53,7 +52,7 @@ fn wait_obf_set(spins: u32) -> bool {
 }
 
 fn write_cmd(cmd: u8) -> bool {
-    if !wait_ibf_clear(SPIN) {
+    if !wait_ibf_clear() {
         return false;
     }
     #[cfg(target_arch = "x86_64")]
@@ -66,7 +65,7 @@ fn write_cmd(cmd: u8) -> bool {
 }
 
 fn write_data(data: u8) -> bool {
-    if !wait_ibf_clear(SPIN) {
+    if !wait_ibf_clear() {
         return false;
     }
     #[cfg(target_arch = "x86_64")]

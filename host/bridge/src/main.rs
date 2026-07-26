@@ -310,7 +310,9 @@ fn forget_file(tool: &str, path: &std::path::Path) -> Vec<String> {
 
 fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
     match tool {
-        "email.search" => email_search(args),
+        "email.search" => {
+            email_search(arg_val(args, "q").unwrap_or("in:inbox"), arg_usize(args, "max", 5, 20))
+        }
         "email.send" => vec!["ERR email.send disabled_until_cap_confirm".into()],
         "skills.list" => skills::list_response(),
         "skills.get" => {
@@ -361,7 +363,7 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
                 return vec!["ERR doc.read missing_url".into()];
             };
             let max = arg_usize(args, "lines", 24, 200);
-            match read_doc(url, max, args) {
+            match read_doc(url, max, arg_flag(args, "files"), arg_flag(args, "audio")) {
                 Ok(lines) => {
                     text::framed_ok(format!("OK doc.read n={}", lines.len()), lines)
                 }
@@ -445,10 +447,12 @@ fn parse_row_field<'a>(row: &'a str, key: &str) -> Option<&'a str> {
 /// Scope is checked per source, using the same flags as `search.query`: a
 /// caller that could not have found the document must not be able to read it
 /// by guessing its URL.
-fn read_doc(url: &str, max: usize, args: &[(String, String)]) -> Result<Vec<String>, String> {
-    let with_files = arg_flag(args, "files");
-    let with_audio = arg_flag(args, "audio");
-
+fn read_doc(
+    url: &str,
+    max: usize,
+    with_files: bool,
+    with_audio: bool,
+) -> Result<Vec<String>, String> {
     let body = if let Some(rel) = url.strip_prefix("file://") {
         if !with_files {
             return Err("needs_workspace_cap".into());
@@ -505,9 +509,7 @@ fn arg_usize(args: &[(String, String)], key: &str, default: usize, max: usize) -
         .clamp(1, max)
 }
 
-fn email_search(args: &[(String, String)]) -> Vec<String> {
-    let query = arg_val(args, "q").unwrap_or("in:inbox");
-    let max = arg_usize(args, "max", 5, 20);
+fn email_search(query: &str, max: usize) -> Vec<String> {
     let backend = env::var("OS_MCP_EMAIL_BACKEND").unwrap_or_else(|_| "mock".into());
 
     let out = match backend.as_str() {
@@ -674,27 +676,22 @@ mod tests {
 mod read_tests {
     use super::*;
 
-    fn args(pairs: &[(&str, &str)]) -> Vec<(String, String)> {
-        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
-    }
-
     #[test]
     fn reading_a_file_needs_the_workspace_grant() {
         // Guessing a URL must not bypass the grant that would have found it.
-        let e = read_doc("file://a/b.md", 10, &args(&[])).unwrap_err();
+        let e = read_doc("file://a/b.md", 10, false, false).unwrap_err();
         assert_eq!(e, "needs_workspace_cap");
     }
 
     #[test]
     fn reading_a_transcript_needs_the_audio_grant() {
-        let e = read_doc("audio:///tmp/x.wav", 10, &args(&[("files", "1")])).unwrap_err();
+        let e = read_doc("audio:///tmp/x.wav", 10, true, false).unwrap_err();
         assert_eq!(e, "needs_audio_cap", "the files grant must not unlock recordings");
     }
 
     #[test]
     fn traversal_outside_the_indexed_roots_is_refused() {
-        let e = read_doc("file://../../../../etc/passwd", 10, &args(&[("files", "1")]))
-            .unwrap_err();
+        let e = read_doc("file://../../../../etc/passwd", 10, true, false).unwrap_err();
         assert!(e.contains("outside the indexed roots"), "{e}");
     }
 

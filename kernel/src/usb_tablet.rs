@@ -155,19 +155,19 @@ impl UsbTablet {
         }
         // Port reset returns the device to the default address.
         me.addr = 0;
-        if me.set_address(1).is_none() {
+        if me.set_address().is_none() {
             return Probe::NotTablet("set-addr");
         }
         me.addr = 1;
         if let Err(r) = me.identify() {
             return Probe::NotTablet(r);
         }
-        if me.set_configuration(1).is_none() {
+        if me.set_configuration().is_none() {
             return Probe::NotTablet("set-cfg");
         }
         // HID: prefer Report protocol; ignore failures (some firmwares NAK).
         let _ = me.hid_set_idle();
-        let _ = me.hid_set_protocol(1);
+        let _ = me.hid_set_protocol();
         Probe::Bound(me)
     }
 
@@ -420,9 +420,9 @@ impl UsbTablet {
         Some(())
     }
 
-    /// GET_DESCRIPTOR(type, index) into `buf`, requesting exactly `buf.len()`.
-    fn get_descriptor(&mut self, desc_type: u8, index: u8, buf: &mut [u8]) -> Option<()> {
-        self.control(0x80, 0x06, ((desc_type as u16) << 8) | index as u16, 0, buf)
+    /// GET_DESCRIPTOR(type, index 0) into `buf`, requesting exactly `buf.len()`.
+    fn get_descriptor(&mut self, desc_type: u8, buf: &mut [u8]) -> Option<()> {
+        self.control(0x80, 0x06, (desc_type as u16) << 8, 0, buf)
     }
 
     /// Is the device on this port an absolute pointer we can drive?
@@ -436,7 +436,7 @@ impl UsbTablet {
     ///   usb-tablet  subclass 0,        protocol 0  <- absolute, what we want
     fn identify(&mut self) -> Result<(), &'static str> {
         let mut dev = [0u8; 18];
-        if self.get_descriptor(1, 0, &mut dev).is_none() {
+        if self.get_descriptor(1, &mut dev).is_none() {
             return Err("dev-desc");
         }
         // bDescriptorType must be DEVICE, and the device class must be 0 so the
@@ -447,7 +447,7 @@ impl UsbTablet {
 
         // Config descriptor header first, to learn wTotalLength.
         let mut head = [0u8; 9];
-        if self.get_descriptor(2, 0, &mut head).is_none() || head[1] != 0x02 {
+        if self.get_descriptor(2, &mut head).is_none() || head[1] != 0x02 {
             return Err("cfg-hdr");
         }
         let total = u16::from_le_bytes([head[2], head[3]]) as usize;
@@ -455,7 +455,7 @@ impl UsbTablet {
             return Err("cfg-len");
         }
         let mut cfg = [0u8; 128];
-        if self.get_descriptor(2, 0, &mut cfg[..total]).is_none() {
+        if self.get_descriptor(2, &mut cfg[..total]).is_none() {
             return Err("cfg-body");
         }
 
@@ -491,14 +491,16 @@ impl UsbTablet {
         Err("not-hid")
     }
 
-    fn set_address(&mut self, new_addr: u8) -> Option<()> {
+    /// Assign USB address 1 (sole device on this root port).
+    fn set_address(&mut self) -> Option<()> {
         let mut empty: [u8; 0] = [];
-        self.control(0x00, 0x05, new_addr as u16, 0, &mut empty)
+        self.control(0x00, 0x05, 1, 0, &mut empty)
     }
 
-    fn set_configuration(&mut self, cfg: u8) -> Option<()> {
+    /// Select configuration 1 (HID tablets ship a single config).
+    fn set_configuration(&mut self) -> Option<()> {
         let mut empty: [u8; 0] = [];
-        self.control(0x00, 0x09, cfg as u16, 0, &mut empty)
+        self.control(0x00, 0x09, 1, 0, &mut empty)
     }
 
     fn hid_set_idle(&mut self) -> Option<()> {
@@ -506,9 +508,10 @@ impl UsbTablet {
         self.control(0x21, 0x0A, 0, 0, &mut empty)
     }
 
-    fn hid_set_protocol(&mut self, protocol: u16) -> Option<()> {
+    /// Prefer HID Report protocol (1).
+    fn hid_set_protocol(&mut self) -> Option<()> {
         let mut empty: [u8; 0] = [];
-        self.control(0x21, 0x0B, protocol, 0, &mut empty)
+        self.control(0x21, 0x0B, 1, 0, &mut empty)
     }
 
     pub fn poll(&mut self, mice: &mut crate::mouse::Mouse) -> bool {
