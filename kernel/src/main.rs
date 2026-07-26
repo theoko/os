@@ -276,13 +276,14 @@ unsafe extern "C" fn kmain() -> ! {
                                     let before = setup.caps;
                                     setup.caps.toggle(i);
                                     let cap = caps::Cap::ALL[i];
-                                    if before.allows(cap)
-                                        && !setup.caps.allows(cap)
-                                        && mcp::forget(cap)
-                                    {
-                                        serial_port.write_str("caps: revoked ");
-                                        serial_port.write_str(cap.name());
-                                        serial_port.write_str(" - purged\n");
+                                    if before.allows(cap) && !setup.caps.allows(cap) {
+                                        // Log the purge CALL verb (`*.forget`), not Cap::name()
+                                        // (Files/Transcripts producers are never guest-CALLed).
+                                        if let Some(tool) = mcp::forget(cap) {
+                                            serial_port.write_str("caps: revoked ");
+                                            serial_port.write_str(tool);
+                                            serial_port.write_str(" - purged\n");
+                                        }
                                     }
                                     dirty = true;
                                 }

@@ -31,7 +31,9 @@ when `email.search` is granted.
 4. Footer: inbox count, active caps, bridge status
 
 Capabilities rows use short human labels (`Inbox`, `Knowledge`, `Files`,
-`Transcripts`); host-tool verbs stay on the wire / COM1 revoke lines.
+`Transcripts`). Guest Inbox/Knowledge CALLs use `Cap::name()`; Files/Transcripts
+scopes are `files=1` / `audio=1`. COM1 revoke lines log the purge tool
+(`workspace.forget` / `audio.forget`), not the host producer name.
 
 Home and list screens share one content column cap (`CONTENT_MAX` = 720) so the
 search field width does not jump when Enter opens Search.

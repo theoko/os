@@ -143,7 +143,9 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
         }
 
         // Guest omits args; host gog defaults q=in:inbox (mock returns a fixed CI count).
-        com2.write_str("CALL email.search\n");
+        com2.write_str("CALL ");
+        com2.write_str(crate::caps::Cap::EmailSearch.name());
+        com2.write_str("\n");
 
         // One `ROW n=<count>`; missing/ERR is not an empty inbox.
         let mut n: Option<usize> = None;
@@ -234,17 +236,20 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str, title: &str) -> DocPage {
 /// Turning a switch off should remove the index it built, not just stop
 /// answering from it — otherwise "off" means "hidden", which is not what the
 /// switch says.
-/// Returns `true` when a purge CALL got a framed OK (not `ERR` / offline).
-pub fn forget(cap: crate::caps::Cap) -> bool {
-    let Some(tool) = cap.forget_tool() else {
-        return false;
-    };
-    when_online(false, |com2, line| {
+/// Returns the purge tool that got a framed OK (`workspace.forget` /
+/// `audio.forget`), or `None` when there is no purge tool / offline / `ERR`.
+pub fn forget(cap: crate::caps::Cap) -> Option<&'static str> {
+    let tool = cap.forget_tool()?;
+    when_online(None, |com2, line| {
         com2.write_str("CALL ");
         com2.write_str(tool);
         com2.write_str("\n");
         // Framed forget is OK + END (stop on ERR) so the next call starts clean.
-        !for_each_ok_rows(com2, line, FRAMED_PAD, |_| true)
+        if for_each_ok_rows(com2, line, FRAMED_PAD, |_| true) {
+            None
+        } else {
+            Some(tool)
+        }
     })
 }
 
@@ -288,7 +293,9 @@ pub(crate) fn fetch_search_rows(
     when_online(DocOutcome::Offline, |com2, line| {
         // CALL search.query q=… [files=1] [audio=1]
         // Bridge default k= matches MAX_HITS. Mail is peek-only (no search hits).
-        com2.write_str("CALL search.query q=");
+        com2.write_str("CALL ");
+        com2.write_str(crate::caps::Cap::SearchQuery.name());
+        com2.write_str(" q=");
         com2.write_str(q);
         write_scope_flags(com2, caps);
         com2.write_str("\n");

@@ -10,7 +10,9 @@
 /// Named capabilities: UI rows + COM2 scope / forget wiring.
 ///
 /// [`Self::label`] is what setup / Capabilities paint. [`Self::name`] is the
-/// stable host-tool verb (serial revoke lines, docs, nc).
+/// stable host producer / grant id (Inbox/Knowledge CALL verbs; Files/Transcripts
+/// are host `workspace.index` / `audio.transcribe` — guest search sends
+/// `files=1` / `audio=1`). Revoke purge CALLs use [`Self::forget_tool`].
 #[derive(Clone, Copy)]
 pub enum Cap {
     EmailSearch = 0,
@@ -34,7 +36,10 @@ impl Cap {
         Cap::AudioTranscribe,
     ];
 
-    /// Host-tool verb (wire / COM1). Not the Capabilities row title.
+    /// Host producer / grant id. Not the Capabilities row title.
+    ///
+    /// Inbox/Knowledge: guest `CALL` verb. Files/Transcripts: host index tools
+    /// (guest never CALLs these — scopes are `files=1` / `audio=1`).
     pub const fn name(self) -> &'static str {
         match self {
             Cap::EmailSearch => "email.search",
@@ -127,7 +132,7 @@ mod tests {
     }
 
     #[test]
-    fn wire_names_are_stable() {
+    fn producer_names_are_stable() {
         assert_eq!(Cap::EmailSearch.name(), "email.search");
         assert_eq!(Cap::SearchQuery.name(), "search.query");
         assert_eq!(Cap::WorkspaceIndex.name(), "workspace.index");
