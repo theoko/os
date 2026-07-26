@@ -41,6 +41,14 @@ but leaves it unable to receive input.
   millisecond pacing rather than CPU-dependent spin counts.
 - Keyboard and pointer reports are polled every millisecond without waiting
   for an interrupt controller.
+- VirtualBox's absolute tablet is decoded using its native eight-byte report
+  layout. The OHCI done queue is consumed and acknowledged on every completed
+  transfer, so pointer delivery remains continuous.
+- Cursor moves save and restore the pixels beneath the arrow, preventing
+  trails or a second cursor at the initial center position.
+- The ARM64 target builds the optimized release kernel by default. Its MMIO
+  helpers deliberately emit simple non-writeback loads and stores because
+  VirtualBox's ARM interpreter can stall on equivalent pre/post-indexed forms.
 - Debug UART output is muted on VirtualBox after platform detection because
   that emulated PL011 can retain a full FIFO and must never pace the UI.
 
@@ -63,4 +71,3 @@ To launch an existing VM headlessly for diagnostics:
 ```sh
 VBOX_FRONTEND=headless make virtualbox-arm64
 ```
-

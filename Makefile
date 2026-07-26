@@ -11,7 +11,11 @@ KERNEL_PROFILE ?= dev
 KERNEL_PROFILE_DIR := $(if $(filter dev,$(KERNEL_PROFILE)),debug,$(KERNEL_PROFILE))
 KERNEL_ELF := target/$(KERNEL_TARGET)/$(KERNEL_PROFILE_DIR)/kernel
 ARM64_KERNEL_TARGET := aarch64-unknown-none
-ARM64_KERNEL_ELF := target/$(ARM64_KERNEL_TARGET)/$(KERNEL_PROFILE_DIR)/kernel
+# VirtualBox is the interactive ARM product path, so ship its optimized build
+# by default while preserving the x86 developer profile and override knobs.
+ARM64_KERNEL_PROFILE ?= release
+ARM64_KERNEL_PROFILE_DIR := $(if $(filter dev,$(ARM64_KERNEL_PROFILE)),debug,$(ARM64_KERNEL_PROFILE))
+ARM64_KERNEL_ELF := target/$(ARM64_KERNEL_TARGET)/$(ARM64_KERNEL_PROFILE_DIR)/kernel
 ARM64_IMAGE_NAME := os-arm64
 LIMINE_BRANCH := v9.x-binary
 BRIDGE_ADDR ?= 127.0.0.1:7420
@@ -53,7 +57,7 @@ kernel:
 # Apple Silicon VirtualBox virtualises ARM guests. This parallel target keeps
 # the existing x86 image intact while producing the ARM64 kernel binary.
 arm64-kernel:
-	$(WITH_RUST) $(CARGO) build -p kernel --target $(ARM64_KERNEL_TARGET) --profile $(KERNEL_PROFILE)
+	$(WITH_RUST) $(CARGO) build -p kernel --target $(ARM64_KERNEL_TARGET) --profile $(ARM64_KERNEL_PROFILE)
 
 bridge:
 	$(WITH_RUST) $(CARGO) build -p os-mcp-bridge

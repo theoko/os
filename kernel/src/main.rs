@@ -60,15 +60,17 @@ unsafe extern "C" fn kmain() -> ! {
         serial::exit_qemu(false);
     }
 
+    // MMIO is not part of Limine's higher-half RAM map. Install the small
+    // identity-mapped device aperture before probing either PL011; otherwise
+    // the very first UART identification read can take a synchronous abort
+    // before fault vectors or the framebuffer exist.
+    #[cfg(target_arch = "aarch64")]
+    let _ = arm64_mmio::install_low_device_window();
+
     // Find the UART before anything logs through it. QEMU and VirtualBox put
     // their PL011 at different addresses; assuming QEMU's meant every line the
     // ARM guest wrote went into unmapped space.
-    serial::detect_pl011(
-        HHDM_REQUEST
-            .get_response()
-            .map(|r| r.offset())
-            .unwrap_or(0),
-    );
+    serial::detect_pl011(HHDM_REQUEST.get_response().map(|r| r.offset()).unwrap_or(0));
 
     let serial_port = serial::Serial::com1();
     serial_port.init();
@@ -363,20 +365,10 @@ unsafe extern "C" fn kmain() -> ! {
                 // First boot: run the setup journey before the home screen.
                 cursor.hide(surface);
                 setup.draw(surface, &mail, &skill_peek);
-                cursor.show_at(surface, x, y);
                 enter(&screen, animate);
-                // An ARM guest can have a framebuffer before it has a native
-                // pointer device. Keep the software cursor on the final frame
-                // so the screen never looks frozen while that driver is absent.
-                #[cfg(target_arch = "aarch64")]
-                {
-                    // Do not use the save/restore cursor here: QemuRamFB may
-                    // repaint after the transition and restore its saved page
-                    // over the arrow. A direct paint is persistent at rest.
-                    cursor.hide(surface);
-                    mouse::paint_pointer(surface, x, y);
-                }
-                #[cfg(not(target_arch = "aarch64"))]
+                // Save the background from the final transition frame, not
+                // the pre-transition page. The cursor can then restore its
+                // old footprint on the very first ARM tablet report.
                 cursor.show_at(surface, x, y);
                 screen.present();
                 serial_port.write_str("ui: setup welcome\n");

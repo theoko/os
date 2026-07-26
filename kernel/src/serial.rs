@@ -66,7 +66,8 @@ pub fn pl011_base() -> usize {
 /// probe talks itself into the wrong address, so check all four.
 #[cfg(target_arch = "aarch64")]
 fn is_pl011(base: usize) -> bool {
-    const PERIPH_ID: [(usize, u8); 4] = [(0xFE0, 0x11), (0xFE4, 0x10), (0xFE8, 0x14), (0xFEC, 0x00)];
+    const PERIPH_ID: [(usize, u8); 4] =
+        [(0xFE0, 0x11), (0xFE4, 0x10), (0xFE8, 0x14), (0xFEC, 0x00)];
     PERIPH_ID.iter().all(|(off, want)| {
         // SAFETY: device memory the firmware has already mapped; a read of a
         // wrong-but-mapped address returns a value that fails this check.
@@ -84,20 +85,15 @@ fn is_pl011(base: usize) -> bool {
 /// but firmware output - and its crashes had to be guessed at from
 /// screenshots.
 #[cfg(target_arch = "aarch64")]
-pub fn detect_pl011(hhdm: u64) -> Option<usize> {
-    // Try through the higher-half direct map first, then raw.
-    //
-    // Limine hands the kernel an MMU that maps physical memory at an offset,
-    // so a raw physical address is not a valid pointer. Writing to one is not
-    // a crash - it simply goes nowhere, which is why the ARM guest produced no
-    // serial output under either QEMU or VirtualBox while appearing to boot
-    // normally.
+pub fn detect_pl011(_hhdm: u64) -> Option<usize> {
+    // `kmain` installs an identity-mapped Device window before calling here.
+    // Never bias MMIO through Limine's HHDM: that map describes RAM, and an
+    // HHDM alias of a device address can synchronously abort on aarch64 before
+    // the kernel has installed its exception vectors.
     for base in Serial::PL011_CANDIDATES {
-        for candidate in [hhdm as usize + base, base] {
-            if is_pl011(candidate) {
-                PL011_BASE.store(candidate, core::sync::atomic::Ordering::Relaxed);
-                return Some(candidate);
-            }
+        if is_pl011(base) {
+            PL011_BASE.store(base, core::sync::atomic::Ordering::Relaxed);
+            return Some(base);
         }
     }
     None

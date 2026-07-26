@@ -348,8 +348,7 @@ impl OhciInput {
     /// TD. Hardware rewrites each TD's `next_td` to build this reverse list.
     fn take_done_mask(&mut self) -> usize {
         let hcca = unsafe { self.dma.ptr::<Hcca>(HCCA_OFF) };
-        let mut done =
-            unsafe { core::ptr::addr_of!((*hcca).done_head).read_volatile() } & !0xF;
+        let mut done = unsafe { core::ptr::addr_of!((*hcca).done_head).read_volatile() } & !0xF;
         if done == 0 {
             return 0;
         }
@@ -391,11 +390,48 @@ impl OhciInput {
     }
 
     fn read(&self, off: usize) -> u32 {
-        unsafe { self.regs.add(off / 4).read_volatile() }
+        let addr = unsafe { self.regs.add(off / 4) };
+        #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+        {
+            let value: u32;
+            unsafe {
+                // See `write`: VirtualBox's ARM interpreter must receive the
+                // non-writeback MMIO form or the guest PC can remain pinned
+                // to this load forever.
+                core::arch::asm!(
+                    "ldr {value:w}, [{addr}]",
+                    addr = in(reg) addr,
+                    value = out(reg) value,
+                    options(nostack, preserves_flags)
+                );
+            }
+            value
+        }
+        #[cfg(not(all(target_arch = "aarch64", target_os = "none")))]
+        unsafe {
+            addr.read_volatile()
+        }
     }
 
     fn write(&self, off: usize, value: u32) {
-        unsafe { self.regs.add(off / 4).write_volatile(value) }
+        let addr = unsafe { self.regs.add(off / 4) };
+        #[cfg(all(target_arch = "aarch64", target_os = "none"))]
+        unsafe {
+            // Keep this as the plain-register addressing form. In optimized
+            // builds VirtualBox 7.2 ARM can repeatedly trap a pre/post-indexed
+            // MMIO store without advancing PC, pinning the guest forever on a
+            // valid OHCI write.
+            core::arch::asm!(
+                "str {value:w}, [{addr}]",
+                addr = in(reg) addr,
+                value = in(reg) value,
+                options(nostack, preserves_flags)
+            );
+        }
+        #[cfg(not(all(target_arch = "aarch64", target_os = "none")))]
+        unsafe {
+            addr.write_volatile(value);
+        }
     }
 
     fn reset_controller(&mut self) -> bool {
@@ -415,13 +451,20 @@ impl OhciInput {
             }
         }
 
-        self.write(COMMAND_STATUS, CMD_HCR);
-        let mut deadline = self.clock.deadline(20);
-        while self.read(COMMAND_STATUS) & CMD_HCR != 0 {
-            if deadline.expired() {
-                return false;
+        // VirtualBox ARM presents the controller in the USB reset state after
+        // each VM power-on, but its OHCI model can pin the vCPU on the HCR
+        // MMIO write itself. Reinitialising every software-visible register
+        // below is sufficient there. Other controllers still get the normal
+        // host-controller reset and timeout.
+        if !serial::is_virtualbox_arm() {
+            self.write(COMMAND_STATUS, CMD_HCR);
+            let mut deadline = self.clock.deadline(20);
+            while self.read(COMMAND_STATUS) & CMD_HCR != 0 {
+                if deadline.expired() {
+                    return false;
+                }
+                core::hint::spin_loop();
             }
-            core::hint::spin_loop();
         }
 
         self.write(HCCA_REG, self.dma.phys(HCCA_OFF));
@@ -817,7 +860,11 @@ impl OhciInput {
                 be: 0,
             });
             td.write_volatile(Td {
-                control: TD_CC_NOT_ACCESSED | TD_DI_NONE | TD_ROUNDING,
+                // DI=0 asks OHCI to publish this completion through
+                // HCCA.done_head at the end of the frame. The driver polls
+                // that RAM queue instead of using a GIC interrupt, but it
+                // still needs the controller's normal writeback handshake.
+                control: TD_CC_NOT_ACCESSED | TD_ROUNDING,
                 cbp: report_p,
                 next_td: dummy_p,
                 be: report_p + device.max_packet as u32 - 1,

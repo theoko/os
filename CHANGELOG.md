@@ -15,16 +15,26 @@ version: 0.11.0
   relative mouse, and absolute tablet report handling. VirtualBox's optional
   `SET_PROTOCOL` stall is tolerated when the descriptor-defined report format
   is already usable.
+- Fixed VirtualBox's eight-byte absolute-tablet report layout and completed
+  the OHCI done-queue/WDH handshake, so pointer reports are delivered
+  continuously instead of the controller stopping after an unpublished TD.
+- ARM device MMIO is mapped before the first PL011 probe, and OHCI accesses
+  use plain non-writeback AArch64 loads/stores to avoid VirtualBox pinning an
+  optimized guest on valid pre/post-indexed MMIO instructions.
 - ARM animation and wait timing use the architectural counter. Input polling
   runs at a bounded 1 ms cadence; rendering continues to use cached
   composition and dirty-rectangle presentation.
+- ARM64 images now use the optimized release kernel by default. Cursor moves
+  restore their saved background on every architecture, eliminating the
+  initial center ghost and pointer trails.
 - VirtualBox's post-firmware PL011 output is muted so a full debug FIFO can
   never stall PCI/input initialization.
 - `make virtualbox-arm64` now builds the ARM ISO, creates or refreshes the VM
   with QemuRamFB plus OHCI USB keyboard/tablet, reattaches the rebuilt ISO, and
   launches it.
 - Verified in the real VirtualBox VM: first-boot setup advances via the
-  emulated USB keyboard and the home search field receives `nvda`.
+  emulated USB keyboard, the home search field receives `nvda`, and injected
+  absolute-tablet positions move one clean cursor across the desktop.
 
 ## 0.10.0 — 2026-07-25
 
