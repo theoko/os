@@ -9,6 +9,7 @@
 
 use crate::fb::Surface;
 use crate::font::{self, BODY_FACE, BRAND_FACE, SMALL_FACE, TITLE_FACE};
+use crate::mcp::DocOutcome;
 use crate::screens;
 use crate::search;
 use crate::skills::{copy_field, str_at};
@@ -62,40 +63,22 @@ impl Row {
 /// Named for the search engine this OS queries.
 const TEDDY: &str = "Teddy is looking into it.";
 
-/// What the last query actually did, so the empty state can be truthful.
-///
-/// A bridge that answers "no matches" is NOT an offline bridge — reporting it
-/// as one sent people looking for a connection problem that did not exist.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Phase {
-    /// No query run yet — idle tip uses live bridge status, not this.
-    Idle,
-    /// Queried, but COM2 was down.
-    Offline,
-    /// `search.query` was not granted.
-    Denied,
-    /// Bridge answered (zero or more hits).
-    Online,
-}
-
-impl Phase {
-    /// One line explaining an empty result set.
-    fn empty_reason(self) -> &'static str {
-        match self {
-            // Idle is exhaustive only; draw never paints empty_reason while idle.
-            Phase::Idle => "",
-            Phase::Offline => crate::mcp::NO_MATCHES_BRIDGE_OFFLINE,
-            Phase::Denied => TEDDY,
-            // Do not invent a missing-grant cause — scopes already ran (or were off).
-            Phase::Online => "No matches.",
-        }
+/// One line explaining an empty result set for a completed query.
+fn empty_reason(outcome: DocOutcome) -> &'static str {
+    match outcome {
+        DocOutcome::Offline => crate::mcp::NO_MATCHES_BRIDGE_OFFLINE,
+        // Missing search cap (pre-CALL) and bridge ERR share copy.
+        DocOutcome::Err => TEDDY,
+        // Do not invent a missing-grant cause — scopes already ran (or were off).
+        DocOutcome::Ok => "No matches.",
     }
 }
 
 pub struct SearchView {
     rows: [Row; search::MAX_HITS],
     count: usize,
-    phase: Phase,
+    /// `None` = no query yet. `Some` = last fetch (or pre-CALL deny as `Err`).
+    outcome: Option<DocOutcome>,
 }
 
 impl SearchView {
@@ -103,11 +86,11 @@ impl SearchView {
         Self {
             rows: [Row::empty(); search::MAX_HITS],
             count: 0,
-            phase: Phase::Idle,
+            outcome: None,
         }
     }
 
-    /// Load baked-index hits for `q` into `rows` (does not touch `phase`).
+    /// Load baked-index hits for `q` into `rows` (does not touch `outcome`).
     fn fill_local(&mut self, q: &str) {
         self.count = 0;
         if q.trim().is_empty() {
@@ -131,32 +114,26 @@ impl SearchView {
         self.count = 0;
         if q.trim().is_empty() {
             // Do not claim the bridge is down — nothing was queried.
-            self.phase = Phase::Idle;
+            self.outcome = None;
             return;
         }
         // Refuse before CALL: no PING/CALL traffic without the search cap.
         if !caps.allows(crate::caps::Cap::SearchQuery) {
-            self.phase = Phase::Denied;
+            self.outcome = Some(DocOutcome::Err);
             self.fill_local(q);
             return;
         }
         // Record reachability BEFORE any fallback, so an online bridge that
         // simply found nothing is never reported as a connection failure.
         // Rows are filled once from the COM2 parse — no intermediate peek buffer.
-        use crate::mcp::DocOutcome;
-        match crate::mcp::fetch_search_rows(caps, q, |title, url, cat| {
+        self.outcome = Some(crate::mcp::fetch_search_rows(caps, q, |title, url, cat| {
             if self.count >= search::MAX_HITS {
                 return false;
             }
             self.rows[self.count].set(title, url, cat);
             self.count += 1;
             true
-        }) {
-            DocOutcome::Offline => self.phase = Phase::Offline,
-            // Bridge ERR (grant miss, …) — same empty copy as a missing search cap.
-            DocOutcome::Err => self.phase = Phase::Denied,
-            DocOutcome::Ok => self.phase = Phase::Online,
-        }
+        }));
         if self.count == 0 {
             // Nothing from the bridge: try what we shipped with.
             self.fill_local(q);
@@ -202,7 +179,7 @@ pub fn draw(
     crate::ui::draw_query_field(fb, f, query, "Type a query, then press Enter", "");
 
     // Results — same geometry as hit-testing (`row_rect`).
-    if view.phase == Phase::Idle {
+    let Some(outcome) = view.outcome else {
         let note = if online {
             "Answers come from the local index and the host bridge."
         } else {
@@ -210,12 +187,12 @@ pub fn draw(
         };
         fb.draw_text_centered(w / 2, row_rect(w, 0).y + 30, note, &SMALL_FACE, 0, theme::MUTED);
         return;
-    }
+    };
     if view.count == 0 {
         fb.draw_text_centered(
             w / 2,
             row_rect(w, 0).y + 30,
-            view.phase.empty_reason(),
+            empty_reason(outcome),
             &BODY_FACE,
             0,
             theme::MUTED,
@@ -252,10 +229,10 @@ mod tests {
     #[test]
     fn running_a_query_populates_openable_rows() {
         let mut v = SearchView::new();
-        // Caps::none() never PINGs COM2; Denied + baked fill exercises the
+        // Caps::none() never PINGs COM2; Err + baked fill exercises the
         // offline index the same way production does when search.query is off.
         v.run_via("capability agent", crate::caps::Caps::none());
-        assert_ne!(v.phase, Phase::Idle);
+        assert!(v.outcome.is_some());
         assert!(v.count > 0, "expected hits from the baked index");
         let (title, url) = v.at(0);
         assert!(!title.is_empty());
@@ -266,7 +243,7 @@ mod tests {
     fn empty_query_stays_idle() {
         let mut v = SearchView::new();
         v.run_via("   ", crate::caps::Caps::none());
-        assert_eq!(v.phase, Phase::Idle, "whitespace is not a bridge outage");
+        assert!(v.outcome.is_none(), "whitespace is not a bridge outage");
         assert_eq!(v.count, 0);
     }
 
@@ -303,8 +280,8 @@ mod empty_state_tests {
     use super::*;
 
     #[test]
-    fn online_empty_does_not_invent_a_grant_fix() {
-        let m = Phase::Online.empty_reason();
+    fn online_empty_does_not_invent_a_grant_tip() {
+        let m = empty_reason(DocOutcome::Ok);
         assert_eq!(m, "No matches.");
         assert!(!m.contains("workspace.index"), "{m}");
         assert!(!m.contains("email.search"), "{m}");
@@ -314,18 +291,14 @@ mod empty_state_tests {
 
     #[test]
     fn every_reason_is_renderable_ascii() {
-        assert_eq!(Phase::Denied.empty_reason(), TEDDY);
+        assert_eq!(empty_reason(DocOutcome::Err), TEDDY);
         // A bridge that answered with zero hits must not read as offline.
-        assert!(!Phase::Online.empty_reason().contains("offline"));
-        let offline = Phase::Offline.empty_reason();
+        assert!(!empty_reason(DocOutcome::Ok).contains("offline"));
+        let offline = empty_reason(DocOutcome::Offline);
         assert!(offline.contains("offline"));
         assert!(!offline.contains("Teddy"));
-        for s in [
-            Phase::Offline,
-            Phase::Online,
-            Phase::Denied,
-        ] {
-            let m = s.empty_reason();
+        for o in [DocOutcome::Offline, DocOutcome::Ok, DocOutcome::Err] {
+            let m = empty_reason(o);
             assert!(m.bytes().all(|b| (0x20..=0x7E).contains(&b)), "{m}");
             assert!(BODY_FACE.width(m, 0) < 980, "empty-state line overflows: {m}");
         }
@@ -349,19 +322,19 @@ pub fn draw_reader(fb: &Surface, page: &crate::mcp::DocPage) {
     );
 
     match page.outcome {
-        crate::mcp::DocOutcome::Err => {
+        DocOutcome::Err => {
             fb.draw_text(fx, 160, TEDDY, &BODY_FACE, 0, theme::MUTED);
             return;
         }
-        crate::mcp::DocOutcome::Offline => {
+        DocOutcome::Offline => {
             fb.draw_text(fx, 160, crate::mcp::BRIDGE_OFFLINE_HINT, &BODY_FACE, 0, theme::MUTED);
             return;
         }
-        crate::mcp::DocOutcome::Ok if page.count == 0 => {
+        DocOutcome::Ok if page.count == 0 => {
             fb.draw_text(fx, 160, "Nothing readable here.", &BODY_FACE, 0, theme::MUTED);
             return;
         }
-        crate::mcp::DocOutcome::Ok => {}
+        DocOutcome::Ok => {}
     }
 
     let mut y = 156;
