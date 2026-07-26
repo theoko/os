@@ -87,10 +87,12 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
     }
 
     let (x, _) = ui::content_column(w, ui::LIST_CONTENT_MAX);
-    // Boot / fetch always leave at least the ISO builtins, so the empty case
-    // never reaches the screen.
     let note = if peek.from_bridge() {
-        "Listed live from the host bridge (skills.list)."
+        if n == 0 {
+            "Bridge listed no skills."
+        } else {
+            "Listed live from the host bridge (skills.list)."
+        }
     } else {
         "Compiled into the ISO. Saved skills live on the host."
     };

@@ -184,7 +184,11 @@ impl Setup {
             fb,
             "Default Skills",
             if skills.from_bridge() {
-                "Live from the host bridge. Tap Continue when ready."
+                if skills.count() == 0 {
+                    "Bridge listed no skills. Tap Continue when ready."
+                } else {
+                    "Live from the host bridge. Tap Continue when ready."
+                }
             } else {
                 "Markdown playbooks the agent can load. Editable later."
             },

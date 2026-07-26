@@ -42,7 +42,7 @@ const EMPTY_SLOT: Slot = Slot {
 };
 
 enum Kind {
-    /// [`BUILTIN`] — offline or empty `skills.list`.
+    /// [`BUILTIN`] — offline / ERR fallback (not a live empty list).
     Builtin,
     /// Rows from `CALL skills.list`.
     Listed { count: usize, slots: [Slot; 8] },
@@ -177,5 +177,12 @@ mod tests {
         assert!(!p.push("overflow", "no"));
         assert_eq!(p.count(), 8);
         assert!(p.from_bridge());
+    }
+
+    #[test]
+    fn empty_listed_is_still_from_bridge() {
+        let p = SkillPeek::empty();
+        assert_eq!(p.count(), 0);
+        assert!(p.from_bridge(), "framed empty list is not ISO builtins");
     }
 }
