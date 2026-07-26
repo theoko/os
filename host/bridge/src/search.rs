@@ -9,6 +9,7 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
+use std::sync::OnceLock;
 
 /// On-disk / HTTP corpus shell around `{t,u,c,b,pr}` documents.
 #[derive(Debug, Deserialize)]
@@ -119,11 +120,21 @@ fn corpus_path() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../search/corpus.json"))
 }
 
-fn load_docs() -> Result<Vec<Doc>, String> {
+/// Curated corpus, parsed once per process (same idea as teddy's cache).
+static CURATED: OnceLock<Result<Vec<Doc>, String>> = OnceLock::new();
+
+fn load_docs_from_disk() -> Result<Vec<Doc>, String> {
     let path = corpus_path();
     let raw = fs::read_to_string(&path).map_err(|e| format!("corpus_missing {}: {e}", path.display()))?;
     let file: CorpusFile = serde_json::from_str(&raw).map_err(|e| format!("corpus_json: {e}"))?;
     Ok(file.docs)
+}
+
+fn load_docs() -> Result<&'static [Doc], String> {
+    match CURATED.get_or_init(load_docs_from_disk) {
+        Ok(docs) => Ok(docs.as_slice()),
+        Err(e) => Err(e.clone()),
+    }
 }
 
 /// ASCII-oriented tokenizer shared with the teddy index.
@@ -237,7 +248,7 @@ pub fn query_all(
     include_audio: bool,
 ) -> Vec<String> {
     let mut docs = match load_docs() {
-        Ok(d) => d,
+        Ok(d) => d.to_vec(),
         Err(e) => return vec![format!("ERR search.query {e}")],
     };
     if include_files {
@@ -311,9 +322,9 @@ mod tests {
 pub fn body_for(url: &str, max_lines: usize) -> Option<Vec<String>> {
     let body = load_docs()
         .ok()?
-        .into_iter()
+        .iter()
         .find(|d| d.u == url)
-        .map(|d| d.b)
+        .map(|d| d.b.clone())
         .or_else(|| {
             crate::tsearch::docs()
                 .iter()

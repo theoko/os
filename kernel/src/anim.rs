@@ -49,7 +49,7 @@ pub fn pace(since: u64, us: u32) -> u64 {
 /// A screen entrance: how far it slides and over how many frames.
 pub struct Entrance {
     pub frames: u32,
-    pub(crate) travel_px: i32,
+    travel_px: i32,
     pub frame_us: u32,
 }
 
@@ -77,12 +77,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn ease_hits_both_ends_exactly() {
-        assert_eq!(ease_out_cubic(0), 0);
-        assert_eq!(ease_out_cubic(ONE), ONE);
-    }
-
-    #[test]
     fn ease_is_monotonic() {
         let mut prev = -1;
         for i in 0..=64 {
@@ -103,6 +97,8 @@ mod tests {
 
     #[test]
     fn ease_clamps_out_of_range_input() {
+        assert_eq!(ease_out_cubic(0), 0);
+        assert_eq!(ease_out_cubic(ONE), ONE);
         assert_eq!(ease_out_cubic(-ONE), 0);
         assert_eq!(ease_out_cubic(3 * ONE), ONE);
     }

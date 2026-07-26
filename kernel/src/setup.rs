@@ -347,11 +347,6 @@ mod tests {
         assert_eq!(s.step, Step::Bridge);
         s.apply(Action::Back);
         assert_eq!(s.step, Step::Welcome);
-    }
-
-    #[test]
-    fn back_from_welcome_stays_put() {
-        let mut s = setup();
         s.apply(Action::Back);
         assert_eq!(s.step, Step::Welcome, "must not walk off the front");
     }

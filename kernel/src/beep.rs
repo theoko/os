@@ -101,14 +101,11 @@ mod tests {
     #[test]
     fn divisor_never_returns_zero() {
         // A zero divisor means 65536 on the PIT — a silent or garbage tone.
+        // hz=0 is deliberate silence (max divisor), not a zero counter load.
+        assert_eq!(divisor_for(0), u16::MAX);
         for hz in [1, 100, 1000, 20_000, 1_000_000, u32::MAX] {
             assert!(divisor_for(hz) >= 1, "hz={hz} produced a zero divisor");
         }
-    }
-
-    #[test]
-    fn silence_is_handled() {
-        assert_eq!(divisor_for(0), u16::MAX);
     }
 
     #[test]

@@ -151,19 +151,20 @@ impl UsbTablet {
         }
         // Port reset returns the device to the default address.
         me.addr = 0;
-        if me.set_address().is_none() {
+        // Address 1, config 1, HID Report protocol — sole tablet on this port.
+        if me.control_no_data(0x00, 0x05, 1).is_none() {
             return Probe::NotTablet("set-addr");
         }
         me.addr = 1;
         if let Err(r) = me.identify() {
             return Probe::NotTablet(r);
         }
-        if me.set_configuration().is_none() {
+        if me.control_no_data(0x00, 0x09, 1).is_none() {
             return Probe::NotTablet("set-cfg");
         }
         // HID: prefer Report protocol; ignore failures (some firmwares NAK).
-        let _ = me.hid_set_idle();
-        let _ = me.hid_set_protocol();
+        let _ = me.control_no_data(0x21, 0x0A, 0);
+        let _ = me.control_no_data(0x21, 0x0B, 1);
         Probe::Bound(me)
     }
 
@@ -484,27 +485,9 @@ impl UsbTablet {
         Err("not-hid")
     }
 
-    /// Assign USB address 1 (sole device on this root port).
-    fn set_address(&mut self) -> Option<()> {
+    fn control_no_data(&mut self, request_type: u8, request: u8, value: u16) -> Option<()> {
         let mut empty: [u8; 0] = [];
-        self.control(0x00, 0x05, 1, &mut empty)
-    }
-
-    /// Select configuration 1 (HID tablets ship a single config).
-    fn set_configuration(&mut self) -> Option<()> {
-        let mut empty: [u8; 0] = [];
-        self.control(0x00, 0x09, 1, &mut empty)
-    }
-
-    fn hid_set_idle(&mut self) -> Option<()> {
-        let mut empty: [u8; 0] = [];
-        self.control(0x21, 0x0A, 0, &mut empty)
-    }
-
-    /// Prefer HID Report protocol (1).
-    fn hid_set_protocol(&mut self) -> Option<()> {
-        let mut empty: [u8; 0] = [];
-        self.control(0x21, 0x0B, 1, &mut empty)
+        self.control(request_type, request, value, &mut empty)
     }
 
     pub fn poll(&mut self, mice: &mut crate::mouse::Mouse) -> bool {
