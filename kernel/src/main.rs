@@ -144,7 +144,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut kb = keyboard::Keyboard::new();
                 let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut sview = searchui::SearchView::new();
-                let mut page = mcp::DocPage::empty(mcp::BridgeStatus::Offline, false);
+                let mut page = mcp::DocPage::empty(mcp::BridgeStatus::Offline);
                 let mut open_title = [0u8; searchui::QUERY_MAX];
                 let mut view = screens::View::Home;
                 // First boot: run the setup journey before the home screen.

@@ -216,8 +216,8 @@ pub struct DocPage {
 impl DocPage {
     pub const MAX: usize = 18;
 
-    pub const fn empty(status: BridgeStatus, denied: bool) -> Self {
-        Self { status, denied, count: 0, lines: [[0; 84]; Self::MAX] }
+    pub const fn empty(status: BridgeStatus) -> Self {
+        Self { status, denied: false, count: 0, lines: [[0; 84]; Self::MAX] }
     }
 
     pub fn line_at(&self, i: usize) -> &str {
@@ -231,14 +231,14 @@ impl DocPage {
 /// per source: a caller that could not have found a document must not be able
 /// to read it by knowing its URL.
 pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
-    when_online(DocPage::empty(BridgeStatus::Offline, false), |com2, line| {
+    when_online(DocPage::empty(BridgeStatus::Offline), |com2, line| {
         com2.write_str("CALL doc.read url=");
         com2.write_str(url);
         com2.write_str(" lines=18");
         write_scope_flags(com2, caps);
         com2.write_str("\n");
 
-        let mut page = DocPage::empty(BridgeStatus::Online, false);
+        let mut page = DocPage::empty(BridgeStatus::Online);
         page.denied = for_each_ok_rows(com2, line, 40, "OK doc.read", |resp| {
             if page.count >= DocPage::MAX {
                 return false;
