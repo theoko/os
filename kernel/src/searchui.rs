@@ -148,7 +148,8 @@ impl SearchView {
             if self.count >= search::MAX_HITS {
                 return false;
             }
-            self.rows[self.count].set(title, url, "bridge");
+            // No cat chip until we parse wire `cat=` — do not invent "bridge".
+            self.rows[self.count].set(title, url, "");
             self.count += 1;
             true
         }) {
@@ -233,9 +234,18 @@ pub fn draw(
         let row = &view.rows[i];
         crate::ui::outlined_round_rect(fb, rect, 10);
         fb.draw_text(rect.x + 18, rect.y + 26, row.title(), &BRAND_FACE, 0, theme::INK);
-        // Category chip, right-aligned.
-        let cw = SMALL_FACE.width(row.cat, 0);
-        fb.draw_text(rect.x + rect.w - 18 - cw, rect.y + 26, row.cat, &SMALL_FACE, 0, theme::ACCENT);
+        // Category chip for baked hits (bridge leaves cat empty until wire parse).
+        if !row.cat.is_empty() {
+            let cw = SMALL_FACE.width(row.cat, 0);
+            fb.draw_text(
+                rect.x + rect.w - 18 - cw,
+                rect.y + 26,
+                row.cat,
+                &SMALL_FACE,
+                0,
+                theme::ACCENT,
+            );
+        }
         fb.draw_text(rect.x + 18, rect.y + 48, row.url(), &SMALL_FACE, 0, theme::MUTED);
     }
 }
