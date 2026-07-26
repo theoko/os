@@ -242,9 +242,7 @@ impl DocPage {
 /// per source: a caller that could not have found a document must not be able
 /// to read it by knowing its URL.
 pub fn fetch_doc(caps: crate::caps::Caps, title: &str, url: &str) -> DocPage {
-    let mut offline = DocPage::empty(BridgeStatus::Offline);
-    copy_field(&mut offline.title, title);
-    when_online(offline, |com2, line| {
+    let mut page = when_online(DocPage::empty(BridgeStatus::Offline), |com2, line| {
         com2.write_str("CALL doc.read url=");
         com2.write_str(url);
         com2.write_str(" lines=");
@@ -253,7 +251,6 @@ pub fn fetch_doc(caps: crate::caps::Caps, title: &str, url: &str) -> DocPage {
         com2.write_str("\n");
 
         let mut page = DocPage::empty(BridgeStatus::Online);
-        copy_field(&mut page.title, title);
         page.denied = for_each_ok_rows(com2, line, 40, "OK doc.read", |resp| {
             if page.count >= DocPage::MAX {
                 return false;
@@ -264,7 +261,9 @@ pub fn fetch_doc(caps: crate::caps::Caps, title: &str, url: &str) -> DocPage {
             true
         });
         page
-    })
+    });
+    copy_field(&mut page.title, title);
+    page
 }
 
 /// Ask the bridge to delete what a revoked capability produced.

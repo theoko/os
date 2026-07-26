@@ -207,10 +207,6 @@ pub fn index() -> &'static Index {
 }
 
 impl Index {
-    pub fn is_empty(&self) -> bool {
-        self.terms.is_empty()
-    }
-
     fn find(&self, w: &str) -> Option<&Term> {
         self.terms
             .binary_search_by(|t| t.word.as_str().cmp(w))

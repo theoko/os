@@ -326,7 +326,7 @@ mod tests {
 }
 
 #[cfg(test)]
-mod source_tests {
+mod empty_state_tests {
     use super::*;
     use crate::caps::{Cap, Caps};
 
@@ -351,15 +351,20 @@ mod source_tests {
 
     #[test]
     fn a_real_outage_still_says_offline() {
-        assert!(Source::offline().empty_reason().contains("offline"));
+        let m = Source::offline().empty_reason();
+        assert!(m.contains("offline"));
+        assert!(!m.contains("Teddy"));
     }
 
     #[test]
     fn missing_file_grant_names_the_fix() {
+        // Finding nothing is a legitimate answer and must stay actionable
+        // rather than being papered over with a mascot.
         let s = source(true, false, false, true);
         let m = s.empty_reason();
         assert!(m.contains("workspace.index"), "{m}");
         assert!(!m.contains("offline"), "{m}");
+        assert_ne!(m, Source::TEDDY);
     }
 
     #[test]
@@ -369,58 +374,24 @@ mod source_tests {
     }
 
     #[test]
-    fn every_reason_is_renderable_ascii() {
-        for s in [
-            Source::offline(),
-            source(true, false, false, false),
-            source(true, false, true, false),
-            source(true, false, true, true),
-        ] {
-            let m = s.empty_reason();
-            assert!(m.bytes().all(|b| (0x20..=0x7E).contains(&b)), "{m}");
-            assert!(BODY_FACE.width(m, 0) < 980, "empty-state line overflows: {m}");
-        }
-    }
-}
-
-#[cfg(test)]
-mod teddy_tests {
-    use super::*;
-    use crate::caps::{Cap, Caps};
-
-    fn source(online: bool, errored: bool, files: bool, mail: bool) -> Source {
-        let mut caps = Caps::none();
-        if mail {
-            caps.toggle(Cap::EmailSearch as usize);
-        }
-        if files {
-            caps.toggle(Cap::WorkspaceIndex as usize);
-        }
-        Source { bridge_online: online, errored, caps }
-    }
-
-    #[test]
     fn a_real_failure_gets_the_friendly_line() {
         let s = source(true, true, true, true);
         assert_eq!(s.empty_reason(), Source::TEDDY);
     }
 
     #[test]
-    fn an_empty_result_is_not_a_failure() {
-        // Finding nothing is a legitimate answer and must stay actionable
-        // rather than being papered over with a mascot.
-        let s = source(true, false, false, true);
-        assert_ne!(s.empty_reason(), Source::TEDDY);
-        assert!(s.empty_reason().contains("workspace.index"));
-    }
-
-    #[test]
-    fn an_outage_still_says_offline_not_teddy() {
-        assert!(Source::offline().empty_reason().contains("offline"));
-    }
-
-    #[test]
-    fn the_line_renders() {
+    fn every_reason_is_renderable_ascii() {
+        for s in [
+            Source::offline(),
+            source(true, false, false, false),
+            source(true, false, true, false),
+            source(true, false, true, true),
+            source(true, true, true, true),
+        ] {
+            let m = s.empty_reason();
+            assert!(m.bytes().all(|b| (0x20..=0x7E).contains(&b)), "{m}");
+            assert!(BODY_FACE.width(m, 0) < 980, "empty-state line overflows: {m}");
+        }
         assert!(Source::TEDDY.bytes().all(|b| (0x20..=0x7E).contains(&b)));
         assert!(BODY_FACE.width(Source::TEDDY, 0) < 980);
     }

@@ -71,13 +71,9 @@ impl SkillPeek {
         str_at(&self.names[i])
     }
 
-    fn desc_at(&self, i: usize) -> &str {
-        str_at(&self.descs[i])
-    }
-
     /// Desc when present; otherwise a source label for empty blurbs.
     pub fn subtitle_at(&self, i: usize) -> &str {
-        let desc = self.desc_at(i);
+        let desc = str_at(&self.descs[i]);
         if !desc.is_empty() {
             return desc;
         }

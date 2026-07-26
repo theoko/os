@@ -61,7 +61,7 @@ impl Graph {
     /// A *corrupt* file is not: silently returning empty would let the next
     /// ingest overwrite a damaged-but-recoverable index with three messages.
     /// The bad file is set aside first so it can be inspected.
-    pub fn load() -> Result<Self, String> {
+    fn load() -> Result<Self, String> {
         let path = graph_path();
         let raw = match fs::read_to_string(&path) {
             Ok(r) => r,

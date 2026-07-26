@@ -249,8 +249,9 @@ pub fn query_all(
     let mut hits = search_tfidf(&docs, q, k, cat);
     // The big corpus is scored from its prebuilt index, then merged. Scoring it
     // inline would re-tokenise 12k documents on every keystroke.
-    let teddy = crate::tsearch::index();
-    if !teddy.is_empty() && cat.is_none() {
+    // Empty teddy index: `search` returns nothing; merge is a no-op.
+    if cat.is_none() {
+        let teddy = crate::tsearch::index();
         let tdocs = crate::tsearch::docs();
         for (score, i) in teddy.search(q, k) {
             let mut d = tdocs[i].clone();
