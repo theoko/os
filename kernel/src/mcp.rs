@@ -282,14 +282,13 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
         com2.write_str("CALL skills.list\n");
 
         let mut peek = crate::skills::SkillPeek::empty();
-        peek.from_bridge = true;
         let _ = for_each_ok_rows(com2, line, 24, |resp| {
             let (name, desc) = parse_row_pair(resp, "name", "desc");
             peek.push(name.unwrap_or("?"), desc.unwrap_or(""))
         })
         .0;
 
-        if peek.count == 0 {
+        if peek.count() == 0 {
             // Bridge answered but listed nothing — still show ISO defaults.
             crate::skills::SkillPeek::from_builtin()
         } else {

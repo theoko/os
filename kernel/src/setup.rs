@@ -184,14 +184,14 @@ impl Setup {
         let top = self.header(
             fb,
             "Default Skills",
-            if skills.from_bridge {
+            if skills.from_bridge() {
                 "Live from the host bridge. Tap Continue when ready."
             } else {
                 "Markdown playbooks the agent can load. Editable later."
             },
         );
         let mut y = top;
-        for i in 0..skills.count.min(4) {
+        for i in 0..skills.count().min(4) {
             ui::draw_titled_row(
                 fb,
                 content_rect(w, y, ROW_H),

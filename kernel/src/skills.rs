@@ -1,4 +1,4 @@
-//! Builtin skill catalog (always available offline) + optional bridge merge.
+//! Builtin skill catalog (always available offline) + optional bridge list.
 
 /// A skill name shown in the home UI.
 pub(crate) struct SkillRef {
@@ -30,66 +30,92 @@ pub(crate) const BUILTIN: &[SkillRef] = &[
     },
 ];
 
-/// One skill row in a [`SkillPeek`].
+/// One skill row from `CALL skills.list`.
 struct Slot {
     name: [u8; 28],
     desc: [u8; 40],
 }
 
-/// Names (+ short descs) from builtins or `CALL skills.list`.
-pub struct SkillPeek {
-    pub(crate) count: usize,
-    /// True when the last fill came from the host bridge.
-    pub from_bridge: bool,
-    slots: [Slot; 8],
+const EMPTY_SLOT: Slot = Slot {
+    name: [0; 28],
+    desc: [0; 40],
+};
+
+/// Names (+ short descs) from ISO builtins or a live bridge list.
+pub enum SkillPeek {
+    /// [`BUILTIN`] — offline or empty `skills.list`.
+    Builtin,
+    /// Rows from `CALL skills.list`.
+    Listed { count: usize, slots: [Slot; 8] },
 }
 
 impl SkillPeek {
+    /// Empty listed peek ready for [`Self::push`] (bridge fill path).
     pub(crate) fn empty() -> Self {
-        const EMPTY: Slot = Slot {
-            name: [0; 28],
-            desc: [0; 40],
-        };
-        Self {
+        Self::Listed {
             count: 0,
-            from_bridge: false,
-            slots: [EMPTY; 8],
+            slots: [EMPTY_SLOT; 8],
         }
     }
 
     pub fn from_builtin() -> Self {
-        let mut peek = Self::empty();
-        for s in BUILTIN.iter().take(peek.slots.len()) {
-            peek.push(s.name, s.blurb);
+        Self::Builtin
+    }
+
+    /// True when the last fill came from the host bridge.
+    pub fn from_bridge(&self) -> bool {
+        matches!(self, Self::Listed { .. })
+    }
+
+    pub(crate) fn count(&self) -> usize {
+        match self {
+            Self::Builtin => BUILTIN.len(),
+            Self::Listed { count, .. } => *count,
         }
-        peek
     }
 
     pub(crate) fn push(&mut self, name: &str, desc: &str) -> bool {
-        if self.count >= self.slots.len() {
+        let Self::Listed { count, slots } = self else {
+            return false;
+        };
+        if *count >= slots.len() {
             return false;
         }
-        let slot = &mut self.slots[self.count];
+        let slot = &mut slots[*count];
         copy_field(&mut slot.name, name);
         copy_field(&mut slot.desc, desc);
-        self.count += 1;
+        *count += 1;
         true
     }
 
     pub(crate) fn name_at(&self, i: usize) -> &str {
-        str_at(&self.slots[i].name)
+        match self {
+            Self::Builtin => BUILTIN.get(i).map(|s| s.name).unwrap_or(""),
+            Self::Listed { count, slots } => {
+                if i < *count {
+                    str_at(&slots[i].name)
+                } else {
+                    ""
+                }
+            }
+        }
     }
 
     /// Desc when present; otherwise a source label for empty blurbs.
     pub(crate) fn subtitle_at(&self, i: usize) -> &str {
-        let desc = str_at(&self.slots[i].desc);
-        if !desc.is_empty() {
-            return desc;
-        }
-        if self.from_bridge {
-            "From host bridge"
-        } else {
-            "Shipped with the ISO"
+        match self {
+            Self::Builtin => BUILTIN.get(i).map(|s| s.blurb).unwrap_or("Shipped with the ISO"),
+            Self::Listed { count, slots } => {
+                if i >= *count {
+                    return "From host bridge";
+                }
+                let desc = str_at(&slots[i].desc);
+                if desc.is_empty() {
+                    "From host bridge"
+                } else {
+                    desc
+                }
+            }
         }
     }
 }
@@ -129,9 +155,9 @@ mod tests {
     #[test]
     fn builtins_present() {
         let p = SkillPeek::from_builtin();
-        assert!(p.count >= 5);
+        assert!(p.count() >= 5);
         assert_eq!(p.name_at(0), "agent-plan-act");
-        assert!(!p.from_bridge);
+        assert!(!p.from_bridge());
     }
 
     #[test]
@@ -141,6 +167,7 @@ mod tests {
             assert!(p.push("n", "d"), "slot {i}");
         }
         assert!(!p.push("overflow", "no"));
-        assert_eq!(p.count, 8);
+        assert_eq!(p.count(), 8);
+        assert!(p.from_bridge());
     }
 }

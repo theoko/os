@@ -406,7 +406,7 @@ fn log_bridge_status(port: &serial::Serial, status: mcp::BridgeStatus) {
 }
 
 fn log_skill_source(port: &serial::Serial, peek: &skills::SkillPeek) {
-    port.write_str(if peek.from_bridge {
+    port.write_str(if peek.from_bridge() {
         "skills: listed from bridge\n"
     } else {
         "skills: builtins (bridge offline)\n"

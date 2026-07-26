@@ -81,7 +81,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
     let w = fb.width() as i32;
     chrome(fb, Some(("Skills", "Playbooks the agent can load")));
 
-    let n = peek.count.min(6);
+    let n = peek.count().min(6);
     for i in 0..n {
         ui::draw_titled_row(fb, row_rect(w, i), peek.name_at(i), peek.subtitle_at(i));
     }
@@ -89,7 +89,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
     let (x, _) = ui::content_column(w, ui::LIST_CONTENT_MAX);
     // Boot / fetch always leave at least the ISO builtins, so the empty case
     // never reaches the screen.
-    let note = if peek.from_bridge {
+    let note = if peek.from_bridge() {
         "Listed live from the host bridge (skills.list)."
     } else {
         "Compiled into the ISO. Saved skills live on the host."
@@ -207,7 +207,7 @@ mod tests {
     fn skill_text_fits_its_row() {
         let cw = row_rect(1024, 0).w;
         let peek = SkillPeek::from_builtin();
-        for i in 0..peek.count.min(6) {
+        for i in 0..peek.count().min(6) {
             assert!(
                 BRAND_FACE.width(peek.name_at(i), 0) < cw - 36,
                 "name overflows: {}",
