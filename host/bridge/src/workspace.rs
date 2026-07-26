@@ -266,7 +266,7 @@ mod tests {
     fn indexes_markdown_with_heading_title() {
         let d = tmp("basic");
         fs::write(d.join("notes.md"), "---\nkey: v\n---\n\n# Real Title\n\nSome prose here.\n").unwrap();
-        let ix = build(&[d.clone()]);
+        let ix = build(std::slice::from_ref(&d));
         assert_eq!(ix.entries.len(), 1);
         assert_eq!(ix.entries[0].title, "Real Title");
         assert!(ix.entries[0].snippet.contains("Some prose"));
@@ -278,7 +278,7 @@ mod tests {
     fn falls_back_to_the_filename() {
         let d = tmp("noheading");
         fs::write(d.join("plain.md"), "just text, no heading\n").unwrap();
-        let ix = build(&[d.clone()]);
+        let ix = build(std::slice::from_ref(&d));
         assert_eq!(ix.entries[0].title, "plain");
         let _ = fs::remove_dir_all(&d);
     }
@@ -290,7 +290,7 @@ mod tests {
         fs::write(d.join("my-secret-notes.md"), "# S\n\nx\n").unwrap();
         fs::write(d.join("service.key"), "-----BEGIN KEY-----\n").unwrap();
         fs::write(d.join("ok.md"), "# Fine\n\ncontent\n").unwrap();
-        let ix = build(&[d.clone()]);
+        let ix = build(std::slice::from_ref(&d));
         let titles: Vec<&str> = ix.entries.iter().map(|e| e.title.as_str()).collect();
         assert_eq!(titles, vec!["Fine"], "a credential-looking file was indexed");
         let _ = fs::remove_dir_all(&d);
@@ -304,7 +304,7 @@ mod tests {
             fs::write(d.join(junk).join("a.md"), "# Junk\n\nx\n").unwrap();
         }
         fs::write(d.join("real.md"), "# Real\n\nx\n").unwrap();
-        let ix = build(&[d.clone()]);
+        let ix = build(std::slice::from_ref(&d));
         assert_eq!(ix.entries.len(), 1);
         assert_eq!(ix.entries[0].title, "Real");
         let _ = fs::remove_dir_all(&d);
@@ -316,7 +316,7 @@ mod tests {
         fs::write(d.join("a.png"), [0u8, 1, 2]).unwrap();
         fs::write(d.join("b.rs"), "fn main() {}").unwrap();
         fs::write(d.join("c.md"), "# Doc\n\nx\n").unwrap();
-        let ix = build(&[d.clone()]);
+        let ix = build(std::slice::from_ref(&d));
         assert_eq!(ix.entries.len(), 1);
         let _ = fs::remove_dir_all(&d);
     }
@@ -327,7 +327,7 @@ mod tests {
         fs::write(d.join("README.md"), "# Top\n\nx\n").unwrap();
         fs::create_dir_all(d.join("a/b/c")).unwrap();
         fs::write(d.join("a/b/c/deep.md"), "# Deep\n\nx\n").unwrap();
-        let ix = build(&[d.clone()]);
+        let ix = build(std::slice::from_ref(&d));
         let top = ix.entries.iter().find(|e| e.title == "Top").unwrap();
         let deep = ix.entries.iter().find(|e| e.title == "Deep").unwrap();
         assert!(top.pr > deep.pr);
@@ -450,7 +450,7 @@ mod consent_tests {
 
         let ix_path = dir.join("index.json");
         unsafe { env::set_var("OS_WORKSPACE_INDEX", &ix_path) };
-        build(&[dir.clone()]).save().expect("save index");
+        build(std::slice::from_ref(&dir)).save().expect("save index");
 
         let without = crate::search::query_all("zygote notary", 5, None, false, false, false);
         let with = crate::search::query_all("zygote notary", 5, None, false, true, false);
@@ -484,7 +484,7 @@ mod revocation_tests {
         unsafe { env::set_var("OS_WORKSPACE_INDEX", &ix) };
 
         fs::write(dir.join("a.md"), "# Doc\n\nbody\n").unwrap();
-        build(&[dir.clone()]).save().unwrap();
+        build(std::slice::from_ref(&dir)).save().unwrap();
         assert!(ix.is_file(), "index should exist before revocation");
 
         fs::remove_file(&ix).unwrap();

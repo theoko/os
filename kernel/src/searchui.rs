@@ -203,8 +203,7 @@ pub fn draw(
     let f = field_rect(w);
     crate::ui::draw_query_field(fb, f, query, "Type a query, then press Enter", "");
 
-    // Results.
-    let mut y = f.y + f.h + 26;
+    // Results — same geometry as hit-testing (`row_rect`).
     if view.phase == Phase::Idle {
         let note = match status {
             crate::mcp::BridgeStatus::Online => {
@@ -212,23 +211,30 @@ pub fn draw(
             }
             crate::mcp::BridgeStatus::Offline => crate::mcp::BRIDGE_OFFLINE_HINT,
         };
-        fb.draw_text_centered(w / 2, y + 30, note, &SMALL_FACE, 0, theme::MUTED);
+        fb.draw_text_centered(w / 2, row_rect(w, 0).y + 30, note, &SMALL_FACE, 0, theme::MUTED);
         return;
     }
     if view.count == 0 {
-        fb.draw_text_centered(w / 2, y + 30, view.phase.empty_reason(), &BODY_FACE, 0, theme::MUTED);
+        fb.draw_text_centered(
+            w / 2,
+            row_rect(w, 0).y + 30,
+            view.phase.empty_reason(),
+            &BODY_FACE,
+            0,
+            theme::MUTED,
+        );
         return;
     }
 
     for i in 0..view.count {
-        let r = &view.rows[i];
-        crate::ui::outlined_round_rect(fb, crate::ui::Rect::new(f.x, y, f.w, ROW_H), 10);
-        fb.draw_text(f.x + 18, y + 26, r.title(), &BRAND_FACE, 0, theme::INK);
+        let rect = row_rect(w, i);
+        let row = &view.rows[i];
+        crate::ui::outlined_round_rect(fb, rect, 10);
+        fb.draw_text(rect.x + 18, rect.y + 26, row.title(), &BRAND_FACE, 0, theme::INK);
         // Category chip, right-aligned.
-        let cw = SMALL_FACE.width(r.cat, 0);
-        fb.draw_text(f.x + f.w - 18 - cw, y + 26, r.cat, &SMALL_FACE, 0, theme::ACCENT);
-        fb.draw_text(f.x + 18, y + 48, r.url(), &SMALL_FACE, 0, theme::MUTED);
-        y += ROW_H + 10;
+        let cw = SMALL_FACE.width(row.cat, 0);
+        fb.draw_text(rect.x + rect.w - 18 - cw, rect.y + 26, row.cat, &SMALL_FACE, 0, theme::ACCENT);
+        fb.draw_text(rect.x + 18, rect.y + 48, row.url(), &SMALL_FACE, 0, theme::MUTED);
     }
 }
 
@@ -336,7 +342,7 @@ pub fn draw_reader(fb: &Surface, page: &crate::mcp::DocPage) {
     let h = fb.height() as i32;
     screens::chrome(fb, None);
 
-    let fx = field_rect(w).x;
+    let fx = screens::column(w).0;
     fb.draw_text(
         fx,
         108,

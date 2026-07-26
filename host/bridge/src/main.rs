@@ -414,9 +414,8 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
 /// Only sender and subject are kept — never the body.
 fn ingest_rows(rows: &[String]) {
     let mut msgs = rows.iter().filter_map(|r| {
-        let from = parse_row_field(r, "from")?;
-        let subj = parse_row_field(r, "subj").unwrap_or("");
-        Some((from, subj))
+        let (from, subj) = parse_row_pair(r, "from", "subj");
+        Some((from?, subj.unwrap_or("")))
     }).peekable();
     if msgs.peek().is_none() {
         return;
@@ -429,11 +428,23 @@ fn ingest_rows(rows: &[String]) {
     }
 }
 
-/// Read `key=value` out of a `ROW a=1|b=2` line.
-fn parse_row_field<'a>(row: &'a str, key: &str) -> Option<&'a str> {
-    let body = row.strip_prefix("ROW ")?;
-    body.split('|')
-        .find_map(|f| f.strip_prefix(key).and_then(|r| r.strip_prefix('=')))
+/// One pass over a `ROW a=1|b=2` line for two keys.
+fn parse_row_pair<'a>(row: &'a str, ka: &str, kb: &str) -> (Option<&'a str>, Option<&'a str>) {
+    let mut a = None;
+    let mut b = None;
+    let Some(body) = row.strip_prefix("ROW ") else {
+        return (None, None);
+    };
+    for part in body.split('|') {
+        if let Some((k, v)) = part.split_once('=') {
+            if k == ka {
+                a = Some(v);
+            } else if k == kb {
+                b = Some(v);
+            }
+        }
+    }
+    (a, b)
 }
 
 /// Resolve a result URL back to readable text.

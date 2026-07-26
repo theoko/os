@@ -60,6 +60,25 @@ fn parse_row_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     None
 }
 
+/// One pass over a ROW for two keys (avoids re-splitting the line).
+fn parse_row_pair<'a>(line: &'a str, ka: &str, kb: &str) -> (Option<&'a str>, Option<&'a str>) {
+    let mut a = None;
+    let mut b = None;
+    let Some(rest) = line.strip_prefix("ROW ") else {
+        return (None, None);
+    };
+    for part in rest.split('|') {
+        if let Some((k, v)) = part.split_once('=') {
+            if k == ka {
+                a = Some(v);
+            } else if k == kb {
+                b = Some(v);
+            }
+        }
+    }
+    (a, b)
+}
+
 /// Walk COM2 reply lines after a CALL. First line waits [`TIMEOUT_REPLY`];
 /// later lines use [`TIMEOUT_LINE`]. Callback returns `false` to stop.
 fn for_each_reply(
@@ -81,13 +100,14 @@ fn for_each_reply(
     }
 }
 
-/// Drain a typical OK / ROW* / END reply. Skips any `OK …` header; stops on
-/// `ERR` / `END`. `on_row` returns `false` to stop early (e.g. buffer full).
+/// Drain a typical OK / ROW* / END reply. Stops on `ERR` / `END`.
+/// `on_ok` sees each OK header; `on_row` returns `false` to stop early.
 /// Returns whether an `ERR` line was seen.
 fn for_each_ok_rows(
     com2: &Serial,
     line: &mut [u8],
     max: usize,
+    mut on_ok: impl FnMut(&str),
     mut on_row: impl FnMut(&str) -> bool,
 ) -> bool {
     let mut saw_err = false;
@@ -100,6 +120,7 @@ fn for_each_ok_rows(
             return false;
         }
         if resp.starts_with("OK ") {
+            on_ok(resp);
             return true;
         }
         if resp.starts_with("ROW ") {
@@ -146,15 +167,13 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
 
         // Count comes from the OK header (`n=`); drain ROW/END for wire hygiene.
         let mut peek = MailPeek::empty(BridgeStatus::Online);
-        for_each_reply(com2, line, 16, |resp| {
-            if resp.starts_with("ERR ") || resp == "END" {
-                return false;
-            }
-            if resp.starts_with("OK email.search") {
-                peek.count = parse_ok_n(resp);
-            }
-            true
-        });
+        let _ = for_each_ok_rows(
+            com2,
+            line,
+            16,
+            |ok| peek.count = parse_ok_n(ok),
+            |_| true,
+        );
         peek
     })
 }
@@ -226,7 +245,7 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
         com2.write_str("\n");
 
         let mut page = DocPage::empty(BridgeStatus::Online);
-        page.denied = for_each_ok_rows(com2, line, 40, |resp| {
+        page.denied = for_each_ok_rows(com2, line, 40, |_| {}, |resp| {
             if page.count >= DocPage::MAX {
                 return false;
             }
@@ -270,10 +289,9 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
 
         let mut peek = crate::skills::SkillPeek::empty();
         peek.from_bridge = true;
-        let _ = for_each_ok_rows(com2, line, 24, |resp| {
-            let name = parse_row_field(resp, "name").unwrap_or("?");
-            let desc = parse_row_field(resp, "desc").unwrap_or("");
-            peek.push(name, desc)
+        let _ = for_each_ok_rows(com2, line, 24, |_| {}, |resp| {
+            let (name, desc) = parse_row_pair(resp, "name", "desc");
+            peek.push(name.unwrap_or("?"), desc.unwrap_or(""))
         });
 
         if peek.count == 0 {
@@ -333,14 +351,12 @@ pub(crate) fn fetch_search_rows(
         com2.write_str("\n");
 
         let mut n = 0usize;
-        let _ = for_each_ok_rows(com2, line, 16, |resp| {
+        let _ = for_each_ok_rows(com2, line, 16, |_| {}, |resp| {
             if n >= crate::search::MAX_HITS {
                 return false;
             }
-            let cont = on_hit(
-                parse_row_field(resp, "title").unwrap_or("?"),
-                parse_row_field(resp, "url").unwrap_or(""),
-            );
+            let (title, url) = parse_row_pair(resp, "title", "url");
+            let cont = on_hit(title.unwrap_or("?"), url.unwrap_or(""));
             n += 1;
             cont
         });
@@ -362,12 +378,16 @@ mod tests {
     #[test]
     fn parse_row_field_extracts_keys() {
         let search = "ROW title=MCP overview|url=https://example/mcp";
-        assert_eq!(parse_row_field(search, "title"), Some("MCP overview"));
-        assert_eq!(parse_row_field(search, "url"), Some("https://example/mcp"));
+        assert_eq!(
+            parse_row_pair(search, "title", "url"),
+            (Some("MCP overview"), Some("https://example/mcp"))
+        );
 
         let skill = "ROW name=email-triage|src=default|desc=Inbox via MCP email";
-        assert_eq!(parse_row_field(skill, "name"), Some("email-triage"));
-        assert_eq!(parse_row_field(skill, "desc"), Some("Inbox via MCP email"));
+        assert_eq!(
+            parse_row_pair(skill, "name", "desc"),
+            (Some("email-triage"), Some("Inbox via MCP email"))
+        );
         // Unread keys must not disturb neighbors.
         assert_eq!(parse_row_field(skill, "src"), Some("default"));
     }

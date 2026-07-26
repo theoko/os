@@ -134,11 +134,13 @@ fn load_docs() -> Result<&'static [Doc], &'static str> {
 }
 
 /// ASCII-oriented tokenizer shared with the teddy index.
+///
+/// Tokens are ascii-alphanumeric runs, so per-token `to_ascii_lowercase`
+/// avoids allocating a full lowercased copy of the haystack.
 pub(crate) fn tokenize(text: &str) -> Vec<String> {
-    text.to_lowercase()
-        .split(|c: char| !c.is_ascii_alphanumeric())
+    text.split(|c: char| !c.is_ascii_alphanumeric())
         .filter(|w| w.len() >= 2)
-        .map(|w| w.to_string())
+        .map(|w| w.to_ascii_lowercase())
         .collect()
 }
 

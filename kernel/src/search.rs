@@ -115,19 +115,13 @@ fn find_term(tok: &str) -> Option<&'static Term> {
 /// Mirrors the host scorer: tf-idf, blended with PageRank, with a bonus for
 /// documents containing every query term. Scores stay local.
 pub fn query(q: &str, out: &mut [usize; MAX_HITS]) -> usize {
-    let mut ranked = [(0i64, 0usize); N_DOCS];
-    let n = rank(q, &mut ranked);
-    let take = n.min(MAX_HITS);
-    for i in 0..take {
-        out[i] = ranked[i].1;
-    }
-    take
+    let mut scores = [0i64; N_DOCS];
+    score_docs(q, &mut scores);
+    pick_top(&mut scores, out)
 }
 
-/// Fill `ranked` with `(score, doc)` pairs and selection-sort the top
-/// [`MAX_HITS`] into place. Returns the number of scored documents.
-fn rank(q: &str, ranked: &mut [(i64, usize); N_DOCS]) -> usize {
-    let mut scores = [0i64; N_DOCS];
+/// Accumulate tf-idf, blend PageRank / exact-AND, leave non-hits at 0.
+fn score_docs(q: &str, scores: &mut [i64; N_DOCS]) {
     let mut hit_count = [0u32; N_DOCS];
     let mut n_terms = 0u32;
 
@@ -141,9 +135,10 @@ fn rank(q: &str, ranked: &mut [(i64, usize); N_DOCS]) -> usize {
         }
     }
 
-    let mut n = 0usize;
-    for (i, &raw) in scores.iter().enumerate() {
+    for (i, slot) in scores.iter_mut().enumerate() {
+        let raw = *slot;
         if raw <= 0 {
+            *slot = 0;
             continue;
         }
         // PageRank blend: score * (1 + 4*pr), pr in 0..1.
@@ -152,19 +147,29 @@ fn rank(q: &str, ranked: &mut [(i64, usize); N_DOCS]) -> usize {
         if n_terms > 0 && hit_count[i] >= n_terms {
             score = score * 135 / 100;
         }
-        ranked[n] = (score, i);
-        n += 1;
+        *slot = score;
     }
+}
 
-    // Selection sort: N_DOCS is tiny and this avoids needing alloc.
-    for i in 0..n.min(MAX_HITS) {
-        let mut best = i;
-        for j in (i + 1)..n {
-            if ranked[j].0 > ranked[best].0 {
-                best = j;
+/// Selection-sort the top [`MAX_HITS`] into `out`, clearing taken scores.
+fn pick_top(scores: &mut [i64; N_DOCS], out: &mut [usize; MAX_HITS]) -> usize {
+    let mut n = 0usize;
+    for slot in out.iter_mut() {
+        let mut best = None;
+        for (i, &s) in scores.iter().enumerate() {
+            if s <= 0 {
+                continue;
+            }
+            if best.map_or(true, |b| s > scores[b]) {
+                best = Some(i);
             }
         }
-        ranked.swap(i, best);
+        let Some(i) = best else {
+            break;
+        };
+        *slot = i;
+        scores[i] = 0;
+        n += 1;
     }
     n
 }
@@ -232,10 +237,16 @@ mod tests {
 
     #[test]
     fn results_are_descending() {
-        let mut ranked = [(0i64, 0usize); N_DOCS];
-        let n = rank("os agent search skills", &mut ranked).min(MAX_HITS);
+        let mut scores = [0i64; N_DOCS];
+        score_docs("os agent search skills", &mut scores);
+        let snapshot = scores;
+        let mut out = [0usize; MAX_HITS];
+        let n = pick_top(&mut scores, &mut out);
         for i in 1..n {
-            assert!(ranked[i - 1].0 >= ranked[i].0, "not sorted at {i}");
+            assert!(
+                snapshot[out[i - 1]] >= snapshot[out[i]],
+                "not sorted at {i}"
+            );
         }
     }
 
