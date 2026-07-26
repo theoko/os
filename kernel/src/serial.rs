@@ -53,7 +53,7 @@ impl Serial {
         let _ = byte;
     }
 
-    pub fn write_bytes(&self, bytes: &[u8]) {
+    fn write_bytes(&self, bytes: &[u8]) {
         for &b in bytes {
             if b == b'\n' {
                 self.write_byte(b'\r');

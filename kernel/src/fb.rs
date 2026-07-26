@@ -60,15 +60,6 @@ impl Surface {
             Some((x0, y0, x1, y1)) => (x0.min(nx0), y0.min(ny0), x1.max(nx1), y1.max(ny1)),
         }));
     }
-
-    /// Current dirty rectangle as `(x0, y0, x1, y1)`, if anything changed.
-    fn dirty_rect(&self) -> Option<(i32, i32, i32, i32)> {
-        self.dirty.get()
-    }
-
-    fn clear_dirty(&self) {
-        self.dirty.set(None);
-    }
 }
 
 /// Blend `src` over `dst` by `a` (0..=255).
@@ -392,9 +383,9 @@ mod tests {
         let mut c = Canvas::new(200, 100);
         {
             let s = c.surface();
-            assert!(s.dirty_rect().is_none(), "clean surface reports dirt");
+            assert!(s.dirty.get().is_none(), "clean surface reports dirt");
             s.fill_rect(10, 20, 30, 40, 0);
-            let (x0, y0, x1, y1) = s.dirty_rect().expect("fill_rect marked nothing");
+            let (x0, y0, x1, y1) = s.dirty.get().expect("fill_rect marked nothing");
             assert_eq!((x0, y0, x1, y1), (10, 20, 40, 60));
         }
     }
@@ -406,21 +397,21 @@ mod tests {
             let s = c.surface();
             s.fill_rect(10, 10, 10, 10, 0);
             s.fill_rect(80, 80, 40, 40, 0); // runs off the right/bottom edge
-            let (x0, y0, x1, y1) = s.dirty_rect().unwrap();
+            let (x0, y0, x1, y1) = s.dirty.get().unwrap();
             assert_eq!((x0, y0), (10, 10));
             assert_eq!((x1, y1), (100, 100), "dirty rect escaped the surface");
         }
     }
 
     #[test]
-    fn clear_dirty_resets() {
+    fn dirty_clear_resets() {
         let mut c = Canvas::new(50, 50);
         {
             let s = c.surface();
             s.fill_rect(0, 0, 5, 5, 0);
-            assert!(s.dirty_rect().is_some());
-            s.clear_dirty();
-            assert!(s.dirty_rect().is_none(), "idle frame would still blit");
+            assert!(s.dirty.get().is_some());
+            s.dirty.set(None);
+            assert!(s.dirty.get().is_none(), "idle frame would still blit");
         }
     }
 
@@ -430,7 +421,7 @@ mod tests {
         {
             let s = c.surface();
             s.fill_rect(-100, -100, 10, 10, 0);
-            assert!(s.dirty_rect().is_none(), "fully clipped draw marked a region");
+            assert!(s.dirty.get().is_none(), "fully clipped draw marked a region");
         }
     }
 
@@ -440,7 +431,7 @@ mod tests {
         {
             let s = c.surface();
             s.draw_text(20, 60, "Hello", &BODY_FACE, 0, 0);
-            let (x0, y0, x1, y1) = s.dirty_rect().expect("text marked nothing");
+            let (x0, y0, x1, y1) = s.dirty.get().expect("text marked nothing");
             assert!(x0 <= 20 && x1 >= 20 + BODY_FACE.width("Hello", 0));
             assert!(y0 < 60 && y1 > 60, "box must straddle the baseline");
         }
@@ -618,13 +609,13 @@ impl Screen {
     /// idle frame costs zero MMIO writes.
     pub fn present(&self) {
         if !self.buffered {
-            self.back.clear_dirty();
+            self.back.dirty.set(None);
             return;
         }
-        let Some((x0, y0, x1, y1)) = self.back.dirty_rect() else {
+        let Some((x0, y0, x1, y1)) = self.back.dirty.get() else {
             return;
         };
-        self.back.clear_dirty();
+        self.back.dirty.set(None);
         self.blit(x0, y0, x1, y1);
     }
 
@@ -636,7 +627,7 @@ impl Screen {
         if !self.buffered {
             return;
         }
-        self.back.clear_dirty();
+        self.back.dirty.set(None);
         // Anim feeds 0..=ONE already; no second clamp.
         let a = alpha_q16 as u32;
         let (w, h) = (self.back.width, self.back.height);

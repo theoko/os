@@ -103,7 +103,8 @@ pub(crate) fn outlined_round_rect(fb: &Surface, r: Rect, radius: i32) {
         r.y + 1,
         r.w - 2,
         r.h - 2,
-        radius.saturating_sub(1),
+        // Callers pass radius ≥ 10 (field / row / tile chrome).
+        radius - 1,
         fb::SURFACE,
     );
 }

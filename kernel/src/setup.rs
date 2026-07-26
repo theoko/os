@@ -65,10 +65,6 @@ impl Setup {
         }
     }
 
-    fn reset_zones(&mut self) {
-        self.n_zones = 0;
-    }
-
     fn push_zone(&mut self, rect: ui::Rect, action: Action) {
         if self.n_zones < MAX_ZONES {
             self.zones[self.n_zones] = Zone { rect, action };
@@ -130,7 +126,7 @@ impl Setup {
     /// Paint the current step. Records hit zones as a side effect.
     pub fn draw(&mut self, fb: &Surface, online: bool, skills: &SkillPeek) {
         fb.fill();
-        self.reset_zones();
+        self.n_zones = 0;
 
         match self.step {
             Step::Welcome => self.draw_welcome(fb),

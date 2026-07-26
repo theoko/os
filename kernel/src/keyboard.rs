@@ -143,10 +143,6 @@ impl<const N: usize> TextField<N> {
         core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.len == 0
-    }
-
     pub fn clear(&mut self) {
         self.len = 0;
     }
@@ -248,7 +244,7 @@ mod tests {
     fn field_backspace_on_empty_is_a_noop() {
         let mut f = TextField::<8>::new();
         assert!(!f.apply(Key::Backspace));
-        assert!(f.is_empty());
+        assert!(f.as_str().is_empty());
     }
 
     #[test]
@@ -266,6 +262,6 @@ mod tests {
         let mut f = TextField::<8>::new();
         assert!(!f.apply(Key::Char(0x07)));
         assert!(!f.apply(Key::Char(0xC3)));
-        assert!(f.is_empty());
+        assert!(f.as_str().is_empty());
     }
 }

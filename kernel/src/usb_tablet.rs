@@ -554,7 +554,8 @@ impl UsbTablet {
 
         let addr = self.addr as u32;
         let ep = self.ep as u32;
-        let mps = self.max_packet.max(1) as u32;
+        // Default 8; parse path maps mps==0 → 8 and otherwise keeps mps ≥ 1.
+        let mps = self.max_packet as u32;
         let toggle = if self.data_toggle { 1u32 << 19 } else { 0 };
         let token = ((mps - 1) << 21) | toggle | (ep << 15) | (addr << 8) | TOKEN_IN;
 

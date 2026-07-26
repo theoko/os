@@ -120,7 +120,7 @@ pub(crate) mod heapless_vec {
                 len: 0,
             }
         }
-        pub fn push(&mut self, io: u16) {
+        pub(super) fn push(&mut self, io: u16) {
             if self.len < self.data.len() {
                 self.data[self.len] = io;
                 self.len += 1;

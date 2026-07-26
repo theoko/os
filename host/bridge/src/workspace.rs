@@ -151,11 +151,7 @@ fn snippet_of(body: &str) -> String {
             break;
         }
     }
-    let mut s: String = out.chars().take(240).collect();
-    while s.ends_with(char::is_whitespace) {
-        s.pop();
-    }
-    s
+    out.chars().take(240).collect::<String>().trim_end().to_string()
 }
 
 /// Walk `roots` and build an index. Returns entries found.
@@ -168,7 +164,7 @@ pub(crate) fn build(roots: &[PathBuf]) -> Index {
             break;
         }
     }
-    entries.truncate(MAX_ENTRIES);
+    // `walk` refuses pushes past MAX_ENTRIES; no post-truncate needed.
     Index { entries }
 }
 

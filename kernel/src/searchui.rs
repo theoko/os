@@ -74,8 +74,9 @@ fn empty_reason(done: SearchDone) -> &'static str {
 }
 
 pub struct SearchView {
+    /// `pub` so the kernel binary can open a hit without a getter.
     pub rows: [Row; search::MAX_HITS],
-    pub count: usize,
+    pub(crate) count: usize,
     /// `None` = no query yet. `Some` = last fetch / local-only fill.
     outcome: Option<SearchDone>,
 }

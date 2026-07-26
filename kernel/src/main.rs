@@ -129,8 +129,7 @@ unsafe extern "C" fn kmain() -> ! {
                     serial_port.write_str("mouse: usb-tablet ready\n");
                 } else {
                     serial_port.write_str("mouse: usb-tablet missing ");
-                    let n = why.iter().position(|&b| b == 0).unwrap_or(why.len());
-                    serial_port.write_bytes(&why[..n]);
+                    serial_port.write_str(skills::str_at(&why));
                     serial_port.write_str("\n");
                 }
 
@@ -351,7 +350,7 @@ fn handle_key(
             true
         }
         (screens::View::Home, keyboard::Key::Escape) => {
-            if query.is_empty() {
+            if query.as_str().is_empty() {
                 return false;
             }
             query.clear();

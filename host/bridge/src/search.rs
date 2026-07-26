@@ -300,7 +300,7 @@ pub(crate) fn wrap_lines(text: &str, max: usize) -> Vec<String> {
             out.push(format!("ROW line={}", crate::text::guest_slot(&cur, LINE_CHARS)));
         }
     }
-    out.truncate(max);
+    // Para-start + mid-flush early returns keep len ≤ max.
     out
 }
 
