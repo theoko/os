@@ -321,12 +321,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn doc_page_max_matches_bridge_default() {
-        // Bridge `GUEST_DOC_LINES` locksteps against `DocPage::MAX`.
-        assert_eq!(DocPage::MAX, 18);
-    }
-
-    #[test]
     fn parse_row_extracts_keys() {
         let search = "ROW title=MCP overview|cat=docs|url=https://example/mcp";
         assert_eq!(

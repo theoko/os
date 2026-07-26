@@ -10,12 +10,14 @@ Dropped unused host portals (`market.health`, `market.fear_greed`) and the
 Python `tsearch_mcp.py` search shell-out. Guest never called either path;
 native teddy indexing covers live corpus search. Also dropped the mock search
 backend / `OS_MCP_SEARCH_BACKEND`, folded five bridge `home()` copies into
-`paths::home`, shared the bridge tokenizer, folded setup cap names into
-`Cap::name()` (blurbs-only table), and removed the unused `skills.save`
-`call_tool` arm (socket path owns saves). Dropped `skills.get` and the Skills
-row click body probe — Skills UI is list + desc only (`skills.list` / builtins).
-Mail is peek-only (`ROW n=`); no email→search graph. Guest Caps are the four
-`Cap::ALL` verbs — `skills.save` stays host-socket-only (no guest Cap).
+`paths::home`, shared the bridge tokenizer, gave Caps UI `label` + `blurb`
+beside `Cap::name()` (host producer / CALL id), and removed the unused
+`skills.save` `call_tool` arm (socket path owns saves). Dropped `skills.get`
+and the Skills row click body probe — Skills UI is list + desc only
+(`skills.list` / builtins). Mail is peek-only (`ROW n=`); no email→search
+graph. Guest Caps are four `Cap::ALL` grants (Inbox/Knowledge CALLs;
+Files/Transcripts via `files=1` / `audio=1`) — `skills.save` stays
+host-socket-only (no guest Cap).
 
 ## 0.9.1 — 2026-07-25
 

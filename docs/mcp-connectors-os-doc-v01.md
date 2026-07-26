@@ -54,8 +54,16 @@ Fields use `key=value`; use `|` between fields. Values are single-line; spaces a
 
 ## Capabilities (guest)
 
-`Cap::EmailSearch` (chosen at setup / Caps screen) is required before
-`CALL email.search`. Ambient root is forbidden for arbitrary tools.
+Four `Cap::ALL` grants (setup / Caps screen), no ambient root:
+
+| Cap | Guest wire |
+|-----|------------|
+| Inbox (`EmailSearch`) | required for `CALL email.search` |
+| Knowledge (`SearchQuery`) | required for `CALL search.query` / `doc.read` |
+| Files (`WorkspaceIndex`) | `files=1` on search/doc (host producer `workspace.index`) |
+| Transcripts (`AudioTranscribe`) | `audio=1` on search/doc (host producer `audio.transcribe`) |
+
+Revoke of Files/Transcripts purges via `workspace.forget` / `audio.forget`.
 
 ## Host backends
 
