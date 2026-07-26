@@ -1324,9 +1324,16 @@ unsafe extern "C" fn kmain() -> ! {
                         // framebuffer. Re-present the software cursor at a
                         // gentle cadence so a host redraw can never erase the
                         // only visible pointer while the guest is idle.
+                        // Through the cursor, not `paint_pointer`: a direct
+                        // paint keeps no saved background yet still counts as
+                        // drawing, so the next move finds its copy stale,
+                        // declines to restore, and strands the arrow. Repeated
+                        // at the start position, that is exactly the ghost
+                        // that sat in the middle of the screen until something
+                        // repainted the whole frame.
                         arm_cursor_refresh = arm_cursor_refresh.wrapping_add(1);
                         if arm_cursor_refresh == 0 {
-                            mouse::paint_pointer(surface, x, y);
+                            cursor.show_at(surface, x, y);
                             screen.present();
                         }
                     }

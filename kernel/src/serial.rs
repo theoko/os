@@ -13,6 +13,15 @@ static ACTIVE_PL011: AtomicUsize = AtomicUsize::new(0);
 #[cfg(target_arch = "aarch64")]
 const VBOX_PL011: usize = 0xFFDD_E000;
 
+/// Emit the kernel log on VirtualBox's ARM PL011.
+///
+/// Off by default: see `write_byte`. Turn on to diagnose something on that
+/// platform that the screen cannot show — driver bring-up, in particular,
+/// where "nothing happened" and "it happened and was dropped" look identical
+/// from in front of the machine.
+#[cfg(target_arch = "aarch64")]
+const VBOX_SERIAL: bool = false;
+
 /// Line ending used after the hello banner.
 pub const LINE_ENDING: &str = "\n";
 
@@ -306,9 +315,16 @@ impl Serial {
             }
             // VirtualBox's ARM PL011 can leave TX full indefinitely after
             // firmware hands it off. Even inspecting the full flag then makes
-            // boot timing nondeterministic, so the framebuffer is the sole
-            // diagnostic surface on that platform. QEMU retains serial logs.
-            if base == VBOX_PL011 {
+            // boot timing nondeterministic, so the framebuffer is normally the
+            // sole diagnostic surface on that platform. QEMU retains serial
+            // logs unconditionally.
+            //
+            // Set `VBOX_SERIAL` to trade that boot-timing cost for a real log
+            // when something on VirtualBox can only be diagnosed from one. The
+            // write below never spins — it drops the byte when the FIFO is
+            // full — so the cost is one emulated MMIO read per byte, not a
+            // stall.
+            if base == VBOX_PL011 && !VBOX_SERIAL {
                 return;
             }
             unsafe {
