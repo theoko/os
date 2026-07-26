@@ -26,17 +26,14 @@ CARGO ?= $(firstword $(wildcard \
 	$(HOME)/.cargo/bin/cargo \
 	/usr/local/opt/rustup/bin/cargo) \
 	$(shell command -v cargo 2>/dev/null))
-RUSTC ?= $(firstword $(wildcard \
-	/opt/homebrew/opt/rustup/bin/rustc \
-	$(HOME)/.cargo/bin/rustc \
-	/usr/local/opt/rustup/bin/rustc) \
-	$(shell command -v rustc 2>/dev/null))
 
 ifeq ($(CARGO),)
 $(error cargo not found — install rustup: brew install rustup && rustup default stable && rustup target add x86_64-unknown-none)
 endif
 
 RUSTUP_BIN := $(patsubst %/,%,$(dir $(CARGO)))
+# Same rustup prefix as cargo (fallback: PATH).
+RUSTC ?= $(firstword $(wildcard $(RUSTUP_BIN)/rustc) $(shell command -v rustc 2>/dev/null))
 WITH_RUST := PATH="$(RUSTUP_BIN):$$PATH"
 
 .PHONY: all build kernel iso bridge bridge-run run run-bridged utm utm-run utm-bridged test test-host smoke smoke-bridge clean distclean

@@ -16,8 +16,15 @@ OK_STATUS = 33
 
 
 def qemu_argv(iso: Path, serial_path: Path, *, com2: str | None = None) -> list[str]:
-    # Prefer Makefile `QEMU_MACHINE` so smoke and `make run` share one knob.
-    machine = os.environ.get("QEMU_MACHINE", "-M q35 -m 512M -display none").split()
+    # Shared with `make run` via exported Makefile `QEMU_MACHINE`.
+    raw = os.environ.get("QEMU_MACHINE")
+    if not raw:
+        print(
+            "error: QEMU_MACHINE unset — run via `make smoke` / `make smoke-bridge`",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    machine = raw.split()
     argv = [
         "qemu-system-x86_64",
         *machine,

@@ -101,7 +101,7 @@ unsafe extern "C" fn kmain() -> ! {
                 screen.present();
                 serial_port.write_str("mouse: pointer painted\n");
 
-                serial::request_qemu_exit();
+                serial::debug_exit(0x10);
 
                 let hhdm = HHDM_REQUEST
                     .get_response()

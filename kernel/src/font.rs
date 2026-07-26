@@ -29,10 +29,6 @@ pub(crate) struct Face {
     pub(crate) px: i32,
 }
 
-/// Codepoint range covered by every face.
-const FIRST: u8 = 0x20;
-const LAST: u8 = 0x7E;
-
 include!(concat!(env!("OUT_DIR"), "/font_atlas.rs"));
 
 impl Face {

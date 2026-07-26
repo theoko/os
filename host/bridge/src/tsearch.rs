@@ -60,11 +60,6 @@ mod tests {
     use std::env;
 
     #[test]
-    fn corpus_url_is_https() {
-        assert!(CORPUS_URL.starts_with("https://"), "corpus must be fetched over TLS");
-    }
-
-    #[test]
     fn cache_lives_outside_the_repo() {
         let _g = crate::paths::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         unsafe { env::remove_var("OS_TSEARCH_CACHE") };

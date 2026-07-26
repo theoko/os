@@ -3,9 +3,6 @@
 //! Type a query, press Enter, read answers. Results come from the index baked
 //! into the kernel (`search.rs`), so this works with no host bridge at all;
 //! the bridge adds corpus / files / audio when those caps are granted.
-//!
-//! Previously the home screen ran searches on a card click and wrote the hits
-//! to COM1 — invisible unless you were watching a serial console.
 
 use crate::fb::{self, Surface};
 use crate::font::{self, BODY_FACE, BRAND_FACE, SMALL_FACE, TITLE_FACE};

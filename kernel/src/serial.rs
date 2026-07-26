@@ -105,8 +105,7 @@ impl Serial {
     ///
     /// If the UART keeps delivering bytes with no terminator (open COM2 with
     /// no peer, or firmware noise), give up after `MAX_OVERRUN` discarded
-    /// bytes so we never spin forever — the old buffer-full early return was
-    /// the previous escape hatch for that case.
+    /// bytes so we never spin forever.
     pub(crate) fn read_line(&self, buf: &mut [u8], timeout_spins: u32) -> Option<usize> {
         const MAX_OVERRUN: usize = 4096;
         let mut n = 0usize;
@@ -141,26 +140,21 @@ impl Serial {
     }
 }
 
-/// Ask QEMU's `isa-debug-exit` to quit with success (`0x10`). No-op on UTM /
-/// hosts without that device; caller may continue (e.g. interactive mouse loop).
-pub fn request_qemu_exit() {
-    debug_exit(0x10);
-}
-
-/// Fail the QEMU smoke run (`0x11`) and halt. Success uses
-/// [`request_qemu_exit`] without halt so the guest can keep running under UTM.
-pub fn exit_qemu() -> ! {
-    debug_exit(0x11);
-    halt()
-}
-
-fn debug_exit(code: u8) {
+/// Ask QEMU's `isa-debug-exit` to quit with `code`. Smoke success is `0x10`
+/// (no halt — UTM continues). Fail/panic uses [`exit_qemu`].
+pub fn debug_exit(code: u8) {
     #[cfg(target_arch = "x86_64")]
     unsafe {
         port::outb(0xf4, code);
     }
     #[cfg(not(target_arch = "x86_64"))]
     let _ = code;
+}
+
+/// Fail the QEMU smoke run (`0x11`) and halt.
+pub fn exit_qemu() -> ! {
+    debug_exit(0x11);
+    halt()
 }
 
 pub(crate) fn halt() -> ! {
@@ -180,8 +174,7 @@ pub(crate) fn halt() -> ! {
 /// faster than they can be heard or seen.
 pub(crate) const ASSUMED_HZ: u64 = 1_000_000_000;
 
-/// Read the cycle counter. Used to measure frame cost honestly rather than
-/// asserting a frame rate.
+/// Read the cycle counter (anim pacing / beep timing).
 #[cfg(target_arch = "x86_64")]
 pub fn rdtsc() -> u64 {
     let lo: u32;
