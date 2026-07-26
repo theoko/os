@@ -143,8 +143,6 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut x = cx;
                 let mut y = cy;
                 let mut prev_buttons = 0u8;
-                let mut status_buf = [0u8; 72];
-                skills::copy_field(&mut status_buf, grants.footer_status());
                 let mut setup = setup::Setup::new();
                 let mut kb = keyboard::Keyboard::new();
                 let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
@@ -220,10 +218,9 @@ unsafe extern "C" fn kmain() -> ! {
                             }
                             if setup.is_finished() {
                                 grants = setup.grants();
-                                skills::copy_field(&mut status_buf, grants.footer_status());
                                 serial_port.write_str("ui: setup done\n");
                                 serial_port.write_str("caps: ");
-                                serial_port.write_str(skills::str_at(&status_buf));
+                                serial_port.write_str(grants.footer_status());
                                 serial_port.write_str("\n");
                                 mail = mcp::fetch_mail_peek(grants);
                                 view = screens::View::Home;
@@ -303,7 +300,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     }
                                     Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
                                         serial_port.write_str("ui: click Capabilities\n");
-                                        skills::copy_field(&mut status_buf, grants.footer_status());
                                         view = screens::View::Caps;
                                         dirty = true;
                                     }
@@ -358,33 +354,21 @@ unsafe extern "C" fn kmain() -> ! {
                                                 serial_port.write_str(" - purged\n");
                                             }
                                         }
-                                        skills::copy_field(
-                                            &mut status_buf,
-                                            grants.footer_status(),
-                                        );
                                         dirty = true;
                                     }
                                 } else if view == screens::View::Skills {
+                                    // Serial feedback only — home no longer shows blurbs.
                                     if let Some(i) =
                                         screens::skills_hit(w, skill_peek.count, x, y)
                                     {
                                         let name = skill_peek.name_at(i);
-                                        let mut blurb = [0u8; 72];
-                                        if mcp::fetch_skill_blurb(name, &mut blurb) {
-                                            skills::copy_field(
-                                                &mut status_buf,
-                                                skills::str_at(&blurb),
-                                            );
-                                            serial_port.write_str("skills: got ");
-                                            serial_port.write_str(name);
-                                            serial_port.write_str("\n");
+                                        serial_port.write_str(if mcp::skill_available(name) {
+                                            "skills: got "
                                         } else {
-                                            skills::copy_field(&mut status_buf, name);
-                                            serial_port.write_str("skills: get offline ");
-                                            serial_port.write_str(name);
-                                            serial_port.write_str("\n");
-                                        }
-                                        dirty = true;
+                                            "skills: get offline "
+                                        });
+                                        serial_port.write_str(name);
+                                        serial_port.write_str("\n");
                                     }
                                 }
                             }

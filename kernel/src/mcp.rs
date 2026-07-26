@@ -306,11 +306,11 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
     })
 }
 
-/// First useful body line from `CALL skills.get name=…` (for a clicked row).
+/// True when `CALL skills.get name=…` returns a non-empty body line.
 ///
-/// Returns `false` when the bridge is down or the skill is missing.
-pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
-    out.fill(0);
+/// Used for serial feedback on a Skills-row click; the home status strip no
+/// longer displays blurbs.
+pub fn skill_available(name: &str) -> bool {
     if name.is_empty() {
         return false;
     }
@@ -332,7 +332,7 @@ pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
             let Some(body) = resp.strip_prefix("LINE ") else {
                 return true;
             };
-            // Skip YAML frontmatter so the blurb is real prose, not `---`.
+            // Skip YAML frontmatter so we look for real prose, not `---`.
             if body.trim() == "---" {
                 if !saw_fm_open {
                     saw_fm_open = true;
@@ -342,14 +342,9 @@ pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
                 }
                 return true;
             }
-            if in_frontmatter {
+            if in_frontmatter || body.trim().is_empty() {
                 return true;
             }
-            let text = body.trim();
-            if text.is_empty() {
-                return true;
-            }
-            copy_field(out, text);
             found = true;
             false
         });

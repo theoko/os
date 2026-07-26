@@ -1,8 +1,8 @@
 //! Home screen — a launcher.
 //!
-//! A search field you can type into on arrival, three destinations carrying
-//! live counts, and recent mail when granted. Type is anti-aliased proportional
-//! (see `font.rs`); all copy is ASCII because the atlas covers 0x20..=0x7E only.
+//! One search field, three equal destination cards with count subtext, and a
+//! locked footer status strip. Type is anti-aliased proportional (`font.rs`);
+//! all copy is ASCII because the atlas covers 0x20..=0x7E only.
 
 use crate::caps::Caps;
 use crate::fb::Surface;
@@ -266,31 +266,8 @@ pub fn draw_home_full(
     draw_status_bar(fb, w, h, mail, grants);
 }
 
-/// Render "3 messages" / "1 message" / "none" into a caller-owned buffer.
-fn fmt_count<'a>(buf: &'a mut [u8; 16], n: usize, one: &'static str, many: &'static str) -> &'a str {
-    if n == 0 {
-        return "none";
-    }
-    let mut i = 0;
-    if n >= 10 {
-        buf[i] = b'0' + ((n / 10) % 10) as u8;
-        i += 1;
-    }
-    buf[i] = b'0' + (n % 10) as u8;
-    i += 1;
-    buf[i] = b' ';
-    i += 1;
-    for &b in (if n == 1 { one } else { many }).as_bytes() {
-        if i < buf.len() {
-            buf[i] = b;
-            i += 1;
-        }
-    }
-    core::str::from_utf8(&buf[..i]).unwrap_or("")
-}
-
-/// "4 Granted" / "5 Playbooks" — card subtext, never a truncated list.
-fn fmt_n_label<'a>(buf: &'a mut [u8; 16], n: usize, label: &'static str) -> &'a str {
+/// `"N label"` into a caller-owned buffer (digits + space + label).
+fn fmt_n_label<'a>(buf: &'a mut [u8; 16], n: usize, label: &str) -> &'a str {
     let mut i = 0;
     if n >= 10 {
         buf[i] = b'0' + ((n / 10) % 10) as u8;
@@ -307,6 +284,14 @@ fn fmt_n_label<'a>(buf: &'a mut [u8; 16], n: usize, label: &'static str) -> &'a 
         }
     }
     core::str::from_utf8(&buf[..i]).unwrap_or("")
+}
+
+/// Render "3 messages" / "1 message" / "none" into a caller-owned buffer.
+fn fmt_count<'a>(buf: &'a mut [u8; 16], n: usize, one: &'static str, many: &'static str) -> &'a str {
+    if n == 0 {
+        return "none";
+    }
+    fmt_n_label(buf, n, if n == 1 { one } else { many })
 }
 
 /// Centered content column capped at `max` (home uses 920; list screens 720).
