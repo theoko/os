@@ -89,16 +89,17 @@ fn for_each_reply(
     }
 }
 
-/// Drain a typical OK / ROW* / END reply. Skips OK headers; stops on `ERR` /
-/// `END`. `on_row` returns `false` to stop early. Returns whether an `ERR`
-/// line was seen.
+/// Drain a typical OK / ROW* / END reply. Stops on `ERR` / `END`.
+/// `on_row` returns `false` to stop early. Returns `(saw_err, n)` where `n`
+/// is the `n=` count from the OK header (0 if absent).
 fn for_each_ok_rows(
     com2: &Serial,
     line: &mut [u8],
     max: usize,
     mut on_row: impl FnMut(&str) -> bool,
-) -> bool {
+) -> (bool, usize) {
     let mut saw_err = false;
+    let mut ok_n = 0usize;
     for_each_reply(com2, line, max, |resp| {
         if resp.starts_with("ERR ") {
             saw_err = true;
@@ -108,6 +109,7 @@ fn for_each_ok_rows(
             return false;
         }
         if resp.starts_with("OK ") {
+            ok_n = parse_ok_n(resp);
             return true;
         }
         if resp.starts_with("ROW ") {
@@ -115,7 +117,7 @@ fn for_each_ok_rows(
         }
         true
     });
-    saw_err
+    (saw_err, ok_n)
 }
 
 /// Ping COM2; if Online, run `f`. Otherwise return `offline`.
@@ -152,17 +154,10 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
 
         com2.write_str("CALL email.search q=in:inbox max=3\n");
 
-        // Count comes from the OK header (`n=`); drain ROW/END for wire hygiene.
+        // Count from OK `n=`; ROWs are drained for wire hygiene only.
         let mut peek = MailPeek::empty(BridgeStatus::Online);
-        for_each_reply(com2, line, 16, |resp| {
-            if resp.starts_with("ERR ") || resp == "END" {
-                return false;
-            }
-            if resp.starts_with("OK ") {
-                peek.count = parse_ok_n(resp);
-            }
-            true
-        });
+        let (_, n) = for_each_ok_rows(com2, line, 16, |_| true);
+        peek.count = n;
         peek
     })
 }
@@ -236,7 +231,8 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str, title: &str) -> DocPage {
             copy_field(&mut page.lines[page.count], text);
             page.count += 1;
             true
-        });
+        })
+        .0;
         page
     });
     copy_field(&mut page.title, title);
@@ -280,7 +276,8 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
         let _ = for_each_ok_rows(com2, line, 24, |resp| {
             let (name, desc) = parse_row_pair(resp, "name", "desc");
             peek.push(name.unwrap_or("?"), desc.unwrap_or(""))
-        });
+        })
+        .0;
 
         if peek.count == 0 {
             // Bridge answered but listed nothing — still show ISO defaults.
@@ -342,7 +339,8 @@ pub(crate) fn fetch_search_rows(
             let (title, url) = parse_row_pair(resp, "title", "url");
             // Caller enforces MAX_HITS (returns false to stop).
             on_hit(title.unwrap_or("?"), url.unwrap_or(""))
-        });
+        })
+        .0;
         true
     })
 }

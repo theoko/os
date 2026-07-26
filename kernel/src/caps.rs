@@ -36,6 +36,17 @@ impl Cap {
             Cap::AudioTranscribe => "audio.transcribe",
         }
     }
+
+    /// One-line UI blurb for setup / Capabilities rows.
+    pub const fn blurb(self) -> &'static str {
+        match self {
+            Cap::EmailSearch => "Read the inbox through the host bridge",
+            Cap::SearchQuery => "Query the built-in knowledge corpus",
+            Cap::SkillsSave => "Write new skill playbooks to disk",
+            Cap::WorkspaceIndex => "Search your own files on this machine",
+            Cap::AudioTranscribe => "Transcribe recordings and index what was said",
+        }
+    }
 }
 
 /// Bitset of granted capabilities (one bit per [`Cap`]).
@@ -96,6 +107,18 @@ mod tests {
         assert_eq!(Cap::SkillsSave.name(), "skills.save");
         assert_eq!(Cap::WorkspaceIndex.name(), "workspace.index");
         assert_eq!(Cap::AudioTranscribe.name(), "audio.transcribe");
+    }
+
+    #[test]
+    fn every_cap_has_an_ascii_blurb() {
+        for cap in Cap::ALL {
+            let b = cap.blurb();
+            assert!(!b.is_empty(), "{:?} blurb empty", cap.name());
+            assert!(
+                b.bytes().all(|c| (0x20..=0x7E).contains(&c)),
+                "non-ASCII blurb: {b:?}"
+            );
+        }
     }
 
     #[test]

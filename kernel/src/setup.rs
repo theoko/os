@@ -42,15 +42,6 @@ pub enum Step {
     Finished,
 }
 
-/// Blurbs for each [`Cap::ALL`] row (tool names come from [`Cap::name`]).
-pub(crate) const CAP_BLURBS: [&str; 5] = [
-    "Read the inbox through the host bridge",
-    "Query the built-in knowledge corpus",
-    "Write new skill playbooks to disk",
-    "Search your own files on this machine",
-    "Transcribe recordings and index what was said",
-];
-
 const MAX_ZONES: usize = 12;
 
 pub struct Setup {
@@ -249,7 +240,7 @@ impl Setup {
     /// Capability toggle at index `i`: titled row + switch + hit zone.
     fn cap_row(&mut self, fb: &Surface, y: i32, i: usize) {
         let r = content_rect(fb.width() as i32, y, ROW_H);
-        ui::draw_titled_row(fb, r, Cap::ALL[i].name(), CAP_BLURBS[i]);
+        ui::draw_titled_row(fb, r, Cap::ALL[i].name(), Cap::ALL[i].blurb());
         ui::draw_switch_in_row(fb, r, self.caps.allows(Cap::ALL[i]));
         self.push_zone(r, Action::Row(i));
     }
@@ -416,8 +407,8 @@ mod tests {
         ];
         for cap in Cap::ALL {
             all.push(cap.name());
+            all.push(cap.blurb());
         }
-        all.extend_from_slice(&CAP_BLURBS);
         for s in all {
             assert!(
                 s.bytes().all(|b| (0x20..=0x7E).contains(&b)),
@@ -473,9 +464,9 @@ mod layout_tests {
 
     #[test]
     fn capability_names_and_blurbs_fit_the_column() {
-        for (i, cap) in Cap::ALL.iter().enumerate() {
+        for cap in Cap::ALL {
             let name = cap.name();
-            let blurb = CAP_BLURBS[i];
+            let blurb = cap.blurb();
             assert!(BRAND_FACE.width(name, 0) < CONTENT_W - 76, "name hits the switch: {name}");
             assert!(SMALL_FACE.width(blurb, 0) < CONTENT_W - 76, "blurb hits the switch: {blurb}");
         }

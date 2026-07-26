@@ -10,7 +10,6 @@
 use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{self, BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
-use crate::setup::CAP_BLURBS;
 use crate::skills::SkillPeek;
 #[cfg(test)]
 use crate::skills::BUILTIN;
@@ -115,7 +114,7 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
     for (i, cap) in Cap::ALL.iter().enumerate() {
         let on = grants.allows(*cap);
         let r = row_rect(w, i);
-        ui::draw_titled_row(fb, r, cap.name(), CAP_BLURBS[i]);
+        ui::draw_titled_row(fb, r, cap.name(), cap.blurb());
         ui::draw_switch_in_row(fb, r, on);
     }
 
