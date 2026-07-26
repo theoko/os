@@ -1,5 +1,8 @@
 //! Builtin skill catalog (always available offline) + optional bridge list.
 
+/// Cap on bridge-listed skills (buffer, paint, home count, bridge `.take`).
+pub(crate) const MAX_LISTED: usize = 6;
+
 /// A skill name shown in the home UI.
 pub(crate) struct SkillRef {
     pub name: &'static str,
@@ -45,7 +48,7 @@ enum Kind {
     /// [`BUILTIN`] — offline / ERR fallback (not a live empty list).
     Builtin,
     /// Rows from `CALL skills.list`.
-    Listed { count: usize, slots: [Slot; 8] },
+    Listed { count: usize, slots: [Slot; MAX_LISTED] },
 }
 
 /// Names (+ short descs) from ISO builtins or a live bridge list.
@@ -59,7 +62,7 @@ impl SkillPeek {
         Self {
             kind: Kind::Listed {
                 count: 0,
-                slots: [EMPTY_SLOT; 8],
+                slots: [EMPTY_SLOT; MAX_LISTED],
             },
         }
     }
@@ -171,11 +174,11 @@ mod tests {
     #[test]
     fn push_caps_at_slot_limit() {
         let mut p = SkillPeek::empty();
-        for i in 0..8 {
+        for i in 0..MAX_LISTED {
             assert!(p.push("n", "d"), "slot {i}");
         }
         assert!(!p.push("overflow", "no"));
-        assert_eq!(p.count(), 8);
+        assert_eq!(p.count(), MAX_LISTED);
         assert!(p.from_bridge());
     }
 

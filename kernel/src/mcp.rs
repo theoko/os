@@ -293,7 +293,8 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
         com2.write_str("CALL skills.list\n");
 
         let mut peek = crate::skills::SkillPeek::empty();
-        let saw_err = for_each_ok_rows(com2, line, 24, |resp| {
+        // OK + up to MAX_LISTED ROWs (+ END breaks); push false also stops early.
+        let saw_err = for_each_ok_rows(com2, line, crate::skills::MAX_LISTED + 2, |resp| {
             let (name, desc) = parse_row_pair(resp, "name", "desc");
             peek.push(name.unwrap_or("?"), desc.unwrap_or(""))
         });

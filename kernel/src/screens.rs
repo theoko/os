@@ -81,7 +81,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
     let w = fb.width() as i32;
     chrome(fb, Some(("Skills", "Playbooks the agent can load")));
 
-    let n = peek.count().min(6);
+    let n = peek.count();
     for i in 0..n {
         ui::draw_titled_row(fb, row_rect(w, i), peek.name_at(i), peek.subtitle_at(i));
     }
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn all_rows_fit_a_768_screen() {
-        let n = BUILTIN.len().min(6).max(Cap::ALL.len());
+        let n = crate::skills::MAX_LISTED.max(Cap::ALL.len());
         let r = row_rect(1024, n - 1);
         let (y, h) = (r.y, r.h);
         assert!(y + h + 40 < 768, "rows run off the screen: {}", y + h);
@@ -209,7 +209,7 @@ mod tests {
     fn skill_text_fits_its_row() {
         let cw = row_rect(1024, 0).w;
         let peek = SkillPeek::from_builtin();
-        for i in 0..peek.count().min(6) {
+        for i in 0..peek.count() {
             assert!(
                 BRAND_FACE.width(peek.name_at(i), 0) < cw - 36,
                 "name overflows: {}",

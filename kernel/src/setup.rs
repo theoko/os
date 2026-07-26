@@ -194,7 +194,7 @@ impl Setup {
             },
         );
         let mut y = top;
-        for i in 0..skills.count().min(4) {
+        for i in 0..skills.count() {
             ui::draw_titled_row(
                 fb,
                 content_rect(w, y, ROW_H),
@@ -443,11 +443,14 @@ mod layout_tests {
         // Overlapping rows and the Continue pill would misroute clicks — the
         // exact failure a previous review caught on a short framebuffer.
         // Asserts ALL+1 so the next capability addition fails here, not on
-        // screen; that also covers today's ALL rows and the skills step
-        // (capped at 4 == Cap::ALL.len()).
+        // screen. Skills lists up to MAX_LISTED rows — assert that too.
         assert!(
             rows_bottom(Cap::ALL.len() + 1) < footer_top(768),
             "adding another capability would collide with the footer"
+        );
+        assert!(
+            rows_bottom(crate::skills::MAX_LISTED) < footer_top(768),
+            "MAX_LISTED skills would collide with the footer"
         );
     }
 
