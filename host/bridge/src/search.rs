@@ -197,52 +197,6 @@ fn search_tfidf(
     scored
 }
 
-fn snip<'a>(body: &'a str, q_terms: &[String]) -> &'a str {
-    // Query terms are already lowercased by `tokenize`. Prefer a no-alloc scan
-    // on ASCII bodies (the common guest path) over cloning a large teddy body.
-    let mut best = 0usize;
-    if body.is_ascii() {
-        let hay = body.as_bytes();
-        for term in q_terms {
-            let needle = term.as_bytes();
-            if needle.is_empty() || needle.len() > hay.len() {
-                continue;
-            }
-            if let Some(i) = hay.windows(needle.len()).position(|w| w.eq_ignore_ascii_case(needle))
-            {
-                best = i;
-                break;
-            }
-        }
-    } else {
-        let lower = body.to_lowercase();
-        // `find` returns a byte offset into `lower`; that only maps back onto
-        // `body` when lowercasing didn't change byte lengths. Otherwise anchor
-        // at the start rather than slicing at a wrong offset.
-        if lower.len() == body.len() {
-            for term in q_terms {
-                if let Some(i) = lower.find(term) {
-                    best = i;
-                    break;
-                }
-            }
-        }
-    }
-    let start = floor_char_boundary(body, best.saturating_sub(40));
-    let end = floor_char_boundary(body, (best + 80).min(body.len()));
-    // Callers run `sanitize` (ASCII + pipe scrub + cap); keep the raw window here.
-    &body[start..end]
-}
-
-/// Largest char boundary <= i (stable substitute for `str::floor_char_boundary`).
-fn floor_char_boundary(s: &str, mut i: usize) -> usize {
-    i = i.min(s.len());
-    while i > 0 && !s.is_char_boundary(i) {
-        i -= 1;
-    }
-    i
-}
-
 fn sanitize(s: &str) -> String {
     // Guest font atlas is ASCII 0x20..=0x7E only; drop the rest.
     crate::text::sanitize(s, 90, true, false)
@@ -318,28 +272,25 @@ pub fn query_all(
     } else {
         &[]
     };
-    let rows = hits.into_iter().map(|(score, src)| {
-        let (t, c, b, u) = match src {
+    let rows = hits.into_iter().map(|(_score, src)| {
+        let (t, c, u) = match src {
             Src::Local(i) => {
                 let d = &docs[i];
-                (d.t.as_str(), d.c.as_str(), d.b.as_str(), d.u.as_str())
+                (d.t.as_str(), d.c.as_str(), d.u.as_str())
             }
             Src::Teddy(i) => {
                 let d = &tdocs[i];
                 (
                     d.t.as_str(),
                     if d.c.is_empty() { "teddy" } else { d.c.as_str() },
-                    d.b.as_str(),
                     d.u.as_str(),
                 )
             }
         };
         format!(
-            "ROW title={}|cat={}|score={:.3}|snip={}|url={}",
+            "ROW title={}|cat={}|url={}",
             sanitize(t),
             sanitize(c),
-            score,
-            sanitize(snip(b, &q_terms)),
             sanitize(u)
         )
     });
