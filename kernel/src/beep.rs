@@ -57,16 +57,16 @@ pub struct Note {
     pub ms: u32,
 }
 
-/// Startup chime: an original rising figure that resolves up an octave.
+/// Startup chime: a chill rising figure — softer and a touch slower.
 ///
 /// Kept under a second so it never delays the first frame noticeably.
 pub const STARTUP: [Note; 6] = [
-    Note { hz: 523, ms: 90 },   // C5
-    Note { hz: 659, ms: 90 },   // E5
-    Note { hz: 784, ms: 90 },   // G5
-    Note { hz: 0, ms: 40 },     // breath
-    Note { hz: 1047, ms: 160 }, // C6
-    Note { hz: 0, ms: 30 },
+    Note { hz: 392, ms: 110 }, // G4
+    Note { hz: 523, ms: 110 }, // C5
+    Note { hz: 659, ms: 130 }, // E5
+    Note { hz: 0, ms: 70 },    // breath
+    Note { hz: 784, ms: 180 }, // G5
+    Note { hz: 0, ms: 40 },
 ];
 
 fn tone_on(hz: u32) {

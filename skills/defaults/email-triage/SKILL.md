@@ -11,7 +11,8 @@ description: >-
 
 1. Search with `email.search` (cap required). Prefer narrow Gmail queries.
 2. Summarize; do not invent message contents.
-3. Draft replies only; `email.send` stays blocked until the user grants confirm.
+3. Draft replies only; `email.send` needs the Send mail cap **and** an
+   explicit Confirm send on Brief (`confirm=1`). Never auto-CALL send.
 4. Secrets and OAuth stay on the host bridge (`gog` keyring) — never ask to paste tokens into the guest.
 
 ## Flow

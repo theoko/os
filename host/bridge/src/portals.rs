@@ -1,14 +1,23 @@
 //! Portal connectors — the OS reaching the user's own live services.
 //!
-//! Two are known: superintelmarkets.com (market intelligence) and
-//! teddysearch.com (the knowledge corpus, handled in `tsearch`). Both are
-//! plain HTTPS JSON, so this is a small fetch-and-shape layer rather than a
-//! client library.
+//! teddysearch.com exposes two different things the bridge must keep distinct:
 //!
-//! Responses are cached with a short TTL. Probing these endpoints during
-//! development got the caller rate-limited into `000` responses, and a search
-//! field that hits a live API per keystroke would do the same to the user.
+//! * **Teddy API** (`tsearch` module) — the knowledge corpus at
+//!   `/tsearch/corpus.json`. There is no server-side query endpoint; the file
+//!   *is* the API, synced once and ranked locally.
+//! * **Teddy portals** (this module) — live JSON tools on the same host
+//!   (`/health`, `/api/fear-greed`, `/api/gex`). These leave the machine on
+//!   every call and therefore require `portal=1`.
+//!
+//! `market.*` tools hit superintelmarkets.com (same response shapes). Both
+//! families are plain HTTPS JSON with a short TTL cache — probing without a
+//! TTL rate-limited the caller into `000` responses.
+//!
+//! Exactly one family is live at a time. Which one is the operator's choice,
+//! held in [`crate::config`] behind the admin password, so a guest cannot pick
+//! its own portal by naming a tool from the other family.
 
+use crate::config::{self, Family};
 use serde_json::Value;
 use std::collections::HashMap;
 use std::env;
@@ -26,9 +35,26 @@ pub struct Endpoint {
     pub params: &'static [&'static str],
 }
 
-/// Confirmed-live endpoints. `/api/screen` and `/api/search` return 404 on the
-/// public host, so they are deliberately absent rather than listed and broken.
+/// Confirmed-live endpoints. `/api/screen` and `/api/search` still 404 on the
+/// public host, so they stay absent rather than listed and broken.
 pub const ENDPOINTS: &[Endpoint] = &[
+    // Teddy portals — live services on teddysearch.com (not the corpus dump).
+    Endpoint {
+        tool: "teddy.health",
+        url: "https://teddysearch.com/health",
+        params: &[],
+    },
+    Endpoint {
+        tool: "teddy.fear_greed",
+        url: "https://teddysearch.com/api/fear-greed",
+        params: &["ticker", "purpose"],
+    },
+    Endpoint {
+        tool: "teddy.gex",
+        url: "https://teddysearch.com/api/gex",
+        params: &[],
+    },
+    // Markets family — same shapes, different origin.
     Endpoint {
         tool: "market.health",
         url: "https://superintelmarkets.com/health",
@@ -41,8 +67,38 @@ pub const ENDPOINTS: &[Endpoint] = &[
     },
 ];
 
-pub fn find(tool: &str) -> Option<&'static Endpoint> {
+/// The family a portal tool belongs to, taken from its prefix. `None` for a
+/// tool that is not a portal tool at all.
+pub fn family_of(tool: &str) -> Option<Family> {
+    match tool.split_once('.') {
+        Some(("teddy", _)) => Some(Family::Teddy),
+        Some(("market", _)) => Some(Family::Market),
+        _ => None,
+    }
+}
+
+/// Registry lookup that ignores the operator's choice.
+///
+/// Only the dispatcher uses this, and only to tell "a real portal tool whose
+/// family is switched off" from "no such tool" — the two need different
+/// answers on the wire. Everything that actually *calls* a portal goes through
+/// `find`, which honours the choice.
+pub fn find_any(tool: &str) -> Option<&'static Endpoint> {
     ENDPOINTS.iter().find(|e| e.tool == tool)
+}
+
+/// Tools that leave the machine and therefore need `portal=1`.
+///
+/// Family-aware: with `family=teddy` a `market.*` tool is not a portal tool
+/// here, it is nothing, and with `family=none` neither family is.
+pub fn is_portal_tool(tool: &str) -> bool {
+    find(tool).is_some()
+}
+
+/// The endpoint for `tool`, if it exists *and* its family is the active one.
+pub fn find(tool: &str) -> Option<&'static Endpoint> {
+    let ep = find_any(tool)?;
+    (family_of(tool) == Some(config::family())).then_some(ep)
 }
 
 /// How long a response stays fresh. Market sentiment does not move in seconds,
@@ -147,53 +203,80 @@ pub fn rows_for(tool: &str, body: &str) -> Vec<String> {
         return vec!["ROW error=unparseable response".into()];
     };
     match tool {
-        "market.health" => {
-            let mut rows = Vec::new();
-            let status = v
-                .get("status")
-                .and_then(|s| s.as_str())
-                .unwrap_or("unknown");
-            rows.push(format!("ROW field=status|value={status}"));
-            if let Some(d) = v.get("degraded").and_then(|d| d.as_array()) {
-                let names: Vec<&str> = d.iter().filter_map(|x| x.as_str()).collect();
-                if !names.is_empty() {
-                    rows.push(format!("ROW field=degraded|value={}", names.join(" ")));
-                }
-            }
-            if let Some(svcs) = v.get("services").and_then(|s| s.as_object()) {
-                for (name, s) in svcs.iter().take(6) {
-                    let ok = s.get("ok").and_then(|o| o.as_bool()).unwrap_or(false);
-                    rows.push(format!(
-                        "ROW field={name}|value={}",
-                        if ok { "ok" } else { "down" }
-                    ));
-                }
-            }
-            rows
-        }
-        "market.fear_greed" => {
-            let mut rows = Vec::new();
-            for key in ["score", "label", "available_count"] {
-                if let Some(x) = v.get(key) {
-                    if !x.is_null() {
-                        rows.push(format!("ROW field={key}|value={}", scalar(x)));
-                    }
-                }
-            }
-            if let Some(c) = v.get("components").and_then(|c| c.as_array()) {
-                for comp in c.iter().take(5) {
-                    let name = comp.get("name").and_then(|n| n.as_str()).unwrap_or("?");
-                    let val = comp
-                        .get("value_fmt")
-                        .and_then(|n| n.as_str())
-                        .unwrap_or("N/A");
-                    rows.push(format!("ROW field={name}|value={val}"));
-                }
-            }
-            rows
-        }
+        // Both families answer with the same shapes, so the shaping is shared
+        // rather than duplicated per family.
+        "teddy.health" | "market.health" => rows_health(&v),
+        "teddy.fear_greed" | "market.fear_greed" => rows_fear_greed(&v),
+        "teddy.gex" => rows_gex(&v),
         _ => vec![format!("ROW body={}", scalar(&v))],
     }
+}
+
+fn rows_health(v: &Value) -> Vec<String> {
+    let mut rows = Vec::new();
+    let status = v.get("status").and_then(|s| s.as_str()).unwrap_or("unknown");
+    rows.push(format!("ROW field=status|value={status}"));
+    if let Some(d) = v.get("degraded").and_then(|d| d.as_array()) {
+        let names: Vec<&str> = d.iter().filter_map(|x| x.as_str()).collect();
+        if !names.is_empty() {
+            rows.push(format!("ROW field=degraded|value={}", names.join(" ")));
+        }
+    }
+    if let Some(svcs) = v.get("services").and_then(|s| s.as_object()) {
+        for (name, s) in svcs.iter().take(6) {
+            let ok = s.get("ok").and_then(|o| o.as_bool()).unwrap_or(false);
+            rows.push(format!(
+                "ROW field={name}|value={}",
+                if ok { "ok" } else { "down" }
+            ));
+        }
+    }
+    rows
+}
+
+fn rows_fear_greed(v: &Value) -> Vec<String> {
+    let mut rows = Vec::new();
+    for key in ["score", "label", "available_count"] {
+        if let Some(x) = v.get(key) {
+            if !x.is_null() {
+                rows.push(format!("ROW field={key}|value={}", scalar(x)));
+            }
+        }
+    }
+    if let Some(c) = v.get("components").and_then(|c| c.as_array()) {
+        for comp in c.iter().take(5) {
+            let name = comp.get("name").and_then(|n| n.as_str()).unwrap_or("?");
+            let val = comp
+                .get("value_fmt")
+                .and_then(|n| n.as_str())
+                .map(|s| s.to_string())
+                .or_else(|| comp.get("value").map(scalar))
+                .unwrap_or_else(|| "N/A".into());
+            rows.push(format!("ROW field={name}|value={val}"));
+        }
+    }
+    rows
+}
+
+fn rows_gex(v: &Value) -> Vec<String> {
+    let mut rows = Vec::new();
+    for key in [
+        "regime",
+        "spot",
+        "net_gex",
+        "call_wall",
+        "put_wall",
+        "zero_gamma",
+        "pcr",
+        "n_strikes",
+    ] {
+        if let Some(x) = v.get(key) {
+            if !x.is_null() {
+                rows.push(format!("ROW field={key}|value={}", scalar(x)));
+            }
+        }
+    }
+    rows
 }
 
 fn scalar(v: &Value) -> String {
@@ -235,6 +318,22 @@ pub fn save_snapshot(tool: &str, body: &str) {
     }
 }
 
+/// Forget live portal state: in-memory TTL cache and on-disk snapshots.
+///
+/// Paired with `tsearch::forget` under `portal.forget` so revoking Online
+/// services clears both the corpus API cache and the live portal residue.
+pub fn forget() -> Result<&'static str, String> {
+    if let Ok(mut g) = CACHE.lock() {
+        *g = None;
+    }
+    let path = snapshot_path();
+    match fs::remove_file(&path) {
+        Ok(()) => Ok("removed"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok("nothing_to_remove"),
+        Err(e) => Err(format!("{e}")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -252,9 +351,82 @@ mod tests {
             assert!(!e.url.contains("/api/screen"));
             assert!(!e.url.contains("/api/search"));
         }
-        assert!(find("market.health").is_some());
-        assert!(find("market.fear_greed").is_some());
-        assert!(find("market.nope").is_none());
+        // Registry membership is family-independent: `find_any` is the lookup
+        // that ignores the operator's choice.
+        assert!(find_any("teddy.health").is_some());
+        assert!(find_any("teddy.fear_greed").is_some());
+        assert!(find_any("teddy.gex").is_some());
+        assert!(find_any("market.health").is_some());
+        assert!(find_any("market.fear_greed").is_some());
+        assert!(find_any("market.nope").is_none());
+        assert!(!is_portal_tool("search.query"));
+    }
+
+    #[test]
+    fn teddy_and_market_portals_are_distinct_origins() {
+        let teddy = find_any("teddy.health").unwrap().url;
+        let market = find_any("market.health").unwrap().url;
+        assert!(teddy.contains("teddysearch.com"), "{teddy}");
+        assert!(market.contains("superintelmarkets.com"), "{market}");
+        // Corpus dump is the teddy *API*, not a portal tool.
+        assert!(find_any("tsearch.sync").is_none());
+        assert!(!ENDPOINTS.iter().any(|e| e.url.contains("corpus.json")));
+    }
+
+    #[test]
+    fn only_the_active_family_resolves() {
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = env::temp_dir().join(format!("os-portal-family-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        unsafe { env::set_var("OS_CONFIG_PATH", dir.join("config.json")) };
+
+        config::set_family(Family::Teddy).expect("write");
+        assert!(is_portal_tool("teddy.health"));
+        assert!(find("teddy.gex").is_some());
+        assert!(!is_portal_tool("market.health"), "market is off with family=teddy");
+        assert!(find("market.fear_greed").is_none());
+
+        config::set_family(Family::Market).expect("write");
+        assert!(is_portal_tool("market.health"));
+        assert!(!is_portal_tool("teddy.health"));
+
+        config::set_family(Family::None).expect("write");
+        assert!(!is_portal_tool("teddy.health"), "none disables everything");
+        assert!(!is_portal_tool("market.health"));
+        // Still in the registry either way — that is what tells the dispatcher
+        // to answer "family off" rather than "no such tool".
+        assert!(find_any("market.health").is_some());
+
+        unsafe { env::remove_var("OS_CONFIG_PATH") };
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn family_of_reads_the_tool_prefix() {
+        assert_eq!(family_of("teddy.gex"), Some(Family::Teddy));
+        assert_eq!(family_of("market.health"), Some(Family::Market));
+        assert_eq!(family_of("search.query"), None);
+        assert_eq!(family_of("tsearch.sync"), None);
+    }
+
+    #[test]
+    fn gex_rows_surface_regime_and_walls() {
+        let body = r#"{"regime":"positive","spot":7413.1,"net_gex":1.2e9,
+            "call_wall":7530.0,"put_wall":7300.0,"zero_gamma":7350.0,
+            "pcr":0.9,"n_strikes":40,"intraday":[]}"#;
+        let rows = rows_for("teddy.gex", body);
+        assert!(rows.iter().any(|r| r.contains("regime") && r.contains("positive")));
+        assert!(rows.iter().any(|r| r.contains("call_wall") && r.contains("7530")));
+        // Nested arrays are summarised away — guest gets scalars only.
+        assert!(!rows.iter().any(|r| r.contains("intraday")));
+    }
+
+    #[test]
+    fn teddy_health_reuses_market_shaping() {
+        let body = r#"{"status":"ok","degraded":[],"services":{"celery":{"ok":true}}}"#;
+        let t = rows_for("teddy.health", body);
+        let m = rows_for("market.health", body);
+        assert_eq!(t, m);
     }
 
     #[test]
@@ -324,5 +496,21 @@ mod tests {
             !p.contains("/os/search"),
             "snapshot must not land in the repo: {p}"
         );
+    }
+
+    #[test]
+    fn forget_clears_snapshot_file() {
+        let _env = crate::graph::ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let dir = env::temp_dir().join(format!("os-portal-forget-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join("portals.json");
+        unsafe { env::set_var("OS_PORTAL_SNAPSHOT", &path) };
+        save_snapshot("teddy.health", r#"{"status":"ok"}"#);
+        assert!(path.is_file());
+        assert_eq!(forget().unwrap(), "removed");
+        assert!(!path.is_file());
+        assert_eq!(forget().unwrap(), "nothing_to_remove");
+        unsafe { env::remove_var("OS_PORTAL_SNAPSHOT") };
+        let _ = fs::remove_dir_all(&dir);
     }
 }

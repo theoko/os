@@ -1,8 +1,8 @@
 //! Motion — easing curves and frame pacing.
 //!
-//! Screens used to snap between states. macOS reads as smooth because things
-//! *move* and because the motion decelerates: a linear slide looks mechanical,
-//! an ease-out looks physical.
+//! Screens used to snap between states. A chill game loop reads as smooth
+//! because things *move*, decelerate, and keep a quiet pulse at 60 Hz even
+//! when the pointer is still.
 //!
 //! Everything is fixed point. The kernel never enables the FPU, so a cubic
 //! curve is evaluated in Q16 integers rather than floats.
@@ -11,6 +11,9 @@ use crate::serial::{counter_hz, rdtsc};
 
 /// Fixed-point one.
 pub const ONE: i32 = 1 << 16;
+
+/// One frame at 60 Hz, in microseconds.
+pub const FRAME_US_60: u32 = 1_000_000 / 60;
 
 /// Cubic ease-out: fast departure, gentle arrival.
 ///
@@ -23,6 +26,39 @@ pub fn ease_out_cubic(t: i32) -> i32 {
     let inv = (ONE - t) as i64;
     let cube = inv * inv / ONE as i64 * inv / ONE as i64;
     (ONE as i64 - cube) as i32
+}
+
+/// Cubic ease-in-out: soft start and soft landing (game-menu feel).
+pub fn ease_in_out_cubic(t: i32) -> i32 {
+    let t = t.clamp(0, ONE);
+    if t < ONE / 2 {
+        // 4 * t^3
+        let t64 = t as i64;
+        let t2 = t64 * t64 / ONE as i64;
+        let t3 = t2 * t64 / ONE as i64;
+        (4 * t3).clamp(0, ONE as i64) as i32
+    } else {
+        // 1 - (-2t + 2)^3 / 2
+        let u = (2 * (ONE as i64 - t as i64)).clamp(0, 2 * ONE as i64);
+        let u2 = u * u / ONE as i64;
+        let u3 = u2 * u / ONE as i64;
+        (ONE as i64 - u3 / 2).clamp(0, ONE as i64) as i32
+    }
+}
+
+/// Soft 0..=ONE breath for ambient chrome. Advances once per 60 Hz frame.
+///
+/// Full cycle ~3 seconds — slow enough to feel chill, not twitchy.
+pub fn breath(phase: u32) -> i32 {
+    const PERIOD: u32 = 180;
+    let p = phase % PERIOD;
+    let half = PERIOD / 2;
+    let rising = if p < half {
+        (p as i64 * ONE as i64) / half as i64
+    } else {
+        ((PERIOD - p) as i64 * ONE as i64) / half as i64
+    } as i32;
+    ease_in_out_cubic(rising)
 }
 
 /// Interpolate `a`..`b` by Q16 `t`.
@@ -67,12 +103,11 @@ pub struct Entrance {
     pub frame_us: u32,
 }
 
-/// Default entrance. Short and small — the point is to soften the cut, not to
-/// make the user wait for the interface.
+/// Default entrance — paced at 60 Hz, soft travel, still under a quarter second.
 pub const SLIDE_IN: Entrance = Entrance {
-    frames: 10,
-    travel_px: 18,
-    frame_us: 12_000,
+    frames: 12,
+    travel_px: 22,
+    frame_us: FRAME_US_60,
 };
 
 impl Entrance {
@@ -158,10 +193,35 @@ mod tests {
     #[test]
     fn entrance_is_brief() {
         let ms = SLIDE_IN.frames * SLIDE_IN.frame_us / 1000;
+        // Chill 60 Hz slide: soft, but still snappy enough for setup.
         assert!(
-            ms <= 200,
+            ms <= 250,
             "entrance takes {ms}ms — too slow to feel responsive"
         );
+        assert_eq!(
+            SLIDE_IN.frame_us, FRAME_US_60,
+            "entrances must pace at 60 Hz"
+        );
+    }
+
+    #[test]
+    fn ease_in_out_is_soft_at_both_ends() {
+        let early = ease_in_out_cubic(ONE / 8);
+        let late = ONE - ease_in_out_cubic(7 * ONE / 8);
+        assert!(early < ONE / 4, "should ease in: {early}");
+        assert!(late < ONE / 4, "should ease out: {late}");
+        assert_eq!(ease_in_out_cubic(0), 0);
+        assert_eq!(ease_in_out_cubic(ONE), ONE);
+    }
+
+    #[test]
+    fn breath_is_periodic_and_bounded() {
+        for i in 0..360 {
+            let v = breath(i);
+            assert!((0..=ONE).contains(&v), "breath out of range at {i}: {v}");
+        }
+        assert_eq!(breath(0), breath(180));
+        assert!(breath(90) > breath(0), "mid-breath should rise");
     }
 
     #[test]

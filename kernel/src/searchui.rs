@@ -15,6 +15,57 @@ use crate::ui::theme;
 /// Longest query we accept. Comfortably wider than the field renders.
 pub const QUERY_MAX: usize = 64;
 
+/// Host media extensions the Search field may send to `audio.transcribe`.
+/// Keep in sync with `host/bridge` `MEDIA_EXTS` (ASCII, lowercase).
+const MEDIA_EXTS: &[&str] = &[
+    "wav", "mp3", "m4a", "aac", "flac", "ogg", "opus", "aiff", "mp4", "mov", "mkv",
+    "webm", "avi",
+];
+
+/// True when `q` looks like an absolute host media path (no spaces).
+///
+/// Search Enter uses this to call `audio.transcribe` instead of `search.query`
+/// when Recordings is granted — the field is the path picker.
+pub fn is_media_path(q: &str) -> bool {
+    let q = q.trim();
+    if q.len() < 3 || q.len() > QUERY_MAX {
+        return false;
+    }
+    if !q.starts_with('/') || q.contains(' ') || q.contains('|') {
+        return false;
+    }
+    let Some(dot) = q.rfind('.') else {
+        return false;
+    };
+    if dot == 0 || dot + 1 >= q.len() {
+        return false;
+    }
+    let ext = &q[dot + 1..];
+    let mut buf = [0u8; 8];
+    if ext.is_empty() || ext.len() > buf.len() {
+        return false;
+    }
+    for (i, b) in ext.bytes().enumerate() {
+        // Digits are legal (mp3, mp4, …).
+        if !b.is_ascii_alphanumeric() {
+            return false;
+        }
+        buf[i] = b.to_ascii_lowercase();
+    }
+    let lower = core::str::from_utf8(&buf[..ext.len()]).unwrap_or("");
+    MEDIA_EXTS.contains(&lower)
+}
+
+/// File stem of a media path, for a follow-up search after transcribe.
+pub fn media_stem(q: &str) -> &str {
+    let q = q.trim();
+    let name = q.rsplit('/').next().unwrap_or(q);
+    match name.rfind('.') {
+        Some(i) if i > 0 => &name[..i],
+        _ => name,
+    }
+}
+
 /// A rendered result row.
 ///
 /// Owns its text: bridge results are parsed out of a COM2 line buffer that is
@@ -81,6 +132,8 @@ pub struct Source {
     pub files_in_scope: bool,
     /// The caller held email.search.
     pub mail_in_scope: bool,
+    /// The caller held audio.transcribe (recordings in search scope).
+    pub audio_in_scope: bool,
 }
 
 impl Source {
@@ -90,6 +143,7 @@ impl Source {
             errored: false,
             files_in_scope: false,
             mail_in_scope: false,
+            audio_in_scope: false,
         }
     }
 
@@ -112,6 +166,9 @@ impl Source {
         }
         if !self.mail_in_scope {
             return "No matches in your files. Turn on email.search to include mail.";
+        }
+        if !self.audio_in_scope {
+            return "No matches in files and mail. Turn on audio.transcribe for recordings.";
         }
         // Deliberately claims nothing about WHAT was searched. The guest
         // cannot see whether an index has content, and this line previously
@@ -200,6 +257,7 @@ impl SearchView {
             errored: peek.denied,
             files_in_scope: caps.allows(crate::caps::Cap::WorkspaceIndex),
             mail_in_scope: caps.allows(crate::caps::Cap::EmailSearch),
+            audio_in_scope: caps.allows(crate::caps::Cap::AudioTranscribe),
         };
         if online {
             for i in 0..peek.count.min(search::MAX_HITS) {
@@ -290,7 +348,14 @@ pub fn result_hit(w: i32, h: i32, count: usize, x: i32, y: i32) -> Option<usize>
 }
 
 /// Draw the search screen. `caret` blinks the insertion point on.
-pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_note: &str) {
+pub fn draw(
+    fb: &Surface,
+    view: &SearchView,
+    query: &str,
+    caret: bool,
+    bridge_note: &str,
+    level: crate::level::Level,
+) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
     fb.fill(theme::BG);
@@ -337,7 +402,7 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
         fb.draw_text(
             tx,
             base,
-            "Type a query, then press Enter",
+            level.search_placeholder(),
             &BODY_FACE,
             0,
             theme::MUTED,
@@ -417,6 +482,16 @@ pub fn draw(fb: &Surface, view: &SearchView, query: &str, caret: bool, bridge_no
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn media_paths_are_recognised() {
+        assert!(is_media_path("/tmp/rec.wav"));
+        assert!(is_media_path("/Users/a/Desktop/note.MP3"));
+        assert!(!is_media_path("rec.wav"), "must be absolute");
+        assert!(!is_media_path("/tmp/notes.md"));
+        assert!(!is_media_path("/tmp/has space.wav"));
+        assert_eq!(media_stem("/tmp/os-smoke-rec.wav"), "os-smoke-rec");
+    }
 
     #[test]
     fn idle_view_reports_nothing_searched() {
@@ -503,6 +578,7 @@ mod source_tests {
             errored: false,
             files_in_scope: true,
             mail_in_scope: true,
+            audio_in_scope: true,
         };
         assert!(!s.empty_reason().contains("offline"));
     }
@@ -519,6 +595,7 @@ mod source_tests {
             errored: false,
             files_in_scope: false,
             mail_in_scope: true,
+            audio_in_scope: false,
         };
         let m = s.empty_reason();
         assert!(m.contains("workspace.index"), "{m}");
@@ -532,8 +609,21 @@ mod source_tests {
             errored: false,
             files_in_scope: true,
             mail_in_scope: false,
+            audio_in_scope: false,
         };
         assert!(s.empty_reason().contains("email.search"));
+    }
+
+    #[test]
+    fn missing_audio_grant_names_the_fix() {
+        let s = Source {
+            bridge_online: true,
+            errored: false,
+            files_in_scope: true,
+            mail_in_scope: true,
+            audio_in_scope: false,
+        };
+        assert!(s.empty_reason().contains("audio.transcribe"));
     }
 
     #[test]
@@ -545,18 +635,28 @@ mod source_tests {
                 errored: false,
                 files_in_scope: false,
                 mail_in_scope: false,
+                audio_in_scope: false,
             },
             Source {
                 bridge_online: true,
                 errored: false,
                 files_in_scope: true,
                 mail_in_scope: false,
+                audio_in_scope: false,
             },
             Source {
                 bridge_online: true,
                 errored: false,
                 files_in_scope: true,
                 mail_in_scope: true,
+                audio_in_scope: false,
+            },
+            Source {
+                bridge_online: true,
+                errored: false,
+                files_in_scope: true,
+                mail_in_scope: true,
+                audio_in_scope: true,
             },
         ] {
             let m = s.empty_reason();
@@ -580,6 +680,7 @@ mod teddy_tests {
             errored: true,
             files_in_scope: true,
             mail_in_scope: true,
+            audio_in_scope: true,
         };
         assert_eq!(s.empty_reason(), Source::TEDDY);
     }
@@ -593,6 +694,7 @@ mod teddy_tests {
             errored: false,
             files_in_scope: false,
             mail_in_scope: true,
+            audio_in_scope: false,
         };
         assert_ne!(s.empty_reason(), Source::TEDDY);
         assert!(s.empty_reason().contains("workspace.index"));
@@ -647,7 +749,13 @@ pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage, scroll
     );
 
     if page.denied {
-        fb.draw_text(fx, 160, Source::TEDDY, &BODY_FACE, 0, theme::MUTED);
+        let msg = page.deny.message();
+        let msg = if msg.is_empty() {
+            "Could not open this document."
+        } else {
+            msg
+        };
+        fb.draw_text(fx, 160, msg, &BODY_FACE, 0, theme::MUTED);
         return;
     }
     if page.count == 0 {
@@ -685,6 +793,17 @@ pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage, scroll
 #[cfg(test)]
 mod reader_tests {
     use super::*;
+
+    #[test]
+    fn denied_reader_names_the_missing_grant() {
+        let mut page = crate::mcp::DocPage::empty(crate::mcp::BridgeStatus::Online, true);
+        page.deny = crate::mcp::DocDeny::NeedFiles;
+        assert!(page.deny.message().contains("Your files"));
+        page.deny = crate::mcp::DocDeny::NeedEmail;
+        assert!(page.deny.message().contains("Email"));
+        // Not the search empty-state mascot — open failures are grant issues.
+        assert_ne!(page.deny.message(), Source::TEDDY);
+    }
 
     #[test]
     fn result_rows_are_clickable_at_their_centre() {
@@ -745,6 +864,7 @@ mod honesty_tests {
             errored: false,
             files_in_scope: true,
             mail_in_scope: true,
+            audio_in_scope: true,
         };
         let m = s.empty_reason();
         assert!(
@@ -762,8 +882,17 @@ mod honesty_tests {
             errored: false,
             files_in_scope: false,
             mail_in_scope: true,
+            audio_in_scope: false,
         };
         assert!(no_files.empty_reason().contains("workspace.index"));
+        let no_audio = Source {
+            bridge_online: true,
+            errored: false,
+            files_in_scope: true,
+            mail_in_scope: true,
+            audio_in_scope: false,
+        };
+        assert!(no_audio.empty_reason().contains("audio.transcribe"));
     }
 }
 

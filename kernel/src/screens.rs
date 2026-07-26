@@ -1,4 +1,4 @@
-//! The Skills and Capabilities screens.
+//! The Skills, Capabilities, and Brief screens.
 //!
 //! Both cards on the home page used to just log to COM1. They now open real
 //! views that share the search screen's chrome: a Back affordance, a title,
@@ -6,11 +6,16 @@
 //!
 //! Capabilities is not merely a report — the switches are live, so grants
 //! chosen during setup can be changed afterwards without reinstalling.
+//!
+//! Brief is where a skill actually runs: plan lines, then results (or the
+//! name of the switch still standing in the way).
 
+use crate::agent::Brief;
 use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{self, BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
 use crate::keyboard::TextField;
+use crate::level::Level;
 use crate::searchui::back_rect;
 use crate::setup::{N_CAPS, cap_rows};
 #[cfg(test)]
@@ -27,6 +32,8 @@ pub enum View {
     Caps,
     /// Reading a document opened from a search result.
     Reader,
+    /// A skill just ran; show its plan and outcomes.
+    Brief,
     /// Connection status for every source, opened from the nav dot.
     Status,
     /// A human-in-the-loop skill checklist.
@@ -106,42 +113,252 @@ fn row(
 }
 
 /// Skills the agent can load — names from bridge `skills.list`, else builtins.
-pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
+///
+/// When `Save skills` is granted, a footer CTA writes `guest-starter` via
+/// `skills.save skills=1` so the cap is felt on this screen, not only in Brief.
+pub fn draw_skills(fb: &Surface, peek: &SkillPeek, caps: Caps) {
     let w = fb.width() as i32;
-    chrome(fb, w, "Skills", "Playbooks the agent can load");
+    let heading = if caps.allows(Cap::SkillsSave) {
+        "Run a playbook, or save a starter"
+    } else {
+        "Tap a playbook to run it"
+    };
+    chrome(fb, w, "Skills", heading);
 
-    let n = peek.count.min(6);
+    let n = peek.count.min(7);
     for i in 0..n {
+        let name = peek.name_at(i);
         let desc = peek.desc_at(i);
-        let sub = if desc.is_empty() {
-            if peek.from_bridge {
-                "From host bridge"
-            } else {
-                "Shipped with the ISO"
-            }
-        } else {
+        let sub = if !desc.is_empty() {
             desc
+        } else if peek.is_saved_at(i) {
+            "Saved - CALL granted tools"
+        } else if crate::agent::is_runnable(name) {
+            "Tap to run under current grants"
+        } else if peek.from_bridge {
+            "From host bridge"
+        } else {
+            "Shipped with the ISO"
         };
-        row(fb, w, i, peek.name_at(i), sub, false);
+        let accent = crate::agent::is_runnable(name) || peek.is_saved_at(i);
+        row(fb, w, i, name, sub, accent);
+    }
+
+    let mut note_row = n;
+    if caps.allows(Cap::SkillsSave) {
+        row(
+            fb,
+            w,
+            n,
+            "Save starter",
+            "Write guest-starter to the host",
+            true,
+        );
+        note_row = n + 1;
     }
 
     let (x, cw) = column(w);
-    let note = if peek.from_bridge {
-        "Listed live from the host bridge (skills.list)."
+    let note = if caps.allows(Cap::SkillsSave) {
+        "Saved playbooks CALL granted tools. Save starter needs the bridge."
+    } else if peek.from_bridge {
+        "Builtins run under grants. Saved CALL only tools you already turned on."
     } else if peek.count > 0 {
-        "Compiled into the ISO. Saved skills live on the host."
+        "Tap a playbook: builtins run; saved CALL only granted tools."
     } else {
         "No skills loaded."
     };
     fb.draw_text(
         x,
-        TOP + n as i32 * (ROW_H + ROW_GAP) + 26,
+        TOP + note_row as i32 * (ROW_H + ROW_GAP) + 26,
         note,
         &SMALL_FACE,
         0,
         theme::MUTED,
     );
     let _ = cw;
+}
+
+/// Show the outcome of a skill run: plan, then tagged result lines.
+pub fn draw_brief(fb: &Surface, brief: &Brief) {
+    let w = fb.width() as i32;
+    let h = fb.height() as i32;
+    let heading = if brief.heading().is_empty() {
+        brief.skill_name()
+    } else {
+        brief.heading()
+    };
+    chrome(fb, w, "Brief", heading);
+
+    let (x, cw) = column(w);
+    let mut y = TOP - 24;
+
+    if brief.denied {
+        let mut msg = [0u8; 64];
+        let prefix = b"Blocked: grant ";
+        let mut n = 0;
+        for &b in prefix {
+            msg[n] = b;
+            n += 1;
+        }
+        for &b in brief.deny_name().as_bytes() {
+            if n < msg.len() {
+                msg[n] = b;
+                n += 1;
+            }
+        }
+        let s = core::str::from_utf8(&msg[..n]).unwrap_or("Blocked by caps");
+        fb.draw_text(x, y, s, &SMALL_FACE, 0, theme::ACCENT);
+        y += 22;
+    }
+
+    if brief.plan_n > 0 {
+        fb.draw_text(x, y, "Plan", &BRAND_FACE, 0, theme::INK);
+        y += 22;
+        for i in 0..brief.plan_n {
+            let mut step = [0u8; 56];
+            let mut n = 0;
+            step[n] = b'0' + (i as u8 + 1);
+            n += 1;
+            step[n] = b'.';
+            n += 1;
+            step[n] = b' ';
+            n += 1;
+            for &b in brief.plan_at(i).as_bytes() {
+                if n < step.len() {
+                    step[n] = b;
+                    n += 1;
+                }
+            }
+            let s = core::str::from_utf8(&step[..n]).unwrap_or(brief.plan_at(i));
+            fb.draw_text(x, y, s, &SMALL_FACE, 0, theme::MUTED);
+            y += 18;
+        }
+        y += 10;
+    }
+
+    if brief.count > 0 {
+        fb.draw_text(x, y, "Report", &BRAND_FACE, 0, theme::INK);
+        y += 8;
+        for i in 0..brief.count {
+            let (rx, ry, rw, rh) = (
+                x,
+                y + 8 + i as i32 * (ROW_H - 10),
+                cw,
+                ROW_H - 14,
+            );
+            fb.fill_round_rect(rx, ry, rw, rh, 10, theme::CARD_BORDER);
+            fb.fill_round_rect(rx + 1, ry + 1, rw - 2, rh - 2, 9, theme::BG);
+            let tag = brief.lines[i].tag();
+            let accent = matches!(tag, "Urgent" | "Reply" | "Need" | "Event" | "Doc");
+            fb.draw_text(
+                rx + 16,
+                ry + 22,
+                tag,
+                &BRAND_FACE,
+                0,
+                if accent { theme::ACCENT } else { theme::MUTED },
+            );
+            fb.draw_text(
+                rx + 16,
+                ry + 42,
+                brief.lines[i].text(),
+                &SMALL_FACE,
+                0,
+                theme::INK,
+            );
+            let _ = rh;
+        }
+    }
+
+    if brief.send_ready {
+        let (sx, sy, sw, sh) = brief_send_rect(w, h);
+        fb.fill_round_rect(sx, sy, sw, sh, 10, theme::ACCENT);
+        fb.fill_round_rect(sx + 1, sy + 1, sw - 2, sh - 2, 9, theme::BG);
+        fb.draw_text(sx + 18, sy + 26, "Confirm send", &BRAND_FACE, 0, theme::ACCENT);
+        let mut sub = [0u8; 64];
+        let mut n = 0;
+        let prefix = b"To ";
+        for &b in prefix {
+            sub[n] = b;
+            n += 1;
+        }
+        for &b in brief.draft_to().as_bytes().iter().take(28) {
+            if n < sub.len() {
+                sub[n] = b;
+                n += 1;
+            }
+        }
+        let s = core::str::from_utf8(&sub[..n]).unwrap_or("Draft ready");
+        fb.draw_text(sx + 18, sy + 46, s, &SMALL_FACE, 0, theme::MUTED);
+    }
+}
+
+/// Confirm send CTA on Brief — only when a draft was armed.
+pub fn brief_send_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
+    let (x, cw) = column(w);
+    (x, h - 96, cw, ROW_H)
+}
+
+pub fn brief_send_hit(w: i32, h: i32, ready: bool, x: i32, y: i32) -> bool {
+    if !ready {
+        return false;
+    }
+    let (rx, ry, rw, rh) = brief_send_rect(w, h);
+    x >= rx && x < rx + rw && y >= ry && y < ry + rh
+}
+
+/// Y of the first Report row card — must match [`draw_brief`].
+fn brief_report_top(brief: &Brief) -> i32 {
+    let mut y = TOP - 24;
+    if brief.denied {
+        y += 22;
+    }
+    if brief.plan_n > 0 {
+        y += 22 + brief.plan_n as i32 * 18 + 10;
+    }
+    if brief.count > 0 {
+        y += 8; // "Report" heading
+    }
+    y
+}
+
+/// Hit an armed Event report row → index into [`Brief::event_url_at`].
+pub fn brief_event_hit(w: i32, brief: &Brief, x: i32, y: i32) -> Option<usize> {
+    brief_armed_hit(w, brief, x, y, brief.event_n, |b, i| b.event_line_at(i))
+}
+
+/// Hit an armed Doc report row → index into [`Brief::doc_url_at`].
+pub fn brief_doc_hit(w: i32, brief: &Brief, x: i32, y: i32) -> Option<usize> {
+    brief_armed_hit(w, brief, x, y, brief.doc_n, |b, i| b.doc_line_at(i))
+}
+
+fn brief_armed_hit(
+    w: i32,
+    brief: &Brief,
+    x: i32,
+    y: i32,
+    n: usize,
+    line_at: fn(&Brief, usize) -> Option<usize>,
+) -> Option<usize> {
+    if n == 0 || brief.count == 0 {
+        return None;
+    }
+    let (col_x, cw) = column(w);
+    let top = brief_report_top(brief);
+    for i in 0..n {
+        let Some(line_i) = line_at(brief, i) else {
+            continue;
+        };
+        if line_i >= brief.count {
+            continue;
+        }
+        let ry = top + 8 + line_i as i32 * (ROW_H - 10);
+        let rh = ROW_H - 14;
+        if x >= col_x && x < col_x + cw && y >= ry && y < ry + rh {
+            return Some(i);
+        }
+    }
+    None
 }
 
 /// Click target for advancing a workflow. Back uses the common chrome target.
@@ -252,18 +469,28 @@ pub fn draw_playbook(
 
 /// Which skill row contains this point, if any.
 pub fn skills_hit(w: i32, count: usize, x: i32, y: i32) -> Option<usize> {
-    (0..count.min(6)).find(|&i| {
+    (0..count.min(7)).find(|&i| {
         let (rx, ry, rw, rh) = row_rect(w, i);
         x >= rx && x < rx + rw && y >= ry && y < ry + rh
     })
 }
 
-/// Live capability switches. Clicking a row toggles the grant.
-pub fn draw_caps(fb: &Surface, grants: Caps) {
-    let w = fb.width() as i32;
-    chrome(fb, w, "Capabilities", "What the agent may do");
+/// True when the click landed on the Save starter CTA (row after the list).
+pub fn skills_save_hit(w: i32, count: usize, can_save: bool, x: i32, y: i32) -> bool {
+    if !can_save {
+        return false;
+    }
+    let i = count.min(7);
+    let (rx, ry, rw, rh) = row_rect(w, i);
+    x >= rx && x < rx + rw && y >= ry && y < ry + rh
+}
 
-    for (i, (name, blurb)) in cap_rows().enumerate() {
+/// Live capability switches. Clicking a row toggles the grant.
+pub fn draw_caps(fb: &Surface, grants: Caps, level: Level) {
+    let w = fb.width() as i32;
+    chrome(fb, w, "Capabilities", level.caps_subtitle());
+
+    for (i, (name, blurb)) in cap_rows(level).enumerate() {
         let on = Cap::ALL.get(i).map(|c| grants.allows(*c)).unwrap_or(false);
         let (x, y, cw, h) = row(fb, w, i, name, blurb, false);
 
@@ -289,7 +516,7 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
     fb.draw_text(
         x,
         TOP + N_CAPS as i32 * (ROW_H + ROW_GAP) + 26,
-        "Tap a row to grant or revoke. Takes effect immediately.",
+        level.caps_footer(),
         &SMALL_FACE,
         0,
         theme::MUTED,
@@ -372,26 +599,88 @@ mod tests {
 
     #[test]
     fn all_rows_fit_a_768_screen() {
-        let n = BUILTIN.len().min(6).max(N_CAPS);
-        let (_, y, _, h) = row_rect(1024, n - 1);
+        // Seven skill rows + Save starter CTA + a short note must clear 768.
+        let n = BUILTIN.len().min(7).max(N_CAPS);
+        let (_, y, _, h) = row_rect(1024, n); // CTA under a full list
         assert!(y + h + 40 < 768, "rows run off the screen: {}", y + h);
+    }
+
+    #[test]
+    fn skills_save_hit_only_when_writable() {
+        let n = 3;
+        let (x, y, w, h) = row_rect(1024, n);
+        assert!(skills_save_hit(1024, n, true, x + w / 2, y + h / 2));
+        assert!(!skills_save_hit(1024, n, false, x + w / 2, y + h / 2));
+        assert!(!skills_save_hit(1024, n, true, x + w / 2, y - 4));
+    }
+
+    #[test]
+    fn brief_send_hit_only_when_armed() {
+        let (x, y, w, h) = brief_send_rect(1024, 768);
+        assert!(brief_send_hit(1024, 768, true, x + w / 2, y + h / 2));
+        assert!(!brief_send_hit(1024, 768, false, x + w / 2, y + h / 2));
+        assert!(!brief_send_hit(1024, 768, true, x + w / 2, y - 4));
+    }
+
+    #[test]
+    fn brief_event_rows_are_hittable() {
+        let mut brief = Brief::empty();
+        brief.push_report("Event", "Demo event - tomorrow");
+        brief.arm_event("0123456789abcdef", 0);
+        let top = brief_report_top(&brief);
+        let (x, cw) = column(1024);
+        let ry = top + 8;
+        assert_eq!(
+            brief_event_hit(1024, &brief, x + cw / 2, ry + 10),
+            Some(0)
+        );
+        assert_eq!(brief_event_hit(1024, &Brief::empty(), x + cw / 2, ry + 10), None);
+    }
+
+    #[test]
+    fn brief_doc_rows_are_hittable() {
+        let mut brief = Brief::empty();
+        brief.push_report("Goal", "work on paper");
+        brief.push_report("Doc", "thesis-draft.md");
+        brief.arm_doc("file://docs/thesis-draft.md", 1);
+        let top = brief_report_top(&brief);
+        let (x, cw) = column(1024);
+        let ry = top + 8 + 1 * (ROW_H - 10);
+        assert_eq!(
+            brief_doc_hit(1024, &brief, x + cw / 2, ry + 10),
+            Some(0)
+        );
+        assert_eq!(brief_doc_hit(1024, &Brief::empty(), x + cw / 2, ry + 10), None);
     }
 
     #[test]
     fn copy_is_ascii_only() {
         let mut all = vec![
-            "Playbooks the agent can load",
-            "What the agent may do",
-            "Compiled into the ISO. Saved skills live on the host.",
-            "Listed live from the host bridge (skills.list).",
-            "Tap a row to grant or revoke. Takes effect immediately.",
+            "Tap a playbook to run it",
+            "Run a playbook, or save a starter",
+            "Tap a playbook: builtins run; saved CALL only granted tools.",
+            "Builtins run under grants. Saved CALL only tools you already turned on.",
+            "Saved playbooks CALL granted tools. Save starter needs the bridge.",
+            "Playbook body unavailable.",
             "No skills loaded.",
             "Skills",
             "Capabilities",
+            "Brief",
             "Back",
             "From host bridge",
             "Shipped with the ISO",
+            "Saved - CALL granted tools",
+            "Save starter",
+            "Write guest-starter to the host",
+            "Tap to run under current grants",
+            "Confirm send",
+            "Plan",
+            "Report",
         ];
+        for level in Level::ALL {
+            all.push(level.caps_subtitle());
+            all.push(level.caps_footer());
+        }
         for s in BUILTIN {
             all.push(s.name);
             all.push(s.blurb);
@@ -408,7 +697,7 @@ mod tests {
     fn skill_text_fits_its_row() {
         let (_, _, cw, _) = row_rect(1024, 0);
         let peek = SkillPeek::from_builtin();
-        for i in 0..peek.count.min(6) {
+        for i in 0..peek.count.min(7) {
             assert!(
                 BRAND_FACE.width(peek.name_at(i), 0) < cw - 36,
                 "name overflows: {}",
@@ -439,15 +728,17 @@ mod tests {
     fn capability_text_clears_the_switch() {
         let (_, _, cw, _) = row_rect(1024, 0);
         // Switch occupies the right 58px of the row.
-        for (name, blurb) in cap_rows() {
-            assert!(
-                BRAND_FACE.width(name, 0) < cw - 76,
-                "name hits the switch: {name}"
-            );
-            assert!(
-                SMALL_FACE.width(blurb, 0) < cw - 76,
-                "blurb hits the switch: {blurb}"
-            );
+        for level in Level::ALL {
+            for (name, blurb) in cap_rows(level) {
+                assert!(
+                    BRAND_FACE.width(name, 0) < cw - 76,
+                    "name hits the switch: {name}"
+                );
+                assert!(
+                    SMALL_FACE.width(blurb, 0) < cw - 76,
+                    "blurb hits the switch: {blurb}"
+                );
+            }
         }
     }
 }

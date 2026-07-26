@@ -1,12 +1,15 @@
 //! Home screen — a launcher.
 //!
 //! A search field you can type into on arrival, three destinations carrying
-//! live counts, and recent mail when granted. Type is anti-aliased proportional
-//! (see `font.rs`); all copy is ASCII because the atlas covers 0x20..=0x7E only.
+//! live counts, the last agent Brief when one has run, and recent mail when
+//! granted. Type is anti-aliased proportional (see `font.rs`); all copy is
+//! ASCII because the atlas covers 0x20..=0x7E only.
 
+use crate::agent::Brief;
+use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{BODY_FACE, BRAND_FACE, H2_FACE, SMALL_FACE};
-use crate::mcp::{BridgeStatus, MailPeek};
+use crate::mcp::{BridgeStatus, FilePeek, MailPeek};
 use crate::skills::SkillPeek;
 
 /// Where the status dot sits, for drawing and hit-testing.
@@ -23,6 +26,17 @@ pub fn status_dot_rect(w: i32) -> Rect {
 fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
     let base = (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline();
     fb.draw_text(PAD_X, base, "os", &BRAND_FACE, 0, theme::INK);
+
+    // Quiet way to re-enter setup without stealing the search field's hit box.
+    let (sx, sy, _sw, sh) = setup_rect(w);
+    fb.draw_text(
+        sx,
+        sy + (sh - SMALL_FACE.px) / 2 + SMALL_FACE.baseline(),
+        "setup",
+        &SMALL_FACE,
+        0,
+        theme::MUTED,
+    );
 
     // Just the dot. "bridge connected" was a label that answered half the
     // question — it said nothing about the portal — and repeated on every
@@ -59,7 +73,22 @@ pub mod theme {
     pub const OFFLINE: u32 = 0x00FF_3B30;
 }
 
-const NAV_H: i32 = 56;
+pub const NAV_H: i32 = 56;
+
+/// Soft nav hairline that breathes with the 60 Hz chill loop.
+///
+/// Cheap: one 1px strip. Keeps the UI alive when the pointer is still —
+/// the difference between a frozen form and a quiet game menu.
+pub fn paint_chill_rule(fb: &Surface, w: i32, phase: u32) {
+    let t = crate::anim::breath(phase);
+    // Keep it subtle: at most ~35% of the way from RULE toward ACCENT.
+    let amt = (t as i64 * (ONE_CHILL as i64) / (crate::anim::ONE as i64)) as i32;
+    let c = crate::anim::lerp_color(theme::RULE, theme::ACCENT, amt);
+    fb.fill_rect(0, NAV_H, w, 1, c);
+}
+
+/// Peak blend strength for the chill rule (Q16) — about a third of the way.
+const ONE_CHILL: i32 = crate::anim::ONE / 3;
 const PAD_X: i32 = 28;
 const CONTENT_MAX: i32 = 920;
 
@@ -82,8 +111,6 @@ impl Rect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CtaId {
     Ready,
-    /// Opens the consent screen where a person can connect their own sources.
-    Portal,
     Skills,
 }
 
@@ -100,23 +127,28 @@ pub enum CardId {
 pub enum HomeHit {
     Cta(CtaId),
     Card(CardId),
+    /// Re-open the last agent Brief.
+    Brief,
+    /// Open a Recent mail row (`email://` via the peek's graph id).
+    Mail(usize),
+    /// Open a Recent files row (`file://` via workspace.recent).
+    File(usize),
 }
 
 /// Hit targets for the CTA pair, computed with the same layout as `draw_home`.
 #[derive(Clone, Copy, Debug)]
 pub struct CtaTargets {
     pub ready: Rect,
-    pub portal: Rect,
     pub skills: Rect,
 }
 
 impl CtaTargets {
     pub fn hit(self, px: i32, py: i32) -> Option<CtaId> {
-        if self.ready.contains(px, py) {
+        // Ready is a small nav control; the search field must never map here
+        // (that used to restart setup whenever you clicked the query box).
+        if self.ready.w > 0 && self.ready.contains(px, py) {
             Some(CtaId::Ready)
-        } else if self.portal.contains(px, py) {
-            Some(CtaId::Portal)
-        } else if self.skills.contains(px, py) {
+        } else if self.skills.w > 0 && self.skills.contains(px, py) {
             Some(CtaId::Skills)
         } else {
             None
@@ -151,6 +183,11 @@ impl CardTargets {
 pub struct HomeTargets {
     pub ctas: CtaTargets,
     pub cards: CardTargets,
+    pub brief: Rect,
+    pub mail: [Rect; 3],
+    pub mail_n: usize,
+    pub files: [Rect; 3],
+    pub files_n: usize,
 }
 
 impl HomeTargets {
@@ -158,30 +195,59 @@ impl HomeTargets {
         if let Some(c) = self.ctas.hit(px, py) {
             return Some(HomeHit::Cta(c));
         }
-        self.cards.hit(px, py).map(HomeHit::Card)
+        if let Some(c) = self.cards.hit(px, py) {
+            return Some(HomeHit::Card(c));
+        }
+        if self.brief.w > 0 && self.brief.contains(px, py) {
+            return Some(HomeHit::Brief);
+        }
+        for i in 0..self.mail_n.min(self.mail.len()) {
+            if self.mail[i].w > 0 && self.mail[i].contains(px, py) {
+                return Some(HomeHit::Mail(i));
+            }
+        }
+        for i in 0..self.files_n.min(self.files.len()) {
+            if self.files[i].w > 0 && self.files[i].contains(px, py) {
+                return Some(HomeHit::File(i));
+            }
+        }
+        None
     }
 }
 
 /// Draw the home composition on `fb`.
 ///
-/// `status` is a short footer line (ASCII); empty falls back to the version bar.
-pub fn draw_home(fb: &Surface, mail: &MailPeek, skills: &SkillPeek, status: &str) {
-    draw_home_full(fb, mail, skills, status, "", false)
+/// `status` is a short Capabilities-tile line (ASCII). `brief` is the last
+/// agent report; when present it replaces the empty mail placeholder.
+pub fn draw_home(
+    fb: &Surface,
+    mail: &MailPeek,
+    files: &FilePeek,
+    skills: &SkillPeek,
+    status: &str,
+    caps: Caps,
+    brief: &Brief,
+    level: crate::level::Level,
+) {
+    draw_home_full(fb, mail, files, skills, status, "", false, caps, brief, level)
 }
 
 /// The home screen: a launcher, not a landing page.
 ///
 /// A search field you can type into immediately, three destinations carrying
-/// live counts, and recent mail when the capability was granted. The previous
-/// version led with a tagline and a primary button whose only effect was to
-/// restart the setup wizard.
+/// live counts, the last Brief when a skill has run, and recent mail when
+/// granted.
 pub fn draw_home_full(
     fb: &Surface,
     mail: &MailPeek,
+    files: &FilePeek,
     skills: &SkillPeek,
     status: &str,
     query: &str,
     caret: bool,
+    caps: Caps,
+    brief: &Brief,
+    level: crate::level::Level,
 ) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
@@ -200,7 +266,7 @@ pub fn draw_home_full(
         fb.draw_text(
             fx + 18,
             base,
-            "Search the knowledge base",
+            level.home_search_placeholder(),
             &BODY_FACE,
             0,
             theme::MUTED,
@@ -215,53 +281,25 @@ pub fn draw_home_full(
     fb.draw_text(
         fx + 2,
         fy + fh + 22,
-        "Type a query and press Enter. Works with the bridge offline.",
+        level.home_search_hint(),
         &SMALL_FACE,
         0,
         theme::MUTED,
     );
 
-    // A search box with no obvious route to personal sources makes the OS
-    // feel like it has forgotten the user. Keep that route beside search,
-    // rather than burying it behind a generic settings label.
-    let portal = portal_rect(w, h);
-    fb.fill_round_rect(
-        portal.x,
-        portal.y,
-        portal.w,
-        portal.h,
-        portal.h / 2,
-        theme::TINT_BORDER,
-    );
-    fb.fill_round_rect(
-        portal.x + 1,
-        portal.y + 1,
-        portal.w - 2,
-        portal.h - 2,
-        (portal.h - 2) / 2,
-        theme::TINT_BG,
-    );
-    let portal_base = portal.y + (portal.h - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
-    fb.draw_text_centered(
-        portal.x + portal.w / 2,
-        portal_base,
-        "Connect tSearch account",
-        &SMALL_FACE,
-        0,
-        theme::ACCENT,
-    );
-
     // Destinations, each showing a real number rather than a slogan.
     let mut mbuf = [0u8; 16];
     let mail_label = fmt_count(&mut mbuf, mail.count, "message", "messages");
-    let mut sbuf = [0u8; 16];
-    let skill_label = fmt_count(&mut sbuf, skills.count, "playbook", "playbooks");
+    let mut sbuf = [0u8; 28];
+    let skill_label = skills_tile_sub(caps, skills.count, &mut sbuf);
+    let mut src_buf = [0u8; 40];
+    let search_sub = search_tile_sub(caps, &mut src_buf);
 
     let gap = 16;
     let tw = (cw - gap * 2) / 3;
     let ty = tile_top(h);
     let tiles: [(&str, &str); 3] = [
-        ("Search", "knowledge + email"),
+        ("Search", search_sub),
         ("Capabilities", status),
         ("Skills", skill_label),
     ];
@@ -273,12 +311,20 @@ pub fn draw_home_full(
         fb.draw_text_clipped(tx + 18, ty + 58, sub, &SMALL_FACE, 0, theme::MUTED, tw - 36);
     }
 
-    // Live content instead of marketing copy.
+    // Last brief stays after Back; mail + files still show below when granted
+    // so a morning brief cannot starve the inbox forever.
     let ry = ty + TILE_H + 40;
+    let mut y = ry;
+    if brief.has_report() {
+        y = draw_brief_residue(fb, x0, ry, cw, brief);
+        y += 16;
+    }
+    let mail_n = home_mail_n(brief, files);
+    let files_n = home_files_n(brief, mail);
     if mail.count > 0 {
-        fb.draw_text(x0, ry, "Recent mail", &BRAND_FACE, 0, theme::INK);
-        let mut y = ry + 30;
-        for i in 0..mail.count.min(3) {
+        fb.draw_text(x0, y, "Recent mail", &BRAND_FACE, 0, theme::INK);
+        y += 28;
+        for i in 0..mail.count.min(mail_n) {
             fb.draw_text(x0, y, mail.row_subj(i), &BODY_FACE, 0, theme::INK);
             let from = mail.row_from(i);
             fb.draw_text(
@@ -291,24 +337,202 @@ pub fn draw_home_full(
             );
             y += 12;
             fb.fill_rect(x0, y, cw, 1, theme::CARD_BORDER);
-            y += 26;
+            y += 22;
         }
-    } else {
-        fb.draw_text(
-            x0,
-            ry,
-            match (mail.status, mail.needs_connection) {
-                (BridgeStatus::Online, true) => "Connect email on this Mac to show your inbox.",
-                (BridgeStatus::Online, false) => "Inbox empty, or email.search not granted.",
-                (BridgeStatus::Offline, _) => "Bridge offline - start the host bridge",
-            },
-            &SMALL_FACE,
-            0,
-            theme::MUTED,
-        );
+    } else if !brief.has_report() && files.count == 0 {
+        let empty_mail = match mail.status {
+            BridgeStatus::Offline => "Bridge offline - run: make utm-bridged",
+            BridgeStatus::Online if !caps.allows(Cap::EmailSearch) => {
+                "Grant Email to show recent mail."
+            }
+            // The bridge is up and the grant is there, but no mail account is
+            // wired on the host — say so instead of blaming an empty inbox.
+            BridgeStatus::Online if mail.needs_connection => {
+                "Connect email on this Mac to show your inbox."
+            }
+            BridgeStatus::Online => "Inbox empty right now.",
+        };
+        fb.draw_text(x0, y, empty_mail, &SMALL_FACE, 0, theme::MUTED);
+        y += 22;
+    }
+    if files.count > 0 {
+        if mail.count > 0 {
+            y += 8;
+        }
+        fb.draw_text(x0, y, "Recent files", &BRAND_FACE, 0, theme::INK);
+        y += 28;
+        for i in 0..files.count.min(files_n) {
+            fb.draw_text(x0, y, files.title_at(i), &BODY_FACE, 0, theme::INK);
+            y += 12;
+            fb.fill_rect(x0, y, cw, 1, theme::CARD_BORDER);
+            y += 22;
+        }
     }
 
     fb.draw_text_centered(w / 2, h - 24, mail_label, &SMALL_FACE, 0, theme::MUTED);
+}
+
+fn home_mail_n(brief: &Brief, files: &FilePeek) -> usize {
+    if brief.has_report() || files.count > 0 {
+        2
+    } else {
+        3
+    }
+}
+
+fn home_files_n(brief: &Brief, mail: &MailPeek) -> usize {
+    if brief.has_report() || mail.count > 0 {
+        2
+    } else {
+        3
+    }
+}
+
+/// Skills-tile subtitle: playbook count plus whether Save skills is granted.
+pub fn skills_tile_sub<'a>(caps: Caps, count: usize, buf: &'a mut [u8; 28]) -> &'a str {
+    buf.fill(0);
+    let mut n = 0;
+    let mut push = |s: &str, n: &mut usize| {
+        for &b in s.as_bytes() {
+            if *n < buf.len() {
+                buf[*n] = b;
+                *n += 1;
+            }
+        }
+    };
+    // Keep it short for the tile width: "7 writable" / "7 read-only".
+    if count >= 10 {
+        push("9+", &mut n);
+    } else {
+        let digit = [b'0' + (count as u8)];
+        push(core::str::from_utf8(&digit).unwrap_or("0"), &mut n);
+    }
+    push(
+        if caps.allows(Cap::SkillsSave) {
+            " writable"
+        } else {
+            " read-only"
+        },
+        &mut n,
+    );
+    match core::str::from_utf8(&buf[..n]) {
+        Ok(s) => s,
+        Err(e) => core::str::from_utf8(&buf[..e.valid_up_to()]).unwrap_or(""),
+    }
+}
+
+/// Short Search-tile subtitle naming the sources the current grants unlock.
+pub fn search_tile_sub<'a>(caps: Caps, buf: &'a mut [u8; 40]) -> &'a str {
+    buf.fill(0);
+    let mut n = 0;
+    let mut push = |s: &str, n: &mut usize| {
+        for &b in s.as_bytes() {
+            if *n < buf.len() {
+                buf[*n] = b;
+                *n += 1;
+            }
+        }
+    };
+    if caps.allows(Cap::SearchQuery) {
+        push("docs", &mut n);
+    }
+    if caps.allows(Cap::EmailSearch) {
+        if n > 0 {
+            push(" + ", &mut n);
+        }
+        push("mail", &mut n);
+    }
+    if caps.allows(Cap::WorkspaceIndex) {
+        if n > 0 {
+            push(" + ", &mut n);
+        }
+        push("files", &mut n);
+    }
+    if caps.allows(Cap::PortalSync) {
+        if n > 0 {
+            push(" + ", &mut n);
+        }
+        // Covers teddy corpus/portals and market.* under the same grant.
+        push("online", &mut n);
+    }
+    if caps.allows(Cap::AudioTranscribe) {
+        if n > 0 {
+            push(" + ", &mut n);
+        }
+        push("audio", &mut n);
+    }
+    if n == 0 {
+        "grant search first"
+    } else {
+        core::str::from_utf8(&buf[..n]).unwrap_or("docs")
+    }
+}
+
+/// Draw the last-brief strip; returns the y just below it.
+fn draw_brief_residue(fb: &Surface, x0: i32, ry: i32, cw: i32, brief: &Brief) -> i32 {
+    fb.draw_text(x0, ry, "Last brief", &BRAND_FACE, 0, theme::INK);
+    let hint = "Tap to reopen";
+    fb.draw_text(
+        x0 + cw - SMALL_FACE.width(hint, 0),
+        ry,
+        hint,
+        &SMALL_FACE,
+        0,
+        theme::MUTED,
+    );
+    let title = if brief.heading().is_empty() {
+        brief.skill_name()
+    } else {
+        brief.heading()
+    };
+    fb.draw_text(x0, ry + 28, title, &BODY_FACE, 0, theme::INK);
+    let mut y = ry + 52;
+    // Two lines when mail may follow, so both fit a 768 screen.
+    for i in 0..brief.count.min(2) {
+        let mut line = [0u8; 72];
+        let mut n = 0;
+        for &b in brief.lines[i].tag().as_bytes().iter().take(8) {
+            line[n] = b;
+            n += 1;
+        }
+        if n + 2 < line.len() {
+            line[n] = b':';
+            line[n + 1] = b' ';
+            n += 2;
+        }
+        for &b in brief.lines[i].text().as_bytes() {
+            if n >= line.len() {
+                break;
+            }
+            line[n] = b;
+            n += 1;
+        }
+        let s = core::str::from_utf8(&line[..n]).unwrap_or(brief.lines[i].text());
+        fb.draw_text(x0, y, s, &SMALL_FACE, 0, theme::MUTED);
+        y += 20;
+    }
+    y
+}
+
+/// Hit box for the last-brief strip on home (empty when none).
+pub fn brief_rect(w: i32, h: i32, brief: &Brief) -> Rect {
+    if !brief.has_report() {
+        return Rect {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+        };
+    }
+    let (x0, cw) = home_column(w);
+    let ry = tile_top(h) + TILE_H + 40;
+    let lines = brief.count.min(2) as i32;
+    Rect {
+        x: x0,
+        y: ry,
+        w: cw,
+        h: 52 + lines * 20 + 8,
+    }
 }
 
 /// Render "3 messages" / "1 message" / "none" into a caller-owned buffer.
@@ -371,43 +595,35 @@ pub fn search_rect(w: i32, h: i32) -> (i32, i32, i32, i32) {
     (x, 132, cw, 52)
 }
 
-pub(crate) fn tile_top(_h: i32) -> i32 {
-    // Below the portal pill, not through it. The pill spans 222..250 and the
-    // tiles used to start at 242, so its bottom 8px were drawn over the tile
-    // row - and because CtaTargets::hit checks the portal before the cards,
-    // clicking the top edge of the Search tile opened the portal instead.
-    let p = portal_rect(0, 0);
-    p.y + p.h + 16
+pub(crate) fn tile_top(h: i32) -> i32 {
+    // Clear of the search field and of the hint drawn 22px under it. This used
+    // to be derived from the "Connect tSearch account" pill that sat between
+    // the two; with the pill gone the tiles take the space it occupied rather
+    // than leaving a band of nothing behind.
+    let (_, fy, _, fh) = search_rect(0, h);
+    fy + fh + 38
 }
 
 pub(crate) const TILE_H: i32 = 78;
 
 pub fn cta_targets(w: i32, h: i32, _skills: &SkillPeek) -> CtaTargets {
-    // The search field is now the primary action; Skills keeps its tile.
-    let (fx, fy, fw, fh) = search_rect(w, h);
+    let _ = h;
+    // Setup lives in the nav. Skills is reached via its tile (CardId), so the
+    // duplicate CTA rect stays empty — one hit target per destination.
+    let (sx, sy, sw, sh) = setup_rect(w);
     CtaTargets {
         ready: Rect {
-            x: fx,
-            y: fy,
-            w: fw,
-            h: fh,
+            x: sx,
+            y: sy,
+            w: sw,
+            h: sh,
         },
-        portal: portal_rect(w, h),
-        skills: tile_rect(w, h, 2),
-    }
-}
-
-/// The personal-sources action sits directly below the search guidance.
-/// Keeping it above the tiles makes it visible on a 768px guest display.
-pub fn portal_rect(w: i32, h: i32) -> Rect {
-    let (fx, fy, fw, fh) = search_rect(w, h);
-    let pw = 238.min(fw);
-    let ph = 28;
-    Rect {
-        x: fx + fw - pw,
-        y: fy + fh + 38,
-        w: pw,
-        h: ph,
+        skills: Rect {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+        },
     }
 }
 
@@ -432,47 +648,152 @@ pub fn card_targets(w: i32, h: i32) -> CardTargets {
     }
 }
 
-pub fn home_targets(w: i32, h: i32, skills: &SkillPeek) -> HomeTargets {
+pub fn home_targets(
+    w: i32,
+    h: i32,
+    skills: &SkillPeek,
+    brief: &Brief,
+    mail: &MailPeek,
+    files: &FilePeek,
+) -> HomeTargets {
+    let (mail_rects, mail_n) = mail_targets(w, h, brief, mail, files);
+    let (file_rects, files_n) = file_targets(w, h, brief, mail, files);
     HomeTargets {
         ctas: cta_targets(w, h, skills),
         cards: card_targets(w, h),
+        brief: brief_rect(w, h, brief),
+        mail: mail_rects,
+        mail_n,
+        files: file_rects,
+        files_n,
     }
 }
+
+/// Y origin of the Recent mail / files stack (heading), matching `draw_home_full`.
+fn mail_block_top(_w: i32, h: i32, brief: &Brief) -> i32 {
+    let ry = tile_top(h) + TILE_H + 40;
+    if !brief.has_report() {
+        return ry;
+    }
+    // Same end Y as `draw_brief_residue`, then the 16px gap before mail/files.
+    let lines = brief.count.min(2) as i32;
+    ry + 52 + lines * 20 + 16
+}
+
+const PEEK_ROW_PITCH: i32 = 34;
+const PEEK_HEADING: i32 = 28;
+
+/// Hit boxes for Recent mail rows. Empty when there is nothing to open.
+pub fn mail_targets(
+    w: i32,
+    h: i32,
+    brief: &Brief,
+    mail: &MailPeek,
+    files: &FilePeek,
+) -> ([Rect; 3], usize) {
+    let mut rects = [Rect {
+        x: 0,
+        y: 0,
+        w: 0,
+        h: 0,
+    }; 3];
+    if mail.count == 0 {
+        return (rects, 0);
+    }
+    let (x0, cw) = home_column(w);
+    let mail_n = home_mail_n(brief, files);
+    let n = mail.count.min(mail_n).min(rects.len());
+    // Heading ("Recent mail") is 28px; each row is subject + rule = 34px.
+    let y0 = mail_block_top(w, h, brief) + PEEK_HEADING;
+    for i in 0..n {
+        rects[i] = Rect {
+            x: x0,
+            y: y0 + i as i32 * PEEK_ROW_PITCH,
+            w: cw,
+            h: PEEK_ROW_PITCH,
+        };
+    }
+    (rects, n)
+}
+
+/// Y origin of the Recent files heading, matching `draw_home_full`.
+fn files_block_top(w: i32, h: i32, brief: &Brief, mail: &MailPeek, files: &FilePeek) -> i32 {
+    let y = mail_block_top(w, h, brief);
+    if mail.count == 0 {
+        return y;
+    }
+    let shown = mail.count.min(home_mail_n(brief, files));
+    y + PEEK_HEADING + shown as i32 * PEEK_ROW_PITCH + 8
+}
+
+/// Hit boxes for Recent files rows. Empty when there is nothing to open.
+pub fn file_targets(
+    w: i32,
+    h: i32,
+    brief: &Brief,
+    mail: &MailPeek,
+    files: &FilePeek,
+) -> ([Rect; 3], usize) {
+    let mut rects = [Rect {
+        x: 0,
+        y: 0,
+        w: 0,
+        h: 0,
+    }; 3];
+    if files.count == 0 {
+        return (rects, 0);
+    }
+    let (x0, cw) = home_column(w);
+    let files_n = home_files_n(brief, mail);
+    let n = files.count.min(files_n).min(rects.len());
+    let y0 = files_block_top(w, h, brief, mail, files) + PEEK_HEADING;
+    for i in 0..n {
+        rects[i] = Rect {
+            x: x0,
+            y: y0 + i as i32 * PEEK_ROW_PITCH,
+            w: cw,
+            h: PEEK_ROW_PITCH,
+        };
+    }
+    (rects, n)
+}
+
+/// Nav "setup" control — restarts the first-boot journey on purpose.
+pub fn setup_rect(_w: i32) -> (i32, i32, i32, i32) {
+    let label_w = SMALL_FACE.width("setup", 0);
+    let x = PAD_X + BRAND_FACE.width("os", 0) + 18;
+    (x, (NAV_H - 28) / 2, label_w + 8, 28)
+}
+
+
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::agent::Brief;
     use crate::caps::Caps;
-    use crate::mcp::MailPeek;
+    use crate::mcp::{FilePeek, MailPeek};
 
     fn peek() -> SkillPeek {
         SkillPeek::from_builtin()
     }
 
-    #[test]
-    fn search_field_is_the_primary_target() {
-        // Typing must be reachable without hunting for a card.
-        let t = home_targets(1024, 768, &peek());
-        let (fx, fy, fw, fh) = search_rect(1024, 768);
-        assert_eq!(
-            t.ctas.ready,
-            Rect {
-                x: fx,
-                y: fy,
-                w: fw,
-                h: fh
-            }
-        );
+    fn empty_brief() -> Brief {
+        Brief::empty()
     }
 
     #[test]
-    fn personal_portal_action_is_visible_and_clickable() {
-        let t = home_targets(1024, 768, &peek());
-        let r = portal_rect(1024, 768);
-        assert!(r.y > search_rect(1024, 768).1);
+    fn search_field_is_not_a_cta() {
+        // Clicking the query box used to fire CtaId::Ready and restart setup.
+        let mail = MailPeek::empty(BridgeStatus::Offline);
+        let files = FilePeek::empty(BridgeStatus::Offline, false);
+        let t = home_targets(1024, 768, &peek(), &empty_brief(), &mail, &files);
+        let (fx, fy, fw, fh) = search_rect(1024, 768);
+        assert_eq!(t.hit(fx + fw / 2, fy + fh / 2), None);
+        let (sx, sy, sw, sh) = setup_rect(1024);
         assert_eq!(
-            t.ctas.hit(r.x + r.w / 2, r.y + r.h / 2),
-            Some(CtaId::Portal)
+            t.ctas.hit(sx + sw / 2, sy + sh / 2),
+            Some(CtaId::Ready)
         );
     }
 
@@ -484,7 +805,9 @@ mod tests {
 
     #[test]
     fn each_tile_hit_tests_to_its_own_id() {
-        let t = home_targets(1024, 768, &peek());
+        let mail = MailPeek::empty(BridgeStatus::Offline);
+        let files = FilePeek::empty(BridgeStatus::Offline, false);
+        let t = home_targets(1024, 768, &peek(), &empty_brief(), &mail, &files);
         for (i, want) in [CardId::Connectors, CardId::Capabilities, CardId::Skills]
             .iter()
             .enumerate()
@@ -531,20 +854,32 @@ mod tests {
 
     #[test]
     fn copy_is_ascii_only() {
-        for s in [
-            "Search the knowledge base",
-            "Type a query and press Enter. Works with the bridge offline.",
-            "Connect tSearch account",
+        let mut all = vec![
             "Search",
             "Capabilities",
             "Skills",
             "Recent mail",
-            "Inbox empty, or email.search not granted.",
-            "Bridge offline - start the host bridge",
+            "Recent files",
+            "Last brief",
+            "Tap to reopen",
+            "grant search first",
+            "docs + mail + files + online + audio",
+            "7 writable",
+            "7 read-only",
+            "Inbox empty right now.",
+            "Grant Email to show recent mail.",
+            "Connect email on this Mac to show your inbox.",
+            "Bridge offline - run: make utm-bridged",
             "bridge connected",
             "bridge offline",
             "os",
-        ] {
+            "setup",
+        ];
+        for level in crate::level::Level::ALL {
+            all.push(level.home_search_placeholder());
+            all.push(level.home_search_hint());
+        }
+        for s in all {
             assert!(
                 s.bytes().all(|b| (0x20..=0x7E).contains(&b)),
                 "non-ASCII renders as '?': {s:?}"
@@ -558,7 +893,22 @@ mod tests {
         for s in ["Search", "Capabilities", "Skills"] {
             assert!(H2_FACE.width(s, 0) < r.w - 36, "tile title overflows: {s}");
         }
-        assert!(SMALL_FACE.width("knowledge + email", 0) < r.w - 36);
+        let mut src = [0u8; 40];
+        let mut caps = Caps::none();
+        caps.set(Cap::SearchQuery, true);
+        caps.set(Cap::EmailSearch, true);
+        caps.set(Cap::WorkspaceIndex, true);
+        caps.set(Cap::PortalSync, true);
+        caps.set(Cap::AudioTranscribe, true);
+        let sub = search_tile_sub(caps, &mut src);
+        assert!(SMALL_FACE.width(sub, 0) < r.w - 36, "search sub overflows: {sub}");
+        assert!(sub.contains("audio"), "{sub}");
+        let mut sbuf = [0u8; 28];
+        let skill_sub = skills_tile_sub(caps, 7, &mut sbuf);
+        assert!(
+            SMALL_FACE.width(skill_sub, 0) < r.w - 36,
+            "skills sub overflows: {skill_sub}"
+        );
         let mut buf = [0u8; 96];
         let n = Caps::default_grants().describe(&mut buf);
         let status = core::str::from_utf8(&buf[..n]).unwrap();
@@ -569,11 +919,150 @@ mod tests {
     }
 
     #[test]
+    fn search_tile_sub_follows_grants() {
+        let mut buf = [0u8; 40];
+        assert_eq!(search_tile_sub(Caps::none(), &mut buf), "grant search first");
+        let mut caps = Caps::none();
+        caps.set(Cap::SearchQuery, true);
+        assert_eq!(search_tile_sub(caps, &mut buf), "docs");
+        caps.set(Cap::PortalSync, true);
+        assert_eq!(search_tile_sub(caps, &mut buf), "docs + online");
+        caps.set(Cap::AudioTranscribe, true);
+        assert_eq!(search_tile_sub(caps, &mut buf), "docs + online + audio");
+    }
+
+    #[test]
+    fn skills_tile_sub_names_writability() {
+        let mut buf = [0u8; 28];
+        assert_eq!(skills_tile_sub(Caps::none(), 7, &mut buf), "7 read-only");
+        let mut caps = Caps::none();
+        caps.set(Cap::SkillsSave, true);
+        assert_eq!(skills_tile_sub(caps, 7, &mut buf), "7 writable");
+        assert_eq!(skills_tile_sub(caps, 12, &mut buf), "9+ writable");
+    }
+
+    #[test]
+    fn brief_strip_is_hittable_when_a_report_exists() {
+        // capability-safe-tools never touches COM2 — safe in host unit tests.
+        let brief = crate::agent::run("capability-safe-tools", Caps::default_grants());
+        assert!(brief.has_report());
+        let r = brief_rect(1024, 768, &brief);
+        assert!(r.w > 0 && r.h > 0);
+        let mail = MailPeek::empty(BridgeStatus::Online);
+        let files = FilePeek::empty(BridgeStatus::Online, false);
+        let t = home_targets(1024, 768, &peek(), &brief, &mail, &files);
+        assert_eq!(t.hit(r.x + 8, r.y + 8), Some(HomeHit::Brief));
+        let empty = home_targets(1024, 768, &peek(), &empty_brief(), &mail, &files);
+        assert_ne!(empty.hit(r.x + 8, r.y + 8), Some(HomeHit::Brief));
+    }
+
+    #[test]
+    fn recent_mail_rows_are_hittable() {
+        let mut mail = MailPeek::empty(BridgeStatus::Online);
+        copy_ascii(&mut mail.rows[0].id, "0123456789abcdef");
+        copy_ascii(&mut mail.rows[0].from, "ada@x.com");
+        copy_ascii(&mut mail.rows[0].subj, "Q2 planning notes");
+        copy_ascii(&mut mail.rows[1].id, "fedcba9876543210");
+        copy_ascii(&mut mail.rows[1].from, "bob@x.com");
+        copy_ascii(&mut mail.rows[1].subj, "Hello");
+        mail.count = 2;
+        let files = FilePeek::empty(BridgeStatus::Online, false);
+
+        let (rects, n) = mail_targets(1024, 768, &empty_brief(), &mail, &files);
+        assert_eq!(n, 2);
+        let t = home_targets(1024, 768, &peek(), &empty_brief(), &mail, &files);
+        assert_eq!(
+            t.hit(rects[0].x + 8, rects[0].y + 8),
+            Some(HomeHit::Mail(0))
+        );
+        assert_eq!(
+            t.hit(rects[1].x + 8, rects[1].y + 8),
+            Some(HomeHit::Mail(1))
+        );
+        // With a brief above, mail still hits and does not steal the brief.
+        let brief = crate::agent::run("capability-safe-tools", Caps::default_grants());
+        let t2 = home_targets(1024, 768, &peek(), &brief, &mail, &files);
+        let br = brief_rect(1024, 768, &brief);
+        assert_eq!(t2.hit(br.x + 8, br.y + 8), Some(HomeHit::Brief));
+        assert_eq!(t2.mail_n, 2);
+        assert_eq!(
+            t2.hit(t2.mail[0].x + 8, t2.mail[0].y + 8),
+            Some(HomeHit::Mail(0))
+        );
+    }
+
+    #[test]
+    fn recent_file_rows_are_hittable() {
+        let mail = MailPeek::empty(BridgeStatus::Online);
+        let mut files = FilePeek::empty(BridgeStatus::Online, false);
+        copy_ascii(&mut files.rows[0].title, "notes.md");
+        copy_ascii(&mut files.rows[0].url, "file://docs/notes.md");
+        copy_ascii(&mut files.rows[1].title, "plan.txt");
+        copy_ascii(&mut files.rows[1].url, "file://docs/plan.txt");
+        files.count = 2;
+
+        let (rects, n) = file_targets(1024, 768, &empty_brief(), &mail, &files);
+        assert_eq!(n, 2);
+        let t = home_targets(1024, 768, &peek(), &empty_brief(), &mail, &files);
+        assert_eq!(
+            t.hit(rects[0].x + 8, rects[0].y + 8),
+            Some(HomeHit::File(0))
+        );
+        assert_eq!(
+            t.hit(rects[1].x + 8, rects[1].y + 8),
+            Some(HomeHit::File(1))
+        );
+        // Mail above files: both hit, files sit below mail.
+        let mut mail2 = MailPeek::empty(BridgeStatus::Online);
+        copy_ascii(&mut mail2.rows[0].id, "0123456789abcdef");
+        copy_ascii(&mut mail2.rows[0].from, "ada@x.com");
+        copy_ascii(&mut mail2.rows[0].subj, "Hello");
+        mail2.count = 1;
+        let t2 = home_targets(1024, 768, &peek(), &empty_brief(), &mail2, &files);
+        assert_eq!(t2.mail_n, 1);
+        assert_eq!(t2.files_n, 2);
+        assert!(t2.files[0].y > t2.mail[0].y);
+        assert_eq!(
+            t2.hit(t2.files[0].x + 8, t2.files[0].y + 8),
+            Some(HomeHit::File(0))
+        );
+    }
+
+    fn copy_ascii(dst: &mut [u8], s: &str) {
+        dst.fill(0);
+        let n = s.len().min(dst.len());
+        dst[..n].copy_from_slice(&s.as_bytes()[..n]);
+    }
+
+    #[test]
+    fn chill_rule_blend_stays_between_rule_and_accent() {
+        // Peak breath should not reach full accent — ambient, not flashing.
+        let peak = crate::anim::breath(90);
+        let amt = (peak as i64 * (ONE_CHILL as i64) / (crate::anim::ONE as i64)) as i32;
+        assert!(amt > 0 && amt < crate::anim::ONE / 2, "amt={amt}");
+        let c = crate::anim::lerp_color(theme::RULE, theme::ACCENT, amt);
+        assert_ne!(c, theme::RULE);
+        assert_ne!(c, theme::ACCENT);
+    }
+
+    #[test]
     fn drawing_the_home_screen_does_not_panic() {
         // Exercises the offline branch and the count formatting together.
         let mail = MailPeek::empty(BridgeStatus::Offline);
-        let _ = home_targets(1024, 768, &peek());
+        let files = FilePeek::empty(BridgeStatus::Offline, false);
+        let _ = home_targets(1024, 768, &peek(), &empty_brief(), &mail, &files);
         assert_eq!(mail.count, 0);
+    }
+
+    #[test]
+    fn mail_url_builds_email_scheme() {
+        let mut mail = MailPeek::empty(BridgeStatus::Online);
+        copy_ascii(&mut mail.rows[0].id, "0123456789abcdef");
+        mail.count = 1;
+        let mut buf = [0u8; 40];
+        assert_eq!(mail.url_at(0, &mut buf), Some("email://0123456789abcdef"));
+        let empty = MailPeek::empty(BridgeStatus::Online);
+        assert_eq!(empty.url_at(0, &mut buf), None);
     }
 }
 
@@ -623,64 +1112,110 @@ mod mail_click_tests {
     }
 }
 
+/// The "Connect tSearch account" pill is gone for good.
+///
+/// It said "connect" and only opened Capabilities — it connected nothing — so
+/// these guard the removal from being quietly undone: no hit region anywhere on
+/// home may report a portal CTA, and the render must not paint the pill.
 #[cfg(test)]
-mod portal_link_tests {
+mod no_portal_cta_tests {
     use super::*;
+    use crate::agent::Brief;
+    use crate::fb::Surface;
+    use crate::mcp::{FilePeek, MailPeek};
 
     fn skills() -> SkillPeek {
         SkillPeek::from_builtin()
     }
 
-    fn overlaps(a: Rect, b: Rect) -> bool {
-        a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    /// Every hit region the finished home screen reports, at a real size.
+    fn sweep(w: i32, h: i32) -> Vec<(i32, i32, HomeHit)> {
+        let mail = MailPeek::empty(BridgeStatus::Offline);
+        let files = FilePeek::empty(BridgeStatus::Offline, false);
+        let brief = Brief::empty();
+        let t = home_targets(w, h, &skills(), &brief, &mail, &files);
+        let mut out = Vec::new();
+        let mut y = 0;
+        while y < h {
+            let mut x = 0;
+            while x < w {
+                if let Some(hit) = t.hit(x, y) {
+                    out.push((x, y, hit));
+                }
+                x += 4;
+            }
+            y += 4;
+        }
+        out
     }
 
     #[test]
-    fn the_portal_link_does_not_sit_on_top_of_any_tile() {
-        // It did: the pill's lower 8px overlapped the tile row, and since the
-        // portal is hit-tested before the cards, the top edge of the Search
-        // tile opened the portal instead of Search.
+    fn no_hit_region_on_home_opens_a_portal_cta() {
+        // Ready (nav "setup") is the only CTA left; the tiles carry everything
+        // else. A swept probe is the honest check: it cannot miss a rect that
+        // some future layout puts back.
         for (w, h) in [(1024, 768), (1280, 800), (1600, 1000)] {
-            let p = portal_rect(w, h);
-            for i in 0..3 {
-                assert!(
-                    !overlaps(p, tile_rect(w, h, i)),
-                    "portal pill overlaps tile {i} at {w}x{h}"
-                );
+            for (x, y, hit) in sweep(w, h) {
+                if let HomeHit::Cta(c) = hit {
+                    assert_eq!(c, CtaId::Ready, "unexpected CTA at ({x},{y}) at {w}x{h}");
+                }
             }
         }
     }
 
     #[test]
-    fn the_portal_link_clears_the_search_field() {
-        for (w, h) in [(1024, 768), (1280, 800)] {
-            let (_, fy, _, fh) = search_rect(w, h);
-            assert!(
-                portal_rect(w, h).y >= fy + fh,
-                "pill overlaps the field at {w}x{h}"
-            );
+    fn the_band_under_the_search_field_is_dead_space() {
+        // Where the pill used to live. Nothing may be clickable there now.
+        for (w, h) in [(1024, 768), (1280, 800), (1600, 1000)] {
+            let mail = MailPeek::empty(BridgeStatus::Offline);
+            let files = FilePeek::empty(BridgeStatus::Offline, false);
+            let brief = Brief::empty();
+            let t = home_targets(w, h, &skills(), &brief, &mail, &files);
+            let (fx, fy, fw, fh) = search_rect(w, h);
+            let mut y = fy + fh;
+            while y < tile_top(h) {
+                for x in [fx, fx + fw / 2, fx + fw - 1] {
+                    assert_eq!(t.hit(x, y), None, "clickable at ({x},{y}) at {w}x{h}");
+                }
+                y += 2;
+            }
         }
     }
 
     #[test]
-    fn clicking_the_portal_link_reports_the_portal_and_nothing_else() {
-        let (w, h) = (1280, 800);
-        let p = portal_rect(w, h);
-        let t = home_targets(w, h, &skills());
-        assert_eq!(
-            t.hit(p.x + p.w / 2, p.y + p.h / 2),
-            Some(HomeHit::Cta(CtaId::Portal))
+    fn the_home_render_paints_no_tinted_pill() {
+        // The pill was the only thing on home drawn in the tint palette, so a
+        // tinted pixel anywhere in this frame means it came back.
+        let (w, h) = (1024i32, 768i32);
+        let mut buf = vec![0u32; (w * h) as usize];
+        let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), w as usize, h as usize) };
+        let mail = MailPeek::empty(BridgeStatus::Offline);
+        let files = FilePeek::empty(BridgeStatus::Offline, false);
+        draw_home(
+            &fb,
+            &mail,
+            &files,
+            &skills(),
+            "3 on",
+            Caps::default_grants(),
+            &Brief::empty(),
+            crate::level::Level::ALL[0],
         );
+        for px in &buf {
+            assert_ne!(*px, theme::TINT_BG, "the tinted pill is back on home");
+            assert_ne!(*px, theme::TINT_BORDER, "the tinted pill border is back");
+        }
     }
 
     #[test]
-    fn the_portal_link_stays_inside_the_content_column() {
+    fn the_tiles_still_clear_the_search_hint() {
+        // Reclaiming the pill's space must not run the tiles into the hint
+        // line drawn 22px under the field.
         for (w, h) in [(1024, 768), (1280, 800), (1600, 1000)] {
-            let (fx, _, fw, _) = search_rect(w, h);
-            let p = portal_rect(w, h);
+            let (_, fy, _, fh) = search_rect(w, h);
             assert!(
-                p.x >= fx && p.x + p.w <= fx + fw,
-                "pill escapes the column at {w}x{h}"
+                tile_top(h) > fy + fh + 22,
+                "tiles collide with the search hint at {w}x{h}"
             );
         }
     }

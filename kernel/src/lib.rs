@@ -4,6 +4,7 @@
 #![cfg_attr(not(test), no_std)]
 
 pub mod acpi;
+pub mod agent;
 pub mod anim;
 pub mod arm64_mmio;
 pub mod beep;
@@ -14,6 +15,7 @@ pub mod font;
 pub mod hid;
 pub mod inputdiag;
 pub mod keyboard;
+pub mod level;
 pub mod mcp;
 pub mod mouse;
 pub mod ohci;

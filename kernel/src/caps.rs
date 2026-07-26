@@ -19,13 +19,17 @@ pub enum Cap {
     /// Exchange data with external portals (teddy, markets). OFF by
     /// default: every other capability is local, this one leaves the machine.
     PortalSync = 5,
+    /// Send mail. OFF by default; still needs an explicit Confirm send on
+    /// Brief — grant alone never auto-sends (AGENTS non-negotiable #3).
+    EmailSend = 6,
 }
 
 impl Cap {
     /// Screen order. `setup::CAPS[i]` labels `ALL[i]`, so these must agree —
     /// a mismatch shows the right switch against the wrong name.
-    pub const ALL: [Cap; 6] = [
+    pub const ALL: [Cap; 7] = [
         Cap::EmailSearch,
+        Cap::EmailSend,
         Cap::SearchQuery,
         Cap::WorkspaceIndex,
         Cap::AudioTranscribe,
@@ -38,6 +42,7 @@ impl Cap {
     pub const fn label(self) -> &'static str {
         match self {
             Cap::EmailSearch => "Email",
+            Cap::EmailSend => "Send mail",
             Cap::SearchQuery => "Built-in docs",
             Cap::WorkspaceIndex => "Your files",
             Cap::AudioTranscribe => "Recordings",
@@ -46,22 +51,32 @@ impl Cap {
         }
     }
 
-    /// The consequence of granting it, in one clause.
+    /// The consequence of granting it, in one clause (Guided UI).
     pub const fn detail(self) -> &'static str {
         match self {
-            Cap::EmailSearch => "Read your inbox",
+            Cap::EmailSearch => "Read inbox and calendar",
+            Cap::EmailSend => "Send after you confirm on Brief",
             Cap::SearchQuery => "Search what ships with the OS",
-            Cap::WorkspaceIndex => "Search documents on this machine",
-            Cap::AudioTranscribe => "Transcribe audio you point it at",
-            Cap::SkillsSave => "Write new playbooks to disk",
-            Cap::PortalSync => "Sync your tSearch account and other portals",
+            Cap::WorkspaceIndex => "Search project folders you choose",
+            Cap::AudioTranscribe => "Type a media path in Search",
+            Cap::SkillsSave => "Write playbooks; revoke deletes them",
+            Cap::PortalSync => "Teddy and market portals",
         }
     }
 
-    /// The wire/tool identifier. Not shown to the user.
+    /// Blurb beside the Caps label — plain language or wire name by level.
+    pub const fn blurb(self, level: crate::level::Level) -> &'static str {
+        match level {
+            crate::level::Level::Guided => self.detail(),
+            crate::level::Level::Advanced => self.name(),
+        }
+    }
+
+    /// The wire/tool identifier. Shown in Advanced Caps rows.
     pub const fn name(self) -> &'static str {
         match self {
             Cap::EmailSearch => "email.search",
+            Cap::EmailSend => "email.send",
             Cap::SearchQuery => "search.query",
             Cap::SkillsSave => "skills.save",
             Cap::WorkspaceIndex => "workspace.index",
@@ -82,10 +97,11 @@ pub struct Caps {
 }
 
 impl Caps {
-    /// Defaults match the setup assistant: read tools on, disk writes off.
+    /// Defaults match the setup assistant: privacy first — only the corpus
+    /// that ships with the OS is searchable. Personal data stays off.
     pub const fn default_grants() -> Self {
         Self {
-            bits: (1 << Cap::EmailSearch.index()) | (1 << Cap::SearchQuery.index()),
+            bits: 1 << Cap::SearchQuery.index(),
         }
     }
 
@@ -173,8 +189,9 @@ mod tests {
     #[test]
     fn default_denies_skills_save() {
         let c = Caps::default_grants();
-        assert!(c.allows(Cap::EmailSearch));
         assert!(c.allows(Cap::SearchQuery));
+        assert!(!c.allows(Cap::EmailSearch));
+        assert!(!c.allows(Cap::EmailSend));
         assert!(!c.allows(Cap::SkillsSave));
     }
 
@@ -191,7 +208,7 @@ mod tests {
 
     #[test]
     fn footer_is_ascii_and_short() {
-        for bits in 0u8..64 {
+        for bits in 0u8..=127 {
             let c = Caps { bits };
             let mut buf = [0u8; 96];
             let n = c.describe(&mut buf);
@@ -204,8 +221,31 @@ mod tests {
     #[test]
     fn names_match_setup_rows() {
         assert_eq!(Cap::EmailSearch.name(), "email.search");
+        assert_eq!(Cap::EmailSend.name(), "email.send");
         assert_eq!(Cap::SearchQuery.name(), "search.query");
         assert_eq!(Cap::SkillsSave.name(), "skills.save");
+    }
+
+    #[test]
+    fn send_mail_is_not_implied_by_email_read() {
+        let mut c = Caps::none();
+        c.set(Cap::EmailSearch, true);
+        assert!(!c.allows(Cap::EmailSend));
+    }
+
+    #[test]
+    fn email_detail_names_calendar() {
+        let d = Cap::EmailSearch.detail();
+        assert!(d.contains("calendar"), "{d}");
+        assert!(d.bytes().all(|b| (0x20..=0x7E).contains(&b)), "{d}");
+    }
+
+    #[test]
+    fn workspace_detail_does_not_claim_the_whole_machine() {
+        let d = Cap::WorkspaceIndex.detail();
+        assert!(!d.contains("this machine"), "{d}");
+        assert!(d.contains("project") || d.contains("folder"), "{d}");
+        assert!(d.bytes().all(|b| (0x20..=0x7E).contains(&b)));
     }
 }
 
