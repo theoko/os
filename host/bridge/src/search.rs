@@ -323,8 +323,17 @@ pub fn body_for(url: &str) -> Option<&'static str> {
         })
 }
 
+/// Soft-wrap / sanitize budget for `ROW line=` (guest `DocPage` slot matches).
+pub(crate) const LINE_WIDTH: usize = 78;
+
+fn sanitize_line(s: &str) -> String {
+    // Cap at LINE_WIDTH so long words cannot overshoot the guest slot
+    // (search hit fields still use [`sanitize`] @ 90).
+    crate::text::sanitize(s, LINE_WIDTH, true, false)
+}
+
 /// Hard-wrap text into `ROW line=...` entries the guest can render directly.
-pub(crate) fn wrap_lines(text: &str, width: usize, max: usize) -> Vec<String> {
+pub(crate) fn wrap_lines(text: &str, max: usize) -> Vec<String> {
     let mut out = Vec::new();
     for para in text.lines() {
         if out.len() >= max {
@@ -337,8 +346,8 @@ pub(crate) fn wrap_lines(text: &str, width: usize, max: usize) -> Vec<String> {
         }
         let mut cur = String::new();
         for word in t.split_whitespace() {
-            if !cur.is_empty() && cur.chars().count() + 1 + word.chars().count() > width {
-                out.push(format!("ROW line={}", sanitize(&cur)));
+            if !cur.is_empty() && cur.chars().count() + 1 + word.chars().count() > LINE_WIDTH {
+                out.push(format!("ROW line={}", sanitize_line(&cur)));
                 cur.clear();
                 if out.len() >= max {
                     return out;
@@ -350,7 +359,7 @@ pub(crate) fn wrap_lines(text: &str, width: usize, max: usize) -> Vec<String> {
             cur.push_str(word);
         }
         if !cur.is_empty() {
-            out.push(format!("ROW line={}", sanitize(&cur)));
+            out.push(format!("ROW line={}", sanitize_line(&cur)));
         }
     }
     out.truncate(max);

@@ -182,18 +182,20 @@ pub struct DocPage {
     pub(crate) outcome: DocOutcome,
     pub(crate) count: usize,
     title: [u8; 72],
-    lines: [[u8; 84]; Self::MAX],
+    lines: [[u8; Self::LINE_CHARS]; Self::MAX],
 }
 
 impl DocPage {
     pub(crate) const MAX: usize = 18;
+    /// Matches bridge `search::LINE_WIDTH` for `ROW line=`.
+    pub(crate) const LINE_CHARS: usize = 78;
 
     pub const fn empty(outcome: DocOutcome) -> Self {
         Self {
             outcome,
             count: 0,
             title: [0; 72],
-            lines: [[0; 84]; Self::MAX],
+            lines: [[0; Self::LINE_CHARS]; Self::MAX],
         }
     }
 

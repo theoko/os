@@ -479,7 +479,7 @@ fn read_doc(
         Cow::Borrowed(search::body_for(url).ok_or("no readable body")?)
     };
 
-    Ok(search::wrap_lines(&body, 78, max))
+    Ok(search::wrap_lines(&body, max))
 }
 
 fn arg_val<'a>(args: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -680,24 +680,34 @@ mod read_tests {
     #[test]
     fn wrapping_respects_the_width_and_line_cap() {
         let text = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi";
-        let rows = search::wrap_lines(text, 20, 3);
+        let rows = search::wrap_lines(text, 3);
         assert!(rows.len() <= 3);
         for r in &rows {
             let line = r.strip_prefix("ROW line=").unwrap();
-            assert!(line.chars().count() <= 20, "line too wide: {line:?}");
+            assert!(
+                line.chars().count() <= search::LINE_WIDTH,
+                "line too wide: {line:?}"
+            );
         }
     }
 
     #[test]
     fn blank_lines_survive_as_paragraph_breaks() {
-        let rows = search::wrap_lines("one\n\ntwo", 40, 10);
+        let rows = search::wrap_lines("one\n\ntwo", 10);
         assert!(rows.iter().any(|r| r == "ROW line="), "paragraph break lost");
     }
 
     #[test]
     fn a_word_longer_than_the_width_does_not_loop_forever() {
-        let rows = search::wrap_lines(&"x".repeat(300), 20, 5);
+        let rows = search::wrap_lines(&"x".repeat(300), 5);
         assert!(!rows.is_empty());
         assert!(rows.len() <= 5);
+        for r in &rows {
+            let line = r.strip_prefix("ROW line=").unwrap();
+            assert!(
+                line.chars().count() <= search::LINE_WIDTH,
+                "long word overshot: {line:?}"
+            );
+        }
     }
 }
