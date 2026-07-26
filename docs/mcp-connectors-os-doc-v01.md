@@ -36,7 +36,7 @@ Guest → host:
 | `CALL email.search q=<gmail query> max=<n>` | Search mail |
 | `CALL email.send …` | Always `ERR … disabled_until_cap_confirm` (policy stub) |
 | `CALL search.query q=<keywords> k=<n> …` | Knowledge search (+ optional email/files/audio scopes) |
-| `CALL skills.list` / `skills.get` / `skills.save` | Skill playbooks |
+| `CALL skills.list` / `skills.save` | Skill playbooks |
 | `CALL doc.read url=…` | Open a result body |
 | `CALL workspace.index` / `audio.transcribe` / `*.forget` | Host indexes + revoke |
 

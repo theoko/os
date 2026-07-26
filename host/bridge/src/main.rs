@@ -28,7 +28,6 @@ const TOOLS: &[&str] = &[
     "email.search",
     "email.send",
     "skills.list",
-    "skills.get",
     "skills.save",
     "search.query",
     "workspace.index",
@@ -314,10 +313,6 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
         }
         "email.send" => vec![format!("ERR {tool} disabled_until_cap_confirm")],
         "skills.list" => skills::list_response(),
-        "skills.get" => {
-            let name = arg_val(args, "name").unwrap_or("");
-            skills::get_response(name)
-        }
         // skills.save is handled in handle_client (LINE…END body on the socket).
         "audio.transcribe" => {
             // Reads media and puts the words in a searchable index, so it
@@ -404,7 +399,7 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
                 search::query_all(q, k, cat, with_email, with_files, with_audio)
             }
         }
-        // Distinct from tool-specific `… not_found` (e.g. skills.get).
+        // Distinct from tool-specific `… not_found` replies.
         _ => vec![format!("ERR unknown_tool {tool}")],
     }
 }

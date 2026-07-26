@@ -129,29 +129,6 @@ pub fn list_response() -> Vec<String> {
     crate::text::framed_ok(format!("OK skills.list n={n}"), rows)
 }
 
-pub fn get_response(name: &str) -> Vec<String> {
-    let (defaults, user) = skills_dirs();
-    let Some(body) = list_skills(&defaults, &user)
-        .get(name)
-        .and_then(|s| fs::read_to_string(&s.path).ok())
-    else {
-        return vec!["ERR skills.get not_found".into()];
-    };
-    // LINE payload is the whole rest of the line, not a ROW with
-    // '|'-separated fields — preserve it verbatim so save→get
-    // round-trips; only strip control chars that would break the
-    // line framing (keep tabs for markdown code blocks).
-    let lines = body.lines().map(|line| {
-        // Preserve markdown tabs; scrub other controls that would break LINE framing.
-        let scrubbed: String = line
-            .chars()
-            .map(|c| if c.is_control() && c != '\t' { ' ' } else { c })
-            .collect();
-        format!("LINE {scrubbed}")
-    });
-    crate::text::framed_ok("OK skills.get".into(), lines)
-}
-
 fn sanitize(s: &str) -> String {
     crate::text::sanitize(s, 120, false, false)
 }

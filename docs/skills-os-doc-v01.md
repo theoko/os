@@ -24,7 +24,6 @@ Frontmatter: `name`, `description` (same convention as Cursor skills).
 | Call | Result |
 |------|--------|
 | `CALL skills.list` | `OK skills.list n=N` + `ROW name=…\|desc=…` + `END` |
-| `CALL skills.get name=…` | `OK skills.get` + `LINE …` body lines + `END` |
 | `CALL skills.save name=…` | writes under Application Support (body via `LINE`…`END` after request) |
 
 Guest always knows **builtin** defaults even if the bridge is offline.
