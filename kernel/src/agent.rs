@@ -219,7 +219,31 @@ impl Brief {
         }
     }
 
+    /// Is this tag a search result rather than a piece of report metadata?
+    ///
+    /// Only results are deduplicated. `Goal` and `Query` frequently carry the
+    /// same text as each other — running a brief on "paper" prints
+    /// `Goal: paper` and `Query: paper`, and both belong there.
+    fn is_result(tag: &str) -> bool {
+        matches!(tag, "Doc" | "Hit")
+    }
+
     fn push_line(&mut self, tag: &str, text: &str) {
+        // A document appears once, whichever lane found it.
+        //
+        // Several fill paths push Hits — the goal run, the knowledge lane, the
+        // teddy lane — and none of them knew what the Doc rows above had
+        // already listed. Running a brief on "paper" reported "os identity"
+        // and "Agent skills" twice each, once as Doc and again as Hit, which
+        // reads as two findings where there is one. Deduplicating at the sink
+        // fixes every caller at once, including the ones not written yet.
+        if Self::is_result(tag)
+            && (0..self.count).any(|i| {
+                Self::is_result(self.lines[i].tag()) && self.lines[i].text() == text
+            })
+        {
+            return;
+        }
         if self.count < self.lines.len() {
             copy_field(&mut self.lines[self.count].tag, tag);
             copy_field(&mut self.lines[self.count].text, text);
@@ -1695,5 +1719,63 @@ mod tests {
         assert_eq!(brief.lines[0].tag(), "Doc");
         assert_eq!(brief.doc_n, 1);
         assert_eq!(brief.doc_url_at(0), Some("file://docs/thesis.md"));
+    }
+}
+
+#[cfg(test)]
+mod dedup_tests {
+    use super::*;
+
+    #[test]
+    fn a_document_is_listed_once_however_many_lanes_found_it() {
+        // Observed on the arm64 guest: a brief on "paper" reported
+        //   Doc  os identity      Hit  os identity
+        //   Doc  Agent skills     Hit  Agent skills
+        // Three fill paths push Hits and none knew what the Doc rows above had
+        // already listed, so one finding read as two.
+        let mut b = Brief::empty();
+        b.push_line("Doc", "os identity");
+        b.push_line("Doc", "Agent skills");
+        b.push_line("Hit", "os identity");
+        b.push_line("Hit", "Agent skills");
+        b.push_line("Hit", "Architecture capability IPC");
+
+        let titles: Vec<&str> = (0..b.count).map(|i| b.lines[i].text()).collect();
+        assert_eq!(
+            titles,
+            vec!["os identity", "Agent skills", "Architecture capability IPC"],
+            "each document should appear exactly once"
+        );
+    }
+
+    #[test]
+    fn the_lane_that_found_it_first_keeps_it() {
+        // Doc rows are openable and Hit rows are not, so when both lanes have
+        // the same document the openable one must survive.
+        let mut b = Brief::empty();
+        b.push_line("Doc", "os identity");
+        b.push_line("Hit", "os identity");
+        assert_eq!(b.count, 1);
+        assert_eq!(b.lines[0].tag(), "Doc", "the openable row must win");
+    }
+
+    #[test]
+    fn metadata_rows_may_repeat_their_text() {
+        // A brief on "paper" prints Goal: paper and Query: paper. Deduplicating
+        // on text alone would silently eat the Query line.
+        let mut b = Brief::empty();
+        b.push_line("Goal", "paper");
+        b.push_line("Query", "paper");
+        b.push_line("Info", "Bridge offline - local keywords only.");
+        assert_eq!(b.count, 3, "Goal and Query both belong even with equal text");
+    }
+
+    #[test]
+    fn two_different_documents_both_survive() {
+        // Guards against a dedup that is too eager and collapses real results.
+        let mut b = Brief::empty();
+        b.push_line("Hit", "os identity");
+        b.push_line("Hit", "Agent skills");
+        assert_eq!(b.count, 2);
     }
 }
