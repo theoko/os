@@ -83,29 +83,6 @@ impl Serial {
         self.write_bytes(&buf[i..]);
     }
 
-    /// Append decimal `u32` into a caller-owned buffer (for composed log lines).
-    pub fn append_u32(buf: &mut [u8], n: &mut usize, mut v: u32) {
-        let mut tmp = [0u8; 10];
-        let mut i = 0;
-        if v == 0 {
-            tmp[0] = b'0';
-            i = 1;
-        } else {
-            while v > 0 {
-                tmp[i] = b'0' + (v % 10) as u8;
-                v /= 10;
-                i += 1;
-            }
-        }
-        while i > 0 {
-            i -= 1;
-            if *n < buf.len() {
-                buf[*n] = tmp[i];
-                *n += 1;
-            }
-        }
-    }
-
     /// Non-blocking read: `None` if no byte waiting.
     pub fn try_read_byte(&self) -> Option<u8> {
         #[cfg(target_arch = "x86_64")]

@@ -69,26 +69,13 @@ unsafe extern "C" fn kmain() -> ! {
     if let Some(resp) = FRAMEBUFFER_REQUEST.get_response() {
         if let Some(fb_info) = resp.framebuffers().next() {
             // Always log geometry so UTM/QEMU serial shows why the window may be blank.
-            {
-                let mut msg = [0u8; 96];
-                let mut n = 0;
-                for &b in b"fb: " {
-                    msg[n] = b;
-                    n += 1;
-                }
-                serial::Serial::append_u32(&mut msg, &mut n, fb_info.width() as u32);
-                msg[n] = b'x';
-                n += 1;
-                serial::Serial::append_u32(&mut msg, &mut n, fb_info.height() as u32);
-                msg[n] = b' ';
-                n += 1;
-                serial::Serial::append_u32(&mut msg, &mut n, fb_info.bpp() as u32);
-                for &b in b"bpp\n" {
-                    msg[n] = b;
-                    n += 1;
-                }
-                serial_port.write_bytes(&msg[..n]);
-            }
+            serial_port.write_str("fb: ");
+            serial_port.write_u64(fb_info.width());
+            serial_port.write_str("x");
+            serial_port.write_u64(fb_info.height());
+            serial_port.write_str(" ");
+            serial_port.write_u64(fb_info.bpp() as u64);
+            serial_port.write_str("bpp\n");
             if let Some(screen) = unsafe {
                 fb::Screen::new(
                     fb_info.addr(),
@@ -163,7 +150,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut query = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
                 let mut sview = searchui::SearchView::new();
                 let mut page = mcp::DocPage::empty(mcp::BridgeStatus::Offline, false);
-                let mut open_title = keyboard::TextField::<{ searchui::QUERY_MAX }>::new();
+                let mut open_title = [0u8; searchui::QUERY_MAX];
                 let mut view = screens::View::Home;
                 let caret = true;
                 // First boot: run the setup journey before the home screen.
@@ -268,34 +255,23 @@ unsafe extern "C" fn kmain() -> ! {
                         }
                     } else {
                         let mut dirty = false;
+                        // Keep Home vs non-Home arms separate so a same-frame
+                        // key that changes `view` cannot also run the other
+                        // arm's click handler.
                         if view == screens::View::Home {
-                            // Type straight into the home field - no click first.
                             while let Some(key) = kb.poll() {
-                                match key {
-                                    keyboard::Key::Enter => {
-                                        if !query.is_empty() {
-                                            sview.run_via(query.as_str(), grants);
-                                            view = screens::View::Search;
-                                            serial_port.write_str("search: ran from home\n");
-                                            dirty = true;
-                                        }
-                                    }
-                                    keyboard::Key::Escape => {
-                                        if !query.is_empty() {
-                                            query.clear();
-                                            dirty = true;
-                                        }
-                                    }
-                                    other => {
-                                        if query.apply(other) {
-                                            dirty = true;
-                                        }
-                                    }
+                                if handle_key(
+                                    &mut view,
+                                    key,
+                                    &mut query,
+                                    &mut sview,
+                                    grants,
+                                    &serial_port,
+                                ) {
+                                    dirty = true;
                                 }
                             }
-                            let left_down = buttons & 1 != 0;
-                            let left_was = prev_buttons & 1 != 0;
-                            if left_down && !left_was {
+                            if click_edge(buttons, prev_buttons) {
                                 let targets = ui::home_targets(w);
                                 match targets.hit(x, y) {
                                     Some(ui::HomeHit::SearchField)
@@ -323,100 +299,83 @@ unsafe extern "C" fn kmain() -> ! {
                                 }
                             }
                         } else {
-                            // Non-home screens: keyboard + clicks (mutually exclusive
-                            // with the Home arm so a same-frame tile open is not
-                            // double-handled).
                             while let Some(key) = kb.poll() {
-                                match key {
-                                    keyboard::Key::Enter => {
-                                        if view == screens::View::Search {
-                                            sview.run_via(query.as_str(), grants);
-                                            serial_port.write_str("search: ran\n");
-                                            dirty = true;
-                                        }
-                                    }
-                                    keyboard::Key::Escape => {
-                                        view = screens::View::Home;
-                                        dirty = true;
-                                    }
-                                    other => {
-                                        // Only the search screen has a field.
-                                        // Without this, typing on Skills or
-                                        // Capabilities silently built a query you
-                                        // could not see.
-                                        if view == screens::View::Search && query.apply(other) {
-                                            dirty = true;
-                                        }
-                                    }
-                                }
-                        }
-                        // Clicking Back leaves the search screen.
-                        let left_down = buttons & 0x01 != 0;
-                        let was_down = prev_buttons & 0x01 != 0;
-                        if left_down && !was_down {
-                            if screens::back_rect().contains(x, y) {
-                                // Back from the reader returns to results.
-                                view = if view == screens::View::Reader {
-                                    screens::View::Search
-                                } else {
-                                    screens::View::Home
-                                };
-                                dirty = true;
-                            } else if view == screens::View::Search {
-                                // Open a result.
-                                if let Some(i) =
-                                    searchui::result_hit(w, sview.count, x, y)
-                                {
-                                    let row = &sview.rows[i];
-                                    open_title.clear();
-                                    for b in row.title().bytes() {
-                                        open_title.apply(keyboard::Key::Char(b));
-                                    }
-                                    page = mcp::fetch_doc(grants, row.url());
-                                    view = screens::View::Reader;
-                                    serial_port.write_str("ui: open doc\n");
-                                    dirty = true;
-                                }
-                            } else if view == screens::View::Caps {
-                                // Live switches: revoke or grant after setup.
-                                if let Some(i) = screens::caps_hit(w, x, y) {
-                                    let before = grants;
-                                    grants = screens::toggle(grants, i);
-                                    // Revoked? Have the host delete what that
-                                    // grant produced.
-                                    for (cap, tool) in [
-                                        (caps::Cap::WorkspaceIndex, "workspace.forget"),
-                                        (caps::Cap::AudioTranscribe, "audio.forget"),
-                                    ] {
-                                        if before.allows(cap) && !grants.allows(cap) {
-                                            mcp::forget(tool);
-                                            serial_port.write_str("caps: revoked ");
-                                            serial_port.write_str(cap.name());
-                                            serial_port.write_str(" - purged\n");
-                                        }
-                                    }
-                                    skills::copy_field(&mut status_buf, grants.footer_status());
-                                    dirty = true;
-                                }
-                            } else if view == screens::View::Skills {
-                                if let Some(i) = screens::skills_hit(w, skill_peek.count, x, y) {
-                                    let name = skill_peek.name_at(i);
-                                    let mut blurb = [0u8; 72];
-                                    if mcp::fetch_skill_blurb(name, &mut blurb) {
-                                        skills::copy_field(&mut status_buf, skills::str_at(&blurb));
-                                        serial_port.write_str("skills: got ");
-                                        serial_port.write_str(name);
-                                        serial_port.write_str("\n");
-                                    } else {
-                                        skills::copy_field(&mut status_buf, name);
-                                        serial_port.write_str("skills: get offline ");
-                                        serial_port.write_str(name);
-                                        serial_port.write_str("\n");
-                                    }
+                                if handle_key(
+                                    &mut view,
+                                    key,
+                                    &mut query,
+                                    &mut sview,
+                                    grants,
+                                    &serial_port,
+                                ) {
                                     dirty = true;
                                 }
                             }
-                        }
+                            if click_edge(buttons, prev_buttons) {
+                                if screens::back_rect().contains(x, y) {
+                                    // Back from the reader returns to results.
+                                    view = if view == screens::View::Reader {
+                                        screens::View::Search
+                                    } else {
+                                        screens::View::Home
+                                    };
+                                    dirty = true;
+                                } else if view == screens::View::Search {
+                                    if let Some(i) =
+                                        searchui::result_hit(w, sview.count, x, y)
+                                    {
+                                        let row = &sview.rows[i];
+                                        skills::copy_field(&mut open_title, row.title());
+                                        page = mcp::fetch_doc(grants, row.url());
+                                        view = screens::View::Reader;
+                                        serial_port.write_str("ui: open doc\n");
+                                        dirty = true;
+                                    }
+                                } else if view == screens::View::Caps {
+                                    if let Some(i) = screens::caps_hit(w, x, y) {
+                                        let before = grants;
+                                        grants = screens::toggle(grants, i);
+                                        for (cap, tool) in [
+                                            (caps::Cap::WorkspaceIndex, "workspace.forget"),
+                                            (caps::Cap::AudioTranscribe, "audio.forget"),
+                                        ] {
+                                            if before.allows(cap) && !grants.allows(cap) {
+                                                mcp::forget(tool);
+                                                serial_port.write_str("caps: revoked ");
+                                                serial_port.write_str(cap.name());
+                                                serial_port.write_str(" - purged\n");
+                                            }
+                                        }
+                                        skills::copy_field(
+                                            &mut status_buf,
+                                            grants.footer_status(),
+                                        );
+                                        dirty = true;
+                                    }
+                                } else if view == screens::View::Skills {
+                                    if let Some(i) =
+                                        screens::skills_hit(w, skill_peek.count, x, y)
+                                    {
+                                        let name = skill_peek.name_at(i);
+                                        let mut blurb = [0u8; 72];
+                                        if mcp::fetch_skill_blurb(name, &mut blurb) {
+                                            skills::copy_field(
+                                                &mut status_buf,
+                                                skills::str_at(&blurb),
+                                            );
+                                            serial_port.write_str("skills: got ");
+                                            serial_port.write_str(name);
+                                            serial_port.write_str("\n");
+                                        } else {
+                                            skills::copy_field(&mut status_buf, name);
+                                            serial_port.write_str("skills: get offline ");
+                                            serial_port.write_str(name);
+                                            serial_port.write_str("\n");
+                                        }
+                                        dirty = true;
+                                    }
+                                }
+                            }
                         }
                         if dirty {
                             repaint(
@@ -433,7 +392,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 query.as_str(),
                                 caret,
                                 &sview,
-                                open_title.as_str(),
+                                skills::str_at(&open_title),
                                 &page,
                                 grants,
                             );
@@ -461,6 +420,61 @@ unsafe extern "C" fn kmain() -> ! {
     // Only the framebuffer-missing/unsupported paths reach here — that is a
     // boot failure, and the smoke test must see it as one.
     serial::exit_qemu(false);
+}
+
+/// Rising edge on the primary mouse button.
+fn click_edge(buttons: u8, prev: u8) -> bool {
+    buttons & 1 != 0 && prev & 1 == 0
+}
+
+/// Keyboard for Home / Search (and Escape-to-home elsewhere).
+///
+/// Returns whether the frame needs a repaint.
+fn handle_key(
+    view: &mut screens::View,
+    key: keyboard::Key,
+    query: &mut keyboard::TextField<{ searchui::QUERY_MAX }>,
+    sview: &mut searchui::SearchView,
+    grants: caps::Caps,
+    serial: &serial::Serial,
+) -> bool {
+    match (*view, key) {
+        (screens::View::Home, keyboard::Key::Enter) => {
+            if query.is_empty() {
+                return false;
+            }
+            sview.run_via(query.as_str(), grants);
+            *view = screens::View::Search;
+            serial.write_str("search: ran from home\n");
+            true
+        }
+        (screens::View::Home, keyboard::Key::Escape) => {
+            if query.is_empty() {
+                return false;
+            }
+            query.clear();
+            true
+        }
+        (screens::View::Home, other) => query.apply(other),
+        (screens::View::Search, keyboard::Key::Enter) => {
+            sview.run_via(query.as_str(), grants);
+            serial.write_str("search: ran\n");
+            true
+        }
+        (screens::View::Search, other) => match other {
+            keyboard::Key::Escape => {
+                *view = screens::View::Home;
+                true
+            }
+            k => query.apply(k),
+        },
+        // Skills / Caps / Reader: Escape returns home; typing is ignored.
+        (_, keyboard::Key::Escape) => {
+            *view = screens::View::Home;
+            true
+        }
+        _ => false,
+    }
 }
 
 /// One line telling the user where answers come from right now.
