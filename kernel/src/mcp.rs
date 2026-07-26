@@ -45,19 +45,20 @@ struct SearchHit {
 }
 
 /// Short corpus peek from the host bridge.
+///
+/// Callers must hold [`crate::caps::Cap::SearchQuery`] before calling
+/// [`fetch_search_peek`]; the cap gate lives in the UI, not here.
 pub(crate) struct SearchPeek {
     pub status: BridgeStatus,
-    pub denied: bool,
     pub count: usize,
     hits: [SearchHit; crate::search::MAX_HITS],
 }
 
 impl SearchPeek {
-    pub const fn empty(status: BridgeStatus, denied: bool) -> Self {
+    pub const fn empty(status: BridgeStatus) -> Self {
         const EMPTY: SearchHit = SearchHit { title: [0; 48], url: [0; 72] };
         Self {
             status,
-            denied,
             count: 0,
             hits: [EMPTY; crate::search::MAX_HITS],
         }
@@ -323,18 +324,13 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
     }
 }
 
-/// Run `search.query` when granted. `q` must be ASCII without spaces (use `-`).
+/// Run `search.query`. `q` must be ASCII without spaces (use `-`).
+///
+/// Caller must hold [`crate::caps::Cap::SearchQuery`]. Scope flags
+/// (`email=1`, `files=1`, …) still follow the rest of `caps`.
 pub(crate) fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
-    // Denied before CALL: still PING so the UI can show Online vs Offline.
-    if !caps.allows(crate::caps::Cap::SearchQuery) {
-        return when_online(
-            SearchPeek::empty(BridgeStatus::Offline, true),
-            |_, _| SearchPeek::empty(BridgeStatus::Online, true),
-        );
-    }
-
     // Offline: UI falls back to the baked index via SearchView::fill_local.
-    when_online(SearchPeek::empty(BridgeStatus::Offline, false), |com2, line| {
+    when_online(SearchPeek::empty(BridgeStatus::Offline), |com2, line| {
         // CALL search.query q=… k=N [email=1]
         //
         // The email graph is opt-in per call on the bridge. Ask for it only when
@@ -350,7 +346,7 @@ pub(crate) fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek 
         write_scope_flags(com2, caps);
         com2.write_str("\n");
 
-        let mut peek = SearchPeek::empty(BridgeStatus::Online, false);
+        let mut peek = SearchPeek::empty(BridgeStatus::Online);
         let _ = for_each_ok_rows(com2, line, 16, |resp| {
             if peek.count >= peek.hits.len() {
                 return false;
@@ -401,9 +397,8 @@ mod tests {
     fn offline_search_falls_back_in_the_ui() {
         // fetch_search_peek returns empty Offline; SearchView::run_via then
         // queries the baked index with the user's actual string.
-        let peek = SearchPeek::empty(BridgeStatus::Offline, false);
+        let peek = SearchPeek::empty(BridgeStatus::Offline);
         assert_eq!(peek.count, 0);
-        assert!(!peek.denied);
     }
 
     #[test]

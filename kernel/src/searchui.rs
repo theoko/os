@@ -154,13 +154,23 @@ impl SearchView {
             self.source = Source::offline();
             return;
         }
+        // Refuse before CALL: no PING/LIST traffic without the search cap.
+        if !caps.allows(crate::caps::Cap::SearchQuery) {
+            self.source = Source {
+                bridge_online: false,
+                errored: true,
+                caps,
+            };
+            self.fill_local(q);
+            return;
+        }
         let peek = crate::mcp::fetch_search_peek(caps, q);
-        let online = matches!(peek.status, crate::mcp::BridgeStatus::Online) && !peek.denied;
+        let online = matches!(peek.status, crate::mcp::BridgeStatus::Online);
         // Record reachability BEFORE any fallback, so an online bridge that
         // simply found nothing is never reported as a connection failure.
         let source = Source {
             bridge_online: online,
-            errored: peek.denied,
+            errored: false,
             caps,
         };
         if online {

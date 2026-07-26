@@ -471,6 +471,8 @@ mod layout_tests {
     fn capability_rows_clear_the_footer_at_768() {
         // Overlapping rows and the Continue pill would misroute clicks — the
         // exact failure a previous review caught on a short framebuffer.
+        // Setup skills list is capped at 4 (< Cap::ALL.len()), so this also
+        // covers that step's footer clearance.
         let bottom = rows_bottom(Cap::ALL.len());
         assert!(
             bottom < footer_top(768),
@@ -478,12 +480,6 @@ mod layout_tests {
             Cap::ALL.len(),
             footer_top(768)
         );
-    }
-
-    #[test]
-    fn skills_rows_also_clear_the_footer() {
-        let bottom = rows_bottom(4); // draw_skills caps the list at 4
-        assert!(bottom < footer_top(768));
     }
 
     #[test]

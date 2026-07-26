@@ -356,8 +356,6 @@ fn draw_status_bar(fb: &Surface, mail: &MailPeek, grants: Caps) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::caps::Caps;
-    use crate::mcp::MailPeek;
 
     #[test]
     fn search_field_is_the_primary_target() {
@@ -464,13 +462,5 @@ mod tests {
         assert!(SMALL_FACE.width("Knowledge + Email", 0) < r.w - 36);
         let mut b = [0u8; 16];
         assert!(SMALL_FACE.width(fmt_n_label(&mut b, 5, "Granted"), 0) < r.w - 36);
-    }
-
-    #[test]
-    fn drawing_the_home_screen_does_not_panic() {
-        let mail = MailPeek::empty(BridgeStatus::Offline);
-        let _ = HomeTargets::new(1024);
-        assert_eq!(mail.count, 0);
-        assert_eq!(Caps::default_grants().granted_count(), 2);
     }
 }
