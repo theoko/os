@@ -194,10 +194,11 @@ pub fn draw_home_full(
     let w = fb.width() as i32;
 
     fb.fill();
-    draw_nav(fb, mail.status);
+    let status = mail.bridge_status();
+    draw_nav(fb, status);
 
     let r = search_rect(w);
-    let badge = match mail.status {
+    let badge = match status {
         BridgeStatus::Online => "Online",
         BridgeStatus::Offline => "Offline Ready",
     };
@@ -310,6 +311,7 @@ fn draw_nav(fb: &Surface, status: BridgeStatus) {
 }
 
 /// Unified bottom telemetry — no orphaned mid-page status lines.
+/// Inbox count is only shown after a granted peek ([`MailPeek::Ok`]).
 fn draw_status_bar(fb: &Surface, mail: &MailPeek, grant_count: usize) {
     let mut line = [0u8; 96];
     let mut n = 0;
@@ -321,24 +323,36 @@ fn draw_status_bar(fb: &Surface, mail: &MailPeek, grant_count: usize) {
             }
         }
     };
-    match mail.count {
-        0 => push(&mut line, &mut n, "Inbox empty"),
-        1 => push(&mut line, &mut n, "1 message"),
-        c => {
-            let mut b = [0u8; 16];
-            push(&mut line, &mut n, fmt_n_label(&mut b, c, "messages"));
+    let mut first = true;
+    let mut sep = |line: &mut [u8], n: &mut usize| {
+        if !first {
+            push(line, n, "  |  ");
+        }
+        first = false;
+    };
+    if let MailPeek::Ok { count } = *mail {
+        sep(&mut line, &mut n);
+        match count {
+            0 => push(&mut line, &mut n, "Inbox empty"),
+            1 => push(&mut line, &mut n, "1 message"),
+            c => {
+                let mut b = [0u8; 16];
+                push(&mut line, &mut n, fmt_n_label(&mut b, c, "messages"));
+            }
         }
     }
-    push(&mut line, &mut n, "  |  Caps: ");
+    sep(&mut line, &mut n);
+    push(&mut line, &mut n, "Caps: ");
     {
         let mut b = [0u8; 16];
         push(&mut line, &mut n, fmt_n_label(&mut b, grant_count, "Active"));
     }
-    push(&mut line, &mut n, "  |  Bridge: ");
+    sep(&mut line, &mut n);
+    push(&mut line, &mut n, "Bridge: ");
     push(
         &mut line,
         &mut n,
-        match mail.status {
+        match mail.bridge_status() {
             BridgeStatus::Online => "Online",
             BridgeStatus::Offline => "Offline",
         },

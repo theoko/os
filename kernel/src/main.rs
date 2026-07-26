@@ -59,8 +59,8 @@ unsafe extern "C" fn kmain() -> ! {
 
     // Liveness only until the user consents. Reading the inbox here would
     // fetch — and persist — mail before anyone agreed to it.
-    let mut mail = mcp::MailPeek::empty(mcp::probe_bridge());
-    log_bridge_status(&serial_port, mail.status);
+    let mut mail = mcp::MailPeek::from_probe(mcp::probe_bridge());
+    log_bridge_status(&serial_port, mail.bridge_status());
     serial_port.write_str("skills: builtins ready\n");
     let mut skill_peek = skills::SkillPeek::from_builtin();
     if let Some(resp) = FRAMEBUFFER_REQUEST.get_response() {
@@ -143,7 +143,7 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut view = screens::View::Home;
                 // First boot: run the setup journey before the home screen.
                 cursor.hide(surface);
-                setup.draw(surface, mail.status, &skill_peek);
+                setup.draw(surface, mail.bridge_status(), &skill_peek);
                 cursor.show_at(surface, mice.x, mice.y);
                 enter(&screen);
                 serial_port.write_str("ui: setup welcome\n");
@@ -187,8 +187,8 @@ unsafe extern "C" fn kmain() -> ! {
                             if setup.step == setup::Step::Bridge && before != setup::Step::Bridge {
                                 // Still pre-consent: the Capabilities step
                                 // comes after this one, so probe, don't read.
-                                mail = mcp::MailPeek::empty(mcp::probe_bridge());
-                                log_bridge_status(&serial_port, mail.status);
+                                mail = mcp::MailPeek::from_probe(mcp::probe_bridge());
+                                log_bridge_status(&serial_port, mail.bridge_status());
                             }
                             if setup.step == setup::Step::Skills && before != setup::Step::Skills {
                                 skill_peek = mcp::fetch_skill_peek();
@@ -218,7 +218,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 moved = false;
                             } else {
                                 cursor.hide(surface);
-                                setup.draw(surface, mail.status, &skill_peek);
+                                setup.draw(surface, mail.bridge_status(), &skill_peek);
                                 cursor.show_at(surface, mice.x, mice.y);
                                 enter(&screen);
                                 moved = false;
@@ -255,7 +255,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     Some(ui::HomeHit::Connect) => {
                                         serial_port.write_str("ui: connect bridge\n");
                                         mail = mcp::fetch_mail_peek(setup.caps);
-                                        log_bridge_status(&serial_port, mail.status);
+                                        log_bridge_status(&serial_port, mail.bridge_status());
                                         dirty = true;
                                     }
                                     Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
@@ -431,7 +431,7 @@ fn repaint(
     cursor.hide(surface);
     match view {
         screens::View::Search => {
-            searchui::draw(surface, sview, query, mail.status)
+            searchui::draw(surface, sview, query, mail.bridge_status())
         }
         screens::View::Skills => screens::draw_skills(surface, skills),
         screens::View::Caps => screens::draw_caps(surface, grants),

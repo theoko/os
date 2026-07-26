@@ -35,16 +35,32 @@ pub(crate) const BRIDGE_OFFLINE_HINT: &str = bridge_offline_tip!();
 pub(crate) const NO_MATCHES_BRIDGE_OFFLINE: &str =
     concat!("No matches. ", bridge_offline_tip!());
 
-/// Inbox liveness + unread count for the home status strip.
-/// Row payloads are not retained — the home UI only shows a count.
-pub struct MailPeek {
-    pub status: BridgeStatus,
-    pub(crate) count: usize,
+/// Inbox peek for the home status strip (row payloads are not retained).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum MailPeek {
+    /// COM2 bridge down.
+    Offline,
+    /// Bridge up, but inbox was not read (no grant / pre-consent probe).
+    Denied,
+    /// `email.search` answered; `count` is the OK `n=` header.
+    Ok { count: usize },
 }
 
 impl MailPeek {
-    pub const fn empty(status: BridgeStatus) -> Self {
-        Self { status, count: 0 }
+    /// Map a liveness-only probe (never an inbox read).
+    pub const fn from_probe(status: BridgeStatus) -> Self {
+        match status {
+            BridgeStatus::Offline => Self::Offline,
+            BridgeStatus::Online => Self::Denied,
+        }
+    }
+
+    /// Bridge reachability for nav / setup / search chrome.
+    pub const fn bridge_status(self) -> BridgeStatus {
+        match self {
+            Self::Offline => BridgeStatus::Offline,
+            Self::Denied | Self::Ok { .. } => BridgeStatus::Online,
+        }
     }
 }
 
@@ -146,19 +162,17 @@ fn write_scope_flags(com2: &Serial, caps: crate::caps::Caps) {
 ///
 /// `email.search` is refused when `caps` does not grant [`crate::caps::Cap::EmailSearch`].
 pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
-    when_online(MailPeek::empty(BridgeStatus::Offline), |com2, line| {
+    when_online(MailPeek::Offline, |com2, line| {
         if !caps.allows(crate::caps::Cap::EmailSearch) {
             // Bridge is up, but this guest was not granted inbox read.
-            return MailPeek::empty(BridgeStatus::Online);
+            return MailPeek::Denied;
         }
 
         com2.write_str("CALL email.search q=in:inbox max=3\n");
 
         // Count from OK `n=`; ROWs are drained for wire hygiene only.
-        let mut peek = MailPeek::empty(BridgeStatus::Online);
         let (_, n) = for_each_ok_rows(com2, line, 16, |_| true);
-        peek.count = n;
-        peek
+        MailPeek::Ok { count: n }
     })
 }
 
