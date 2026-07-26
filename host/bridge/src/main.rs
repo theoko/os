@@ -31,7 +31,6 @@ const TOOLS: &[&str] = &[
     "skills.save",
     "search.query",
     "workspace.index",
-    "tsearch.sync",
     "audio.transcribe",
     "workspace.forget",
     "audio.forget",
@@ -345,10 +344,6 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
                 Err(e) => vec![format!("ERR {tool} {e}")],
             }
         }
-        "tsearch.sync" => match tsearch::sync() {
-            Ok((n, at)) => text::framed_ok(format!("OK {tool} n={n} crawled={at}"), []),
-            Err(e) => vec![format!("ERR {tool} {e}")],
-        },
         // Revoking a grant should remove what it produced, not merely hide it.
         // Read one indexed document back, so a result can be opened rather
         // than merely located.

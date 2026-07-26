@@ -15,13 +15,12 @@
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use crate::search::{CorpusFile, Doc};
 
-/// Live corpus published by the tsearch front-end.
+/// Live corpus published by the tsearch front-end (operators curl this into the cache).
 const DEFAULT_URL: &str = "https://teddysearch.com/tsearch/corpus.json";
 
 fn url() -> String {
@@ -32,63 +31,28 @@ fn cache_path() -> PathBuf {
     crate::paths::env_or_knowledge("OS_TSEARCH_CACHE", "teddysearch.json")
 }
 
-/// Fetch the live corpus into the cache. Returns (documents, crawl stamp).
-///
-/// Downloads to a temporary file and renames on success, so an interrupted
-/// fetch cannot leave a half-written corpus that then fails to parse. curl is
-/// used rather than pulling a TLS stack into the bridge for one request.
-pub fn sync() -> Result<(usize, String), String> {
-    let path = cache_path();
-    if let Some(d) = path.parent() {
-        fs::create_dir_all(d).map_err(|e| format!("mkdir {}: {e}", d.display()))?;
-    }
-    let tmp = path.with_extension("part");
-
-    let out = Command::new("curl")
-        .arg("-sS")
-        .arg("--fail")
-        .arg("--max-time")
-        .arg("300")
-        .arg("-o")
-        .arg(&tmp)
-        .arg(url())
-        .output()
-        .map_err(|e| format!("curl: {e}"))?;
-    if !out.status.success() {
-        let _ = fs::remove_file(&tmp);
-        return Err(crate::text::stderr_brief(&out.stderr, "fetch failed", 120));
-    }
-
-    // Validate before publishing: a truncated download parses as an error here
-    // rather than as an empty corpus at query time.
-    let raw = fs::read_to_string(&tmp).map_err(|e| format!("read: {e}"))?;
-    let parsed: CorpusFile = serde_json::from_str(&raw)
-        .map_err(|e| format!("corpus json (truncated download?): {e}"))?;
-    let n = parsed.docs.len();
-    if n == 0 {
-        let _ = fs::remove_file(&tmp);
-        return Err("corpus contained no documents".into());
-    }
-
-    fs::rename(&tmp, &path).map_err(|e| format!("rename: {e}"))?;
-    Ok((n, parsed.crawled_at))
-}
-
 static CACHE: OnceLock<Vec<Doc>> = OnceLock::new();
 
 /// Cached corpus documents, parsed once per process.
 ///
 /// Re-reading 64 MB on every `search.query` would make the search field
 /// unusable; this is why the source is a cache rather than a live call.
+/// Refresh by curling [`DEFAULT_URL`] into `OS_TSEARCH_CACHE` (or the
+/// Application Support default) before starting the bridge.
 pub fn docs() -> &'static [Doc] {
     CACHE.get_or_init(|| {
-        let Ok(raw) = fs::read_to_string(cache_path()) else {
+        let path = cache_path();
+        let Ok(raw) = fs::read_to_string(&path) else {
             return Vec::new();
         };
         match serde_json::from_str::<CorpusFile>(&raw) {
             Ok(c) => c.docs,
             Err(e) => {
-                eprintln!("tsearch: cache unreadable ({e}); run CALL tsearch.sync");
+                eprintln!(
+                    "tsearch: cache unreadable ({e}); curl -o {} {}",
+                    path.display(),
+                    url()
+                );
                 Vec::new()
             }
         }
@@ -134,8 +98,9 @@ mod tests {
 ///
 /// `search_tfidf` re-tokenises every document and rebuilds the df map per
 /// query. That is fine for the ~16-document built-in corpus and hopeless for
-/// 12k: measured at 5.6 s per search. The corpus only changes on sync, so the
-/// tokenisation and idf are computed once and queries walk postings instead.
+/// 12k: measured at 5.6 s per search. The cache is fixed for the process
+/// lifetime, so tokenisation and idf are computed once and queries walk
+/// postings instead.
 pub struct Index {
     /// Sorted by term, so lookup is a binary search.
     terms: Vec<Term>,
