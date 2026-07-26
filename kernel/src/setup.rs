@@ -215,7 +215,7 @@ impl Setup {
         let mut y = top;
         for (i, cap) in Cap::ALL.iter().enumerate() {
             let on = self.caps[i];
-            self.row(fb, w, y, cap.name(), Some(CAP_BLURBS[i]), on, true, Action::Row(i));
+            self.row(fb, w, y, cap.name(), Some(CAP_BLURBS[i]), on, true, Some(Action::Row(i)));
             y += ROW_H + 8;
         }
         self.footer(fb, w, h, y, true);
@@ -236,7 +236,8 @@ impl Setup {
         for i in 0..skills.count.min(4) {
             let desc = skills.desc_at(i);
             let blurb = if desc.is_empty() { None } else { Some(desc) };
-            self.row(fb, w, y, skills.name_at(i), blurb, true, false, Action::Row(i));
+            // Display-only — Continue advances; rows are not toggles.
+            self.row(fb, w, y, skills.name_at(i), blurb, true, false, None);
             y += ROW_H + 8;
         }
         self.footer(fb, w, h, y, true);
@@ -270,6 +271,7 @@ impl Setup {
     }
 
     /// A selectable row. `toggle` draws a switch instead of a checkmark.
+    /// Pass `action: None` for paint-only rows (setup Skills).
     #[allow(clippy::too_many_arguments)]
     fn row(
         &mut self,
@@ -280,7 +282,7 @@ impl Setup {
         blurb: Option<&str>,
         on: bool,
         toggle: bool,
-        action: Action,
+        action: Option<Action>,
     ) {
         let cw = CONTENT_W.min(w - 80);
         let x = (w - cw) / 2;
@@ -323,7 +325,9 @@ impl Setup {
             );
         }
 
-        self.push_zone(x, y, cw, ROW_H, action);
+        if let Some(action) = action {
+            self.push_zone(x, y, cw, ROW_H, action);
+        }
     }
 
     fn status_card(&mut self, fb: &Surface, w: i32, y: i32, label: &str, detail: &str, tint: u32) {

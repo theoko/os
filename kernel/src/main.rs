@@ -330,17 +330,11 @@ unsafe extern "C" fn kmain() -> ! {
                                     dirty = true;
                                 }
                             } else if view == screens::View::Skills {
-                                // Serial feedback only — home no longer shows blurbs.
                                 if let Some(i) =
                                     screens::skills_hit(w, skill_peek.count, x, y)
                                 {
-                                    let name = skill_peek.name_at(i);
-                                    serial_port.write_str(if mcp::skill_available(name) {
-                                        "skills: got "
-                                    } else {
-                                        "skills: get offline "
-                                    });
-                                    serial_port.write_str(name);
+                                    serial_port.write_str("skills: ");
+                                    serial_port.write_str(skill_peek.name_at(i));
                                     serial_port.write_str("\n");
                                 }
                             }

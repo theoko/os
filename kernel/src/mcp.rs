@@ -300,52 +300,6 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
     })
 }
 
-/// True when `CALL skills.get name=…` returns a non-empty body line.
-///
-/// Used for serial feedback on a Skills-row click; the home status strip no
-/// longer displays blurbs.
-pub fn skill_available(name: &str) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-    when_online(false, |com2, line| {
-        com2.write_str("CALL skills.get name=");
-        com2.write_str(name);
-        com2.write_str("\n");
-
-        let mut in_frontmatter = false;
-        let mut saw_fm_open = false;
-        let mut found = false;
-        for_each_reply(com2, line, 40, |resp| {
-            if resp == "END" || resp.starts_with("ERR ") {
-                return false;
-            }
-            if resp.starts_with("OK skills.get") {
-                return true;
-            }
-            let Some(body) = resp.strip_prefix("LINE ") else {
-                return true;
-            };
-            // Skip YAML frontmatter so we look for real prose, not `---`.
-            if body.trim() == "---" {
-                if !saw_fm_open {
-                    saw_fm_open = true;
-                    in_frontmatter = true;
-                } else {
-                    in_frontmatter = false;
-                }
-                return true;
-            }
-            if in_frontmatter || body.trim().is_empty() {
-                return true;
-            }
-            found = true;
-            false
-        });
-        found
-    })
-}
-
 fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
     for _ in 0..64 {
         if com2.try_read_byte().is_none() {
