@@ -200,14 +200,8 @@ fn snip(body: &str, query: &str) -> String {
     }
     let start = floor_char_boundary(body, best.saturating_sub(40));
     let end = floor_char_boundary(body, (best + 80).min(body.len()));
-    let mut s = body[start..end].to_string();
-    if start > 0 {
-        s = format!("…{s}");
-    }
-    if end < body.len() {
-        s.push('…');
-    }
-    s.replace('|', " ").chars().take(90).collect()
+    // Callers run `sanitize` (ASCII + pipe scrub + cap); keep the raw window here.
+    body[start..end].to_string()
 }
 
 /// Largest char boundary <= i (stable substitute for `str::floor_char_boundary`).

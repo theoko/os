@@ -10,7 +10,6 @@ struct SkillMeta {
     name: String,
     description: String,
     path: PathBuf,
-    builtin: bool,
 }
 
 pub fn skills_dirs() -> (PathBuf, PathBuf) {
@@ -26,12 +25,12 @@ pub fn skills_dirs() -> (PathBuf, PathBuf) {
 fn list_skills() -> Vec<SkillMeta> {
     let (defaults, user) = skills_dirs();
     let mut map: BTreeMap<String, SkillMeta> = BTreeMap::new();
-    collect_dir(&defaults, true, &mut map);
-    collect_dir(&user, false, &mut map); // saved overrides default
+    collect_dir(&defaults, &mut map);
+    collect_dir(&user, &mut map); // saved overrides default
     map.into_values().collect()
 }
 
-fn collect_dir(dir: &Path, builtin: bool, map: &mut BTreeMap<String, SkillMeta>) {
+fn collect_dir(dir: &Path, map: &mut BTreeMap<String, SkillMeta>) {
     let Ok(entries) = fs::read_dir(dir) else {
         return;
     };
@@ -40,20 +39,19 @@ fn collect_dir(dir: &Path, builtin: bool, map: &mut BTreeMap<String, SkillMeta>)
         if !path.is_file() {
             continue;
         }
-        if let Some(meta) = parse_skill(&path, builtin) {
+        if let Some(meta) = parse_skill(&path) {
             map.insert(meta.name.clone(), meta);
         }
     }
 }
 
-fn parse_skill(path: &Path, builtin: bool) -> Option<SkillMeta> {
+fn parse_skill(path: &Path) -> Option<SkillMeta> {
     let text = fs::read_to_string(path).ok()?;
     let (name, description) = parse_frontmatter(&text)?;
     Some(SkillMeta {
         name,
         description,
         path: path.to_path_buf(),
-        builtin,
     })
 }
 
@@ -117,6 +115,7 @@ pub fn save_skill(name: &str, body: &str) -> Result<PathBuf, String> {
 }
 
 pub fn list_response() -> Vec<String> {
+    let (defaults, _) = skills_dirs();
     let skills = list_skills();
     let n = skills.len();
     let rows = skills.iter().map(|s| {
@@ -124,7 +123,11 @@ pub fn list_response() -> Vec<String> {
         // in a name cannot inject ROW fields.
         let name = sanitize(&s.name);
         let desc = sanitize(&s.description);
-        let src = if s.builtin { "default" } else { "saved" };
+        let src = if s.path.starts_with(&defaults) {
+            "default"
+        } else {
+            "saved"
+        };
         format!("ROW name={name}|src={src}|desc={desc}")
     });
     crate::text::framed_ok(format!("OK skills.list n={n}"), rows)

@@ -65,7 +65,7 @@ impl Caps {
         Cap::ALL.iter().filter(|&&c| self.allows(c)).count()
     }
 
-    pub fn set(&mut self, cap: Cap, on: bool) {
+    pub(crate) fn set(&mut self, cap: Cap, on: bool) {
         if on {
             self.bits |= 1 << cap as usize;
         } else {

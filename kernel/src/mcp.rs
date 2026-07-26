@@ -288,8 +288,7 @@ pub fn forget(tool: &str) {
 /// `fetch_mail_peek` there would read — and, since the bridge indexes results,
 /// *persist* — the inbox before anyone agreed to it.
 pub fn probe_bridge() -> BridgeStatus {
-    let mut line = [0u8; LINE_BUF];
-    open_com2(&mut line).1
+    when_online(BridgeStatus::Offline, |_, _| BridgeStatus::Online)
 }
 
 /// List playbooks via `CALL skills.list`. Offline → builtins baked into the ISO.
@@ -336,9 +335,10 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
 pub(crate) fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     // Denied before CALL: still PING so the UI can show Online vs Offline.
     if !caps.allows(crate::caps::Cap::SearchQuery) {
-        let mut line = [0u8; LINE_BUF];
-        let status = open_com2(&mut line).1;
-        return SearchPeek::empty(status, true);
+        return when_online(
+            SearchPeek::empty(BridgeStatus::Offline, true),
+            |_, _| SearchPeek::empty(BridgeStatus::Online, true),
+        );
     }
 
     // Offline: UI falls back to the baked index via SearchView::fill_local.

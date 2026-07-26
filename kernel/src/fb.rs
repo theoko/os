@@ -95,7 +95,7 @@ impl Surface {
     ///
     /// # Safety
     /// `addr` must point to at least `width * height` u32s.
-    pub unsafe fn in_memory(addr: *mut u32, width: usize, height: usize) -> Self {
+    pub(crate) unsafe fn in_memory(addr: *mut u32, width: usize, height: usize) -> Self {
         Self::from_parts(addr.cast::<u8>(), width, height, width * 4)
     }
 
@@ -236,7 +236,7 @@ impl Surface {
     ///
     /// Points are in 1/8-px units so callers can place sub-pixel vertices.
     /// Same 4x4 integer supersample as `fill_round_rect` — no floats.
-    pub fn fill_polygon(&self, pts8: &[(i32, i32)], color: u32) {
+    pub(crate) fn fill_polygon(&self, pts8: &[(i32, i32)], color: u32) {
         if pts8.len() < 3 {
             return;
         }
