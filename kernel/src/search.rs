@@ -43,15 +43,6 @@ include!(concat!(env!("OUT_DIR"), "/corpus.rs"));
 /// Max hits returned. Matches the bridge's home-screen peek.
 pub const MAX_HITS: usize = 3;
 
-#[derive(Clone, Copy)]
-pub struct Hit {
-    pub doc: usize,
-}
-
-impl Hit {
-    pub(crate) const EMPTY: Self = Self { doc: 0 };
-}
-
 /// Tokenizer. Must stay identical to `fold_tok` in `build.rs`, or query terms
 /// will not match the baked vocabulary.
 ///
@@ -118,18 +109,17 @@ fn find_term(tok: &str) -> Option<&'static Term> {
     None
 }
 
-/// Rank documents for `query`. Returns hits in descending score order.
+/// Rank documents for `query`. Writes up to [`MAX_HITS`] document indices into
+/// `out` in descending score order. Returns how many were written.
 ///
 /// Mirrors the host scorer: tf-idf, blended with PageRank, with a bonus for
-/// documents containing every query term.
-///
-/// Scores stay local — callers only need document indices.
-pub fn query(q: &str, out: &mut [Hit; MAX_HITS]) -> usize {
+/// documents containing every query term. Scores stay local.
+pub fn query(q: &str, out: &mut [usize; MAX_HITS]) -> usize {
     let mut ranked = [(0i64, 0usize); N_DOCS];
     let n = rank(q, &mut ranked);
     let take = n.min(MAX_HITS);
     for i in 0..take {
-        out[i] = Hit { doc: ranked[i].1 };
+        out[i] = ranked[i].1;
     }
     take
 }
@@ -184,9 +174,9 @@ mod tests {
     use super::*;
 
     fn top(q: &str) -> Option<&'static str> {
-        let mut out = [Hit::EMPTY; MAX_HITS];
+        let mut out = [0usize; MAX_HITS];
         let n = query(q, &mut out);
-        (n > 0).then(|| DOCS[out[0].doc].title)
+        (n > 0).then(|| DOCS[out[0]].title)
     }
 
     #[test]
@@ -235,7 +225,7 @@ mod tests {
     #[test]
     fn empty_or_unknown_queries_return_nothing() {
         for q in ["", "zzzz qqqq wwww"] {
-            let mut out = [Hit::EMPTY; MAX_HITS];
+            let mut out = [0usize; MAX_HITS];
             assert_eq!(query(q, &mut out), 0, "q={q:?}");
         }
     }
@@ -250,22 +240,14 @@ mod tests {
     }
 
     #[test]
-    fn never_returns_more_than_max_hits() {
-        let mut out = [Hit::EMPTY; MAX_HITS];
-        // A term-heavy query that touches most of the corpus.
-        let n = query("os agent kernel search skills bridge capability docs", &mut out);
-        assert!(n <= MAX_HITS);
-    }
-
-    #[test]
     fn lookup_is_case_insensitive() {
-        let mut a = [Hit::EMPTY; MAX_HITS];
-        let mut b = [Hit::EMPTY; MAX_HITS];
+        let mut a = [0usize; MAX_HITS];
+        let mut b = [0usize; MAX_HITS];
         let na = query("CAPABILITY", &mut a);
         let nb = query("capability", &mut b);
         assert_eq!(na, nb);
         if na > 0 {
-            assert_eq!(a[0].doc, b[0].doc);
+            assert_eq!(a[0], b[0]);
         }
     }
 

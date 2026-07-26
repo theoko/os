@@ -48,43 +48,6 @@ impl MailPeek {
     }
 }
 
-/// One hit from `search.query`.
-struct SearchHit {
-    title: [u8; 48],
-    /// Source URL, needed to open the document rather than only name it.
-    url: [u8; 72],
-}
-
-impl SearchHit {
-    fn set(&mut self, title: &str, url: &str) {
-        copy_field(&mut self.title, title);
-        copy_field(&mut self.url, url);
-    }
-}
-
-/// Short corpus peek from the host bridge.
-///
-/// Callers must hold [`crate::caps::Cap::SearchQuery`] before calling
-/// [`fetch_search_peek`]; the cap gate lives in the UI, not here.
-pub(crate) struct SearchPeek {
-    pub(crate) count: usize,
-    hits: [SearchHit; crate::search::MAX_HITS],
-}
-
-impl SearchPeek {
-    const fn empty() -> Self {
-        const EMPTY: SearchHit = SearchHit { title: [0; 48], url: [0; 72] };
-        Self {
-            count: 0,
-            hits: [EMPTY; crate::search::MAX_HITS],
-        }
-    }
-
-    pub(crate) fn at(&self, i: usize) -> (&str, &str) {
-        (str_at(&self.hits[i].title), str_at(&self.hits[i].url))
-    }
-}
-
 fn parse_row_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     let rest = line.strip_prefix("ROW ")?;
     for part in rest.split('|') {
@@ -344,8 +307,14 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
 ///
 /// Caller must hold [`crate::caps::Cap::SearchQuery`]. Scope flags
 /// (`email=1`, `files=1`, …) still follow the rest of `caps`.
-/// Returns [`None`] when the bridge is offline.
-pub(crate) fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> Option<SearchPeek> {
+/// Invokes `on_hit(title, url)` for each ROW (stop early by returning `false`).
+/// Returns [`None`] when the bridge is offline; [`Some`] when it answered
+/// (even with zero hits — so the UI can tell "no matches" from "no bridge").
+pub(crate) fn fetch_search_rows(
+    caps: crate::caps::Caps,
+    q: &str,
+    mut on_hit: impl FnMut(&str, &str) -> bool,
+) -> Option<()> {
     // Offline: UI falls back to the baked index via SearchView::fill_local.
     when_online(None, |com2, line| {
         // CALL search.query q=… k=N [email=1]
@@ -363,19 +332,19 @@ pub(crate) fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> Option<Sear
         write_scope_flags(com2, caps);
         com2.write_str("\n");
 
-        let mut peek = SearchPeek::empty();
+        let mut n = 0usize;
         let _ = for_each_ok_rows(com2, line, 16, |resp| {
-            if peek.count >= peek.hits.len() {
+            if n >= crate::search::MAX_HITS {
                 return false;
             }
-            peek.hits[peek.count].set(
+            let cont = on_hit(
                 parse_row_field(resp, "title").unwrap_or("?"),
                 parse_row_field(resp, "url").unwrap_or(""),
             );
-            peek.count += 1;
-            true
+            n += 1;
+            cont
         });
-        Some(peek)
+        Some(())
     })
 }
 

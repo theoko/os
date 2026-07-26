@@ -111,10 +111,10 @@ impl SearchView {
         if q.trim().is_empty() {
             return;
         }
-        let mut hits = [search::Hit::EMPTY; search::MAX_HITS];
+        let mut hits = [0usize; search::MAX_HITS];
         let n = search::query(q, &mut hits);
-        for h in hits.iter().take(n) {
-            let d = &search::DOCS[h.doc];
+        for &doc in hits.iter().take(n) {
+            let d = &search::DOCS[doc];
             self.rows[self.count].set(d.title, d.url, d.cat);
             self.count += 1;
         }
@@ -137,22 +137,26 @@ impl SearchView {
             self.fill_local(q);
             return;
         }
-        match crate::mcp::fetch_search_peek(caps, q) {
-            // Record reachability BEFORE any fallback, so an online bridge that
-            // simply found nothing is never reported as a connection failure.
-            Some(peek) => {
-                use crate::caps::Cap;
-                self.phase = Phase::Online {
-                    files: caps.allows(Cap::WorkspaceIndex),
-                    mail: caps.allows(Cap::EmailSearch),
-                };
-                for i in 0..peek.count.min(search::MAX_HITS) {
-                    let (title, url) = peek.at(i);
-                    self.rows[self.count].set(title, url, "bridge");
-                    self.count += 1;
-                }
+        // Record reachability BEFORE any fallback, so an online bridge that
+        // simply found nothing is never reported as a connection failure.
+        // Rows are filled once from the COM2 parse — no intermediate peek buffer.
+        if crate::mcp::fetch_search_rows(caps, q, |title, url| {
+            if self.count >= search::MAX_HITS {
+                return false;
             }
-            None => self.phase = Phase::Offline,
+            self.rows[self.count].set(title, url, "bridge");
+            self.count += 1;
+            true
+        })
+        .is_some()
+        {
+            use crate::caps::Cap;
+            self.phase = Phase::Online {
+                files: caps.allows(Cap::WorkspaceIndex),
+                mail: caps.allows(Cap::EmailSearch),
+            };
+        } else {
+            self.phase = Phase::Offline;
         }
         if self.count == 0 {
             // Nothing from the bridge: try what we shipped with.
