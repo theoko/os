@@ -41,21 +41,27 @@ const EMPTY_SLOT: Slot = Slot {
     desc: [0; 40],
 };
 
+/// Bridge-filled rows (kept private so `Slot` is not a public interface).
+struct BridgeList {
+    count: usize,
+    slots: [Slot; 8],
+}
+
 /// Names (+ short descs) from ISO builtins or a live bridge list.
 pub enum SkillPeek {
     /// [`BUILTIN`] — offline or empty `skills.list`.
     Builtin,
     /// Rows from `CALL skills.list`.
-    Listed { count: usize, slots: [Slot; 8] },
+    Listed(BridgeList),
 }
 
 impl SkillPeek {
     /// Empty listed peek ready for [`Self::push`] (bridge fill path).
     pub(crate) fn empty() -> Self {
-        Self::Listed {
+        Self::Listed(BridgeList {
             count: 0,
             slots: [EMPTY_SLOT; 8],
-        }
+        })
     }
 
     pub fn from_builtin() -> Self {
@@ -64,36 +70,36 @@ impl SkillPeek {
 
     /// True when the last fill came from the host bridge.
     pub fn from_bridge(&self) -> bool {
-        matches!(self, Self::Listed { .. })
+        matches!(self, Self::Listed(_))
     }
 
     pub(crate) fn count(&self) -> usize {
         match self {
             Self::Builtin => BUILTIN.len(),
-            Self::Listed { count, .. } => *count,
+            Self::Listed(list) => list.count,
         }
     }
 
     pub(crate) fn push(&mut self, name: &str, desc: &str) -> bool {
-        let Self::Listed { count, slots } = self else {
+        let Self::Listed(list) = self else {
             return false;
         };
-        if *count >= slots.len() {
+        if list.count >= list.slots.len() {
             return false;
         }
-        let slot = &mut slots[*count];
+        let slot = &mut list.slots[list.count];
         copy_field(&mut slot.name, name);
         copy_field(&mut slot.desc, desc);
-        *count += 1;
+        list.count += 1;
         true
     }
 
     pub(crate) fn name_at(&self, i: usize) -> &str {
         match self {
             Self::Builtin => BUILTIN.get(i).map(|s| s.name).unwrap_or(""),
-            Self::Listed { count, slots } => {
-                if i < *count {
-                    str_at(&slots[i].name)
+            Self::Listed(list) => {
+                if i < list.count {
+                    str_at(&list.slots[i].name)
                 } else {
                     ""
                 }
@@ -105,11 +111,11 @@ impl SkillPeek {
     pub(crate) fn subtitle_at(&self, i: usize) -> &str {
         match self {
             Self::Builtin => BUILTIN.get(i).map(|s| s.blurb).unwrap_or("Shipped with the ISO"),
-            Self::Listed { count, slots } => {
-                if i >= *count {
+            Self::Listed(list) => {
+                if i >= list.count {
                     return "From host bridge";
                 }
-                let desc = str_at(&slots[i].desc);
+                let desc = str_at(&list.slots[i].desc);
                 if desc.is_empty() {
                     "From host bridge"
                 } else {
