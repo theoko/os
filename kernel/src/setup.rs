@@ -172,7 +172,7 @@ impl Setup {
 
         match self.step {
             Step::Welcome => self.draw_welcome(fb, w, h),
-            Step::Bridge => self.draw_bridge(fb, w, h, mail),
+            Step::Bridge => self.draw_bridge(fb, w, h, mail.status),
             Step::Capabilities => self.draw_caps(fb, w, h),
             Step::Skills => self.draw_skills(fb, w, h, skills),
             Step::Done => self.draw_done(fb, w, h),
@@ -188,20 +188,14 @@ impl Setup {
         self.primary(fb, w, cy + 90, "Continue");
     }
 
-    fn draw_bridge(&mut self, fb: &Surface, w: i32, h: i32, mail: &MailPeek) {
-        let online = matches!(mail.status, BridgeStatus::Online);
+    fn draw_bridge(&mut self, fb: &Surface, w: i32, h: i32, status: BridgeStatus) {
         let top = self.header(
             fb,
             w,
             "Connect the Bridge",
             "Connectors run on the host, never in the kernel.",
         );
-        let (detail, tint) = if online {
-            ("Connected on COM2", theme::ONLINE)
-        } else {
-            (crate::mcp::BRIDGE_OFFLINE_HINT, theme::OFFLINE)
-        };
-        self.status_card(fb, w, top, detail, tint);
+        self.status_card(fb, w, top, status);
         self.footer(fb, w, h, top + ROW_H + 8);
     }
 
@@ -298,7 +292,11 @@ impl Setup {
         self.push_zone(x, y, cw, ROW_H, Action::Row(i));
     }
 
-    fn status_card(&mut self, fb: &Surface, w: i32, y: i32, detail: &str, tint: u32) {
+    fn status_card(&mut self, fb: &Surface, w: i32, y: i32, status: BridgeStatus) {
+        let (detail, tint) = match status {
+            BridgeStatus::Online => ("Connected on COM2", theme::ONLINE),
+            BridgeStatus::Offline => (crate::mcp::BRIDGE_OFFLINE_HINT, theme::OFFLINE),
+        };
         let cw = CONTENT_W.min(w - 80);
         let x = (w - cw) / 2;
         ui::outlined_round_rect(fb, x, y, cw, ROW_H + 8, 10);
