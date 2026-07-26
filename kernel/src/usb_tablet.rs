@@ -85,7 +85,6 @@ impl UsbTablet {
     /// Probe every UHCI controller and every port, binding only a device that
     /// identifies as an absolute tablet. `err` gets a short ASCII reason.
     pub unsafe fn init(hhdm: u64, phys_page0: u64, phys_page1: u64, err: &mut [u8]) -> Option<Self> {
-        set_err(err, "start");
         disable_ehci_pci();
 
         let controllers = pci::find_all_uhci();
@@ -99,10 +98,7 @@ impl UsbTablet {
         for &io in controllers.iter() {
             for port in 0..2u16 {
                 match unsafe { Self::init_on(io, port, hhdm, phys_page0, phys_page1) } {
-                    Probe::Bound(t) => {
-                        set_err(err, "ok");
-                        return Some(t);
-                    }
+                    Probe::Bound(t) => return Some(t),
                     // Something enumerated but was a keyboard / redirect stub.
                     Probe::NotTablet(r) => {
                         saw_device = true;
@@ -192,12 +188,6 @@ impl UsbTablet {
         }
     }
 
-    fn outl_flbase(&self, val: u32) {
-        unsafe {
-            crate::port::outl(self.io + FLBASEADD, val);
-        }
-    }
-
     fn hc_reset(&mut self) {
         self.outw(USBCMD, 0x0002);
         for _ in 0..100_000 {
@@ -209,7 +199,9 @@ impl UsbTablet {
         self.outw(USBINTR_ZERO, 0); // defined below as 0x04 — disable IRQs
         self.outw(USBSTS, 0xFFFF);
         self.outw(SOFMOD, 64);
-        self.outl_flbase(self.dma.fl_phys);
+        unsafe {
+            crate::port::outl(self.io + FLBASEADD, self.dma.fl_phys);
+        }
         self.outw(FRNUM, 0);
         self.outw(USBCMD, 0x0001 | 0x0080); // RS | MaxPacket
         delay(20_000);
@@ -249,8 +241,9 @@ impl UsbTablet {
         }
     }
 
-    fn wait_td(&self, td: *mut Td, spins: u32) -> bool {
-        for _ in 0..spins {
+    fn wait_td(&self, td: *mut Td) -> bool {
+        const SPINS: u32 = 1_000_000;
+        for _ in 0..SPINS {
             let st = unsafe { core::ptr::addr_of!((*td).status).read_volatile() };
             if st & TD_ACTIVE == 0 {
                 return st & (1 << 22) == 0; // not stalled
@@ -278,7 +271,6 @@ impl UsbTablet {
         request_type: u8,
         request: u8,
         value: u16,
-        index: u16,
         data: &mut [u8],
     ) -> Option<()> {
         // Scratch layout is fixed so the control and interrupt paths never
@@ -304,8 +296,9 @@ impl UsbTablet {
             setup_v.add(1).write_volatile(request);
             setup_v.add(2).write_volatile((value & 0xFF) as u8);
             setup_v.add(3).write_volatile((value >> 8) as u8);
-            setup_v.add(4).write_volatile((index & 0xFF) as u8);
-            setup_v.add(5).write_volatile((index >> 8) as u8);
+            // wIndex is always 0 for the UHCI HID ops we issue.
+            setup_v.add(4).write_volatile(0);
+            setup_v.add(5).write_volatile(0);
             let n = data.len() as u16;
             setup_v.add(6).write_volatile((n & 0xFF) as u8);
             setup_v.add(7).write_volatile((n >> 8) as u8);
@@ -391,7 +384,7 @@ impl UsbTablet {
             }
         }
 
-        if !self.wait_td(td2, 1_000_000) {
+        if !self.wait_td(td2) {
             unsafe {
                 for i in 0..1024 {
                     self.dma.fl.add(i).write_volatile(1);
@@ -422,7 +415,7 @@ impl UsbTablet {
 
     /// GET_DESCRIPTOR(type, index 0) into `buf`, requesting exactly `buf.len()`.
     fn get_descriptor(&mut self, desc_type: u8, buf: &mut [u8]) -> Option<()> {
-        self.control(0x80, 0x06, (desc_type as u16) << 8, 0, buf)
+        self.control(0x80, 0x06, (desc_type as u16) << 8, buf)
     }
 
     /// Is the device on this port an absolute pointer we can drive?
@@ -494,24 +487,24 @@ impl UsbTablet {
     /// Assign USB address 1 (sole device on this root port).
     fn set_address(&mut self) -> Option<()> {
         let mut empty: [u8; 0] = [];
-        self.control(0x00, 0x05, 1, 0, &mut empty)
+        self.control(0x00, 0x05, 1, &mut empty)
     }
 
     /// Select configuration 1 (HID tablets ship a single config).
     fn set_configuration(&mut self) -> Option<()> {
         let mut empty: [u8; 0] = [];
-        self.control(0x00, 0x09, 1, 0, &mut empty)
+        self.control(0x00, 0x09, 1, &mut empty)
     }
 
     fn hid_set_idle(&mut self) -> Option<()> {
         let mut empty: [u8; 0] = [];
-        self.control(0x21, 0x0A, 0, 0, &mut empty)
+        self.control(0x21, 0x0A, 0, &mut empty)
     }
 
     /// Prefer HID Report protocol (1).
     fn hid_set_protocol(&mut self) -> Option<()> {
         let mut empty: [u8; 0] = [];
-        self.control(0x21, 0x0B, 1, 0, &mut empty)
+        self.control(0x21, 0x0B, 1, &mut empty)
     }
 
     pub fn poll(&mut self, mice: &mut crate::mouse::Mouse) -> bool {

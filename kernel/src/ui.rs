@@ -64,7 +64,7 @@ pub(crate) fn draw_switch_in_row(fb: &Surface, row: Rect, on: bool) {
 
 /// Axis-aligned hit region (inclusive origin, exclusive of `x+w` / `y+h`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Rect {
+pub(crate) struct Rect {
     pub(crate) x: i32,
     pub(crate) y: i32,
     pub(crate) w: i32,
@@ -76,7 +76,7 @@ impl Rect {
         Self { x, y, w, h }
     }
 
-    pub fn contains(self, px: i32, py: i32) -> bool {
+    pub(crate) fn contains(self, px: i32, py: i32) -> bool {
         px >= self.x && py >= self.y && px < self.x + self.w && py < self.y + self.h
     }
 }

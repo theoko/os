@@ -34,8 +34,13 @@ const ROW_GAP: i32 = 8;
 const TOP: i32 = 150;
 
 /// Back affordance used by Skills, Caps, Search, and Reader.
-pub fn back_rect() -> ui::Rect {
+fn back_rect() -> ui::Rect {
     ui::Rect::new(PAD_X, (NAV_H - 24) / 2, 72, 28)
+}
+
+/// Whether `(x, y)` hits the shared Back control.
+pub fn back_hit(x: i32, y: i32) -> bool {
+    back_rect().contains(x, y)
 }
 
 pub(crate) fn column(w: i32) -> (i32, i32) {

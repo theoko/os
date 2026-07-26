@@ -243,12 +243,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn running_a_query_populates_rows() {
+    fn running_a_query_populates_openable_rows() {
         let mut v = SearchView::new();
         v.run("capability agent");
         assert_ne!(v.phase, Phase::Idle);
         assert!(v.count > 0, "expected hits from the baked index");
-        assert!(!v.rows[0].title().is_empty());
+        let (title, url) = v.at(0);
+        assert!(!title.is_empty());
+        assert!(!url.is_empty(), "offline results must be openable too");
     }
 
     #[test]
@@ -441,11 +443,4 @@ mod reader_tests {
         assert!(ry >= fy + fh, "first result overlaps the input");
     }
 
-    #[test]
-    fn a_result_carries_the_url_needed_to_open_it() {
-        let mut v = SearchView::new();
-        v.run("capability agent");
-        assert!(v.count > 0);
-        assert!(!v.at(0).1.is_empty(), "offline results must be openable too");
-    }
 }
