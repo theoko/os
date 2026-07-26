@@ -272,7 +272,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     }
                                     None => {}
                                 }
-                            } else if screens::back_rect().contains(mice.x, mice.y) {
+                            } else if screens::back_hit(mice.x, mice.y) {
                                 // Back from the reader returns to results.
                                 view = if view == screens::View::Reader {
                                     screens::View::Search
