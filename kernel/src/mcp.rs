@@ -47,14 +47,6 @@ pub enum MailPeek {
 }
 
 impl MailPeek {
-    /// Map a liveness-only probe (never an inbox read).
-    pub const fn from_probe(status: BridgeStatus) -> Self {
-        match status {
-            BridgeStatus::Offline => Self::Offline,
-            BridgeStatus::Online => Self::Denied,
-        }
-    }
-
     /// Bridge reachability for nav / setup / search chrome.
     pub const fn bridge_status(self) -> BridgeStatus {
         match self {
@@ -287,12 +279,16 @@ pub fn forget(tool: &str) {
 ///
 /// Used before the user has consented on the Capabilities step. Calling
 /// `fetch_mail_peek` there would read — and, since the bridge indexes results,
-/// *persist* — the inbox before anyone agreed to it.
-pub fn probe_bridge() -> BridgeStatus {
+/// *persist* — the inbox before anyone agreed to it. Online → [`MailPeek::Denied`]
+/// (bridge up, no inbox read yet).
+pub fn probe_bridge() -> MailPeek {
     let mut line = [0u8; LINE_BUF];
     let com2 = Serial::com2();
     com2.init();
-    ping_bridge(&com2, &mut line)
+    match ping_bridge(&com2, &mut line) {
+        BridgeStatus::Offline => MailPeek::Offline,
+        BridgeStatus::Online => MailPeek::Denied,
+    }
 }
 
 /// List playbooks via `CALL skills.list`. Offline → builtins baked into the ISO.

@@ -59,7 +59,7 @@ unsafe extern "C" fn kmain() -> ! {
 
     // Liveness only until the user consents. Reading the inbox here would
     // fetch — and persist — mail before anyone agreed to it.
-    let mut mail = mcp::MailPeek::from_probe(mcp::probe_bridge());
+    let mut mail = mcp::probe_bridge();
     log_bridge_status(&serial_port, mail.bridge_status());
     serial_port.write_str("skills: builtins ready\n");
     let mut skill_peek = skills::SkillPeek::from_builtin();
@@ -187,7 +187,7 @@ unsafe extern "C" fn kmain() -> ! {
                             if setup.step == setup::Step::Bridge && before != setup::Step::Bridge {
                                 // Still pre-consent: the Capabilities step
                                 // comes after this one, so probe, don't read.
-                                mail = mcp::MailPeek::from_probe(mcp::probe_bridge());
+                                mail = mcp::probe_bridge();
                                 log_bridge_status(&serial_port, mail.bridge_status());
                             }
                             if setup.step == setup::Step::Skills && before != setup::Step::Skills {
