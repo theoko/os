@@ -1,4 +1,4 @@
-"""Shared QEMU argv + assertions for smoke-qemu / smoke-bridge."""
+"""Shared QEMU argv + assertions for `make smoke` / `make smoke-bridge`."""
 
 from __future__ import annotations
 
