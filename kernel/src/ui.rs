@@ -13,7 +13,7 @@ use crate::skills::SkillPeek;
 /// Apple-inspired light palette.
 pub mod theme {
     /// Page — Apple light grey.
-    pub const BG: u32 = 0x00F5_F5F7;
+    pub const BG: u32 = crate::fb::PAGE_BG;
     /// Cards, inputs, switch knobs — pure white.
     pub(crate) const SURFACE: u32 = 0x00FF_FFFF;
     /// Primary text — Apple's near-black, never pure #000.

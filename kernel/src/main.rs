@@ -450,7 +450,7 @@ fn repaint(
 /// Snapping between screens is what made this feel unlike a desktop; an
 /// eased slide-and-fade costs a handful of blits and reads as intentional.
 fn enter(screen: &fb::Screen) {
-    anim::slide_in(|dy, a| screen.present_slide(dy, a, ui::theme::BG));
+    anim::slide_in(|dy, a| screen.present_slide(dy, a));
 }
 
 #[panic_handler]

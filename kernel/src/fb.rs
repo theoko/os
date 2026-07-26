@@ -9,6 +9,9 @@ use core::cell::Cell;
 
 use crate::font::Face;
 
+/// Page colour (Apple light grey). Shared with `ui::theme::BG`.
+pub const PAGE_BG: u32 = 0x00F5_F5F7;
+
 /// Accept only 32-bit XRGB8888 with a sane pitch — Surface and Screen share this.
 fn mode_ok(width: u64, height: u64, pitch: u64, bpp: u16, mask_shifts: (u8, u8, u8)) -> bool {
     bpp == 32
@@ -628,11 +631,11 @@ impl Screen {
         self.blit(x0, y0, x1, y1);
     }
 
-    /// Blit the back buffer shifted down by `dy` and faded toward `bg`.
+    /// Blit the back buffer shifted down by `dy` and faded toward [`PAGE_BG`].
     ///
     /// Used for screen entrances. The frame is composed once and only the blit
     /// is animated, so a transition costs blits rather than full redraws.
-    pub fn present_slide(&self, dy: i32, alpha_q16: i32, bg: u32) {
+    pub fn present_slide(&self, dy: i32, alpha_q16: i32) {
         if !self.buffered {
             return;
         }
@@ -645,14 +648,14 @@ impl Screen {
             let sy = y as i32 - dy;
             for x in 0..w {
                 let px = if sy < 0 {
-                    bg
+                    PAGE_BG
                 } else {
                     let src = unsafe {
                         self.back.addr.add(sy as usize * self.back.pitch).cast::<u32>()
                     };
                     let c = unsafe { src.add(x).read() };
                     // Fade toward the page colour rather than to black.
-                    blend(bg, c, a >> 8)
+                    blend(PAGE_BG, c, a >> 8)
                 };
                 unsafe { dst.add(x).write_volatile(px) };
             }

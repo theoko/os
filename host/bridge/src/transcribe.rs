@@ -181,7 +181,7 @@ impl Store {
 /// Deliberately not a model call — this runs on the bridge with no network and
 /// no inference, and its job is to give the guest something readable in three
 /// lines rather than to be clever.
-pub fn summarize(text: &str, max_lines: usize) -> Vec<String> {
+pub fn summarize(text: &str) -> Vec<String> {
     let mut sentences: Vec<&str> = text
         .split(|c| c == '.' || c == '!' || c == '?')
         .map(|s| s.trim())
@@ -190,7 +190,7 @@ pub fn summarize(text: &str, max_lines: usize) -> Vec<String> {
     sentences.sort_by_key(|s| core::cmp::Reverse(s.split_whitespace().count()));
     sentences
         .into_iter()
-        .take(max_lines)
+        .take(3)
         .map(|s| s.chars().take(110).collect())
         .collect()
 }
@@ -231,17 +231,13 @@ mod tests {
     }
 
     #[test]
-    fn summary_picks_substantial_sentences() {
+    fn summary_picks_substantial_sentences_and_stays_bounded() {
         let text = "Hi. This is a much longer sentence carrying the actual content of the recording. Bye.";
-        let s = summarize(text, 2);
+        let s = summarize(text);
         assert_eq!(s.len(), 1, "short fragments should be dropped");
         assert!(s[0].contains("actual content"));
-    }
-
-    #[test]
-    fn summary_is_bounded() {
-        let text = "word ".repeat(400) + ".";
-        let s = summarize(&text, 3);
+        let long = "word ".repeat(400) + ".";
+        let s = summarize(&long);
         assert!(s.len() <= 3);
         assert!(s.iter().all(|l| l.chars().count() <= 110));
     }

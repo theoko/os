@@ -331,7 +331,7 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
             match transcribe::transcribe(std::path::Path::new(path)) {
                 Ok((t, secs)) => {
                     let mut store = transcribe::Store::load();
-                    let summary = transcribe::summarize(&t.text, 3);
+                    let summary = transcribe::summarize(&t.text);
                     let words = t.text.split_whitespace().count();
                     let mut rows = vec![format!(
                         "ROW field=title|value={}",

@@ -36,24 +36,16 @@ fn write32(bus: u8, slot: u8, func: u8, offset: u8, val: u32) {
     let _ = (bus, slot, func, offset, val);
 }
 
-pub(crate) fn read16(bus: u8, slot: u8, func: u8, offset: u8) -> u16 {
-    let v = read32(bus, slot, func, offset & 0xFC);
-    ((v >> (8 * (offset as u32 & 2))) & 0xFFFF) as u16
+/// Read the PCI command register (config offset 0x04).
+pub(crate) fn read_cmd(bus: u8, slot: u8, func: u8) -> u16 {
+    (read32(bus, slot, func, 0x04) & 0xFFFF) as u16
 }
 
-pub(crate) fn write16(bus: u8, slot: u8, func: u8, offset: u8, val: u16) {
-    let aligned = offset & 0xFC;
-    let shift = 8 * (offset as u32 & 2);
-    let mut v = read32(bus, slot, func, aligned);
-    v &= !(0xFFFF << shift);
-    v |= (val as u32) << shift;
-    // The status register (0x06) is RW1C: writing back the 1s we just read
-    // would clear them. When updating the command register, write 0s to the
-    // status half instead (0s are a no-op for RW1C bits).
-    if aligned == 0x04 && shift == 0 {
-        v &= 0x0000_FFFF;
-    }
-    write32(bus, slot, func, aligned, v);
+/// Write the PCI command register. The adjacent status half (0x06) is RW1C —
+/// writing back the 1s we just read would clear them — so the high word is
+/// always written as 0 (a no-op for RW1C bits).
+pub(crate) fn write_cmd(bus: u8, slot: u8, func: u8, val: u16) {
+    write32(bus, slot, func, 0x04, val as u32);
 }
 
 /// Walk present PCI functions (buses 0..4).
@@ -98,8 +90,8 @@ pub(crate) fn find_all_uhci() -> heapless_vec::UhciList {
         let bar4 = read32(bus, slot, func, 0x20);
         if bar4 & 1 == 1 {
             let io = (bar4 & 0xFFE0) as u16;
-            let cmd = read16(bus, slot, func, 0x04);
-            write16(bus, slot, func, 0x04, cmd | 0x05);
+            let cmd = read_cmd(bus, slot, func);
+            write_cmd(bus, slot, func, cmd | 0x05);
             out.push(io);
         }
     });

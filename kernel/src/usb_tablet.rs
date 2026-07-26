@@ -76,8 +76,8 @@ unsafe fn fill_fl(fl: *mut u32, link: u32) {
 /// enabled strands the devices behind it.
 fn disable_ehci_pci() {
     pci::for_each_ehci(|b, s, f| {
-        let cmd = pci::read16(b, s, f, 0x04);
-        pci::write16(b, s, f, 0x04, cmd & !0x06); // clear Mem Space + Bus Master
+        let cmd = pci::read_cmd(b, s, f);
+        pci::write_cmd(b, s, f, cmd & !0x06); // clear Mem Space + Bus Master
     });
 }
 
