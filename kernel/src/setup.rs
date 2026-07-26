@@ -444,7 +444,7 @@ mod layout_tests {
         // exact failure a previous review caught on a short framebuffer.
         // Asserts ALL+1 so the next capability addition fails here, not on
         // screen; that also covers today's ALL rows and the skills step
-        // (capped at 4 < Cap::ALL.len()).
+        // (capped at 4 == Cap::ALL.len()).
         assert!(
             rows_bottom(Cap::ALL.len() + 1) < footer_top(768),
             "adding another capability would collide with the footer"

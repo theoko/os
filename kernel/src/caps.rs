@@ -3,27 +3,28 @@
 //! Connectors on the host bridge are tools behind caps — the setup assistant
 //! chooses the grant set, and MCP calls must check here before talking COM2.
 //! No ambient root: a missing grant is a hard deny, not a soft skip-with-try.
+//!
+//! `skills.save` stays host-socket-only (nc / bridge LINE…END); there is no
+//! guest Cap for it — toggling one never gated a CALL.
 
 /// Named capabilities that mirror bridge tools / setup rows.
 #[derive(Clone, Copy)]
 pub enum Cap {
     EmailSearch = 0,
     SearchQuery = 1,
-    SkillsSave = 2,
     /// Index and search the user's own documents. Off by default: a personal
     /// file tree is not something to opt someone into silently.
-    WorkspaceIndex = 3,
+    WorkspaceIndex = 2,
     /// Transcribe local audio/video and index the text. Off by default: a
     /// recording can contain anyone, not just the user.
-    AudioTranscribe = 4,
+    AudioTranscribe = 3,
 }
 
 impl Cap {
     /// Dense table for UI rows and revoke walks (`main` is a separate binary).
-    pub const ALL: [Cap; 5] = [
+    pub const ALL: [Cap; 4] = [
         Cap::EmailSearch,
         Cap::SearchQuery,
-        Cap::SkillsSave,
         Cap::WorkspaceIndex,
         Cap::AudioTranscribe,
     ];
@@ -32,7 +33,6 @@ impl Cap {
         match self {
             Cap::EmailSearch => "email.search",
             Cap::SearchQuery => "search.query",
-            Cap::SkillsSave => "skills.save",
             Cap::WorkspaceIndex => "workspace.index",
             Cap::AudioTranscribe => "audio.transcribe",
         }
@@ -43,7 +43,6 @@ impl Cap {
         match self {
             Cap::EmailSearch => "Read the inbox through the host bridge",
             Cap::SearchQuery => "Query the built-in knowledge corpus",
-            Cap::SkillsSave => "Write new skill playbooks to disk",
             Cap::WorkspaceIndex => "Search your own files on this machine",
             Cap::AudioTranscribe => "Transcribe recordings and index what was said",
         }
@@ -102,11 +101,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn default_denies_skills_save() {
+    fn default_grants_are_read_tools_only() {
         let c = Caps::default_grants();
         assert!(c.allows(Cap::EmailSearch));
         assert!(c.allows(Cap::SearchQuery));
-        assert!(!c.allows(Cap::SkillsSave));
+        assert!(!c.allows(Cap::WorkspaceIndex));
+        assert!(!c.allows(Cap::AudioTranscribe));
         assert_eq!(c.granted_count(), 2);
     }
 
@@ -114,7 +114,6 @@ mod tests {
     fn wire_names_are_stable() {
         assert_eq!(Cap::EmailSearch.name(), "email.search");
         assert_eq!(Cap::SearchQuery.name(), "search.query");
-        assert_eq!(Cap::SkillsSave.name(), "skills.save");
         assert_eq!(Cap::WorkspaceIndex.name(), "workspace.index");
         assert_eq!(Cap::AudioTranscribe.name(), "audio.transcribe");
     }
@@ -137,7 +136,6 @@ mod tests {
         assert_eq!(Cap::AudioTranscribe.forget_tool(), Some("audio.forget"));
         assert_eq!(Cap::EmailSearch.forget_tool(), None);
         assert_eq!(Cap::SearchQuery.forget_tool(), None);
-        assert_eq!(Cap::SkillsSave.forget_tool(), None);
     }
 
     #[test]
