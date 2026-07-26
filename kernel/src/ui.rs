@@ -13,13 +13,13 @@ use crate::skills::SkillPeek;
 /// Apple-inspired light palette.
 pub mod theme {
     /// Cards, inputs, switch knobs — pure white.
-    pub(crate) const SURFACE: u32 = 0x00FF_FFFF;
+    pub(crate) const SURFACE: u32 = crate::fb::SURFACE;
     /// Primary text — Apple's near-black, never pure #000.
     pub(crate) const INK: u32 = 0x001D_1D1F;
     /// Secondary copy.
     pub(crate) const MUTED: u32 = 0x0086_868B;
     /// Accent / primary action.
-    pub(crate) const ACCENT: u32 = 0x0000_71E3;
+    pub(crate) const ACCENT: u32 = crate::fb::ACCENT;
     /// Hairline separators.
     pub(crate) const RULE: u32 = 0x00D2_D2D7;
     /// Card / input border.
@@ -30,6 +30,9 @@ pub mod theme {
 
 /// Shared chrome height (home nav, Skills/Caps/Search Back bar).
 pub(crate) const NAV_H: i32 = 56;
+
+/// Search field height on Home and Search.
+pub(crate) const FIELD_H: i32 = 52;
 /// Shared horizontal page margin.
 pub(crate) const PAD_X: i32 = 28;
 const CONTENT_MAX: i32 = 920;
@@ -242,7 +245,7 @@ pub(crate) fn content_column(w: i32, max: i32) -> (i32, i32) {
 /// The home search field, shared by drawing and hit-testing.
 fn search_rect(w: i32) -> Rect {
     let (x, cw) = content_column(w, CONTENT_MAX);
-    Rect::new(x, 120, cw, 52)
+    Rect::new(x, 120, cw, FIELD_H)
 }
 
 const TILE_TOP: i32 = 200;

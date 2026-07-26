@@ -60,7 +60,7 @@ unsafe extern "C" fn kmain() -> ! {
     // Liveness only until the user consents. Reading the inbox here would
     // fetch — and persist — mail before anyone agreed to it.
     let mut mail = mcp::MailPeek::empty(mcp::probe_bridge());
-    log_mail_status(&serial_port, mail.status);
+    log_bridge_status(&serial_port, mail.status);
     serial_port.write_str("skills: builtins ready\n");
     let mut skill_peek = skills::SkillPeek::from_builtin();
     if let Some(resp) = FRAMEBUFFER_REQUEST.get_response() {
@@ -188,10 +188,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 // Still pre-consent: the Capabilities step
                                 // comes after this one, so probe, don't read.
                                 mail = mcp::MailPeek::empty(mcp::probe_bridge());
-                                serial_port.write_str(match mail.status {
-                                    mcp::BridgeStatus::Online => "mcp: bridge live\n",
-                                    mcp::BridgeStatus::Offline => "mcp: bridge still offline\n",
-                                });
+                                log_bridge_status(&serial_port, mail.status);
                             }
                             if setup.step == setup::Step::Skills && before != setup::Step::Skills {
                                 skill_peek = mcp::fetch_skill_peek();
@@ -258,7 +255,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     Some(ui::HomeHit::Connect) => {
                                         serial_port.write_str("ui: connect bridge\n");
                                         mail = mcp::fetch_mail_peek(setup.caps);
-                                        log_mail_status(&serial_port, mail.status);
+                                        log_bridge_status(&serial_port, mail.status);
                                         dirty = true;
                                     }
                                     Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
@@ -401,10 +398,10 @@ fn handle_key(
     }
 }
 
-fn log_mail_status(port: &serial::Serial, status: mcp::BridgeStatus) {
+fn log_bridge_status(port: &serial::Serial, status: mcp::BridgeStatus) {
     port.write_str(match status {
-        mcp::BridgeStatus::Online => "mcp: email connected\n",
-        mcp::BridgeStatus::Offline => "mcp: email offline\n",
+        mcp::BridgeStatus::Online => "mcp: bridge live\n",
+        mcp::BridgeStatus::Offline => "mcp: bridge still offline\n",
     });
 }
 

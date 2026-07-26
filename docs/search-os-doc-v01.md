@@ -21,10 +21,10 @@ status: active
 ## Shape
 
 ```
-guest  -- CALL search.query -->  host/bridge
-                                      |
-                         search/corpus.json  (curated {t,u,c,b,pr})
-                         + native teddy cache / files / mail when granted
+guest SearchView
+  ├─ bridge online  -- CALL search.query -->  host/bridge
+  │                        search/corpus.json + teddy / files / mail when granted
+  └─ offline / empty     baked kernel index (search/corpus.json via build.rs)
 ```
 
 Corpus docs use the same card fields as tSearch: title `t`, url `u`, category `c`,

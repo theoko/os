@@ -84,13 +84,6 @@ pub(crate) fn chrome(fb: &Surface, label: Option<(&str, &str)>) {
     }
 }
 
-/// A bordered row with a title and a subtitle.
-fn row(fb: &Surface, w: i32, i: usize, title: &str, sub: &str) -> ui::Rect {
-    let r = row_rect(w, i);
-    ui::draw_titled_row(fb, r, title, sub);
-    r
-}
-
 /// Skills the agent can load — names from bridge `skills.list`, else builtins.
 pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
     let w = fb.width() as i32;
@@ -98,7 +91,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
 
     let n = peek.count.min(6);
     for i in 0..n {
-        row(fb, w, i, peek.name_at(i), peek.subtitle_at(i));
+        ui::draw_titled_row(fb, row_rect(w, i), peek.name_at(i), peek.subtitle_at(i));
     }
 
     let (x, _) = column(w);
@@ -126,7 +119,8 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
 
     for (i, cap) in Cap::ALL.iter().enumerate() {
         let on = grants.allows(*cap);
-        let r = row(fb, w, i, cap.name(), CAP_BLURBS[i]);
+        let r = row_rect(w, i);
+        ui::draw_titled_row(fb, r, cap.name(), CAP_BLURBS[i]);
         ui::draw_switch_in_row(fb, r, on);
     }
 

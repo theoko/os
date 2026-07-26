@@ -173,13 +173,12 @@ impl SearchView {
     }
 }
 
-const FIELD_H: i32 = 52;
 const ROW_H: i32 = 64;
 
 /// Geometry shared by the renderer and hit-testing.
 fn field_rect(w: i32) -> crate::ui::Rect {
     let (x, cw) = screens::column(w);
-    crate::ui::Rect::new(x, 150, cw, FIELD_H)
+    crate::ui::Rect::new(x, 150, cw, crate::ui::FIELD_H)
 }
 
 /// Bounding box of result row `i`, shared by drawing and hit-testing.

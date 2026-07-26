@@ -11,6 +11,10 @@ use crate::font::Face;
 
 /// Page colour (Apple light grey) — full-screen fills and slide entrances.
 pub const PAGE_BG: u32 = 0x00F5_F5F7;
+/// Cards / knobs / cursor keyline — pure white (`ui::theme::SURFACE`).
+pub const SURFACE: u32 = 0x00FF_FFFF;
+/// Accent / primary action (`ui::theme::ACCENT`).
+pub const ACCENT: u32 = 0x0000_71E3;
 
 /// Accept only 32-bit XRGB8888 with a sane pitch — Surface and Screen share this.
 fn mode_ok(width: u64, height: u64, pitch: u64, bpp: u16, mask_shifts: (u8, u8, u8)) -> bool {
@@ -372,7 +376,7 @@ mod tests {
 
     impl Canvas {
         fn new(w: usize, h: usize) -> Self {
-            Self { buf: vec![0x00FF_FFFF; w * h], w, h }
+            Self { buf: vec![SURFACE; w * h], w, h }
         }
         fn surface(&mut self) -> Surface {
             Surface {
@@ -387,7 +391,7 @@ mod tests {
             self.buf[y * self.w + x]
         }
         fn ink_count(&self) -> usize {
-            self.buf.iter().filter(|&&p| p != 0x00FF_FFFF).count()
+            self.buf.iter().filter(|&&p| p != SURFACE).count()
         }
     }
 
@@ -452,9 +456,9 @@ mod tests {
 
     #[test]
     fn blend_endpoints_and_midpoint() {
-        assert_eq!(blend(0x00FF_FFFF, 0x0000_0000, 0), 0x00FF_FFFF);
-        assert_eq!(blend(0x00FF_FFFF, 0x0000_0000, 255), 0x0000_0000);
-        let m = blend(0x00FF_FFFF, 0x0000_0000, 128);
+        assert_eq!(blend(SURFACE, 0x0000_0000, 0), SURFACE);
+        assert_eq!(blend(SURFACE, 0x0000_0000, 255), 0x0000_0000);
+        let m = blend(SURFACE, 0x0000_0000, 128);
         assert_eq!(m & 0xff, (m >> 8) & 0xff, "channels should stay neutral");
         assert!((0x76..=0x80).contains(&(m & 0xff)), "got {:06X}", m);
     }
@@ -480,7 +484,7 @@ mod tests {
         let greys = c
             .buf
             .iter()
-            .filter(|&&p| p != 0x00FF_FFFF && p != 0x0000_0000)
+            .filter(|&&p| p != SURFACE && p != 0x0000_0000)
             .count();
         assert!(greys > 20, "expected AA edge pixels, got {greys}");
     }
@@ -495,7 +499,7 @@ mod tests {
         let (mut lo, mut hi) = (usize::MAX, 0);
         for y in 0..c.h {
             for x in 0..c.w {
-                if c.get(x, y) != 0x00FF_FFFF {
+                if c.get(x, y) != SURFACE {
                     lo = lo.min(x);
                     hi = hi.max(x);
                 }
@@ -517,16 +521,16 @@ mod tests {
         let mut c = Canvas::new(120, 60);
         {
             let s = c.surface();
-            s.fill_round_rect(10, 10, 100, 40, 20, 0x0000_71E3);
+            s.fill_round_rect(10, 10, 100, 40, 20, ACCENT);
         }
         // Dead centre is solid; the extreme corner is untouched page.
-        assert_eq!(c.get(60, 30), 0x0000_71E3);
-        assert_eq!(c.get(10, 10), 0x00FF_FFFF, "square corner — no rounding");
+        assert_eq!(c.get(60, 30), ACCENT);
+        assert_eq!(c.get(10, 10), SURFACE, "square corner — no rounding");
         // And somewhere on the arc there must be a partial blend.
         let partial = c
             .buf
             .iter()
-            .filter(|&&p| p != 0x00FF_FFFF && p != 0x0000_71E3)
+            .filter(|&&p| p != SURFACE && p != ACCENT)
             .count();
         assert!(partial > 10, "corner arc is not anti-aliased ({partial})");
     }

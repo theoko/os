@@ -78,7 +78,7 @@ topology as headless `make run-bridged` / `smoke-bridge`. QEMU's TcpClient mode
 does not retry; that is why the bridge is always the client.
 
 Serial should show `mouse: usb-tablet ready` then `mouse: ps2 ready`, then
-`ui: setup welcome`. With the bridge up you should also see `mcp: email connected`
+`ui: setup welcome`. With the bridge up you should also see `mcp: bridge live`
 early and `mcp: bridge live` when entering the Bridge setup step.
 
 ## Override

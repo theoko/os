@@ -10,7 +10,7 @@ import tempfile
 from pathlib import Path
 
 HELLO = b"os: hello from kernel"
-MCP_EMAIL = b"mcp: email connected"
+MCP_BRIDGE = b"mcp: bridge live"
 # isa-debug-exit: guest writes 0x10 → host status ((0x10 << 1) | 1) = 33
 OK_STATUS = 33
 
@@ -88,7 +88,7 @@ def check_smoke(
         print("error: hello banner not found on serial", file=sys.stderr)
         sys.stderr.buffer.write(serial + b"\n")
         sys.exit(1)
-    if need_mcp and MCP_EMAIL not in serial:
+    if need_mcp and MCP_BRIDGE not in serial:
         print("error: MCP bridge not connected", file=sys.stderr)
         sys.stderr.buffer.write(serial + b"\n")
         sys.exit(1)
@@ -153,7 +153,7 @@ def run_bridge_smoke() -> None:
         argv = qemu_argv(iso, serial_path, com2=addr)
         status, serial = run_qemu(argv, cwd=root, serial_path=serial_path, timeout=120)
         check_smoke(status, serial, need_mcp=True)
-        print("smoke-bridge ok: hello + mcp email connected")
+        print("smoke-bridge ok: hello + mcp bridge live")
     finally:
         _stop_bridge(pid_file)
         serial_path.unlink(missing_ok=True)
