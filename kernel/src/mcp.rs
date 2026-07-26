@@ -38,10 +38,10 @@ impl MailPeek {
 }
 
 /// One hit from `search.query`.
-pub struct SearchHit {
-    pub title: [u8; 48],
+struct SearchHit {
+    title: [u8; 48],
     /// Source URL, needed to open the document rather than only name it.
-    pub url: [u8; 72],
+    url: [u8; 72],
 }
 
 /// Short corpus peek from the host bridge.
@@ -49,7 +49,7 @@ pub struct SearchPeek {
     pub status: BridgeStatus,
     pub denied: bool,
     pub count: usize,
-    pub hits: [SearchHit; 3],
+    hits: [SearchHit; 3],
 }
 
 impl SearchPeek {
@@ -257,14 +257,13 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
 /// Turning a switch off should remove the index it built, not just stop
 /// answering from it — otherwise "off" means "hidden", which is not what the
 /// switch says.
-pub fn forget(tool: &str) -> BridgeStatus {
-    when_online(BridgeStatus::Offline, |com2, line| {
+pub fn forget(tool: &str) {
+    when_online((), |com2, line| {
         com2.write_str("CALL ");
         com2.write_str(tool);
         com2.write_str("\n");
         // Drain the reply so the next call starts on a clean line.
         for_each_reply(com2, line, 8, |resp| resp != "END");
-        BridgeStatus::Online
     })
 }
 

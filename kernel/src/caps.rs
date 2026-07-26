@@ -36,10 +36,6 @@ impl Cap {
             Cap::AudioTranscribe => "audio.transcribe",
         }
     }
-
-    pub const fn index(self) -> usize {
-        self as usize
-    }
 }
 
 /// Bitset of granted capabilities (one bit per [`Cap`]).
@@ -52,7 +48,7 @@ impl Caps {
     /// Defaults match the setup assistant: read tools on, disk writes off.
     pub const fn default_grants() -> Self {
         Self {
-            bits: (1 << Cap::EmailSearch.index()) | (1 << Cap::SearchQuery.index()),
+            bits: (1 << Cap::EmailSearch as usize) | (1 << Cap::SearchQuery as usize),
         }
     }
 
@@ -61,7 +57,7 @@ impl Caps {
     }
 
     pub const fn allows(self, cap: Cap) -> bool {
-        self.bits & (1 << cap.index()) != 0
+        self.bits & (1 << cap as usize) != 0
     }
 
     /// How many named capabilities are currently granted.
@@ -71,9 +67,16 @@ impl Caps {
 
     pub fn set(&mut self, cap: Cap, on: bool) {
         if on {
-            self.bits |= 1 << cap.index();
+            self.bits |= 1 << cap as usize;
         } else {
-            self.bits &= !(1 << cap.index());
+            self.bits &= !(1 << cap as usize);
+        }
+    }
+
+    /// Flip capability `i` in place. Out-of-range is a no-op.
+    pub fn toggle(&mut self, i: usize) {
+        if let Some(c) = Cap::ALL.get(i) {
+            self.set(*c, !self.allows(*c));
         }
     }
 }
@@ -98,5 +101,23 @@ mod tests {
         assert_eq!(Cap::SkillsSave.name(), "skills.save");
         assert_eq!(Cap::WorkspaceIndex.name(), "workspace.index");
         assert_eq!(Cap::AudioTranscribe.name(), "audio.transcribe");
+    }
+
+    #[test]
+    fn toggle_flips_only_the_named_capability() {
+        let mut g = Caps::none();
+        g.toggle(0);
+        assert!(g.allows(Cap::ALL[0]));
+        assert!(!g.allows(Cap::ALL[1]), "toggling one must not affect another");
+        g.toggle(0);
+        assert!(!g.allows(Cap::ALL[0]), "must toggle back off");
+    }
+
+    #[test]
+    fn toggle_out_of_range_is_a_noop() {
+        let mut g = Caps::default_grants();
+        let before = g;
+        g.toggle(99);
+        assert_eq!(g, before);
     }
 }

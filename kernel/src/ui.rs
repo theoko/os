@@ -115,14 +115,12 @@ pub fn draw_titled_row(fb: &Surface, r: Rect, title: &str, sub: &str) {
 /// (e.g. "Offline Ready") so helper copy never sits under the input.
 pub fn draw_query_field(
     fb: &Surface,
-    x: i32,
-    y: i32,
-    w: i32,
-    h: i32,
+    r: Rect,
     query: &str,
     placeholder: &str,
     badge: Option<&str>,
 ) {
+    let Rect { x, y, w, h } = r;
     outlined_round_rect(fb, x, y, w, h, 12);
     let tx = x + 18;
     let base = y + (h - BODY_FACE.px) / 2 + BODY_FACE.baseline();
@@ -187,26 +185,16 @@ pub fn draw_home_full(
     query: &str,
 ) {
     let w = fb.width() as i32;
-    let h = fb.height() as i32;
 
     fb.fill(theme::BG);
-    draw_nav(fb, w, mail.status);
+    draw_nav(fb, mail.status);
 
     let r = search_rect(w);
     let badge = match mail.status {
         BridgeStatus::Online => "Online",
         BridgeStatus::Offline => "Offline Ready",
     };
-    draw_query_field(
-        fb,
-        r.x,
-        r.y,
-        r.w,
-        r.h,
-        query,
-        "Search knowledge base...",
-        Some(badge),
-    );
+    draw_query_field(fb, r, query, "Search knowledge base...", Some(badge));
 
     let mut gbuf = [0u8; 16];
     let granted = fmt_n_label(&mut gbuf, grants.granted_count(), "Granted");
@@ -224,7 +212,7 @@ pub fn draw_home_full(
         fb.draw_text(r.x + 18, r.y + 58, sub, &SMALL_FACE, 0, theme::MUTED);
     }
 
-    draw_status_bar(fb, w, h, mail, grants);
+    draw_status_bar(fb, mail, grants);
 }
 
 /// `"N label"` into a caller-owned buffer (digits + space + label).
@@ -253,13 +241,9 @@ pub(crate) fn content_column(w: i32, max: i32) -> (i32, i32) {
     ((w - cw) / 2, cw)
 }
 
-fn home_column(w: i32) -> (i32, i32) {
-    content_column(w, CONTENT_MAX)
-}
-
 /// The home search field, shared by drawing and hit-testing.
 pub fn search_rect(w: i32) -> Rect {
-    let (x, cw) = home_column(w);
+    let (x, cw) = content_column(w, CONTENT_MAX);
     Rect::new(x, 120, cw, 52)
 }
 
@@ -268,7 +252,7 @@ const TILE_H: i32 = 88;
 
 /// Bounding box of home tile `i` (0 = Search, 1 = Capabilities, 2 = Skills).
 pub fn tile_rect(w: i32, i: i32) -> Rect {
-    let (x0, cw) = home_column(w);
+    let (x0, cw) = content_column(w, CONTENT_MAX);
     let gap = 16;
     let tw = (cw - gap * 2) / 3;
     Rect::new(x0 + (tw + gap) * i, TILE_TOP, tw, TILE_H)
@@ -287,7 +271,8 @@ pub fn home_targets(w: i32) -> HomeTargets {
     HomeTargets { w }
 }
 
-fn draw_nav(fb: &Surface, w: i32, status: BridgeStatus) {
+fn draw_nav(fb: &Surface, status: BridgeStatus) {
+    let w = fb.width() as i32;
     let base = (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline();
     fb.draw_text(PAD_X, base, "os", &BRAND_FACE, 0, theme::INK);
 
@@ -321,7 +306,7 @@ fn draw_nav(fb: &Surface, w: i32, status: BridgeStatus) {
 }
 
 /// Unified bottom telemetry — no orphaned mid-page status lines.
-fn draw_status_bar(fb: &Surface, w: i32, h: i32, mail: &MailPeek, grants: Caps) {
+fn draw_status_bar(fb: &Surface, mail: &MailPeek, grants: Caps) {
     let mut line = [0u8; 96];
     let mut n = 0;
     let push = |line: &mut [u8], n: &mut usize, s: &str| {
@@ -355,7 +340,14 @@ fn draw_status_bar(fb: &Surface, w: i32, h: i32, mail: &MailPeek, grants: Caps) 
         },
     );
     let text = core::str::from_utf8(&line[..n]).unwrap_or("");
-    fb.draw_text_centered(w / 2, h - 28, text, &SMALL_FACE, 0, theme::MUTED);
+    fb.draw_text_centered(
+        fb.width() as i32 / 2,
+        fb.height() as i32 - 28,
+        text,
+        &SMALL_FACE,
+        0,
+        theme::MUTED,
+    );
 }
 
 

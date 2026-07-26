@@ -574,8 +574,6 @@ pub struct Screen {
     back: Surface,
     fb: *mut u8,
     fb_pitch: usize,
-    w: usize,
-    h: usize,
     /// False when the mode is bigger than the back buffer and we draw straight
     /// into video memory instead. Flickers, but a large display must still boot.
     buffered: bool,
@@ -610,7 +608,7 @@ impl Screen {
         } else {
             Surface::from_parts(addr, w, h, pitch as usize)
         };
-        Some(Self { back, fb: addr, fb_pitch: pitch as usize, w, h, buffered })
+        Some(Self { back, fb: addr, fb_pitch: pitch as usize, buffered })
     }
 
     /// The surface to draw on. Nothing is visible until [`Self::present`].
@@ -644,11 +642,12 @@ impl Screen {
         }
         self.back.clear_dirty();
         let a = alpha_q16.clamp(0, 1 << 16) as u32;
-        for y in 0..self.h {
+        let (w, h) = (self.back.width(), self.back.height());
+        for y in 0..h {
             let dst = unsafe { self.fb.add(y * self.fb_pitch).cast::<u32>() };
             // Source row, shifted: rows above the offset show the backdrop.
             let sy = y as i32 - dy;
-            for x in 0..self.w {
+            for x in 0..w {
                 let px = if sy < 0 {
                     bg
                 } else {
@@ -670,14 +669,19 @@ impl Screen {
             return;
         }
         self.back.clear_dirty();
-        self.blit(0, 0, self.w as i32, self.h as i32);
+        self.blit(
+            0,
+            0,
+            self.back.width() as i32,
+            self.back.height() as i32,
+        );
     }
 
     fn blit(&self, x0: i32, y0: i32, x1: i32, y1: i32) {
         let x0 = x0.max(0) as usize;
         let y0 = y0.max(0) as usize;
-        let x1 = (x1.max(0) as usize).min(self.w);
-        let y1 = (y1.max(0) as usize).min(self.h);
+        let x1 = (x1.max(0) as usize).min(self.back.width());
+        let y1 = (y1.max(0) as usize).min(self.back.height());
         for y in y0..y1 {
             let src = unsafe { self.back.addr.add(y * self.back.pitch).cast::<u32>() };
             let dst = unsafe { self.fb.add(y * self.fb_pitch).cast::<u32>() };

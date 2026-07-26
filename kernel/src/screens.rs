@@ -59,7 +59,8 @@ pub fn caps_hit(w: i32, x: i32, y: i32) -> Option<usize> {
 }
 
 /// Shared top chrome: Back, centered title, rule, optional heading.
-pub fn chrome(fb: &Surface, w: i32, title: &str, heading: Option<&str>) {
+pub fn chrome(fb: &Surface, title: &str, heading: Option<&str>) {
+    let w = fb.width() as i32;
     fb.fill(theme::BG);
     let back = back_rect();
     fb.draw_text(back.x, back.y + BTN_FACE.baseline(), "Back", &BTN_FACE, 0, theme::ACCENT);
@@ -88,7 +89,7 @@ fn row(fb: &Surface, w: i32, i: usize, title: &str, sub: &str) -> ui::Rect {
 /// Skills the agent can load — names from bridge `skills.list`, else builtins.
 pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
     let w = fb.width() as i32;
-    chrome(fb, w, "Skills", Some("Playbooks the agent can load"));
+    chrome(fb, "Skills", Some("Playbooks the agent can load"));
 
     let n = peek.count.min(6);
     for i in 0..n {
@@ -126,7 +127,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
 /// Live capability switches. Clicking a row toggles the grant.
 pub fn draw_caps(fb: &Surface, grants: Caps) {
     let w = fb.width() as i32;
-    chrome(fb, w, "Capabilities", Some("What the agent may do"));
+    chrome(fb, "Capabilities", Some("What the agent may do"));
 
     for (i, cap) in Cap::ALL.iter().enumerate() {
         let on = grants.allows(*cap);
@@ -146,15 +147,6 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
         0,
         theme::MUTED,
     );
-}
-
-/// Toggle capability `i`, returning the new grant set.
-pub fn toggle(grants: Caps, i: usize) -> Caps {
-    let mut g = grants;
-    if let Some(c) = Cap::ALL.get(i) {
-        g.set(*c, !g.allows(*c));
-    }
-    g
 }
 
 #[cfg(test)]
@@ -188,21 +180,6 @@ mod tests {
         assert_eq!(caps_hit(1024, 2, y + h / 2), None);
         // Above the first row.
         assert_eq!(caps_hit(1024, 512, TOP - 5), None);
-    }
-
-    #[test]
-    fn toggle_flips_only_the_named_capability() {
-        let g = Caps::none();
-        let after = toggle(g, 0);
-        assert!(after.allows(Cap::ALL[0]));
-        assert!(!after.allows(Cap::ALL[1]), "toggling one must not affect another");
-        assert!(!toggle(after, 0).allows(Cap::ALL[0]), "must toggle back off");
-    }
-
-    #[test]
-    fn toggle_out_of_range_is_a_noop() {
-        let g = Caps::default_grants();
-        assert_eq!(toggle(g, 99), g);
     }
 
     #[test]

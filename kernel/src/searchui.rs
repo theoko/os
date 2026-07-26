@@ -120,7 +120,7 @@ impl SearchView {
     ///
     /// The baked corpus is a handful of documents about the OS itself, so a
     /// question about the user's own work legitimately finds nothing here.
-    pub fn run(&mut self, q: &str) {
+    fn run(&mut self, q: &str) {
         self.searched = true;
         self.count = 0;
         self.source = Source::offline();
@@ -170,6 +170,11 @@ impl SearchView {
         }
         self.source = source;
     }
+
+    /// Which drawn result contains `(x, y)`, if any.
+    pub fn hit(&self, w: i32, x: i32, y: i32) -> Option<usize> {
+        crate::ui::hit_among(self.count.min(search::MAX_HITS), x, y, |i| row_rect(w, i))
+    }
 }
 
 const FIELD_H: i32 = 52;
@@ -187,11 +192,6 @@ pub fn row_rect(w: i32, i: usize) -> crate::ui::Rect {
     crate::ui::Rect::new(f.x, f.y + f.h + 26 + i as i32 * (ROW_H + 10), f.w, ROW_H)
 }
 
-/// Which result was clicked, if any.
-pub fn result_hit(w: i32, count: usize, x: i32, y: i32) -> Option<usize> {
-    crate::ui::hit_among(count.min(search::MAX_HITS), x, y, |i| row_rect(w, i))
-}
-
 /// Draw the search screen.
 pub fn draw(
     fb: &Surface,
@@ -200,24 +200,14 @@ pub fn draw(
     status: crate::mcp::BridgeStatus,
 ) {
     let w = fb.width() as i32;
-    screens::chrome(fb, w, "Search", Some("What do you want to know?"));
+    screens::chrome(fb, "Search", Some("What do you want to know?"));
 
     // Input field.
     let f = field_rect(w);
-    let (fx, fy, fw, fh) = (f.x, f.y, f.w, f.h);
-    crate::ui::draw_query_field(
-        fb,
-        fx,
-        fy,
-        fw,
-        fh,
-        query,
-        "Type a query, then press Enter",
-        None,
-    );
+    crate::ui::draw_query_field(fb, f, query, "Type a query, then press Enter", None);
 
     // Results.
-    let mut y = fy + fh + 26;
+    let mut y = f.y + f.h + 26;
     if !view.searched {
         let note = match status {
             crate::mcp::BridgeStatus::Online => {
@@ -235,12 +225,12 @@ pub fn draw(
 
     for i in 0..view.count {
         let r = &view.rows[i];
-        crate::ui::outlined_round_rect(fb, fx, y, fw, ROW_H, 10);
-        fb.draw_text(fx + 18, y + 26, r.title(), &BRAND_FACE, 0, theme::INK);
+        crate::ui::outlined_round_rect(fb, f.x, y, f.w, ROW_H, 10);
+        fb.draw_text(f.x + 18, y + 26, r.title(), &BRAND_FACE, 0, theme::INK);
         // Category chip, right-aligned.
         let cw = SMALL_FACE.width(r.cat(), 0);
-        fb.draw_text(fx + fw - 18 - cw, y + 26, r.cat(), &SMALL_FACE, 0, theme::ACCENT);
-        fb.draw_text(fx + 18, y + 48, r.url(), &SMALL_FACE, 0, theme::MUTED);
+        fb.draw_text(f.x + f.w - 18 - cw, y + 26, r.cat(), &SMALL_FACE, 0, theme::ACCENT);
+        fb.draw_text(f.x + 18, y + 48, r.url(), &SMALL_FACE, 0, theme::MUTED);
         y += ROW_H + 10;
     }
 }
@@ -403,7 +393,7 @@ mod teddy_tests {
 pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
-    screens::chrome(fb, w, "", None);
+    screens::chrome(fb, "", None);
 
     let fx = field_rect(w).x;
     fb.draw_text(fx, 108, title, &TITLE_FACE, font::tracking_pct(TITLE_FACE.px, -20), theme::INK);
@@ -437,25 +427,29 @@ mod reader_tests {
 
     #[test]
     fn result_rows_are_clickable_at_their_centre() {
+        let mut v = SearchView::new();
+        v.count = search::MAX_HITS;
         for i in 0..search::MAX_HITS {
             let r = row_rect(1024, i);
-            let (x, y, w, h) = (r.x, r.y, r.w, r.h);
-            assert_eq!(result_hit(1024, search::MAX_HITS, x + w / 2, y + h / 2), Some(i));
+            assert_eq!(v.hit(1024, r.x + r.w / 2, r.y + r.h / 2), Some(i));
         }
     }
 
     #[test]
     fn clicks_below_the_last_result_open_nothing() {
+        let mut v = SearchView::new();
+        v.count = search::MAX_HITS;
         let r = row_rect(1024, search::MAX_HITS - 1);
-        assert_eq!(result_hit(1024, search::MAX_HITS, 512, r.y + r.h + 40), None);
+        assert_eq!(v.hit(1024, 512, r.y + r.h + 40), None);
     }
 
     #[test]
     fn rows_beyond_the_result_count_are_not_hittable() {
         // Only the rows actually drawn may be opened.
+        let mut v = SearchView::new();
+        v.count = 1;
         let r = row_rect(1024, 2);
-        let (x, y, w, h) = (r.x, r.y, r.w, r.h);
-        assert_eq!(result_hit(1024, 1, x + w / 2, y + h / 2), None);
+        assert_eq!(v.hit(1024, r.x + r.w / 2, r.y + r.h / 2), None);
     }
 
     #[test]

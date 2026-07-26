@@ -90,11 +90,10 @@ unsafe extern "C" fn kmain() -> ! {
                 // Everything composes in cached RAM; `present()` is the only
                 // thing that touches video memory.
                 let surface = screen.surface();
-                let mut grants = caps::Caps::none();
 
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
-                ui::draw_home_full(surface, &mail, &skill_peek, grants, "");
+                ui::draw_home_full(surface, &mail, &skill_peek, caps::Caps::none(), "");
                 mouse::draw_arrow(surface, cx, cy);
                 screen.present();
                 serial_port.write_str("mouse: pointer painted\n");
@@ -137,8 +136,6 @@ unsafe extern "C" fn kmain() -> ! {
                 }
 
                 let mut cursor = mouse::Cursor::new();
-                let mut x = cx;
-                let mut y = cy;
                 let mut prev_buttons = 0u8;
                 let mut setup = setup::Setup::new();
                 let mut kb = keyboard::Keyboard::new();
@@ -150,7 +147,7 @@ unsafe extern "C" fn kmain() -> ! {
                 // First boot: run the setup journey before the home screen.
                 cursor.hide(surface);
                 setup.draw(surface, mail.status, &skill_peek);
-                cursor.show_at(surface, x, y);
+                cursor.show_at(surface, mice.x, mice.y);
                 enter(&screen);
                 serial_port.write_str("ui: setup welcome\n");
                 // Chime after the first frame is up, so the screen is never
@@ -179,24 +176,20 @@ unsafe extern "C" fn kmain() -> ! {
                     let mut moved = false;
                     if let Some(ref mut t) = tablet {
                         if t.poll(w, h) {
-                            x = t.x;
-                            y = t.y;
+                            mice.x = t.x;
+                            mice.y = t.y;
+                            mice.buttons = t.buttons;
                             buttons = t.buttons;
-                            mice.x = x;
-                            mice.y = y;
-                            mice.buttons = buttons;
                             moved = true;
                         }
                     } else if mice.poll(w, h) {
-                        x = mice.x;
-                        y = mice.y;
                         buttons = mice.buttons;
                         moved = true;
                     }
 
                     if !setup.is_finished() {
                         let before = setup.step;
-                        if setup.pointer(x, y, buttons) {
+                        if setup.pointer(mice.x, mice.y, buttons) {
                             // Entering the Bridge step: re-probe COM2 so the
                             // status card reflects a bridge that came up after boot.
                             if setup.step == setup::Step::Bridge && before != setup::Step::Bridge {
@@ -213,19 +206,18 @@ unsafe extern "C" fn kmain() -> ! {
                                 log_skill_source(&serial_port, &skill_peek);
                             }
                             if setup.is_finished() {
-                                grants = setup.caps;
                                 serial_port.write_str("ui: setup done\n");
                                 serial_port.write_str("caps: ");
-                                serial_port.write_u64(grants.granted_count() as u64);
+                                serial_port.write_u64(setup.caps.granted_count() as u64);
                                 serial_port.write_str(" granted\n");
-                                mail = mcp::fetch_mail_peek(grants);
+                                mail = mcp::fetch_mail_peek(setup.caps);
                                 view = screens::View::Home;
                                 repaint(
                                     &mut cursor,
                                     surface,
                                     &screen,
-                                    x,
-                                    y,
+                                    mice.x,
+                                    mice.y,
                                     &mut moved,
                                     view,
                                     &mail,
@@ -234,12 +226,12 @@ unsafe extern "C" fn kmain() -> ! {
                                     &sview,
                                     "",
                                     &page,
-                                    grants,
+                                    setup.caps,
                                 );
                             } else {
                                 cursor.hide(surface);
                                 setup.draw(surface, mail.status, &skill_peek);
-                                cursor.show_at(surface, x, y);
+                                cursor.show_at(surface, mice.x, mice.y);
                                 enter(&screen);
                                 moved = false;
                             }
@@ -255,7 +247,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 key,
                                 &mut query,
                                 &mut sview,
-                                grants,
+                                setup.caps,
                                 &serial_port,
                             ) {
                                 dirty = true;
@@ -264,7 +256,7 @@ unsafe extern "C" fn kmain() -> ! {
                         if click_edge(buttons, prev_buttons) {
                             if on_home {
                                 let targets = ui::home_targets(w);
-                                match targets.hit(x, y) {
+                                match targets.hit(mice.x, mice.y) {
                                     Some(ui::HomeHit::SearchField)
                                     | Some(ui::HomeHit::Card(ui::CardId::Search)) => {
                                         serial_port.write_str("ui: open search\n");
@@ -275,7 +267,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     }
                                     Some(ui::HomeHit::Connect) => {
                                         serial_port.write_str("ui: connect bridge\n");
-                                        mail = mcp::fetch_mail_peek(grants);
+                                        mail = mcp::fetch_mail_peek(setup.caps);
                                         log_mail_status(&serial_port, mail.status);
                                         dirty = true;
                                     }
@@ -293,7 +285,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     }
                                     None => {}
                                 }
-                            } else if screens::back_rect().contains(x, y) {
+                            } else if screens::back_rect().contains(mice.x, mice.y) {
                                 // Back from the reader returns to results.
                                 view = if view == screens::View::Reader {
                                     screens::View::Search
@@ -302,23 +294,23 @@ unsafe extern "C" fn kmain() -> ! {
                                 };
                                 dirty = true;
                             } else if view == screens::View::Search {
-                                if let Some(i) = searchui::result_hit(w, sview.count, x, y) {
+                                if let Some(i) = sview.hit(w, mice.x, mice.y) {
                                     let row = &sview.rows[i];
                                     skills::copy_field(&mut open_title, row.title());
-                                    page = mcp::fetch_doc(grants, row.url());
+                                    page = mcp::fetch_doc(setup.caps, row.url());
                                     view = screens::View::Reader;
                                     serial_port.write_str("ui: open doc\n");
                                     dirty = true;
                                 }
                             } else if view == screens::View::Caps {
-                                if let Some(i) = screens::caps_hit(w, x, y) {
-                                    let before = grants;
-                                    grants = screens::toggle(grants, i);
+                                if let Some(i) = screens::caps_hit(w, mice.x, mice.y) {
+                                    let before = setup.caps;
+                                    setup.caps.toggle(i);
                                     for (cap, tool) in [
                                         (caps::Cap::WorkspaceIndex, "workspace.forget"),
                                         (caps::Cap::AudioTranscribe, "audio.forget"),
                                     ] {
-                                        if before.allows(cap) && !grants.allows(cap) {
+                                        if before.allows(cap) && !setup.caps.allows(cap) {
                                             mcp::forget(tool);
                                             serial_port.write_str("caps: revoked ");
                                             serial_port.write_str(cap.name());
@@ -334,8 +326,8 @@ unsafe extern "C" fn kmain() -> ! {
                                 &mut cursor,
                                 surface,
                                 &screen,
-                                x,
-                                y,
+                                mice.x,
+                                mice.y,
                                 &mut moved,
                                 view,
                                 &mail,
@@ -344,13 +336,13 @@ unsafe extern "C" fn kmain() -> ! {
                                 &sview,
                                 skills::str_at(&open_title),
                                 &page,
-                                grants,
+                                setup.caps,
                             );
                         }
                     }
                     prev_buttons = buttons;
                     if moved {
-                        cursor.show_at(surface, x, y);
+                        cursor.show_at(surface, mice.x, mice.y);
                         // hide()/show_at() marked both footprints; present()
                         // blits exactly that union and nothing else.
                         screen.present();
