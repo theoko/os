@@ -142,25 +142,26 @@ impl Serial {
     }
 }
 
-/// Ask QEMU's `isa-debug-exit` to quit. No-op on UTM / hosts without that device;
-/// caller may continue (e.g. interactive mouse loop).
-pub fn request_qemu_exit(success: bool) {
-    #[cfg(target_arch = "x86_64")]
-    {
-        let code: u8 = if success { 0x10 } else { 0x11 };
-        unsafe {
-            port::outb(0xf4, code);
-        }
-    }
-    #[cfg(not(target_arch = "x86_64"))]
-    let _ = success;
+/// Ask QEMU's `isa-debug-exit` to quit with success (`0x10`). No-op on UTM /
+/// hosts without that device; caller may continue (e.g. interactive mouse loop).
+pub fn request_qemu_exit() {
+    debug_exit(0x10);
 }
 
-/// Fail the QEMU smoke run and halt. Success uses [`request_qemu_exit`]`(true)`
-/// without halting so the guest can keep running under UTM.
+/// Fail the QEMU smoke run (`0x11`) and halt. Success uses
+/// [`request_qemu_exit`] without halt so the guest can keep running under UTM.
 pub fn exit_qemu() -> ! {
-    request_qemu_exit(false);
+    debug_exit(0x11);
     halt()
+}
+
+fn debug_exit(code: u8) {
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        port::outb(0xf4, code);
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    let _ = code;
 }
 
 pub(crate) fn halt() -> ! {

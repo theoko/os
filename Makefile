@@ -122,7 +122,7 @@ limine/limine:
 
 clean:
 	$(WITH_RUST) $(CARGO) clean
-	rm -rf iso_root $(IMAGE_NAME).iso serial.out .smoke-*
+	rm -rf iso_root $(IMAGE_NAME).iso
 
 distclean: clean
 	rm -rf limine

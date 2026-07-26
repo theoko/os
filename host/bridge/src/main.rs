@@ -40,12 +40,12 @@ const TOOLS: &[&str] = &[
 ];
 
 /// `read_line` with a hard length cap so a peer that never sends `\n` cannot
-/// grow the buffer without bound. `Ok(None)` = EOF, `Err` on I/O or oversize.
-fn read_line_bounded<R: BufRead>(reader: &mut R, line: &mut String) -> std::io::Result<Option<()>> {
+/// grow the buffer without bound. `Ok(true)` = got a line, `Ok(false)` = EOF.
+fn read_line_bounded<R: BufRead>(reader: &mut R, line: &mut String) -> std::io::Result<bool> {
     line.clear();
     let n = reader.take(MAX_LINE).read_line(line)?;
     if n == 0 {
-        return Ok(None);
+        return Ok(false);
     }
     if n as u64 == MAX_LINE && !line.ends_with('\n') {
         return Err(std::io::Error::new(
@@ -53,7 +53,7 @@ fn read_line_bounded<R: BufRead>(reader: &mut R, line: &mut String) -> std::io::
             "line exceeds MAX_LINE",
         ));
     }
-    Ok(Some(()))
+    Ok(true)
 }
 
 fn main() {
@@ -130,7 +130,7 @@ fn handle_client<R: Read, W: Write>(
 ) -> std::io::Result<()> {
     let mut raw = String::new();
     loop {
-        if read_line_bounded(&mut reader, &mut raw)?.is_none() {
+        if !read_line_bounded(&mut reader, &mut raw)? {
             break;
         }
         // UEFI/Limine also write to COM2 under UTM; strip CSI/controls so a
@@ -156,7 +156,7 @@ fn handle_client<R: Read, W: Write>(
                 let mut body = String::new();
                 let mut ended = false;
                 loop {
-                    if read_line_bounded(&mut reader, &mut raw)?.is_none() {
+                    if !read_line_bounded(&mut reader, &mut raw)? {
                         break;
                     }
                     let t = raw.trim_end_matches(['\r', '\n']);
