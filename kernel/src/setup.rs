@@ -20,7 +20,7 @@ use crate::ui::{self, theme};
 pub enum Action {
     Continue,
     Back,
-    /// A selectable/toggleable row.
+    /// Capability row toggle (setup Skills rows are paint-only).
     Row(usize),
 }
 
