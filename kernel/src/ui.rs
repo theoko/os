@@ -237,6 +237,50 @@ pub fn draw_home(
 /// A search field you can type into immediately, three destinations carrying
 /// live counts, the last Brief when a skill has run, and recent mail when
 /// granted.
+
+/// Repaint just the search field: its box, its text and its caret.
+///
+/// Typing used to go through `draw_home_full`, which opens with
+/// `fb.fill(theme::BG)` - it clears and redraws every pixel on the screen. A
+/// full present costs ~22.5ms over emulated MMIO (see
+/// docs/substrate-measurement-os-doc-v01.md), and that happened on every
+/// keypress *and* on every caret-blink flip at 1.2Hz. The screen was being
+/// rewritten top-to-bottom while it was being displayed, which is visible as a
+/// flicker and catches text mid-redraw.
+///
+/// Nothing outside this rectangle changes when you type, so nothing outside it
+/// needs redrawing. The dirty-rect presenter then moves a few thousand pixels
+/// instead of a megabyte.
+pub fn draw_search_field(
+    fb: &Surface,
+    w: i32,
+    h: i32,
+    query: &str,
+    caret: bool,
+    level: crate::level::Level,
+) {
+    let (fx, fy, fw, fh) = search_rect(w, h);
+    fb.fill_round_rect(fx, fy, fw, fh, 12, theme::RULE);
+    fb.fill_round_rect(fx + 1, fy + 1, fw - 2, fh - 2, 11, theme::BG);
+    let base = fy + (fh - BODY_FACE.px) / 2 + BODY_FACE.baseline();
+    if query.is_empty() {
+        fb.draw_text(
+            fx + 18,
+            base,
+            level.home_search_placeholder(),
+            &BODY_FACE,
+            0,
+            theme::MUTED,
+        );
+    } else {
+        fb.draw_text(fx + 18, base, query, &BODY_FACE, 0, theme::INK);
+    }
+    if caret {
+        let cx = fx + 18 + BODY_FACE.width(query, 0) + 2;
+        fb.fill_rect(cx, fy + 14, 2, fh - 28, theme::INK);
+    }
+}
+
 pub fn draw_home_full(
     fb: &Surface,
     mail: &MailPeek,
@@ -258,26 +302,8 @@ pub fn draw_home_full(
     let (x0, cw) = home_column(w);
 
     // The one thing you can do without clicking anything first.
-    let (fx, fy, fw, fh) = search_rect(w, h);
-    fb.fill_round_rect(fx, fy, fw, fh, 12, theme::RULE);
-    fb.fill_round_rect(fx + 1, fy + 1, fw - 2, fh - 2, 11, theme::BG);
-    let base = fy + (fh - BODY_FACE.px) / 2 + BODY_FACE.baseline();
-    if query.is_empty() {
-        fb.draw_text(
-            fx + 18,
-            base,
-            level.home_search_placeholder(),
-            &BODY_FACE,
-            0,
-            theme::MUTED,
-        );
-    } else {
-        fb.draw_text(fx + 18, base, query, &BODY_FACE, 0, theme::INK);
-    }
-    if caret {
-        let cx = fx + 18 + BODY_FACE.width(query, 0) + 2;
-        fb.fill_rect(cx, fy + 14, 2, fh - 28, theme::INK);
-    }
+    let (fx, fy, _fw, fh) = search_rect(w, h);
+    draw_search_field(fb, w, h, query, caret, level);
     fb.draw_text(
         fx + 2,
         fy + fh + 22,

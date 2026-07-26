@@ -584,6 +584,11 @@ unsafe extern "C" fn kmain() -> ! {
 
                         // Type straight into the home field - no click first.
                         let mut dirty = false;
+                        // True when the ONLY thing that changed is the query text. Typing must
+                        // not repaint the whole screen: draw_home_full opens with fill(BG), and a
+                        // full present costs ~22.5ms over emulated MMIO, which is visible as a
+                        // flicker on every keypress.
+                        let mut query_only = false;
                         while let Some(key) = poll_key(&mut ohci_input, &mut kb) {
                             match key {
                                 keyboard::Key::Enter => {
@@ -596,12 +601,14 @@ unsafe extern "C" fn kmain() -> ! {
                                             query.as_str(),
                                         ) {
                                             view = screens::View::Search;
+                                            query_only = false;
                                             dirty = true;
                                         } else {
                                             // Agentic home: plan/act under caps,
                                             // then a Brief with openable Doc rows.
                                             brief = agent::run_goal(query.as_str(), grants);
                                             view = screens::View::Brief;
+                                            query_only = false;
                                             serial_port.write_str("agent: ran goal\n");
                                             dirty = true;
                                         }
@@ -623,12 +630,14 @@ unsafe extern "C" fn kmain() -> ! {
                                     // whatever this screen believed last time.
                                     portal_cfg.refresh(mcp::config_status());
                                     view = screens::View::PortalConfig;
+                                    query_only = false;
                                     serial_port.write_str("ui: config screen\n");
                                     dirty = true;
                                 }
                                 other => {
                                     if query.apply(other) {
                                         dirty = true;
+                                        query_only = true;
                                     }
                                 }
                             }
@@ -656,6 +665,18 @@ unsafe extern "C" fn kmain() -> ! {
                                         scroll,
                                     )
                                 }
+                                // Typing changes one rectangle. Repainting
+                                // the screen for it clears and rewrites every
+                                // pixel, which at ~22.5ms a present is visible
+                                // as a flicker on each keypress.
+                                _ if query_only => ui::draw_search_field(
+                                    surface,
+                                    w,
+                                    h,
+                                    query.as_str(),
+                                    caret,
+                                    level,
+                                ),
                                 _ => ui::draw_home_full(
                                     surface,
                                     &mail,
@@ -1377,19 +1398,18 @@ unsafe extern "C" fn kmain() -> ! {
                     if blink_changed && setup.is_finished() {
                         match view {
                             screens::View::Home => {
-                                ui::draw_home_full(
+                                // Only the caret changed. Repainting the whole
+                                // screen for it cost a ~22.5ms full present
+                                // twice a second and made the display visibly
+                                // flicker while it was being rewritten.
+                                ui::draw_search_field(
                                     surface,
-                                    &mail,
-                                    &files,
-                                    &skill_peek,
-                                    status_str(&status_buf, status_len),
+                                    w,
+                                    h,
                                     query.as_str(),
                                     caret,
-                                    grants,
-                                    &brief,
                                     level,
                                 );
-                                ui::paint_chill_rule(surface, w, tick);
                             }
                             screens::View::Search => {
                                 searchui::draw(
