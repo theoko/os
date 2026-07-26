@@ -359,7 +359,7 @@ fn handle_key(
 ) -> bool {
     match (*view, key) {
         (screens::View::Home, keyboard::Key::Enter) => {
-            if query.is_empty() {
+            if query.as_str().trim().is_empty() {
                 return false;
             }
             sview.run_via(query.as_str(), grants);
@@ -376,6 +376,9 @@ fn handle_key(
         }
         (screens::View::Home, other) => query.apply(other),
         (screens::View::Search, keyboard::Key::Enter) => {
+            if query.as_str().trim().is_empty() {
+                return false;
+            }
             sview.run_via(query.as_str(), grants);
             serial.write_str("search: ran\n");
             true

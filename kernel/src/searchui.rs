@@ -62,7 +62,7 @@ const TEDDY: &str = "Teddy is looking into it.";
 enum Phase {
     /// No query run yet — idle tip uses live bridge status, not this.
     Idle,
-    /// Queried, but COM2 was down (or the query was empty).
+    /// Queried, but COM2 was down.
     Offline,
     /// `search.query` was not granted.
     Denied,
@@ -75,7 +75,8 @@ impl Phase {
     fn empty_reason(self) -> &'static str {
         match self {
             // Idle is exhaustive only; draw never paints empty_reason while idle.
-            Phase::Idle | Phase::Offline => crate::mcp::NO_MATCHES_BRIDGE_OFFLINE,
+            Phase::Idle => "",
+            Phase::Offline => crate::mcp::NO_MATCHES_BRIDGE_OFFLINE,
             Phase::Denied => TEDDY,
             Phase::Online { files, mail } => {
                 if !files {
@@ -128,7 +129,8 @@ impl SearchView {
     pub fn run_via(&mut self, q: &str, caps: crate::caps::Caps) {
         self.count = 0;
         if q.trim().is_empty() {
-            self.phase = Phase::Offline;
+            // Do not claim the bridge is down — nothing was queried.
+            self.phase = Phase::Idle;
             return;
         }
         // Refuse before CALL: no PING/LIST traffic without the search cap.
@@ -256,14 +258,10 @@ mod tests {
     }
 
     #[test]
-    fn empty_query_searches_nothing_but_marks_searched() {
+    fn empty_query_stays_idle() {
         let mut v = SearchView::new();
         v.run_via("   ", crate::caps::Caps::none());
-        assert_ne!(
-            v.phase,
-            Phase::Idle,
-            "must distinguish 'ran and found nothing' from idle"
-        );
+        assert_eq!(v.phase, Phase::Idle, "whitespace is not a bridge outage");
         assert_eq!(v.count, 0);
     }
 
