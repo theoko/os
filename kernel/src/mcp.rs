@@ -47,13 +47,19 @@ impl MailPeek {
     }
 }
 
-/// One pass over a ROW for up to two keys (avoids re-splitting the line).
-/// Pass `""` for `kb` when only one key is needed.
-fn parse_row_pair<'a>(line: &'a str, ka: &str, kb: &str) -> (Option<&'a str>, Option<&'a str>) {
+/// One pass over a ROW for up to three keys (avoids re-splitting the line).
+/// Pass `""` for unused keys.
+fn parse_row_triple<'a>(
+    line: &'a str,
+    ka: &str,
+    kb: &str,
+    kc: &str,
+) -> (Option<&'a str>, Option<&'a str>, Option<&'a str>) {
     let mut a = None;
     let mut b = None;
+    let mut c = None;
     let Some(rest) = line.strip_prefix("ROW ") else {
-        return (None, None);
+        return (None, None, None);
     };
     for part in rest.split('|') {
         if let Some((k, v)) = part.split_once('=') {
@@ -61,9 +67,16 @@ fn parse_row_pair<'a>(line: &'a str, ka: &str, kb: &str) -> (Option<&'a str>, Op
                 a = Some(v);
             } else if k == kb {
                 b = Some(v);
+            } else if !kc.is_empty() && k == kc {
+                c = Some(v);
             }
         }
     }
+    (a, b, c)
+}
+
+fn parse_row_pair<'a>(line: &'a str, ka: &str, kb: &str) -> (Option<&'a str>, Option<&'a str>) {
+    let (a, b, _) = parse_row_triple(line, ka, kb, "");
     (a, b)
 }
 
@@ -287,7 +300,7 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> bool {
 pub(crate) fn fetch_search_rows(
     caps: crate::caps::Caps,
     q: &str,
-    mut on_hit: impl FnMut(&str, &str) -> bool,
+    mut on_hit: impl FnMut(&str, &str, &str) -> bool,
 ) -> DocOutcome {
     // Offline: UI falls back to the baked index via SearchView::fill_local.
     when_online(DocOutcome::Offline, |com2, line| {
@@ -307,9 +320,13 @@ pub(crate) fn fetch_search_rows(
         com2.write_str("\n");
 
         let saw_err = for_each_ok_rows(com2, line, 16, |resp| {
-            let (title, url) = parse_row_pair(resp, "title", "url");
+            let (title, url, cat) = parse_row_triple(resp, "title", "url", "cat");
             // Caller enforces MAX_HITS (returns false to stop).
-            on_hit(title.unwrap_or("?"), url.unwrap_or(""))
+            on_hit(
+                title.unwrap_or("?"),
+                url.unwrap_or(""),
+                cat.unwrap_or(""),
+            )
         });
         if saw_err {
             DocOutcome::Err
@@ -325,10 +342,14 @@ mod tests {
 
     #[test]
     fn parse_row_field_extracts_keys() {
-        let search = "ROW title=MCP overview|url=https://example/mcp";
+        let search = "ROW title=MCP overview|cat=docs|url=https://example/mcp";
         assert_eq!(
-            parse_row_pair(search, "title", "url"),
-            (Some("MCP overview"), Some("https://example/mcp"))
+            parse_row_triple(search, "title", "url", "cat"),
+            (
+                Some("MCP overview"),
+                Some("https://example/mcp"),
+                Some("docs"),
+            )
         );
 
         let skill = "ROW name=email-triage|desc=Inbox via MCP email";

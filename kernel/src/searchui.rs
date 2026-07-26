@@ -26,18 +26,23 @@ pub const QUERY_MAX: usize = 64;
 struct Row {
     title: [u8; 56],
     url: [u8; 72],
-    cat: &'static str,
+    /// Owned like title/url — bridge `cat=` outlives the COM2 line buffer.
+    cat: [u8; 16],
 }
 
 impl Row {
     const fn empty() -> Self {
-        Self { title: [0; 56], url: [0; 72], cat: "" }
+        Self {
+            title: [0; 56],
+            url: [0; 72],
+            cat: [0; 16],
+        }
     }
 
-    fn set(&mut self, title: &str, url: &str, cat: &'static str) {
+    fn set(&mut self, title: &str, url: &str, cat: &str) {
         copy_field(&mut self.title, title);
         copy_field(&mut self.url, url);
-        self.cat = cat;
+        copy_field(&mut self.cat, cat);
     }
 
     fn title(&self) -> &str {
@@ -48,6 +53,9 @@ impl Row {
         str_at(&self.url)
     }
 
+    fn cat(&self) -> &str {
+        str_at(&self.cat)
+    }
 }
 
 /// Shown when something actually broke, as opposed to simply finding nothing.
@@ -144,12 +152,11 @@ impl SearchView {
         // Rows are filled once from the COM2 parse — no intermediate peek buffer.
         use crate::caps::Cap;
         use crate::mcp::DocOutcome;
-        match crate::mcp::fetch_search_rows(caps, q, |title, url| {
+        match crate::mcp::fetch_search_rows(caps, q, |title, url, cat| {
             if self.count >= search::MAX_HITS {
                 return false;
             }
-            // No cat chip until we parse wire `cat=` — do not invent "bridge".
-            self.rows[self.count].set(title, url, "");
+            self.rows[self.count].set(title, url, cat);
             self.count += 1;
             true
         }) {
@@ -234,13 +241,14 @@ pub fn draw(
         let row = &view.rows[i];
         crate::ui::outlined_round_rect(fb, rect, 10);
         fb.draw_text(rect.x + 18, rect.y + 26, row.title(), &BRAND_FACE, 0, theme::INK);
-        // Category chip for baked hits (bridge leaves cat empty until wire parse).
-        if !row.cat.is_empty() {
-            let cw = SMALL_FACE.width(row.cat, 0);
+        // Category chip (baked index or bridge `cat=`).
+        let cat = row.cat();
+        if !cat.is_empty() {
+            let cw = SMALL_FACE.width(cat, 0);
             fb.draw_text(
                 rect.x + rect.w - 18 - cw,
                 rect.y + 26,
-                row.cat,
+                cat,
                 &SMALL_FACE,
                 0,
                 theme::ACCENT,
