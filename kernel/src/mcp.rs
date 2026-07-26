@@ -60,27 +60,21 @@ struct SearchHit {
 /// Callers must hold [`crate::caps::Cap::SearchQuery`] before calling
 /// [`fetch_search_peek`]; the cap gate lives in the UI, not here.
 pub(crate) struct SearchPeek {
-    pub(crate) status: BridgeStatus,
     pub(crate) count: usize,
     hits: [SearchHit; crate::search::MAX_HITS],
 }
 
 impl SearchPeek {
-    const fn empty(status: BridgeStatus) -> Self {
+    const fn empty() -> Self {
         const EMPTY: SearchHit = SearchHit { title: [0; 48], url: [0; 72] };
         Self {
-            status,
             count: 0,
             hits: [EMPTY; crate::search::MAX_HITS],
         }
     }
 
-    pub(crate) fn title_at(&self, i: usize) -> &str {
-        str_at(&self.hits[i].title)
-    }
-
-    pub(crate) fn url_at(&self, i: usize) -> &str {
-        str_at(&self.hits[i].url)
+    pub(crate) fn at(&self, i: usize) -> (&str, &str) {
+        (str_at(&self.hits[i].title), str_at(&self.hits[i].url))
     }
 }
 
@@ -339,9 +333,10 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
 ///
 /// Caller must hold [`crate::caps::Cap::SearchQuery`]. Scope flags
 /// (`email=1`, `files=1`, …) still follow the rest of `caps`.
-pub(crate) fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
+/// Returns [`None`] when the bridge is offline.
+pub(crate) fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> Option<SearchPeek> {
     // Offline: UI falls back to the baked index via SearchView::fill_local.
-    when_online(SearchPeek::empty(BridgeStatus::Offline), |com2, line| {
+    when_online(None, |com2, line| {
         // CALL search.query q=… k=N [email=1]
         //
         // The email graph is opt-in per call on the bridge. Ask for it only when
@@ -357,7 +352,7 @@ pub(crate) fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek 
         write_scope_flags(com2, caps);
         com2.write_str("\n");
 
-        let mut peek = SearchPeek::empty(BridgeStatus::Online);
+        let mut peek = SearchPeek::empty();
         let _ = for_each_ok_rows(com2, line, 16, |resp| {
             if peek.count >= peek.hits.len() {
                 return false;
@@ -371,7 +366,7 @@ pub(crate) fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek 
             peek.count += 1;
             true
         });
-        peek
+        Some(peek)
     })
 }
 

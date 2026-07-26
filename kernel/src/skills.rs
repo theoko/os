@@ -32,7 +32,7 @@ pub(crate) const BUILTIN: &[SkillRef] = &[
 
 /// Names (+ short descs) from builtins or `CALL skills.list`.
 pub struct SkillPeek {
-    pub count: usize,
+    pub(crate) count: usize,
     /// True when the last fill came from the host bridge.
     pub from_bridge: bool,
     names: [[u8; 28]; 8],

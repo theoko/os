@@ -286,11 +286,8 @@ unsafe extern "C" fn kmain() -> ! {
                                 dirty = true;
                             } else if view == screens::View::Search {
                                 if let Some(i) = sview.hit(w, mice.x, mice.y) {
-                                    page = mcp::fetch_doc(
-                                        setup.caps,
-                                        sview.title_at(i),
-                                        sview.url_at(i),
-                                    );
+                                    let (title, url) = sview.at(i);
+                                    page = mcp::fetch_doc(setup.caps, title, url);
                                     view = screens::View::Reader;
                                     serial_port.write_str("ui: open doc\n");
                                     dirty = true;

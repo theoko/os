@@ -113,26 +113,30 @@ pub(crate) fn draw_titled_row(fb: &Surface, r: Rect, title: &str, sub: &str) {
 
 /// Shared search-field chrome used on Home and Search.
 ///
-/// `badge`, when set, is drawn muted on the far right inside the field
+/// Non-empty `badge` is drawn muted on the far right inside the field
 /// (e.g. "Offline Ready") so helper copy never sits under the input.
 pub(crate) fn draw_query_field(
     fb: &Surface,
     r: Rect,
     query: &str,
     placeholder: &str,
-    badge: Option<&str>,
+    badge: &str,
 ) {
     let Rect { x, y, w, h } = r;
     outlined_round_rect(fb, r, 12);
     let tx = x + 18;
     let base = y + (h - BODY_FACE.px) / 2 + BODY_FACE.ascent;
-    let badge_tw = badge.map(|b| SMALL_FACE.width(b, 0)).unwrap_or(0);
+    let badge_tw = if badge.is_empty() {
+        0
+    } else {
+        SMALL_FACE.width(badge, 0)
+    };
     if query.is_empty() {
         fb.draw_text(tx, base, placeholder, &BODY_FACE, 0, theme::MUTED);
     } else {
         fb.draw_text(tx, base, query, &BODY_FACE, 0, theme::INK);
     }
-    if let Some(badge) = badge {
+    if !badge.is_empty() {
         let bx = x + w - 18 - badge_tw;
         let bbase = y + (h - SMALL_FACE.px) / 2 + SMALL_FACE.ascent;
         fb.draw_text(bx, bbase, badge, &SMALL_FACE, 0, theme::MUTED);
@@ -200,10 +204,11 @@ pub fn draw_home_full(
         BridgeStatus::Online => "Online",
         BridgeStatus::Offline => "Offline Ready",
     };
-    draw_query_field(fb, r, query, "Search knowledge base...", Some(badge));
+    draw_query_field(fb, r, query, "Search knowledge base...", badge);
 
+    let n_grants = grants.granted_count();
     let mut gbuf = [0u8; 16];
-    let granted = fmt_n_label(&mut gbuf, grants.granted_count(), "Granted");
+    let granted = fmt_n_label(&mut gbuf, n_grants, "Granted");
     let mut sbuf = [0u8; 16];
     let playbooks = fmt_n_label(&mut sbuf, skills.count, "Playbooks");
     let tiles: [(&str, &str); 3] = [
@@ -218,7 +223,7 @@ pub fn draw_home_full(
         fb.draw_text(r.x + 18, r.y + 58, sub, &SMALL_FACE, 0, theme::MUTED);
     }
 
-    draw_status_bar(fb, mail, grants);
+    draw_status_bar(fb, mail, n_grants);
 }
 
 /// `"N label"` into a caller-owned buffer (digits + space + label).
@@ -308,7 +313,7 @@ fn draw_nav(fb: &Surface, status: BridgeStatus) {
 }
 
 /// Unified bottom telemetry — no orphaned mid-page status lines.
-fn draw_status_bar(fb: &Surface, mail: &MailPeek, grants: Caps) {
+fn draw_status_bar(fb: &Surface, mail: &MailPeek, grant_count: usize) {
     let mut line = [0u8; 96];
     let mut n = 0;
     let push = |line: &mut [u8], n: &mut usize, s: &str| {
@@ -330,7 +335,7 @@ fn draw_status_bar(fb: &Surface, mail: &MailPeek, grants: Caps) {
     push(&mut line, &mut n, "  |  Caps: ");
     {
         let mut b = [0u8; 16];
-        push(&mut line, &mut n, fmt_n_label(&mut b, grants.granted_count(), "Active"));
+        push(&mut line, &mut n, fmt_n_label(&mut b, grant_count, "Active"));
     }
     push(&mut line, &mut n, "  |  Bridge: ");
     push(

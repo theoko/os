@@ -66,23 +66,22 @@ enum Phase {
     Offline,
     /// `search.query` was not granted.
     Denied,
-    /// Bridge answered; grants name what's missing when the result set is empty.
-    Online(crate::caps::Caps),
+    /// Bridge answered; which scopes were granted at query time.
+    Online { files: bool, mail: bool },
 }
 
 impl Phase {
     /// One line explaining an empty result set, naming the fix when there is one.
     fn empty_reason(self) -> &'static str {
-        use crate::caps::Cap;
         match self {
             // Idle is exhaustive only; draw never paints empty_reason while idle.
             Phase::Idle | Phase::Offline => crate::mcp::NO_MATCHES_BRIDGE_OFFLINE,
             Phase::Denied => TEDDY,
-            Phase::Online(caps) => {
-                if !caps.allows(Cap::WorkspaceIndex) {
+            Phase::Online { files, mail } => {
+                if !files {
                     return "No matches. Turn on workspace.index in Capabilities to search your files.";
                 }
-                if !caps.allows(Cap::EmailSearch) {
+                if !mail {
                     return "No matches in your files. Turn on email.search to include mail.";
                 }
                 "No matches. The bridge searched your files and mail."
@@ -148,20 +147,22 @@ impl SearchView {
             self.fill_local(q);
             return;
         }
-        let peek = crate::mcp::fetch_search_peek(caps, q);
-        let online = matches!(peek.status, crate::mcp::BridgeStatus::Online);
-        // Record reachability BEFORE any fallback, so an online bridge that
-        // simply found nothing is never reported as a connection failure.
-        self.phase = if online {
-            Phase::Online(caps)
-        } else {
-            Phase::Offline
-        };
-        if online {
-            for i in 0..peek.count.min(search::MAX_HITS) {
-                self.rows[self.count].set(peek.title_at(i), peek.url_at(i), "bridge");
-                self.count += 1;
+        match crate::mcp::fetch_search_peek(caps, q) {
+            // Record reachability BEFORE any fallback, so an online bridge that
+            // simply found nothing is never reported as a connection failure.
+            Some(peek) => {
+                use crate::caps::Cap;
+                self.phase = Phase::Online {
+                    files: caps.allows(Cap::WorkspaceIndex),
+                    mail: caps.allows(Cap::EmailSearch),
+                };
+                for i in 0..peek.count.min(search::MAX_HITS) {
+                    let (title, url) = peek.at(i);
+                    self.rows[self.count].set(title, url, "bridge");
+                    self.count += 1;
+                }
             }
+            None => self.phase = Phase::Offline,
         }
         if self.count == 0 {
             // Nothing from the bridge: try what we shipped with.
@@ -174,12 +175,8 @@ impl SearchView {
         crate::ui::hit_among(self.count, x, y, |i| row_rect(w, i))
     }
 
-    pub fn title_at(&self, i: usize) -> &str {
-        self.rows[i].title()
-    }
-
-    pub fn url_at(&self, i: usize) -> &str {
-        self.rows[i].url()
+    pub fn at(&self, i: usize) -> (&str, &str) {
+        (self.rows[i].title(), self.rows[i].url())
     }
 }
 
@@ -206,11 +203,11 @@ pub fn draw(
     status: crate::mcp::BridgeStatus,
 ) {
     let w = fb.width() as i32;
-    screens::chrome(fb, Some("Search"), Some("What do you want to know?"));
+    screens::chrome(fb, Some(("Search", "What do you want to know?")));
 
     // Input field.
     let f = field_rect(w);
-    crate::ui::draw_query_field(fb, f, query, "Type a query, then press Enter", None);
+    crate::ui::draw_query_field(fb, f, query, "Type a query, then press Enter", "");
 
     // Results.
     let mut y = f.y + f.h + 26;
@@ -311,17 +308,9 @@ mod tests {
 #[cfg(test)]
 mod empty_state_tests {
     use super::*;
-    use crate::caps::{Cap, Caps};
 
     fn online(files: bool, mail: bool) -> Phase {
-        let mut caps = Caps::none();
-        if mail {
-            caps.toggle(Cap::EmailSearch as usize);
-        }
-        if files {
-            caps.toggle(Cap::WorkspaceIndex as usize);
-        }
-        Phase::Online(caps)
+        Phase::Online { files, mail }
     }
 
     #[test]
@@ -378,7 +367,7 @@ mod empty_state_tests {
 pub fn draw_reader(fb: &Surface, page: &crate::mcp::DocPage) {
     let w = fb.width() as i32;
     let h = fb.height() as i32;
-    screens::chrome(fb, None, None);
+    screens::chrome(fb, None);
 
     let fx = field_rect(w).x;
     fb.draw_text(
@@ -457,6 +446,6 @@ mod reader_tests {
         let mut v = SearchView::new();
         v.run("capability agent");
         assert!(v.count > 0);
-        assert!(!v.url_at(0).is_empty(), "offline results must be openable too");
+        assert!(!v.at(0).1.is_empty(), "offline results must be openable too");
     }
 }
