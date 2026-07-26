@@ -39,7 +39,10 @@ pub(crate) const FIELD_H: i32 = 52;
 pub(crate) const LIST_TOP: i32 = 150;
 /// Shared horizontal page margin.
 pub(crate) const PAD_X: i32 = 28;
-const CONTENT_MAX: i32 = 920;
+/// Home launcher column cap (search field + tiles).
+pub(crate) const HOME_CONTENT_MAX: i32 = 920;
+/// Skills / Caps / Search list column cap.
+pub(crate) const LIST_CONTENT_MAX: i32 = 720;
 
 /// Pill on/off switch width/height (Capabilities + setup).
 const SWITCH_W: i32 = 40;
@@ -240,7 +243,7 @@ fn fmt_n_label<'a>(buf: &'a mut [u8; 16], n: usize, label: &str) -> &'a str {
     core::str::from_utf8(&buf[..i]).unwrap_or("")
 }
 
-/// Centered content column capped at `max` (home uses 920; list screens 720).
+/// Centered content column capped at `max` ([`HOME_CONTENT_MAX`] / [`LIST_CONTENT_MAX`]).
 pub(crate) fn content_column(w: i32, max: i32) -> (i32, i32) {
     let cw = (w - PAD_X * 2).min(max);
     ((w - cw) / 2, cw)
@@ -248,7 +251,7 @@ pub(crate) fn content_column(w: i32, max: i32) -> (i32, i32) {
 
 /// The home search field, shared by drawing and hit-testing.
 fn search_rect(w: i32) -> Rect {
-    let (x, cw) = content_column(w, CONTENT_MAX);
+    let (x, cw) = content_column(w, HOME_CONTENT_MAX);
     Rect::new(x, 120, cw, FIELD_H)
 }
 
@@ -257,7 +260,7 @@ const TILE_H: i32 = 88;
 
 /// Bounding box of home tile `i` (0 = Search, 1 = Capabilities, 2 = Skills).
 fn tile_rect(w: i32, i: i32) -> Rect {
-    let (x0, cw) = content_column(w, CONTENT_MAX);
+    let (x0, cw) = content_column(w, HOME_CONTENT_MAX);
     let gap = 16;
     let tw = (cw - gap * 2) / 3;
     Rect::new(x0 + (tw + gap) * i, TILE_TOP, tw, TILE_H)

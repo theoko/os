@@ -26,8 +26,6 @@ pub enum View {
     Reader,
 }
 
-/// Column width cap for Skills / Caps / Search (home uses a wider max).
-pub(crate) const CONTENT_MAX: i32 = 720;
 const ROW_H: i32 = 62;
 const ROW_GAP: i32 = 8;
 
@@ -43,7 +41,7 @@ pub fn back_hit(x: i32, y: i32) -> bool {
 
 /// Bounding box of row `i`, for both drawing and hit-testing.
 fn row_rect(w: i32, i: usize) -> ui::Rect {
-    let (x, cw) = ui::content_column(w, CONTENT_MAX);
+    let (x, cw) = ui::content_column(w, ui::LIST_CONTENT_MAX);
     ui::Rect::new(x, ui::LIST_TOP + i as i32 * (ROW_H + ROW_GAP), cw, ROW_H)
 }
 
@@ -88,7 +86,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek) {
         ui::draw_titled_row(fb, row_rect(w, i), peek.name_at(i), peek.subtitle_at(i));
     }
 
-    let (x, _) = ui::content_column(w, CONTENT_MAX);
+    let (x, _) = ui::content_column(w, ui::LIST_CONTENT_MAX);
     // Boot / fetch always leave at least the ISO builtins, so the empty case
     // never reaches the screen.
     let note = if peek.from_bridge {
@@ -118,7 +116,7 @@ pub fn draw_caps(fb: &Surface, grants: Caps) {
         ui::draw_switch_in_row(fb, r, on);
     }
 
-    let (x, _) = ui::content_column(w, CONTENT_MAX);
+    let (x, _) = ui::content_column(w, ui::LIST_CONTENT_MAX);
     fb.draw_text(
         x,
         ui::LIST_TOP + Cap::ALL.len() as i32 * (ROW_H + ROW_GAP) + 26,

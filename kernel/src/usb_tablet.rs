@@ -160,14 +160,14 @@ impl UsbTablet {
         // Port reset returns the device to the default address.
         me.addr = 0;
         // Address 1, config 1, HID Report protocol — sole tablet on this port.
-        if me.control_no_data(0x00, 0x05, 1).is_none() {
+        if !me.control_no_data(0x00, 0x05, 1) {
             return Probe::NotTablet("set-addr");
         }
         me.addr = 1;
         if let Err(r) = me.identify() {
             return Probe::NotTablet(r);
         }
-        if me.control_no_data(0x00, 0x09, 1).is_none() {
+        if !me.control_no_data(0x00, 0x09, 1) {
             return Probe::NotTablet("set-cfg");
         }
         // HID: prefer Report protocol; ignore failures (some firmwares NAK).
@@ -281,7 +281,7 @@ impl UsbTablet {
         request: u8,
         value: u16,
         data: &mut [u8],
-    ) -> Option<()> {
+    ) -> bool {
         // Scratch layout is fixed so the control and interrupt paths never
         // overlap: 0x100..0x160 belongs to poll_once().
         const DATA_TD_BASE: usize = 0x200;
@@ -291,7 +291,7 @@ impl UsbTablet {
         const MPS: usize = 8;
 
         if data.len() > 256 {
-            return None;
+            return false;
         }
 
         let (setup_v, setup_p) = self.scratch_offset(0x00);
@@ -398,7 +398,7 @@ impl UsbTablet {
             // The HC may have fetched the frame pointer just before the
             // unlink; let the current frame drain before scratch is reused.
             self.wait_frame_tick();
-            return None;
+            return false;
         }
 
         if has_data && data_is_in {
@@ -413,11 +413,11 @@ impl UsbTablet {
             fill_fl(self.dma.fl, 1);
         }
         self.wait_frame_tick();
-        Some(())
+        true
     }
 
     /// GET_DESCRIPTOR(type, index 0) into `buf`, requesting exactly `buf.len()`.
-    fn get_descriptor(&mut self, desc_type: u8, buf: &mut [u8]) -> Option<()> {
+    fn get_descriptor(&mut self, desc_type: u8, buf: &mut [u8]) -> bool {
         self.control(0x80, 0x06, (desc_type as u16) << 8, buf)
     }
 
@@ -432,7 +432,7 @@ impl UsbTablet {
     ///   usb-tablet  subclass 0,        protocol 0  <- absolute, what we want
     fn identify(&mut self) -> Result<(), &'static str> {
         let mut dev = [0u8; 18];
-        if self.get_descriptor(1, &mut dev).is_none() {
+        if !self.get_descriptor(1, &mut dev) {
             return Err("dev-desc");
         }
         // bDescriptorType must be DEVICE, and the device class must be 0 so the
@@ -443,7 +443,7 @@ impl UsbTablet {
 
         // Config descriptor header first, to learn wTotalLength.
         let mut head = [0u8; 9];
-        if self.get_descriptor(2, &mut head).is_none() || head[1] != 0x02 {
+        if !self.get_descriptor(2, &mut head) || head[1] != 0x02 {
             return Err("cfg-hdr");
         }
         let total = u16::from_le_bytes([head[2], head[3]]) as usize;
@@ -451,7 +451,7 @@ impl UsbTablet {
             return Err("cfg-len");
         }
         let mut cfg = [0u8; 128];
-        if self.get_descriptor(2, &mut cfg[..total]).is_none() {
+        if !self.get_descriptor(2, &mut cfg[..total]) {
             return Err("cfg-body");
         }
 
@@ -487,7 +487,7 @@ impl UsbTablet {
         Err("not-hid")
     }
 
-    fn control_no_data(&mut self, request_type: u8, request: u8, value: u16) -> Option<()> {
+    fn control_no_data(&mut self, request_type: u8, request: u8, value: u16) -> bool {
         let mut empty: [u8; 0] = [];
         self.control(request_type, request, value, &mut empty)
     }
