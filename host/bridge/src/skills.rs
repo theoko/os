@@ -22,12 +22,13 @@ pub fn skills_dirs() -> (PathBuf, PathBuf) {
     (defaults, user)
 }
 
-fn list_skills() -> Vec<SkillMeta> {
+/// Defaults dir plus merged skill list (saved overrides default by name).
+fn list_skills() -> (PathBuf, Vec<SkillMeta>) {
     let (defaults, user) = skills_dirs();
     let mut map: BTreeMap<String, SkillMeta> = BTreeMap::new();
     collect_dir(&defaults, &mut map);
-    collect_dir(&user, &mut map); // saved overrides default
-    map.into_values().collect()
+    collect_dir(&user, &mut map);
+    (defaults, map.into_values().collect())
 }
 
 fn collect_dir(dir: &Path, map: &mut BTreeMap<String, SkillMeta>) {
@@ -108,8 +109,7 @@ pub fn save_skill(name: &str, body: &str) -> Result<PathBuf, String> {
 }
 
 pub fn list_response() -> Vec<String> {
-    let (defaults, _) = skills_dirs();
-    let skills = list_skills();
+    let (defaults, skills) = list_skills();
     let n = skills.len();
     let rows = skills.iter().map(|s| {
         // Frontmatter names are untrusted text: sanitize like desc so a '|'
@@ -127,7 +127,8 @@ pub fn list_response() -> Vec<String> {
 }
 
 pub fn get_response(name: &str) -> Vec<String> {
-    let Some(body) = list_skills()
+    let (_, skills) = list_skills();
+    let Some(body) = skills
         .into_iter()
         .find(|s| s.name == name)
         .and_then(|s| fs::read_to_string(s.path).ok())
@@ -174,7 +175,7 @@ mod tests {
             "missing {}",
             defaults.display()
         );
-        let list = list_skills();
+        let (_, list) = list_skills();
         assert!(list.iter().any(|s| s.name == "email-triage"));
         assert!(list.iter().any(|s| s.name == "agent-plan-act"));
     }

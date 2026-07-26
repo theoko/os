@@ -90,19 +90,16 @@ impl Setup {
         }
     }
 
-    fn hit(&self, px: i32, py: i32) -> Option<Action> {
-        self.zones[..self.n_zones]
-            .iter()
-            .find(|z| z.rect.contains(px, py))
-            .map(|z| z.action)
-    }
-
     /// Apply a click at `(x, y)`. Returns true when the screen needs redrawing.
     ///
     /// Rising-edge filtering lives in the main loop (`Mouse::take_click_edge`)
     /// so setup does not keep a parallel button latch.
     pub fn click(&mut self, x: i32, y: i32) -> bool {
-        match self.hit(x, y) {
+        match self.zones[..self.n_zones]
+            .iter()
+            .find(|z| z.rect.contains(x, y))
+            .map(|z| z.action)
+        {
             Some(action) => self.apply(action),
             None => false,
         }

@@ -105,14 +105,13 @@ fn for_each_reply(
     }
 }
 
-/// Drain a typical OK / ROW* / END reply. Skips the `OK …` header; stops on
+/// Drain a typical OK / ROW* / END reply. Skips any `OK …` header; stops on
 /// `ERR` / `END`. `on_row` returns `false` to stop early (e.g. buffer full).
 /// Returns whether an `ERR` line was seen.
 fn for_each_ok_rows(
     com2: &Serial,
     line: &mut [u8],
     max: usize,
-    ok_prefix: &str,
     mut on_row: impl FnMut(&str) -> bool,
 ) -> bool {
     let mut saw_err = false;
@@ -124,7 +123,7 @@ fn for_each_ok_rows(
         if resp == "END" {
             return false;
         }
-        if resp.starts_with(ok_prefix) {
+        if resp.starts_with("OK ") {
             return true;
         }
         if resp.starts_with("ROW ") {
@@ -245,7 +244,7 @@ pub fn fetch_doc(caps: crate::caps::Caps, title: &str, url: &str) -> DocPage {
         com2.write_str("\n");
 
         let mut page = DocPage::empty(BridgeStatus::Online);
-        page.denied = for_each_ok_rows(com2, line, 40, "OK doc.read", |resp| {
+        page.denied = for_each_ok_rows(com2, line, 40, |resp| {
             if page.count >= DocPage::MAX {
                 return false;
             }
@@ -291,7 +290,7 @@ pub fn fetch_skill_peek() -> crate::skills::SkillPeek {
 
         let mut peek = crate::skills::SkillPeek::empty();
         peek.from_bridge = true;
-        let _ = for_each_ok_rows(com2, line, 24, "OK skills.list", |resp| {
+        let _ = for_each_ok_rows(com2, line, 24, |resp| {
             let name = parse_row_field(resp, "name").unwrap_or("?");
             let desc = parse_row_field(resp, "desc").unwrap_or("");
             peek.push(name, desc)
@@ -352,7 +351,7 @@ pub(crate) fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek 
         com2.write_str("\n");
 
         let mut peek = SearchPeek::empty(BridgeStatus::Online, false);
-        let _ = for_each_ok_rows(com2, line, 16, "OK search.query", |resp| {
+        let _ = for_each_ok_rows(com2, line, 16, |resp| {
             if peek.count >= peek.hits.len() {
                 return false;
             }
