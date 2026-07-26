@@ -145,27 +145,11 @@ unsafe extern "C" fn kmain() -> ! {
                 cursor.hide(surface);
                 setup.draw(surface, mail.online(), &skill_peek);
                 cursor.show_at(surface, mice.x, mice.y);
-                enter(&screen);
+                anim::slide_in(|dy, a| screen.present_slide(dy, a));
                 serial_port.write_str("ui: setup welcome\n");
                 // Chime after the first frame is up, so the screen is never
                 // waiting on the speaker.
                 beep::startup();
-
-                // Measure what a frame actually costs, rather than guessing.
-                {
-                    let t0 = serial::rdtsc();
-                    surface.mark_dirty(0, 0, surface.width() as i32, surface.height() as i32);
-                    screen.present();
-                    let t1 = serial::rdtsc();
-                    surface.mark_dirty(0, 0, 24, 32);
-                    screen.present();
-                    let t2 = serial::rdtsc();
-                    serial_port.write_str("perf: full=");
-                    serial_port.write_u64((t1 - t0) / 1000);
-                    serial_port.write_str("kcyc dirty=");
-                    serial_port.write_u64((t2 - t1) / 1000);
-                    serial_port.write_str("kcyc\n");
-                }
 
                 loop {
                     let w = surface.width() as i32;
@@ -192,7 +176,6 @@ unsafe extern "C" fn kmain() -> ! {
                             }
                             if setup.step == setup::Step::Skills && before != setup::Step::Skills {
                                 skill_peek = mcp::fetch_skill_peek();
-                                log_skill_source(&serial_port, &skill_peek);
                             }
                             if setup.is_finished() {
                                 serial_port.write_str("ui: setup done\n");
@@ -220,7 +203,7 @@ unsafe extern "C" fn kmain() -> ! {
                                 cursor.hide(surface);
                                 setup.draw(surface, mail.online(), &skill_peek);
                                 cursor.show_at(surface, mice.x, mice.y);
-                                enter(&screen);
+                                anim::slide_in(|dy, a| screen.present_slide(dy, a));
                                 moved = false;
                             }
                         }
@@ -230,14 +213,7 @@ unsafe extern "C" fn kmain() -> ! {
                         // cannot also run the other arm's click handler.
                         let on_home = view == screens::View::Home;
                         while let Some(key) = kb.poll() {
-                            if handle_key(
-                                &mut view,
-                                key,
-                                &mut query,
-                                &mut sview,
-                                setup.caps,
-                                &serial_port,
-                            ) {
+                            if handle_key(&mut view, key, &mut query, &mut sview, setup.caps) {
                                 dirty = true;
                             }
                         }
@@ -246,27 +222,22 @@ unsafe extern "C" fn kmain() -> ! {
                                 match ui::home_hit(w, mice.x, mice.y) {
                                     Some(ui::HomeHit::SearchField)
                                     | Some(ui::HomeHit::Card(ui::CardId::Search)) => {
-                                        serial_port.write_str("ui: open search\n");
                                         view = screens::View::Search;
                                         query.clear();
                                         sview = searchui::SearchView::new();
                                         dirty = true;
                                     }
                                     Some(ui::HomeHit::Connect) => {
-                                        serial_port.write_str("ui: connect bridge\n");
                                         mail = mcp::fetch_mail_peek(setup.caps);
                                         log_bridge_status(&serial_port, mail.online());
                                         dirty = true;
                                     }
                                     Some(ui::HomeHit::Card(ui::CardId::Skills)) => {
-                                        serial_port.write_str("ui: click Skills\n");
                                         skill_peek = mcp::fetch_skill_peek();
-                                        log_skill_source(&serial_port, &skill_peek);
                                         view = screens::View::Skills;
                                         dirty = true;
                                     }
                                     Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
-                                        serial_port.write_str("ui: click Capabilities\n");
                                         view = screens::View::Caps;
                                         dirty = true;
                                     }
@@ -285,7 +256,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     let (title, url) = sview.at(i);
                                     page = mcp::fetch_doc(setup.caps, url, title);
                                     view = screens::View::Reader;
-                                    serial_port.write_str("ui: open doc\n");
                                     dirty = true;
                                 }
                             } else if view == screens::View::Caps {
@@ -355,7 +325,6 @@ fn handle_key(
     query: &mut keyboard::TextField<{ searchui::QUERY_MAX }>,
     sview: &mut searchui::SearchView,
     grants: caps::Caps,
-    serial: &serial::Serial,
 ) -> bool {
     match (*view, key) {
         (screens::View::Home | screens::View::Search, keyboard::Key::Enter) => {
@@ -364,7 +333,6 @@ fn handle_key(
             }
             sview.run_via(query.as_str(), grants);
             *view = screens::View::Search;
-            serial.write_str("search: ran\n");
             true
         }
         (screens::View::Home, keyboard::Key::Escape) => {
@@ -403,14 +371,6 @@ fn log_bridge_status(port: &serial::Serial, online: bool) {
     });
 }
 
-fn log_skill_source(port: &serial::Serial, peek: &skills::SkillPeek) {
-    port.write_str(if peek.is_live() {
-        "skills: listed from bridge\n"
-    } else {
-        "skills: builtins\n"
-    });
-}
-
 /// Hide cursor, paint the active view, show cursor, play entrance.
 fn repaint(
     cursor: &mut mouse::Cursor,
@@ -437,14 +397,7 @@ fn repaint(
         screens::View::Home => ui::draw_home(surface, mail, skills, grants, query),
     }
     cursor.show_at(surface, x, y);
-    enter(screen);
-}
-
-/// Play a screen entrance: the frame is already composed in the back buffer.
-///
-/// Snapping between screens is what made this feel unlike a desktop; an
-/// eased slide-and-fade costs a handful of blits and reads as intentional.
-fn enter(screen: &fb::Screen) {
+    // Frame is already composed; eased slide-and-fade reads as intentional.
     anim::slide_in(|dy, a| screen.present_slide(dy, a));
 }
 

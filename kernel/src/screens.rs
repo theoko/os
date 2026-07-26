@@ -1,11 +1,8 @@
 //! The Skills and Capabilities screens.
 //!
-//! Both cards on the home page used to just log to COM1. They now open real
-//! views that share the search screen's chrome: a Back affordance, a title,
-//! and a column of rows.
-//!
-//! Capabilities is not merely a report — the switches are live, so grants
-//! chosen during setup can be changed afterwards without reinstalling.
+//! Share the search screen's chrome: a Back affordance, a title, and a column
+//! of rows. Capabilities switches are live — grants chosen during setup can
+//! be changed afterwards without reinstalling.
 
 use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
