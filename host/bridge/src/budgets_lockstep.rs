@@ -1,4 +1,4 @@
-//! Guest buffer / peek budgets must match the kernel twins.
+//! Guest buffer / hit / doc budgets must match the kernel twins.
 //!
 //! Not a shared crate yet — this panel fails `make test-host` if either side
 //! drifts. Paths are resolved from `CARGO_MANIFEST_DIR` (cwd-safe).
