@@ -304,7 +304,7 @@ fn forget_file(tool: &str, path: &std::path::Path) -> Vec<String> {
 fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
     match tool {
         "email.search" => {
-            // Default matches guest mail peek (`max=3`; guest always sends max=).
+            // Guest mail peek omits args; defaults are the peek budget.
             email_search(arg_val(args, "q").unwrap_or("in:inbox"), arg_usize(args, "max", 3, 20))
         }
         "email.send" => vec![format!("ERR {tool} disabled_until_cap_confirm")],
@@ -346,7 +346,7 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
             let Some(url) = arg_val(args, "url") else {
                 return vec![format!("ERR {tool} missing_url")];
             };
-            // Default matches guest `DocPage::MAX` (guest always sends lines=).
+            // Guest omits lines=; default matches guest `DocPage::MAX`.
             let max = arg_usize(args, "lines", 18, 200);
             match read_doc(url, max, arg_flag(args, "files"), arg_flag(args, "audio")) {
                 Ok(lines) => text::framed_ok(format!("OK {tool}"), lines),
@@ -370,7 +370,7 @@ fn call_tool(tool: &str, args: &[(String, String)]) -> Vec<String> {
         }
         "search.query" => {
             let q = arg_val(args, "q").unwrap_or("");
-            // Default matches guest `search::MAX_HITS` (guest always sends k=).
+            // Guest omits k=; default matches guest `search::MAX_HITS`.
             let k = arg_usize(args, "k", 3, 20);
             // Email content is opt-in per call. The guest only sets this when
             // the user granted email.search at setup, so holding search.query
@@ -628,10 +628,15 @@ mod tests {
 
     #[test]
     fn dispatch_search_query() {
-        let r = dispatch("CALL search.query q=capability k=3");
+        // Guest omits k=; default is MAX_HITS (3).
+        let r = dispatch("CALL search.query q=capability");
         assert_eq!(r[0], "OK search.query");
         assert!(r.iter().any(|l| l.starts_with("ROW ")));
         assert_eq!(r.last().map(String::as_str), Some("END"));
+        assert!(
+            r.iter().filter(|l| l.starts_with("ROW ")).count() <= 3,
+            "default k must cap at guest MAX_HITS"
+        );
     }
 
     #[test]

@@ -40,7 +40,7 @@ struct Posting {
 
 include!(concat!(env!("OUT_DIR"), "/corpus.rs"));
 
-/// Cap on search hits (offline index, SearchView rows, and guest `k=`).
+/// Cap on search hits (offline index, SearchView rows; bridge default `k=`).
 pub const MAX_HITS: usize = 3;
 
 /// Tokenizer. Must stay identical to `fold_tok` in `build.rs`, or query terms

@@ -149,7 +149,8 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
             return MailPeek::Denied;
         }
 
-        com2.write_str("CALL email.search q=in:inbox max=3\n");
+        // Bridge defaults: q=in:inbox, max=3 (guest mail-peek budget).
+        com2.write_str("CALL email.search\n");
 
         // Count ROWs actually received. ERR is not an empty inbox — same
         // Denied path as a missing grant.
@@ -212,10 +213,9 @@ impl DocPage {
 /// to read it by knowing its URL. `title` is the search-hit label (not on the wire).
 pub fn fetch_doc(caps: crate::caps::Caps, url: &str, title: &str) -> DocPage {
     let mut page = when_online(DocPage::empty(DocOutcome::Offline), |com2, line| {
+        // Bridge default lines= matches DocPage::MAX; guest still caps ROWs locally.
         com2.write_str("CALL doc.read url=");
         com2.write_str(url);
-        com2.write_str(" lines=");
-        com2.write_u64(DocPage::MAX as u64);
         write_scope_flags(com2, caps);
         com2.write_str("\n");
 
@@ -304,15 +304,11 @@ pub(crate) fn fetch_search_rows(
 ) -> DocOutcome {
     // Offline: UI falls back to the baked index via SearchView::fill_local.
     when_online(DocOutcome::Offline, |com2, line| {
-        // CALL search.query q=… k=N [email=1]
-        //
-        // The email graph is opt-in per call on the bridge. Ask for it only when
-        // the user granted email.search at setup: holding search.query alone must
-        // not reach mail content.
+        // CALL search.query q=… [email=1] [files=1] [audio=1]
+        // Bridge default k= matches MAX_HITS. Email graph is opt-in per call —
+        // holding search.query alone must not reach mail content.
         com2.write_str("CALL search.query q=");
         com2.write_str(q);
-        com2.write_str(" k=");
-        com2.write_u64(crate::search::MAX_HITS as u64);
         if caps.allows(crate::caps::Cap::EmailSearch) {
             com2.write_str(" email=1");
         }
