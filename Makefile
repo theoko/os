@@ -15,7 +15,7 @@ BRIDGE_ADDR ?= 127.0.0.1:7420
 EMAIL_BACKEND ?= mock
 
 QEMU ?= qemu-system-x86_64
-# Shared machine knobs for `run` / `run-bridged` (smokes build argv in Python).
+# Shared machine knobs for `run` / `run-bridged` / smoke (exported for Python).
 QEMU_MACHINE := -M q35 -m 512M -display none
 export QEMU_MACHINE
 QEMUFLAGS ?= -serial stdio
