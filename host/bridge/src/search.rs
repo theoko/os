@@ -191,7 +191,7 @@ fn search_tfidf(
     scored
 }
 
-/// Guest `SearchView::Row` slot sizes (title / url / cat).
+/// Guest `search::{TITLE,URL,CAT}_CHARS` (title / url / cat).
 const TITLE_WIDTH: usize = 56;
 const URL_WIDTH: usize = 72;
 const CAT_WIDTH: usize = 16;

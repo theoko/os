@@ -25,18 +25,18 @@ pub const QUERY_MAX: usize = 64;
 /// fixed slots keeps the whole path free of unsafe lifetime tricks.
 #[derive(Clone, Copy)]
 struct Row {
-    title: [u8; 56],
-    url: [u8; 72],
+    title: [u8; search::TITLE_CHARS],
+    url: [u8; search::URL_CHARS],
     /// Owned like title/url — bridge `cat=` outlives the COM2 line buffer.
-    cat: [u8; 16],
+    cat: [u8; search::CAT_CHARS],
 }
 
 impl Row {
     const fn empty() -> Self {
         Self {
-            title: [0; 56],
-            url: [0; 72],
-            cat: [0; 16],
+            title: [0; search::TITLE_CHARS],
+            url: [0; search::URL_CHARS],
+            cat: [0; search::CAT_CHARS],
         }
     }
 
@@ -67,7 +67,7 @@ const TEDDY: &str = "Teddy is looking into it.";
 fn empty_reason(outcome: DocOutcome) -> &'static str {
     match outcome {
         DocOutcome::Offline => crate::mcp::NO_MATCHES_BRIDGE_OFFLINE,
-        // Missing search cap (pre-CALL) and bridge ERR share copy.
+        // Framed bridge ERR only — grant-miss uses local Ok (no CALL).
         DocOutcome::Err => TEDDY,
         // Do not invent a missing-grant cause — scopes already ran (or were off).
         DocOutcome::Ok => "No matches.",
@@ -77,7 +77,7 @@ fn empty_reason(outcome: DocOutcome) -> &'static str {
 pub struct SearchView {
     rows: [Row; search::MAX_HITS],
     count: usize,
-    /// `None` = no query yet. `Some` = last fetch (or pre-CALL deny as `Err`).
+    /// `None` = no query yet. `Some` = last fetch / local-only fill.
     outcome: Option<DocOutcome>,
 }
 
@@ -118,9 +118,10 @@ impl SearchView {
             return;
         }
         // Refuse before CALL: no PING/CALL traffic without the search cap.
+        // Local-only fill is Ok — Err/TEDDY is reserved for a framed bridge ERR.
         if !caps.allows(crate::caps::Cap::SearchQuery) {
-            self.outcome = Some(DocOutcome::Err);
             self.fill_local(q);
+            self.outcome = Some(DocOutcome::Ok);
             return;
         }
         // Record reachability BEFORE any fallback, so an online bridge that
@@ -229,10 +230,9 @@ mod tests {
     #[test]
     fn running_a_query_populates_openable_rows() {
         let mut v = SearchView::new();
-        // Caps::none() never PINGs COM2; Err + baked fill exercises the
-        // offline index the same way production does when search.query is off.
+        // Caps::none() never PINGs COM2; local Ok + baked fill when search.query is off.
         v.run_via("capability agent", crate::caps::Caps::none());
-        assert!(v.outcome.is_some());
+        assert_eq!(v.outcome, Some(DocOutcome::Ok));
         assert!(v.count > 0, "expected hits from the baked index");
         let (title, url) = v.at(0);
         assert!(!title.is_empty());
@@ -255,6 +255,8 @@ mod tests {
         assert!(first > 0);
         v.run_via("zzzz qqqq", crate::caps::Caps::none());
         assert_eq!(v.count, 0, "stale rows must not survive a new search");
+        // Grant-miss local empty is Ok — not Err/TEDDY (no CALL failed).
+        assert_eq!(v.outcome, Some(DocOutcome::Ok));
     }
 
     #[test]

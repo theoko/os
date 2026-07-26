@@ -11,7 +11,7 @@ const TIMEOUT_LINE: u32 = 200_000;
 /// Only reached once PING has succeeded, so an offline bridge never waits.
 const TIMEOUT_REPLY: u32 = 40_000_000;
 
-/// Longest protocol line: guest search slots (56+72+16) plus framing headroom.
+/// Longest protocol line: guest search slots plus framing headroom.
 const LINE_BUF: usize = 768;
 
 /// Bridge default `email.search max=` (guest omits the arg).
@@ -199,10 +199,10 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
 }
 
 /// How a framed CALL finished (`doc.read`, `search.query`).
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DocOutcome {
     Offline,
-    /// Bridge returned `ERR` (grant miss, not found, …).
+    /// Bridge returned `ERR` (not found, host grant miss, …).
     Err,
     /// Bridge returned a framed OK (zero or more lines).
     Ok,
@@ -212,15 +212,13 @@ pub enum DocOutcome {
 pub struct DocPage {
     pub(crate) outcome: DocOutcome,
     pub(crate) count: usize,
-    /// Copied from the search hit (not on the wire) — guest title slot size.
-    title: [u8; Self::TITLE_CHARS],
+    /// Copied from the search hit (not on the wire).
+    title: [u8; crate::search::TITLE_CHARS],
     lines: [[u8; Self::LINE_CHARS]; Self::MAX],
 }
 
 impl DocPage {
     pub(crate) const MAX: usize = 18;
-    /// Matches bridge / `SearchView::Row` title width.
-    pub(crate) const TITLE_CHARS: usize = 56;
     /// Matches bridge `search::LINE_WIDTH` for `ROW line=`.
     pub(crate) const LINE_CHARS: usize = 78;
 
@@ -228,7 +226,7 @@ impl DocPage {
         Self {
             outcome,
             count: 0,
-            title: [0; Self::TITLE_CHARS],
+            title: [0; crate::search::TITLE_CHARS],
             lines: [[0; Self::LINE_CHARS]; Self::MAX],
         }
     }

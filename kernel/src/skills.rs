@@ -33,15 +33,19 @@ pub(crate) const BUILTIN: &[SkillRef] = &[
     },
 ];
 
+/// Guest `Slot` / bridge `sanitize_slot` budgets.
+pub(crate) const NAME_CHARS: usize = 28;
+pub(crate) const DESC_CHARS: usize = 40;
+
 /// One skill row from `CALL skills.list`.
 struct Slot {
-    name: [u8; 28],
-    desc: [u8; 40],
+    name: [u8; NAME_CHARS],
+    desc: [u8; DESC_CHARS],
 }
 
 const EMPTY_SLOT: Slot = Slot {
-    name: [0; 28],
-    desc: [0; 40],
+    name: [0; NAME_CHARS],
+    desc: [0; DESC_CHARS],
 };
 
 enum Kind {

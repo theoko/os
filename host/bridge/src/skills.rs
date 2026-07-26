@@ -111,7 +111,7 @@ pub fn list_response() -> Vec<String> {
     crate::text::framed_ok("OK skills.list".into(), rows)
 }
 
-/// Guest `skills::Slot` sizes (name / desc).
+/// Guest `skills::{NAME,DESC}_CHARS`.
 const NAME_WIDTH: usize = 28;
 const DESC_WIDTH: usize = 40;
 
