@@ -2,8 +2,8 @@
 //!
 //! One decision per screen, centred on a white page, with a single primary
 //! action and a quiet way back. The steps mirror what this OS actually has to
-//! establish before the agent can do anything: where it is, whether the host
-//! bridge is reachable, which capabilities are granted, and which skills load.
+//! establish before the agent can do anything: where it is, which capabilities
+//! are granted, and which skills load.
 //!
 //! Drawing records its own hit zones, so `click()` needs no separate layout
 //! table to drift out of sync.
@@ -13,7 +13,7 @@ use crate::fb::Surface;
 use crate::font::{self, BODY_FACE, BRAND_FACE, BTN_FACE, HERO_FACE, SMALL_FACE, TITLE_FACE};
 use crate::keyboard::Key;
 use crate::level::Level;
-use crate::mcp::{BridgeStatus, MailPeek};
+use crate::mcp::MailPeek;
 use crate::skills::SkillPeek;
 use crate::ui::theme;
 
@@ -48,7 +48,6 @@ pub enum Step {
     /// Explicit Guided vs Advanced — copy adapts; grants stay privacy-first.
     Experience,
     Region,
-    Bridge,
     Capabilities,
     Skills,
     Done,
@@ -237,8 +236,7 @@ impl Setup {
                 self.step = match self.step {
                     Step::Welcome => Step::Experience,
                     Step::Experience => Step::Region,
-                    Step::Region => Step::Bridge,
-                    Step::Bridge => Step::Capabilities,
+                    Step::Region => Step::Capabilities,
                     Step::Capabilities => Step::Skills,
                     Step::Skills => Step::Done,
                     Step::Done => Step::Finished,
@@ -252,8 +250,7 @@ impl Setup {
                 self.step = match self.step {
                     Step::Welcome | Step::Experience => Step::Welcome,
                     Step::Region => Step::Experience,
-                    Step::Bridge => Step::Region,
-                    Step::Capabilities => Step::Bridge,
+                    Step::Capabilities => Step::Region,
                     Step::Skills => Step::Capabilities,
                     Step::Done => Step::Skills,
                     Step::Finished => Step::Finished,
@@ -290,7 +287,7 @@ impl Setup {
     }
 
     /// Paint the current step. Records hit zones as a side effect.
-    pub fn draw(&mut self, fb: &Surface, mail: &MailPeek, skills: &SkillPeek) {
+    pub fn draw(&mut self, fb: &Surface, _mail: &MailPeek, skills: &SkillPeek) {
         let w = fb.width() as i32;
         let h = fb.height() as i32;
         fb.fill(theme::BG);
@@ -300,7 +297,6 @@ impl Setup {
             Step::Welcome => self.draw_welcome(fb, w, h),
             Step::Experience => self.draw_experience(fb, w, h),
             Step::Region => self.draw_region(fb, w, h),
-            Step::Bridge => self.draw_bridge(fb, w, h, mail),
             Step::Capabilities => self.draw_caps(fb, w, h),
             Step::Skills => self.draw_skills(fb, w, h, skills),
             Step::Done => self.draw_done(fb, w, h),
@@ -337,12 +333,11 @@ impl Setup {
             Step::Welcome | Step::Finished => return,
             Step::Experience => 1,
             Step::Region => 2,
-            Step::Bridge => 3,
-            Step::Capabilities => 4,
-            Step::Skills => 5,
-            Step::Done => 6,
+            Step::Capabilities => 3,
+            Step::Skills => 4,
+            Step::Done => 5,
         };
-        const STEPS: i32 = 7;
+        const STEPS: i32 = 6;
         const PITCH: i32 = 18;
         let x0 = w / 2 - (STEPS - 1) * PITCH / 2;
         let cy = 28;
@@ -421,29 +416,6 @@ impl Setup {
             y += ROW_H + 8;
         }
         self.footer(fb, w, h, y, true);
-    }
-
-    fn draw_bridge(&mut self, fb: &Surface, w: i32, h: i32, mail: &MailPeek) {
-        let online = matches!(mail.status, BridgeStatus::Online);
-        let sub = if self.level.is_guided() {
-            crate::copy::setup_bridge_sub_guided()
-        } else {
-            crate::copy::setup_bridge_sub_plain()
-        };
-        let top = self.header(fb, w, h, crate::copy::setup_bridge_title(), sub);
-        let (label, detail, tint) = if online {
-            (crate::copy::setup_bridge_label(), "Connected on COM2", theme::ONLINE)
-        } else if self.level.is_guided() {
-            (
-                crate::copy::setup_bridge_label(),
-                crate::copy::setup_bridge_detail_guided(),
-                theme::OFFLINE,
-            )
-        } else {
-            (crate::copy::setup_bridge_label(), crate::copy::setup_bridge_detail_plain(), theme::OFFLINE)
-        };
-        self.status_card(fb, w, top, label, detail, tint);
-        self.footer(fb, w, h, top + ROW_H + 8, true);
     }
 
     fn draw_caps(&mut self, fb: &Surface, w: i32, h: i32) {
@@ -778,7 +750,6 @@ mod tests {
             Step::Welcome,
             Step::Experience,
             Step::Region,
-            Step::Bridge,
             Step::Capabilities,
             Step::Skills,
             Step::Done,
@@ -794,14 +765,14 @@ mod tests {
     #[test]
     fn back_walks_the_journey_in_reverse() {
         let mut s = setup();
-        for _ in 0..5 {
+        for _ in 0..4 {
             s.apply(Action::Continue);
         }
         assert_eq!(s.step, Step::Skills);
         s.apply(Action::Back);
         assert_eq!(s.step, Step::Capabilities);
         s.apply(Action::Back);
-        assert_eq!(s.step, Step::Bridge);
+        assert_eq!(s.step, Step::Region);
     }
 
     #[test]
@@ -1002,7 +973,6 @@ mod tests {
         for expected in [
             Step::Experience,
             Step::Region,
-            Step::Bridge,
             Step::Capabilities,
             Step::Skills,
             Step::Done,
@@ -1055,12 +1025,6 @@ mod tests {
             "You choose. Grants stay off until you turn them on.",
             "Select Your Region",
             "This sets formatting defaults. It does not leave the machine.",
-            crate::copy::setup_bridge_title(),
-            crate::copy::setup_bridge_sub_guided(),
-            crate::copy::setup_bridge_sub_plain(),
-            crate::copy::setup_bridge_detail_guided(),
-            crate::copy::setup_bridge_detail_plain(),
-            "Connected on COM2",
             "Capabilities",
             "Every tool sits behind a grant. Turn on only what you need.",
             "Consent switches. Defaults stay privacy-first.",
@@ -1073,7 +1037,6 @@ mod tests {
             "Continue",
             "Go Back",
             "Start",
-            crate::copy::setup_bridge_label(),
         ];
         all.extend(REGIONS);
         for level in Level::ALL {

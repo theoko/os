@@ -543,17 +543,7 @@ unsafe extern "C" fn kmain() -> ! {
                             setup_changed |= setup.key(key);
                         }
                         if setup_changed {
-                            // Entering the Bridge step: re-probe COM2 so the
-                            // status card reflects a bridge that came up after boot.
-                            if setup.step == setup::Step::Bridge && before != setup::Step::Bridge {
-                                // Still pre-consent: the Capabilities step
-                                // comes after this one, so probe, don't read.
-                                mail = mcp::MailPeek::empty(mcp::probe_bridge());
-                                serial_port.write_str(match mail.status {
-                                    mcp::BridgeStatus::Online => "mcp: bridge live\n",
-                                    mcp::BridgeStatus::Offline => "mcp: bridge still offline\n",
-                                });
-                            }
+                            // Setup step changed. Move forward.
                             if setup.step == setup::Step::Skills && before != setup::Step::Skills {
                                 skill_peek = mcp::fetch_skill_peek();
                                 serial_port.write_str(if skill_peek.from_bridge {
