@@ -7,6 +7,7 @@
 //! see it act within the grants, or be told which switch is still off.
 
 use crate::caps::{Cap, Caps};
+use crate::copy;
 use crate::level::Level;
 use crate::mcp::{self, BridgeStatus, CalendarPeek, FilePeek, IntentPlan, MailPeek, SearchPeek};
 
@@ -172,9 +173,19 @@ impl Brief {
         Some(str_at(&buf[..n]))
     }
 
+    /// Can this URL be stored whole, and therefore opened?
+    ///
+    /// A URL too long for the slot would arrive truncated, and a truncated
+    /// URL still reads as non-empty — so the row would be drawn openable and
+    /// the tap would resolve to a path the bridge cannot find. Rows that
+    /// cannot be stored whole are findings, not documents.
+    fn armable(&self, url: &str) -> bool {
+        !url.is_empty() && url.len() <= self.doc_url[0].len()
+    }
+
     /// Remember a Doc report line so Brief can open its URL.
     pub fn arm_doc(&mut self, url: &str, line_idx: usize) {
-        if self.doc_n >= self.doc_url.len() || url.is_empty() {
+        if self.doc_n >= self.doc_url.len() || !self.armable(url) {
             return;
         }
         copy_field(&mut self.doc_url[self.doc_n], url);
@@ -228,6 +239,13 @@ impl Brief {
         matches!(tag, "Doc" | "Hit")
     }
 
+    /// How many findings are on screen, as opposed to report metadata.
+    fn result_rows(&self) -> usize {
+        (0..self.count)
+            .filter(|&i| Self::is_result(self.lines[i].tag()))
+            .count()
+    }
+
     fn push_line(&mut self, tag: &str, text: &str) {
         // A document appears once, whichever lane found it.
         //
@@ -248,6 +266,30 @@ impl Brief {
             copy_field(&mut self.lines[self.count].tag, tag);
             copy_field(&mut self.lines[self.count].text, text);
             self.count += 1;
+        }
+    }
+
+    /// Push one search result, choosing its tag by what it can deliver.
+    ///
+    /// The tag is a promise: `Doc` rows open when tapped, `Hit` rows are
+    /// findings the guest cannot open (offline corpus titles carry no URL —
+    /// their bodies live only on the bridge). Deciding here, at the sink,
+    /// keeps every lane honest at once: a lane can no longer draw a `Doc`
+    /// it never armed, which is how "No openable hits - refine the ask."
+    /// ended up printed under three Doc rows on the arm64 guest.
+    ///
+    /// Arming happens only when the push actually appended. `push_line`
+    /// dedups results by text, and arming after a swallowed push would
+    /// record the URL against whatever line gets pushed next.
+    fn push_result(&mut self, title: &str, url: &str) {
+        if !self.armable(url) {
+            self.push_line("Hit", title);
+            return;
+        }
+        let line_i = self.count;
+        self.push_line("Doc", title);
+        if self.count > line_i {
+            self.arm_doc(url, line_i);
         }
     }
 
@@ -325,7 +367,7 @@ pub fn run_goal_with_plan(goal: &str, caps: Caps, intent: &IntentPlan) -> Brief 
         brief.push_plan("Search under those grants");
         brief.push_plan("Report openable hits");
         if intent.status == BridgeStatus::Offline {
-            brief.push_line("Info", "Bridge offline - local keywords only.");
+            brief.push_line("Info", copy::search_local_only());
         }
     }
 
@@ -335,13 +377,7 @@ pub fn run_goal_with_plan(goal: &str, caps: Caps, intent: &IntentPlan) -> Brief 
     // Host already ranked Your files — arm those Doc rows first.
     if intent.hit_n > 0 && caps.allows(Cap::WorkspaceIndex) {
         for i in 0..intent.hit_n.min(3) {
-            let title = intent.hit_title_at(i);
-            let url = intent.hit_url_at(i);
-            let line_i = brief.count;
-            brief.push_line("Doc", title);
-            if !url.is_empty() {
-                brief.arm_doc(url, line_i);
-            }
+            brief.push_result(intent.hit_title_at(i), intent.hit_url_at(i));
         }
         acted = true;
     }
@@ -359,7 +395,7 @@ pub fn run_goal_with_plan(goal: &str, caps: Caps, intent: &IntentPlan) -> Brief 
                 brief.push_line("FYI", "Inbox empty.");
                 acted = true;
             } else {
-                brief.push_line("Info", "Bridge offline for mail.");
+                brief.push_line("Info", copy::mail_unavailable());
             }
         } else {
             brief.need(Cap::EmailSearch);
@@ -396,12 +432,39 @@ pub fn run_goal_with_plan(goal: &str, caps: Caps, intent: &IntentPlan) -> Brief 
         }
     }
 
-    if acted && brief.doc_n == 0 && !mailish {
-        brief.push_line("Info", "No openable hits - refine the ask.");
-    } else if brief.doc_n > 0 {
-        brief.push_line("Next", "Tap a Doc row to open it.");
+    if let Some((tag, text)) =
+        closing_line(brief.status, brief.doc_n, brief.result_rows(), acted, mailish)
+    {
+        brief.push_line(tag, text);
     }
     brief
+}
+
+/// The last line of a goal run: what to do next, or why nothing opens.
+///
+/// `None` when the report has already said it. "Refine the ask" is advice the
+/// reader can only act on while the bridge is up — offline, the baked index
+/// answers with titles alone, so no rewording of the goal produces an
+/// openable row. And when the search already reported finding nothing,
+/// a second sentence saying nothing was found carries no second fact: the
+/// offline guest stacked three of them under one empty answer.
+fn closing_line(
+    status: BridgeStatus,
+    doc_n: usize,
+    result_rows: usize,
+    acted: bool,
+    mailish: bool,
+) -> Option<(&'static str, &'static str)> {
+    if doc_n > 0 {
+        return Some(("Next", "Tap a Doc row to open it."));
+    }
+    if !acted || mailish {
+        return None;
+    }
+    if status != BridgeStatus::Offline {
+        return Some(("Info", "No openable hits - refine the ask."));
+    }
+    (result_rows > 0).then_some(("Info", copy::titles_only()))
 }
 
 /// Drop filler words so "i wanna work on my paper" becomes `paper`.
@@ -532,17 +595,7 @@ fn fill_goal_hits_remaining(brief: &mut Brief, peek: &SearchPeek) {
         if (0..brief.doc_n).any(|d| brief.doc_url_at(d) == Some(url)) {
             continue;
         }
-        let line_i = brief.count;
-        brief.push_line("Doc", title);
-        if !url.is_empty() {
-            brief.arm_doc(url, line_i);
-        }
-    }
-    if brief.doc_n == 0 && peek.count > 0 {
-        // Titles without URLs (offline corpus) still show as Hits.
-        for i in 0..peek.count.min(3) {
-            brief.push_line("Hit", peek.title_at(i));
-        }
+        brief.push_result(title, url);
     }
 }
 
@@ -554,27 +607,16 @@ fn fill_goal_files(brief: &mut Brief, files: &FilePeek, q: &str) {
     let mut matched = 0usize;
     for i in 0..files.count.min(3) {
         let title = files.title_at(i);
-        let url = files.url_at(i);
         if !title_matches_query(title, q) {
             continue;
         }
-        let line_i = brief.count;
-        brief.push_line("Doc", title);
-        if !url.is_empty() {
-            brief.arm_doc(url, line_i);
-        }
+        brief.push_result(title, files.url_at(i));
         matched += 1;
     }
     if matched == 0 {
         // Still surface top recent files so the agent is not empty theatre.
         for i in 0..files.count.min(2) {
-            let title = files.title_at(i);
-            let url = files.url_at(i);
-            let line_i = brief.count;
-            brief.push_line("Doc", title);
-            if !url.is_empty() {
-                brief.arm_doc(url, line_i);
-            }
+            brief.push_result(files.title_at(i), files.url_at(i));
         }
         brief.push_line("Info", "No title match - showing recent files.");
     }
@@ -728,7 +770,7 @@ pub fn run_playbook_allowed(brief: &mut Brief, caps: Caps, body: &str) {
         } else if mail.status == BridgeStatus::Online {
             brief.push_line("FYI", "Inbox empty.");
         } else {
-            brief.push_line("Info", "Bridge offline for mail.");
+            brief.push_line("Info", copy::mail_unavailable());
         }
     }
 
@@ -835,7 +877,7 @@ fn run_inbox(brief: &mut Brief, caps: Caps, triage: bool) {
     let mail = mcp::fetch_mail_peek(caps);
     brief.status = mail.status;
     if mail.status == BridgeStatus::Offline {
-        brief.push_line("Info", "Bridge offline - cannot read mail.");
+        brief.push_line("Info", copy::mail_unreadable());
         return;
     }
     if mail.count == 0 {
@@ -920,7 +962,7 @@ fn fill_calendar_lines(brief: &mut Brief, cal: &CalendarPeek) {
         return;
     }
     if cal.status == BridgeStatus::Offline {
-        brief.push_line("Info", "Bridge offline for calendar.");
+        brief.push_line("Info", copy::calendar_unavailable());
         return;
     }
     if cal.count == 0 {
@@ -1073,9 +1115,60 @@ fn fill_search_lines(brief: &mut Brief, peek: &SearchPeek) {
     }
 }
 
+/// Report built-in corpus hits, saying where they came from.
+///
+/// Titles alone were the whole problem on the morning brief: three rows reading
+/// "Agent skills" / "Architecture capability IPC" / "os identity" appeared
+/// directly under "Bridge offline for mail" and "Bridge offline for calendar",
+/// with nothing on screen connecting them to anything. Read in order, the
+/// screen said the bridge could not be reached and then produced documents
+/// from nowhere.
+///
+/// `push_result` rather than `push_line("Hit", …)`: when the bridge is up it
+/// sends a URL per hit and those rows should open, which is the playbook's own
+/// step 5 ("arm Doc / Event rows the user can open"). Offline, `search_offline`
+/// copies titles and no URLs — nothing is openable without a bridge — so
+/// `push_result` falls back to `Hit` on its own and the rows stay honest.
+fn fill_corpus_lines(brief: &mut Brief, peek: &SearchPeek) {
+    if peek.count == 0 {
+        brief.push_line("Info", "Knowledge search returned no hits.");
+        return;
+    }
+    // Exactly one row of provenance, because `Brief::lines` holds eight and the
+    // configuration in the bug report already filled all eight. A second
+    // explanatory row would not have been dropped loudly — `push_line` swallows
+    // pushes past the end — it would have silently evicted the "Recordings on"
+    // line off the bottom of the same screen this is trying to fix.
+    brief.push_line(
+        "Info",
+        if peek.status == BridgeStatus::Offline {
+            copy::builtin_docs_titles_only()
+        } else {
+            "Built-in docs - tap a Doc row to read it."
+        },
+    );
+    // Keep room: at most 3 knowledge hits after mail lines.
+    let room = brief.lines.len().saturating_sub(brief.count).min(3);
+    for i in 0..peek.count.min(room) {
+        brief.push_result(peek.title_at(i), peek.url_at(i));
+    }
+}
+
+/// What this lane asks the built-in corpus for.
+///
+/// There is no user question here — `morning` runs this with nothing typed —
+/// so the lane demonstrates the one grant that is on by default ("Built-in
+/// docs") by showing what is in it. Named rather than written inline because
+/// the rows it produces are shown without it, and an unexplained slug behind
+/// three unlabelled rows is exactly how this screen stopped making sense.
+const BUILTIN_DOCS_QUERY: &str = "capability-agent";
+
 fn run_plan_act(brief: &mut Brief, caps: Caps) {
     brief.set_heading("Plan, act, report");
-    brief.push_plan("Restate: what matters right now");
+    // No "Restate the goal" step. The playbook opens with one, and `run_goal`
+    // honours it with a Goal row, but this lane is reached from the morning
+    // brief and the skills list with nothing typed. A plan that promises four
+    // steps and delivers three reads as a step that silently failed.
     brief.push_plan("List grants in force");
     brief.push_plan("Act via MCP under those grants");
     brief.push_plan("Report outcomes");
@@ -1088,10 +1181,16 @@ fn run_plan_act(brief: &mut Brief, caps: Caps) {
         }
     }
     if on == 0 {
+        // Actionable: nothing is on, so nothing below this will happen.
         brief.push_line("Need", "No capabilities granted yet.");
-    } else {
-        brief.push_line("Plan", "Acting only with switches that are on.");
     }
+    // When something *is* on, no row. This used to push "Acting only with
+    // switches that are on." tagged `Plan`, which was wrong twice over: it put
+    // the word Plan on screen as both the checklist heading and a row tag
+    // meaning something else, and it restated the two plan steps directly above
+    // it. `Brief::lines` holds eight rows and this lane can fill all eight, so
+    // the slot it was spending is the one the corpus rows now use to say where
+    // they came from.
 
     // Mail + calendar when granted (same Cap::EmailSearch / email=1 bit).
     if caps.allows(Cap::EmailSearch) {
@@ -1102,7 +1201,7 @@ fn run_plan_act(brief: &mut Brief, caps: Caps) {
         } else if mail.status == BridgeStatus::Online {
             brief.push_line("FYI", "Inbox empty.");
         } else {
-            brief.push_line("Info", "Bridge offline for mail.");
+            brief.push_line("Info", copy::mail_unavailable());
         }
         if brief.count < brief.lines.len() {
             let cal = mcp::fetch_calendar_peek(caps);
@@ -1114,19 +1213,11 @@ fn run_plan_act(brief: &mut Brief, caps: Caps) {
 
     // Knowledge lane when granted (includes teddy corpus when portal=1).
     if caps.allows(Cap::SearchQuery) {
-        let peek = mcp::fetch_search_peek(caps, "capability-agent");
+        let peek = mcp::fetch_search_peek(caps, BUILTIN_DOCS_QUERY);
         if brief.status != BridgeStatus::Online {
             brief.status = peek.status;
         }
-        if peek.count > 0 {
-            // Keep room: at most 3 knowledge hits after mail lines.
-            let room = brief.lines.len().saturating_sub(brief.count).min(3);
-            for i in 0..peek.count.min(room) {
-                brief.push_line("Hit", peek.title_at(i));
-            }
-        } else {
-            brief.push_line("Info", "Knowledge search returned no hits.");
-        }
+        fill_corpus_lines(brief, &peek);
     } else {
         brief.push_line("Need", Cap::SearchQuery.label());
     }
@@ -1170,7 +1261,7 @@ fn run_teddy(brief: &mut Brief, caps: Caps) {
                 brief.push_line("Hit", peek.title_at(i));
             }
         } else if peek.status == BridgeStatus::Offline {
-            brief.push_line("Info", "Bridge offline - corpus unavailable.");
+            brief.push_line("Info", copy::corpus_unavailable());
         } else {
             brief.push_line("Info", "Teddy corpus returned no hits.");
         }
@@ -1215,7 +1306,7 @@ fn fill_portal_lines(brief: &mut Brief, caps: Caps, tool: &str, max: usize) {
         return;
     }
     if peek.status == BridgeStatus::Offline {
-        brief.push_line("Info", "Bridge offline for portals.");
+        brief.push_line("Info", copy::portals_unavailable());
         return;
     }
     if peek.count == 0 {
@@ -1274,7 +1365,7 @@ fn run_cap_safe(brief: &mut Brief, caps: Caps) {
         match mcp::save_skill(caps, "guest-starter", "Starter from capability check") {
             mcp::SaveSkillStatus::Ok => brief.push_line("Saved", "guest-starter"),
             mcp::SaveSkillStatus::Offline => {
-                brief.push_line("Info", "Bridge offline - cannot save.")
+                brief.push_line("Info", copy::cannot_save())
             }
             mcp::SaveSkillStatus::Denied => brief.need(Cap::SkillsSave),
             mcp::SaveSkillStatus::Failed => {
@@ -1573,6 +1664,160 @@ mod tests {
         assert!(advanced.plan_n <= 2);
     }
 
+    /// The morning brief the arm64 guest showed after setup, line by line:
+    ///
+    /// ```text
+    /// Plan   Acting only with switches that are on.
+    /// Info   Bridge offline for mail.
+    /// Info   Bridge offline for calendar.
+    /// Hit    Agent skills
+    /// Hit    Architecture capability IPC
+    /// Hit    os identity
+    /// Info   Your files on - open file hits from Search.
+    /// Info   Recordings on - type /path.wav in Search.
+    /// ```
+    ///
+    /// A row tagged `Plan` sitting under the `Report` heading, and three
+    /// document titles under two "bridge offline" lines with nothing on screen
+    /// tying them to anything. Eight rows for eight slots, so the fix had to
+    /// spend a row rather than add one — `a_lane_with_every_grant_on_still_fits_the_brief`
+    /// is the other half of this.
+    #[test]
+    fn no_report_row_is_tagged_plan() {
+        // "Plan" is the heading above the checklist. Reusing it as a row tag
+        // put the word on screen twice meaning two different things, and the
+        // row it tagged only restated the two plan steps above it.
+        let mut caps = Caps::none();
+        caps.set(Cap::AudioTranscribe, true);
+        let b = run("agent-plan-act", caps);
+        assert!(
+            !b.lines[..b.count].iter().any(|l| l.tag() == "Plan"),
+            "a Report row is tagged Plan: {:?}",
+            b.lines[..b.count]
+                .iter()
+                .map(|l| (l.tag(), l.text()))
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            !b.lines[..b.count]
+                .iter()
+                .any(|l| l.text().contains("switches that are on")),
+            "the grants note is back, and it costs a row this lane needs"
+        );
+    }
+
+    #[test]
+    fn a_lane_with_every_grant_on_still_fits_the_brief() {
+        // `Brief::lines` holds eight and `push_line` swallows anything past the
+        // end. The configuration in the bug report filled all eight, so a row
+        // added anywhere in this lane evicts one off the bottom in silence.
+        // This counts what the fullest realistic run needs.
+        let mut brief = Brief::empty();
+        brief.push_line("Info", "Bridge offline for mail.");
+        brief.push_line("Info", "Bridge offline for calendar.");
+        let mut peek = SearchPeek::empty(BridgeStatus::Offline, false);
+        for (i, t) in ["os identity", "Agent skills", "Architecture capability IPC"]
+            .iter()
+            .enumerate()
+        {
+            copy_field(&mut peek.hits[i].title, t);
+        }
+        peek.count = 3;
+        fill_corpus_lines(&mut brief, &peek);
+        brief.push_line("Info", "Your files on - open file hits from Search.");
+        brief.push_line("Info", "Recordings on - type /path.wav in Search.");
+        assert!(
+            brief.count <= brief.lines.len(),
+            "{} rows for {} slots",
+            brief.count,
+            brief.lines.len()
+        );
+        assert_eq!(
+            brief.lines[brief.count - 1].text(),
+            "Recordings on - type /path.wav in Search.",
+            "the last lane was silently evicted: {:?}",
+            brief.lines[..brief.count]
+                .iter()
+                .map(|l| l.text())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn the_plan_promises_only_steps_this_lane_performs() {
+        // The playbook opens with "Restate the goal in one sentence", and
+        // `run_goal` honours it with a Goal row. This lane is reached from the
+        // morning brief and the skills list with nothing typed, so it used to
+        // list a restate step and then never restate anything - a checklist
+        // whose first item silently never happened.
+        let b = run("agent-plan-act", Caps::none());
+        for i in 0..b.plan_n {
+            assert!(
+                !b.plan_at(i).to_ascii_lowercase().contains("restate"),
+                "plan step {i} promises a restatement this lane cannot make: {:?}",
+                b.plan_at(i)
+            );
+        }
+        assert!(b.plan_n >= 3, "the plan lost its remaining steps");
+    }
+
+    #[test]
+    fn corpus_rows_say_where_they_came_from() {
+        // Three bare titles under "Bridge offline for mail" read as a
+        // contradiction. Name the source before listing them, and say the
+        // search fell back to local keywords when it did.
+        let mut brief = Brief::empty();
+        let mut peek = SearchPeek::empty(BridgeStatus::Offline, false);
+        copy_field(&mut peek.hits[0].title, "os identity");
+        peek.count = 1;
+        fill_corpus_lines(&mut brief, &peek);
+        let texts = brief.lines[..brief.count]
+            .iter()
+            .map(|l| l.text())
+            .collect::<Vec<_>>();
+        assert!(
+            texts.iter().any(|t| t.contains("Built-in docs")),
+            "nothing says what these rows are: {texts:?}"
+        );
+        assert!(
+            texts.iter().any(|t| *t == copy::builtin_docs_titles_only()),
+            "nothing says why an offline corpus row does not open: {texts:?}"
+        );
+        // One row of provenance, not two: see `fill_corpus_lines`.
+        assert_eq!(brief.count, 2, "provenance grew: {texts:?}");
+        // The title still has to be the last word, after its provenance.
+        assert_eq!(brief.lines[brief.count - 1].text(), "os identity");
+    }
+
+    #[test]
+    fn corpus_rows_open_when_the_bridge_supplies_a_url() {
+        // The playbook's step 5 is "arm Doc / Event rows the user can open".
+        // This lane pushed `Hit` unconditionally, so a corpus document could
+        // never be opened even with the bridge up and a URL in hand.
+        let mut brief = Brief::empty();
+        let mut peek = SearchPeek::empty(BridgeStatus::Online, false);
+        copy_field(&mut peek.hits[0].title, "os identity");
+        copy_field(&mut peek.hits[0].url, "os://docs/identity.md");
+        peek.count = 1;
+        fill_corpus_lines(&mut brief, &peek);
+        let last = brief.count - 1;
+        assert_eq!(brief.lines[last].tag(), "Doc");
+        assert_eq!(brief.doc_url_at(0), Some("os://docs/identity.md"));
+    }
+
+    #[test]
+    fn an_offline_corpus_row_stays_unopenable() {
+        // `mcp::search_offline` copies titles and no URLs, because nothing can
+        // be read without a bridge. Those rows must not claim the Doc tag.
+        let mut brief = Brief::empty();
+        let mut peek = SearchPeek::empty(BridgeStatus::Offline, false);
+        copy_field(&mut peek.hits[0].title, "os identity");
+        peek.count = 1;
+        fill_corpus_lines(&mut brief, &peek);
+        assert_eq!(brief.lines[brief.count - 1].tag(), "Hit");
+        assert_eq!(brief.doc_n, 0, "an unopenable row was armed as a Doc");
+    }
+
     #[test]
     fn plan_act_mentions_recordings_when_granted_without_com2() {
         // AudioTranscribe alone must not open COM2 (SearchQuery stays off).
@@ -1628,7 +1873,8 @@ mod tests {
             "Save skills: use Save starter on Skills.",
             "doc.read: open a hit from Search.",
             "tsearch.sync: warm Online services on Caps.",
-            "Acting only with switches that are on.",
+            "Built-in docs - tap a Doc row to read it.",
+            copy::builtin_docs_titles_only(),
             "CALL tools already granted",
             "CALL calendar.list under the same grant",
             "Bridge offline for calendar.",
@@ -1643,6 +1889,7 @@ mod tests {
             "Try naming the file, topic, or inbox.",
             "Grant Built-in docs or Your files.",
             "No openable hits - refine the ask.",
+            "Titles only - reading needs the bridge.",
             "Tap a Doc row to open it.",
             "No recent files indexed yet.",
             "No title match - showing recent files.",
@@ -1719,6 +1966,110 @@ mod tests {
         assert_eq!(brief.lines[0].tag(), "Doc");
         assert_eq!(brief.doc_n, 1);
         assert_eq!(brief.doc_url_at(0), Some("file://docs/thesis.md"));
+    }
+
+    #[test]
+    fn url_less_results_are_hits_never_unopenable_docs() {
+        // The offline corpus returns titles with no URLs: nothing to open,
+        // so nothing may claim the openable `Doc` tag. The arm64 guest
+        // shipped three Doc rows above "No openable hits - refine the ask."
+        // because a lane pushed `Doc` first and armed (or not) second.
+        let mut brief = Brief::empty();
+        let mut peek = SearchPeek::empty(BridgeStatus::Offline, false);
+        copy_field(&mut peek.hits[0].title, "os identity");
+        copy_field(&mut peek.hits[1].title, "Agent skills");
+        copy_field(&mut peek.hits[2].title, "Architecture capability IPC");
+        peek.count = 3;
+        fill_goal_hits_remaining(&mut brief, &peek);
+        assert_eq!(brief.doc_n, 0, "nothing armable was offered");
+        assert_eq!(brief.count, 3, "all three findings still render");
+        for i in 0..brief.count {
+            assert_eq!(
+                brief.lines[i].tag(),
+                "Hit",
+                "row {i} promises to open but cannot"
+            );
+        }
+    }
+
+    #[test]
+    fn every_doc_row_is_armed_and_every_armed_line_is_a_doc_row() {
+        // Doc <=> openable, in both directions, whatever mix of lanes ran.
+        let mut brief = Brief::empty();
+        brief.push_result("with url", "file://a.md");
+        brief.push_result("without url", "");
+        brief.push_result("also with", "os://AGENTS.md");
+        let doc_rows =
+            (0..brief.count).filter(|&i| brief.lines[i].tag() == "Doc").count();
+        assert_eq!(doc_rows, brief.doc_n, "a Doc tag without an armed URL");
+        for d in 0..brief.doc_n {
+            let line = brief.doc_line_at(d).unwrap();
+            assert_eq!(brief.lines[line].tag(), "Doc");
+        }
+    }
+
+    #[test]
+    fn an_empty_offline_answer_is_explained_once_not_three_times() {
+        // The arm64 guest stacked "Bridge offline - local keywords only.",
+        // "No offline hits for that query." and "No openable hits - refine
+        // the ask." under one empty answer: three sentences, one fact.
+        assert_eq!(
+            closing_line(BridgeStatus::Offline, 0, 0, true, false),
+            None,
+            "the search already said nothing was found"
+        );
+    }
+
+    #[test]
+    fn offline_findings_are_told_why_they_do_not_open() {
+        // Titles came back, so the reader can see rows — but offline nothing
+        // opens, and no rewording of the goal changes that.
+        // Which line, not which wording — the standalone image explains the
+        // same dead end without naming a host it can never have.
+        let line = closing_line(BridgeStatus::Offline, 0, 3, true, false);
+        assert_eq!(line, Some(("Info", copy::titles_only())));
+
+        // Online the advice is actionable, so it stays.
+        assert_eq!(
+            closing_line(BridgeStatus::Online, 0, 0, true, false),
+            Some(("Info", "No openable hits - refine the ask."))
+        );
+
+        // Anything openable outranks both.
+        assert_eq!(
+            closing_line(BridgeStatus::Offline, 1, 3, true, false),
+            Some(("Next", "Tap a Doc row to open it."))
+        );
+    }
+
+    #[test]
+    fn a_url_too_long_to_store_is_a_hit_not_a_broken_doc() {
+        // The bridge sends paths up to 90 bytes; the slot holds 72. A cut
+        // URL still reads as non-empty, so the old code drew an openable Doc
+        // whose tap resolved to a path the bridge cannot find. 41 of the 320
+        // entries in a real workspace index are this long.
+        let mut brief = Brief::empty();
+        let long = "file://droplet/new/docker_config_template/backend/opportunistic-capital-deployment-service/requirements.txt";
+        assert!(long.len() > 72, "fixture must exceed the slot");
+        brief.push_result("requirements", long);
+        assert_eq!(brief.lines[0].tag(), "Hit", "a URL we cannot store is not a Doc");
+        assert_eq!(brief.doc_n, 0);
+        assert_eq!(brief.doc_url_at(0), None);
+    }
+
+    #[test]
+    fn a_deduped_title_never_arms_the_wrong_line() {
+        // Two lanes find the same title under different URLs. The second
+        // push is swallowed by the dedup, so its URL must not be recorded:
+        // arming after a swallowed push points the URL at whatever line
+        // happens to be pushed next, opening the wrong document.
+        let mut brief = Brief::empty();
+        brief.push_result("os identity", "file://notes/os-identity.md");
+        brief.push_result("os identity", "os://AGENTS.md");
+        brief.push_line("Info", "Bridge offline - local keywords only.");
+        assert_eq!(brief.doc_n, 1, "the swallowed push must not arm");
+        assert_eq!(brief.doc_url_at(0), Some("file://notes/os-identity.md"));
+        assert_eq!(brief.doc_line_at(0), Some(0));
     }
 }
 

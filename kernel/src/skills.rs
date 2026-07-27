@@ -38,6 +38,10 @@ pub const BUILTIN: &[SkillRef] = &[
         name: "market-portals",
         blurb: "Live market health + fear/greed",
     },
+    SkillRef {
+        name: "system-health-check",
+        blurb: "Check system status",
+    },
 ];
 
 /// A deliberately small executable view of a playbook.  This is not a YAML
@@ -75,6 +79,13 @@ const SAFE_TOOL_STEPS: &[&str] = &[
     "Check what will be shared",
     "Ask before a consequential action",
 ];
+const HEALTH_STEPS: &[&str] = &[
+    "Check memory and CPU status",
+    "Inspect bus devices and input",
+    "Verify capability table grants",
+    "Probe host MCP bridge connection",
+    "Summarize system health",
+];
 
 /// Resolve a catalog name into an interactive, review-first workflow.
 pub fn workflow_for(name: &str) -> Workflow {
@@ -93,6 +104,11 @@ pub fn workflow_for(name: &str) -> Workflow {
             title: "Safe tools",
             required: None,
             steps: SAFE_TOOL_STEPS,
+        },
+        "system-health-check" => Workflow {
+            title: "System health check",
+            required: None,
+            steps: HEALTH_STEPS,
         },
         _ => Workflow {
             title: "Plan and act",
@@ -198,6 +214,10 @@ mod tests {
             BUILTIN.iter().any(|s| s.name == "market-portals"),
             "market portals skill must ship in the ISO"
         );
+        assert!(
+            BUILTIN.iter().any(|s| s.name == "system-health-check"),
+            "system health check skill must ship in the ISO"
+        );
         assert!(!p.from_bridge);
     }
 
@@ -228,5 +248,8 @@ mod tests {
         assert!(email.steps.len() >= 3);
         let planning = workflow_for("agent-plan-act");
         assert_eq!(planning.required, None);
+        let health = workflow_for("system-health-check");
+        assert_eq!(health.required, None);
+        assert_eq!(health.title, "System health check");
     }
 }

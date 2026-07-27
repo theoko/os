@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["kernel", "core", "host/bridge"]
+members = ["kernel", "core"]
 default-members = ["kernel"]
 
 [profile.dev]

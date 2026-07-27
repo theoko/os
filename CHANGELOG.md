@@ -1,8 +1,70 @@
 ---
-version: 0.11.0
+version: 0.12.0
 ---
 
 # Changelog
+
+## 0.12.0 — 2026-07-27
+
+### A machine can fetch the update it was told about
+
+`update.check` could say a newer build existed. Nothing could go and get it, so
+the answer ended at "there is one" — and against the live site it did not even
+manage that: the URL it read answered with the homepage.
+
+- `CALL update.download [arch=…] [wait=1]` downloads the published image for an
+  architecture, verifies it against the published checksum, and stages it in
+  `~/Library/Application Support/os/updates/`. `update.status` reports progress
+  without touching the network; `update.forget` deletes staged images *and*
+  partials, because "off means gone" applies to megabytes fetched on somebody's
+  behalf.
+- Downloads use `?v=<commit>`, the URL `os.html` links. A CDN fronts the origin
+  and the bare URL serves the previous release for hours; fetched that way, a
+  good release arrives as a checksum mismatch, which reads to anyone verifying
+  a download as tampering. The commit comes from `BUILD-INFO.txt`, and a
+  download refuses when it is unreadable rather than falling back to the stale
+  URL.
+- Verification happens before staging, never after. A mismatched download is
+  deleted rather than left at the final path — an unbootable ISO on a USB stick
+  explains nothing about why.
+- Nothing is applied. These are boot media, and what a machine boots from is a
+  thing a person changes on purpose, not a side effect of a status check.
+- Runs in the background by default and reports through `update.status`. The
+  guest declares the bridge offline after about ten seconds, which is well
+  short of a 16 MB download; `wait=1` is for shell callers, which have no such
+  timeout.
+
+### The updater stops reading a web page as a release
+
+`/tsearch/` serves a catch-all: a missing path answers **HTTP 200 with the
+homepage**. `manifest.json` was never published, so every installed machine
+read 88 KB of HTML and reported `manifest_is_not_json` forever.
+
+- `SHA256SUMS` is now the checksum authority — the file `publish-os.sh`
+  actually uploads and re-verifies on the server and over HTTPS. A manifest is
+  optional and adds the version.
+- Every parser judges the body, never the status code: checksum lines must be
+  64 hex digits, a commit must look like one (`commit: unknown` is refused —
+  "unknown" in a URL fetches the stale cached image).
+- `update.check` names a version when a manifest is published and a commit
+  otherwise, and says which in `ROW source=`. With only a commit it reports
+  `state=undetermined` instead of comparing a commit to a version and calling
+  the result "behind".
+- `publish-os.sh` now builds and uploads `manifest.json`, and verifies it by
+  *body* — a 200 here would prove it published and prove it missing equally
+  well. `check-published.sh` watches for it and warns, since a visitor's
+  download works without one but no machine can tell whether it is behind.
+
+### Entry points
+
+- `make update-check` / `make update-os [ARCH=…]`, and `scripts/update-os.sh`.
+  It refuses to run against a bridge that predates the feature rather than
+  reporting the confusing failure that causes — a shared long-lived bridge
+  serving an older build has cost this repo an afternoon before — and does not
+  kill it, since QEMU/UTM sessions may be mid-boot on the same port.
+- `make-usb.sh` accepts `ISO=/path/to/image`, so a staged download can be
+  written without first being copied over the build output. That copy step is
+  where the wrong image gets flashed.
 
 ## 0.11.0 — 2026-07-25
 
@@ -27,14 +89,132 @@ version: 0.11.0
 - ARM64 images now use the optimized release kernel by default. Cursor moves
   restore their saved background on every architecture, eliminating the
   initial center ghost and pointer trails.
+- First-run controls now respond before activation: Continue gains a calm
+  intent halo, selectable rows tint on hover, and Back underlines. A seven-dot
+  journey rail makes progress through setup visible without adding more copy.
+- Pointer reports are coalesced into one 60 Hz visual path. Precise movement
+  settles over a few frames, fast flicks land on the next frame, and clicks
+  still snap exactly to their hit target.
 - VirtualBox's post-firmware PL011 output is muted so a full debug FIFO can
   never stall PCI/input initialization.
 - `make virtualbox-arm64` now builds the ARM ISO, creates or refreshes the VM
   with QemuRamFB plus OHCI USB keyboard/tablet, reattaches the rebuilt ISO, and
-  launches it.
+  launches it. Its VM-creation command uses VirtualBox's supported `--ostype`
+  spelling.
 - Verified in the real VirtualBox VM: first-boot setup advances via the
   emulated USB keyboard, the home search field receives `nvda`, and injected
-  absolute-tablet positions move one clean cursor across the desktop.
+  absolute-tablet positions move one clean cursor across the desktop. The
+  live welcome screen also shows hover feedback and advances once into the
+  visible setup journey.
+
+### The agent only promises what it can open
+
+- A Brief row is tagged by what it can deliver, decided once at the sink:
+  `Doc` rows open when tapped, `Hit` rows are findings the guest cannot open.
+  Lanes could previously draw a `Doc` they never armed, which is how the
+  offline guest listed three `Doc` rows above "No openable hits - refine the
+  ask." Arming now also requires the push to have appended, so a title
+  deduplicated against an earlier row can no longer record its URL against
+  the next line.
+- The offline search ranks the question that was asked. It had discarded the
+  query for a hardcoded showcase phrase, so a brief on `nvda` answered with
+  corpus documents about capabilities while claiming "local keywords only".
+- A URL too long for its 72-byte slot is no longer stored cut. A truncated
+  URL still reads as present, so the row was drawn openable and the tap
+  resolved to a path the bridge cannot find; deep workspace roots reach this
+  routinely, and two documents sharing a 72-byte prefix also collapsed into
+  one. Rows that cannot be stored whole are `Hit`s.
+- An empty offline answer is explained once. The guest had stacked three
+  sentences — bridge offline, no hits, refine the ask — under a single empty
+  result. Offline findings now close with "Titles only - reading needs the
+  bridge." because no rewording of the goal can open a baked-index title;
+  "refine the ask" is kept for when the bridge is up and the advice works.
+- The duplicate-row assertion compares findings, not metadata. A one-word goal
+  draws "Goal: opportunistic" above "Query: opportunistic" — two facts about
+  one word, which the kernel deliberately allows and the harness read as one
+  document listed twice. Its can-it-fail proof was seeding that same shape, so
+  correcting the assertion alone would have left it unable to fail; the proof
+  now seeds one document tagged both Doc and Hit, the defect it describes.
+
+### A standalone image stops waiting for a host that will never come
+
+- `make standalone-iso` (and `standalone-arm64-iso`) build a bare-metal image
+  under the new `standalone` kernel feature. The guest skips the COM2 probe
+  outright instead of spending `TIMEOUT_PING` before every bridge-touching
+  action to learn what the image already knows. Capabilities are unchanged:
+  `BridgeStatus::Offline` was always a modeled state, so this changes when the
+  guest asks, not what it can do. The ISO is named separately because the two
+  images are not interchangeable.
+- Offline copy no longer names a bridge on machines that cannot have one.
+  "Bridge offline for mail." describes something the user can fix by starting
+  the host; on standalone hardware it points at a remedy that does not exist,
+  so that image says "Mail is unavailable on this device." instead. The worst
+  offenders were the ones naming a command: the status note read "Bridge
+  offline - run: make utm-bridged", and first-run setup had a whole "Connect
+  the Bridge" step telling the reader to run `make bridge-run`. All 21 lines
+  now live in `kernel/src/copy.rs` and switch together.
+- The wording is pinned from both sides — the standalone build must name
+  neither "bridge" nor a `make` command, and the hosted build must keep saying
+  "bridge" — so the copy cannot pass by going vague in both. Search-source
+  lines deliberately keep the word "offline", which stays true on a machine
+  with no network and promises no remedy.
+- The arm64 e2e harness learned the standalone spelling of the setup step.
+  Renaming the screen made it fall through to the catch-all "any screen with a
+  Back button" signature, which sent the wrong key and looped the journey for
+  12 steps instead of reporting an unknown screen.
+
+### A busy port names the process holding it
+
+- A bridge that cannot bind its TCP port now reports which process owns it and
+  exits, instead of panicking. Under the `com.os.mcp-bridge` LaunchAgent the
+  bare panic was near-unreadable: `KeepAlive` restarted the bridge every
+  `ThrottleInterval` and the log filled with identical aborts, saying nothing
+  about the stale `make bridge-run` actually sitting on 7420.
+
+### The morning brief explains itself
+
+- Corpus rows say where they came from. The brief that opens after setup listed
+  three bare titles — "Agent skills", "Architecture capability IPC", "os
+  identity" — directly under "Bridge offline for mail" and "Bridge offline for
+  calendar", with nothing on screen connecting them to anything. Read in order
+  it said the bridge was unreachable and then produced documents from nowhere.
+  One row of provenance now precedes them, and says why they do not open when
+  the bridge is down.
+- Corpus rows open when there is something to open. The lane pushed the
+  unopenable `Hit` tag unconditionally, so a document could never be tapped even
+  with the bridge up and a URL in hand — against the playbook's own step 5,
+  "arm Doc / Event rows the user can open". Offline the rows still read `Hit`,
+  correctly: `search_offline` carries titles and no URLs.
+- The plan lists only the steps this lane performs. It opened with "Restate:
+  what matters right now" and then never restated anything, because the morning
+  brief and the skills list both reach it with nothing typed. A four-step
+  checklist that delivers three reads as a step that silently failed.
+- Dropped the `Plan`-tagged row from the report. It put the word Plan on screen
+  as both the checklist heading and a row tag meaning something else, and its
+  text only restated the two plan steps above it. `Brief::lines` holds eight
+  rows and this lane can fill all eight, so that slot is what the provenance
+  line spends — adding a row instead would have silently evicted "Recordings
+  on" off the bottom of the screen being fixed.
+
+### Setup owns the screen until it is finished
+
+- Boot no longer paints Home before setup has run. Three `draw_home` calls sat
+  on the way to the main loop, and Home is a lie before consent: it offers a
+  query box and capability cards under an empty grant set. On x86-64 the window
+  was milliseconds; on ARM64 the USB probe sits inside it, so the guest showed a
+  complete Home screen for over a second and then replaced it with Welcome.
+  That is what made the ARM64 end-to-end run report that Enter on Home went back
+  to the welcome screen — it never left setup, and the harness had photographed
+  and typed into the pre-setup Home paint.
+- The "which input is missing" note is drawn on the Welcome screen. It was
+  painted onto Home during boot, where setup overdrew it moments later, so on a
+  machine with no driveable keyboard or pointer the one sentence explaining why
+  nothing responds was never actually readable. Welcome is the screen such a
+  machine is stuck on, and a deliberate setup restart keeps the note.
+- `scripts/e2e/arm64.py` asserts that the screen a fresh boot lands on is the
+  screen it stays on. Nothing has been typed at that point, so a screen that
+  changes by itself is the guest overpainting, and the run now says so instead
+  of blaming the input path for the keystrokes it aimed at a dead frame.
 
 ## 0.10.0 — 2026-07-25
 

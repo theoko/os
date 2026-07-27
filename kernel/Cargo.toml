@@ -16,6 +16,14 @@ path = "src/main.rs"
 test = false
 bench = false
 
+[features]
+default = []
+# Bare-metal image: no host is attached to COM2 and none ever will be, so the
+# bridge probe is skipped rather than timing out before every action. Offline
+# is already a modeled state everywhere, so this changes when the guest asks,
+# not what it can do.
+standalone = []
+
 [dependencies]
 limine = "0.5"
 

@@ -18,7 +18,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-ISO="${IMAGE_NAME:-os}.iso"
+# An explicit ISO= wins, so an image downloaded by scripts/update-os.sh (which
+# stages outside the repo) can be written without being copied over the build
+# output first — the copy step is where the wrong image gets flashed.
+ISO="${ISO:-${IMAGE_NAME:-os}.iso}"
 DEVICE="${DEVICE:-}"
 DRY_RUN="${DRY_RUN:-0}"
 
@@ -67,7 +70,7 @@ if [[ "${1:-}" == "--list" || -z "$DEVICE" ]]; then
   exit 0
 fi
 
-[[ -f "$ISO" ]] || die "$ISO missing - run 'make iso' first"
+[[ -f "$ISO" ]] || die "$ISO missing - run 'make iso' first, or pass ISO=/path/to/os.iso"
 
 size_label="$(check_device "$DEVICE")"
 iso_size="$(stat -f%z "$ISO")"

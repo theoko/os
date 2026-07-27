@@ -299,6 +299,119 @@ impl Surface {
         }
     }
 
+    /// Anti-aliased rounded rectangle outline (border/stroke).
+    ///
+    /// Draws a border of `stroke` pixels along the boundary of the rounded rectangle.
+    pub fn draw_round_rect_outline(
+        &self,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        radius: i32,
+        stroke: i32,
+        color: u32,
+    ) {
+        if w <= 0 || h <= 0 || stroke <= 0 {
+            return;
+        }
+        if stroke * 2 >= w || stroke * 2 >= h {
+            self.fill_round_rect(x, y, w, h, radius, color);
+            return;
+        }
+        self.mark_dirty(x, y, w, h);
+        let r_out = radius.max(0).min(w / 2).min(h / 2);
+        let r_in = (r_out - stroke).max(0);
+
+        let r_out8 = r_out * 8;
+        let rr_out = r_out8 * r_out8;
+        let r_in8 = r_in * 8;
+        let rr_in = r_in8 * r_in8;
+
+        let (l8, t8) = (x * 8, y * 8);
+        let (rt8, b8) = ((x + w) * 8, (y + h) * 8);
+        let cx_l_out = l8 + r_out8;
+        let cx_r_out = rt8 - r_out8;
+        let cy_t_out = t8 + r_out8;
+        let cy_b_out = b8 - r_out8;
+
+        let in_l8 = (x + stroke) * 8;
+        let in_t8 = (y + stroke) * 8;
+        let in_rt8 = (x + w - stroke) * 8;
+        let in_b8 = (y + h - stroke) * 8;
+        let cx_l_in = in_l8 + r_in8;
+        let cx_r_in = in_rt8 - r_in8;
+        let cy_t_in = in_t8 + r_in8;
+        let cy_b_in = in_b8 - r_in8;
+
+        let x0 = x.max(0);
+        let y0 = y.max(0);
+        let x1 = (x + w).min(self.width as i32);
+        let y1 = (y + h).min(self.height as i32);
+
+        for py in y0..y1 {
+            for px in x0..x1 {
+                let mut hits = 0u32;
+                for sy in 0..4 {
+                    let s_y = py * 8 + sy * 2 + 1;
+                    for sx in 0..4 {
+                        let s_x = px * 8 + sx * 2 + 1;
+                        if s_x < l8 || s_x >= rt8 || s_y < t8 || s_y >= b8 {
+                            continue;
+                        }
+                        let cxo = if s_x < cx_l_out {
+                            cx_l_out
+                        } else if s_x > cx_r_out {
+                            cx_r_out
+                        } else {
+                            s_x
+                        };
+                        let cyo = if s_y < cy_t_out {
+                            cy_t_out
+                        } else if s_y > cy_b_out {
+                            cy_b_out
+                        } else {
+                            s_y
+                        };
+                        let dxo = s_x - cxo;
+                        let dyo = s_y - cyo;
+                        if dxo * dxo + dyo * dyo > rr_out {
+                            continue;
+                        }
+
+                        let in_rect = s_x >= in_l8 && s_x < in_rt8 && s_y >= in_t8 && s_y < in_b8;
+                        if in_rect {
+                            let cxi = if s_x < cx_l_in {
+                                cx_l_in
+                            } else if s_x > cx_r_in {
+                                cx_r_in
+                            } else {
+                                s_x
+                            };
+                            let cyi = if s_y < cy_t_in {
+                                cy_t_in
+                            } else if s_y > cy_b_in {
+                                cy_b_in
+                            } else {
+                                s_y
+                            };
+                            let dxi = s_x - cxi;
+                            let dyi = s_y - cyi;
+                            if dxi * dxi + dyi * dyi <= rr_in {
+                                continue;
+                            }
+                        }
+
+                        hits += 1;
+                    }
+                }
+                if hits > 0 {
+                    self.blend_pixel(px, py, color, hits * 255 / 16);
+                }
+            }
+        }
+    }
+
     /// Anti-aliased convex/concave polygon fill (even-odd rule).
     ///
     /// Points are in 1/8-px units so callers can place sub-pixel vertices.

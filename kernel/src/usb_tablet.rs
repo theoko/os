@@ -9,6 +9,7 @@ use crate::pci;
 const USBCMD: u16 = 0x00;
 const USBSTS: u16 = 0x02;
 const FRNUM: u16 = 0x06;
+#[allow(dead_code)]
 const FLBASEADD: u16 = 0x08;
 const SOFMOD: u16 = 0x0C;
 const PORTSC1: u16 = 0x10;

@@ -3,20 +3,36 @@
 
 use core::hint::black_box;
 
+#[allow(unused_imports)]
 use kernel::{
-    acpi, agent, anim, arm64_mmio, beep, caps, fault, fb, hello_message, inputdiag, keyboard, level,
+    acpi, agent, anim, arm64_mmio, beep, boot_splash, caps, fault, fb, hello_message, inputdiag, keyboard, level,
     mcp, mouse, ohci, pci, screens, searchui, serial, setup, skills, time, ui, usb_tablet,
 };
 use limine::BaseRevision;
 use limine::request::{
-    FramebufferRequest, HhdmRequest, MemoryMapRequest, RequestsEndMarker, RequestsStartMarker,
-    RsdpRequest, StackSizeRequest,
+    ExecutableCmdlineRequest, FramebufferRequest, HhdmRequest, MemoryMapRequest,
+    RequestsEndMarker, RequestsStartMarker, RsdpRequest, StackSizeRequest,
 };
 
 const STACK_SIZE: u64 = 128 * 1024;
 /// Chill game loop: always paced at 60 Hz so ambient motion keeps breathing
 /// even when the pointer is still.
 const FRAME_US: u32 = anim::FRAME_US_60;
+
+/// The small interactive region currently under the raw pointer.
+///
+/// Semantic targets keep hover independent from cursor smoothing: clicks and
+/// feedback both follow the device coordinates immediately, while the arrow
+/// can still ease between those points.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum HoverTarget {
+    None,
+    StatusDot,
+    Home(ui::HomeHit),
+    Back,
+    SearchResult(usize),
+    ScreenRow(usize),
+}
 
 #[used]
 #[unsafe(link_section = ".requests")]
@@ -43,6 +59,10 @@ static FRAMEBUFFER_REQUEST: FramebufferRequest = FramebufferRequest::new();
 static RSDP_REQUEST: RsdpRequest = RsdpRequest::new();
 
 #[used]
+#[unsafe(link_section = ".requests")]
+static CMDLINE_REQUEST: ExecutableCmdlineRequest = ExecutableCmdlineRequest::new();
+
+#[used]
 #[unsafe(link_section = ".requests_start_marker")]
 static _START_MARKER: RequestsStartMarker = RequestsStartMarker::new();
 
@@ -58,6 +78,7 @@ unsafe extern "C" fn kmain() -> ! {
     black_box(&MEMORY_MAP_REQUEST);
     black_box(&FRAMEBUFFER_REQUEST);
     black_box(&RSDP_REQUEST);
+    black_box(&CMDLINE_REQUEST);
 
     if !BASE_REVISION.is_supported() {
         serial::exit_qemu(false);
@@ -85,11 +106,35 @@ unsafe extern "C" fn kmain() -> ! {
     // indistinguishable from "it just randomly crashes".
     fault::init();
 
+    // Optional shared secret for the host MCP bridge, passed in via the
+    // Limine `cmdline:` directive so the ISO carries no baked-in credential
+    // in the ELF itself — the token is minted fresh per install/session by
+    // the host tooling and only ever lands here at boot. Absent entirely on
+    // any image built without a bridge pairing (e.g. bare metal, or a dev
+    // ISO remastered without a token), in which case `mcp::ping_bridge`
+    // simply never emits an AUTH line, matching its behavior before this
+    // existed.
+    if let Some(resp) = CMDLINE_REQUEST.get_response() {
+        if let Ok(cmdline) = resp.cmdline().to_str() {
+            for tok in cmdline.split_whitespace() {
+                if let Some(v) = tok.strip_prefix("mcp_token=") {
+                    if !v.is_empty() {
+                        mcp::set_auth_token(v);
+                    }
+                    break;
+                }
+            }
+        }
+    }
+
     serial_port.write_str(hello_message());
     serial_port.write_str(serial::LINE_ENDING);
 
-    // Paint UI immediately (don't block on MCP). Bridge is optional.
-    let mut mail = mcp::MailPeek::empty(mcp::BridgeStatus::Offline);
+    // Paint UI immediately (don't block on MCP). Bridge is optional. `mail` is
+    // deferred rather than pre-filled with an Offline placeholder: nothing
+    // paints before the boot splash now, and the splash probes the bridge, so
+    // the first value it takes is the real one.
+    let mut mail;
     let mut files = mcp::FilePeek::empty(mcp::BridgeStatus::Offline, false);
     let mut skill_peek = skills::SkillPeek::from_builtin();
     if let Some(resp) = FRAMEBUFFER_REQUEST.get_response() {
@@ -159,17 +204,44 @@ unsafe extern "C" fn kmain() -> ! {
                 // Everything composes in cached RAM; `present()` is the only
                 // thing that touches video memory.
                 let surface = screen.surface();
-                let boot_brief = agent::Brief::empty();
-                ui::draw_home(
-                    surface,
-                    &mail,
-                    &files,
-                    &skill_peek,
-                    "",
-                    caps::Caps::none(),
-                    &boot_brief,
-                    level::Level::Guided,
-                );
+
+                // Nothing paints Home before setup has had its say. The boot
+                // splash below fills the surface on its own frame 0, so the
+                // firmware screen is gone just as fast without ever showing a
+                // screen this machine has not earned yet. See the comment on
+                // the Welcome paint after the splash.
+
+                // ── Boot splash ──────────────────────────────────────────
+                // Play the connection animation while the bridge probe runs.
+                // The probe is slow (serial round-trip with a timeout), so we
+                // fire it at the halfway point: frames 0..HALF play first,
+                // then the probe runs, then frames HALF..TOTAL finish.
+                const HALF: u32 = boot_splash::TOTAL_FRAMES / 2;
+                let mut splash_tick = serial::rdtsc();
+                // Phase 1: first half of animation
+                for frame in 0..HALF {
+                    boot_splash::draw_frame(surface, frame);
+                    surface.clear_dirty();
+                    screen.present();
+                    splash_tick = anim::pace(splash_tick, FRAME_US);
+                }
+                // Run the bridge probe while the animation would show its midpoint.
+                serial_port.write_str("mcp: probing bridge\n");
+                mail = mcp::MailPeek::empty(mcp::probe_bridge());
+                serial_port.write_str("mcp: probe returned\n");
+                match mail.status {
+                    mcp::BridgeStatus::Online => serial_port.write_str("mcp: bridge connected\n"),
+                    mcp::BridgeStatus::Offline => serial_port.write_str("mcp: bridge offline\n"),
+                }
+                // Phase 2: second half (now colour-coded by bridge result)
+                for frame in HALF..boot_splash::TOTAL_FRAMES {
+                    boot_splash::draw_frame(surface, frame);
+                    surface.clear_dirty();
+                    screen.present();
+                    splash_tick = anim::pace(splash_tick, FRAME_US);
+                }
+                // Fade out — draw one blank frame to clear the splash bg.
+                surface.fill(crate::ui::theme::BG);
                 screen.present();
 
                 // Liveness only until the user consents. Reading the inbox
@@ -177,24 +249,22 @@ unsafe extern "C" fn kmain() -> ! {
                 // persist to disk — mail before anyone agreed to it.
                 let mut grants = caps::Caps::none();
                 let mut level = level::Level::Guided;
-                serial_port.write_str("mcp: probing bridge\n");
-                mail = mcp::MailPeek::empty(mcp::probe_bridge());
-                serial_port.write_str("mcp: probe returned\n");
-                match mail.status {
-                    mcp::BridgeStatus::Online => serial_port.write_str("mcp: email connected\n"),
-                    mcp::BridgeStatus::Offline => serial_port.write_str("mcp: email offline\n"),
-                }
                 serial_port.write_str("skills: builtins ready\n");
-                ui::draw_home(
-                    surface,
-                    &mail,
-                    &files,
-                    &skill_peek,
-                    "",
-                    caps::Caps::none(),
-                    &boot_brief,
-                    level,
-                );
+
+                // Setup owns the screen from here to the moment it finishes.
+                //
+                // This used to paint Home three times on the way to the main
+                // loop, and Home is a lie until setup has run: it offers a
+                // query box and capability cards under `Caps::none()`, before
+                // anyone has consented to anything. On x86 the window was a
+                // few milliseconds and nobody saw it. On arm64 the USB probe
+                // below takes over a second, so the guest showed a complete
+                // Home screen and then replaced it with Welcome — which is
+                // also why the e2e harness reported that Enter on Home went
+                // back to the welcome screen. It never left setup; the harness
+                // photographed the pre-setup Home paint and typed into it.
+                let mut setup = setup::Setup::new();
+                setup.draw(surface, &mail, &skill_peek);
 
                 let cx = surface.width() as i32 / 2;
                 let cy = surface.height() as i32 / 2;
@@ -305,7 +375,6 @@ unsafe extern "C" fn kmain() -> ! {
                 }
 
                 let mut brief = agent::Brief::empty();
-                ui::draw_home(surface, &mail, &files, &skill_peek, "", grants, &brief, level);
                 let mut cursor = mouse::Cursor::new();
                 let mut x = cx;
                 let mut y = cy;
@@ -349,29 +418,15 @@ unsafe extern "C" fn kmain() -> ! {
                     None => grants.describe(&mut status_buf),
                 };
 
-                // Paint it now, not on the next redraw.
+                // Say it on the screen setup is already showing.
                 //
-                // Home was already drawn above, and every later redraw is
-                // triggered by input. On a machine with no input driver that
-                // redraw never comes, so the one message explaining why
-                // nothing responds was only ever shown to people whose input
-                // already worked. The arm64 guest sat there displaying the
-                // capability summary instead.
-                if inputs.note().is_some() {
-                    ui::draw_home(
-                        surface,
-                        &mail,
-                        &files,
-                        &skill_peek,
-                        status_str(&status_buf, status_len),
-                        grants,
-                        &brief,
-                        level,
-                    );
-                    screen.present_all();
-                }
+                // This used to paint the note onto Home and present it, which
+                // achieved nothing: setup drew over it a moment later, so the
+                // one message explaining why nothing responds was never
+                // actually readable on first boot. A machine with no keyboard
+                // is stuck on Welcome, so Welcome is where the note belongs.
+                setup.set_note(inputs.note());
 
-                let mut setup = setup::Setup::new();
                 let animate = can_animate(&screen);
                 serial_port.write_str(if animate {
                     "ui: transitions on\n"
@@ -398,6 +453,9 @@ unsafe extern "C" fn kmain() -> ! {
                 let mut playbook_name = [0u8; 28];
                 let mut playbook_name_len = 0usize;
                 let mut view = screens::View::Home;
+                let mut hover = HoverTarget::None;
+                let mut hover_view = view;
+                let mut hover_pressed = false;
                 // The hidden portal screen. Nothing on Home points at it; the
                 // Ctrl+Shift+P chord is the whole entrance.
                 let mut portal_cfg = screens::PortalConfig::new();
@@ -439,13 +497,11 @@ unsafe extern "C" fn kmain() -> ! {
                     let h = surface.height() as i32;
                     let mut buttons = prev_buttons;
                     let mut moved = false;
-                    let mut ohci_pointer = false;
                     if let Some(ref mut input) = ohci_input {
-                        ohci_pointer = input.has_pointer();
-                        if input.poll(w, h) && ohci_pointer {
+                        if input.has_pointer() && input.poll(w, h) {
                             let point = input.pointer();
-                            x = point.x;
-                            y = point.y;
+                            x = point.x.clamp(0, w.saturating_sub(1));
+                            y = point.y.clamp(0, h.saturating_sub(1));
                             buttons = point.buttons;
                             mice.x = x;
                             mice.y = y;
@@ -453,29 +509,34 @@ unsafe extern "C" fn kmain() -> ! {
                             moved = true;
                         }
                     }
-                    if !ohci_pointer {
+                    if !moved {
                         if let Some(ref mut t) = tablet {
                             if t.poll(w, h) {
-                                x = t.x;
-                                y = t.y;
+                                x = t.x.clamp(0, w.saturating_sub(1));
+                                y = t.y.clamp(0, h.saturating_sub(1));
                                 buttons = t.buttons;
                                 mice.x = x;
                                 mice.y = y;
                                 mice.buttons = buttons;
                                 moved = true;
                             }
-                        } else if mice.poll(w, h) {
-                            x = mice.x;
-                            y = mice.y;
+                        }
+                    }
+                    if !moved {
+                        if mice.poll(w, h) {
+                            x = mice.x.clamp(0, w.saturating_sub(1));
+                            y = mice.y.clamp(0, h.saturating_sub(1));
                             buttons = mice.buttons;
                             moved = true;
                         }
                     }
+                    prev_buttons = buttons;
                     if moved {
                         motion.set_target(x, y);
                     }
 
                     if !setup.is_finished() {
+                        let hover_changed = moved && setup.pointer_hover(x, y);
                         let before = setup.step;
                         let mut setup_changed = setup.pointer(x, y, buttons);
                         while let Some(key) = poll_key(&mut ohci_input, &mut kb) {
@@ -564,7 +625,11 @@ unsafe extern "C" fn kmain() -> ! {
                             }
                             cursor.show_at(surface, x, y);
                             enter(&screen, animate, &mut motion, x, y);
-                            moved = false;
+                        } else if hover_changed {
+                            // Hover is feedback, not navigation: repaint the
+                            // same setup step without replaying its entrance.
+                            cursor.hide(surface);
+                            setup.draw(surface, &mail, &skill_peek);
                         }
                     } else if view == screens::View::Home {
                         // The nav dot is the only nav affordance; clicking it
@@ -579,7 +644,6 @@ unsafe extern "C" fn kmain() -> ! {
                             screens::draw_status(surface, &mail, &portal, grants);
                             cursor.show_at(surface, x, y);
                             enter(&screen, animate, &mut motion, x, y);
-                            moved = false;
                         }
 
                         // Type straight into the home field - no click first.
@@ -643,6 +707,15 @@ unsafe extern "C" fn kmain() -> ! {
                             }
                         }
                         if dirty {
+                            if !query_only {
+                                // A full redraw may cover an existing intent
+                                // rail. Re-derive it from the live pointer in
+                                // the common frame instead of trusting stale
+                                // painted state. The bounded field painter
+                                // leaves the existing rail untouched.
+                                hover = HoverTarget::None;
+                                hover_pressed = false;
+                            }
                             cursor.hide(surface);
                             match view {
                                 screens::View::Search => searchui::draw(
@@ -691,13 +764,22 @@ unsafe extern "C" fn kmain() -> ! {
                                 ),
                             }
                             cursor.show_at(surface, x, y);
-                            enter(&screen, animate, &mut motion, x, y);
-                            moved = false;
+                            if query_only {
+                                // Typing is an in-place edit, not a screen
+                                // transition. Sliding the whole framebuffer
+                                // for one changed field made each key feel like
+                                // opening a new page.
+                                screen.present();
+                            } else {
+                                enter(&screen, animate, &mut motion, x, y);
+                            }
                         }
                     }
                     if view != screens::View::Home {
                         // --- search screen: keyboard drives it ---
                         let mut dirty = false;
+                        let mut query_only = false;
+                        let mut full_redraw = false;
                         while let Some(key) = poll_key(&mut ohci_input, &mut kb) {
                             match key {
                                 keyboard::Key::Enter => {
@@ -713,6 +795,7 @@ unsafe extern "C" fn kmain() -> ! {
                                             serial_port.write_str("search: ran\n");
                                         }
                                         dirty = true;
+                                        full_redraw = true;
                                     } else if view == screens::View::Playbook {
                                         if playbook_step + 1 < playbook.steps.len() {
                                             playbook_step += 1;
@@ -810,6 +893,7 @@ unsafe extern "C" fn kmain() -> ! {
                                     // could not see.
                                     if view == screens::View::Search && query.apply(other) {
                                         dirty = true;
+                                        query_only = !full_redraw;
                                     } else if view == screens::View::Playbook
                                         && playbook_goal.apply(other)
                                     {
@@ -1128,8 +1212,25 @@ unsafe extern "C" fn kmain() -> ! {
                             }
                         }
                         if dirty {
+                            if !query_only || full_redraw {
+                                // Full secondary-screen redraws replace the
+                                // rail. The common frame below reinstates the
+                                // right one; field-only edits preserve it.
+                                hover = HoverTarget::None;
+                                hover_pressed = false;
+                            }
                             cursor.hide(surface);
                             match view {
+                                screens::View::Search if query_only && !full_redraw => {
+                                    searchui::draw_search_field(
+                                        surface,
+                                        w,
+                                        h,
+                                        query.as_str(),
+                                        caret,
+                                        level,
+                                    )
+                                }
                                 screens::View::Search => searchui::draw(
                                     surface,
                                     &sview,
@@ -1176,8 +1277,11 @@ unsafe extern "C" fn kmain() -> ! {
                                 }
                             }
                             cursor.show_at(surface, x, y);
-                            enter(&screen, animate, &mut motion, x, y);
-                            moved = false;
+                            if query_only && !full_redraw {
+                                screen.present();
+                            } else {
+                                enter(&screen, animate, &mut motion, x, y);
+                            }
                         }
                     } else {
                         let left_down = buttons & 1 != 0;
@@ -1188,12 +1292,11 @@ unsafe extern "C" fn kmain() -> ! {
                             match targets.hit(x, y) {
                                 Some(ui::HomeHit::Cta(ui::CtaId::Ready)) => {
                                     serial_port.write_str("ui: click Ready\n");
-                                    setup = setup::Setup::restart(level);
+                                    setup = setup::Setup::restart(level, inputs.note());
                                     cursor.hide(surface);
                                     setup.draw(surface, &mail, &skill_peek);
                                     cursor.show_at(surface, x, y);
                                     enter(&screen, animate, &mut motion, x, y);
-                                    moved = false;
                                     clicked = true;
                                 }
                                 Some(ui::HomeHit::Cta(ui::CtaId::Skills))
@@ -1210,7 +1313,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     screens::draw_skills(surface, &skill_peek, grants);
                                     cursor.show_at(surface, x, y);
                                     enter(&screen, animate, &mut motion, x, y);
-                                    moved = false;
                                     // Don't fall through to the home redraw below.
                                     clicked = false;
                                 }
@@ -1230,8 +1332,11 @@ unsafe extern "C" fn kmain() -> ! {
                                     );
                                     cursor.show_at(surface, x, y);
                                     enter(&screen, animate, &mut motion, x, y);
-                                    moved = false;
-                                    clicked = true;
+                                    // Search is already composed. Falling into
+                                    // the shared Home redraw leaves `view`
+                                    // saying Search while the framebuffer
+                                    // visibly shows Home.
+                                    clicked = false;
                                 }
                                 Some(ui::HomeHit::Card(ui::CardId::Capabilities)) => {
                                     serial_port.write_str("ui: click Capabilities\n");
@@ -1241,7 +1346,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     screens::draw_caps(surface, grants, level);
                                     cursor.show_at(surface, x, y);
                                     enter(&screen, animate, &mut motion, x, y);
-                                    moved = false;
                                     clicked = false;
                                 }
                                 Some(ui::HomeHit::Brief) => {
@@ -1251,7 +1355,6 @@ unsafe extern "C" fn kmain() -> ! {
                                     screens::draw_brief(surface, &brief);
                                     cursor.show_at(surface, x, y);
                                     enter(&screen, animate, &mut motion, x, y);
-                                    moved = false;
                                     clicked = false;
                                 }
                                 Some(ui::HomeHit::Mail(i)) => {
@@ -1283,7 +1386,6 @@ unsafe extern "C" fn kmain() -> ! {
                                         );
                                         cursor.show_at(surface, x, y);
                                         enter(&screen, animate, &mut motion, x, y);
-                                        moved = false;
                                     } else {
                                         serial_port.write_str("ui: mail missing id\n");
                                     }
@@ -1309,7 +1411,6 @@ unsafe extern "C" fn kmain() -> ! {
                                         );
                                         cursor.show_at(surface, x, y);
                                         enter(&screen, animate, &mut motion, x, y);
-                                        moved = false;
                                     } else {
                                         serial_port.write_str("ui: file missing url\n");
                                     }
@@ -1331,7 +1432,6 @@ unsafe extern "C" fn kmain() -> ! {
                                 );
                                 cursor.show_at(surface, x, y);
                                 enter(&screen, animate, &mut motion, x, y);
-                                moved = false;
                             }
                         }
                     }
@@ -1357,12 +1457,6 @@ unsafe extern "C" fn kmain() -> ! {
                             cursor.show_at(surface, x, y);
                             screen.present();
                         }
-                    }
-                    if moved {
-                        cursor.show_at(surface, x, y);
-                        // hide()/show_at() marked both footprints; present()
-                        // blits exactly that union and nothing else.
-                        screen.present();
                     }
                     // ARM's frame pacing below is derived from CNTFRQ_EL0, but
                     // the timebase is the independent floor: a guest whose
@@ -1412,15 +1506,16 @@ unsafe extern "C" fn kmain() -> ! {
                                 );
                             }
                             screens::View::Search => {
-                                searchui::draw(
+                                // Results and the agent sentence did not
+                                // change; keep a blink to one bounded field.
+                                searchui::draw_search_field(
                                     surface,
-                                    &sview,
+                                    w,
+                                    h,
                                     query.as_str(),
                                     caret,
-                                    bridge_note(&mail),
                                     level,
                                 );
-                                ui::paint_chill_rule(surface, w, tick);
                             }
                             // The password field has a caret too; without this
                             // it would sit frozen while every other field
@@ -1428,9 +1523,129 @@ unsafe extern "C" fn kmain() -> ! {
                             screens::View::PortalConfig if portal_cfg.status.locked => {
                                 screens::draw_portal_config(surface, &portal_cfg, caret);
                                 ui::paint_chill_rule(surface, w, tick);
+                                hover = HoverTarget::None;
+                                hover_pressed = false;
                             }
                             _ => {}
                         }
+                    }
+
+                    // Derive intent from the raw pointer once per frame. A
+                    // target transition repaints two 2px rails; staying inside
+                    // the same target performs no UI work. View changes drop
+                    // the old rail without erasing it over the freshly drawn
+                    // screen.
+                    let home_targets =
+                        ui::home_targets(w, h, &skill_peek, &brief, &mail, &files);
+                    let (bx, by, bw, bh) = searchui::back_rect(w);
+                    let over_back = x >= bx && x < bx + bw && y >= by && y < by + bh;
+                    let next_hover = if !setup.is_finished() {
+                        HoverTarget::None
+                    } else {
+                        match view {
+                            screens::View::Home => {
+                                if ui::status_dot_rect(w).contains(x, y) {
+                                    HoverTarget::StatusDot
+                                } else {
+                                    home_targets
+                                        .hit(x, y)
+                                        .map(HoverTarget::Home)
+                                        .unwrap_or(HoverTarget::None)
+                                }
+                            }
+                            screens::View::Search => {
+                                if over_back {
+                                    HoverTarget::Back
+                                } else {
+                                    searchui::result_hit(w, h, sview.count, x, y)
+                                        .map(HoverTarget::SearchResult)
+                                        .unwrap_or(HoverTarget::None)
+                                }
+                            }
+                            screens::View::Caps => {
+                                if over_back {
+                                    HoverTarget::Back
+                                } else {
+                                    screens::caps_hit(w, x, y)
+                                        .map(HoverTarget::ScreenRow)
+                                        .unwrap_or(HoverTarget::None)
+                                }
+                            }
+                            screens::View::Skills => {
+                                if over_back {
+                                    HoverTarget::Back
+                                } else if screens::skills_save_hit(
+                                    w,
+                                    skill_peek.count,
+                                    grants.allows(caps::Cap::SkillsSave),
+                                    x,
+                                    y,
+                                ) {
+                                    HoverTarget::ScreenRow(skill_peek.count.min(7))
+                                } else {
+                                    screens::skills_hit(w, skill_peek.count, x, y)
+                                        .map(HoverTarget::ScreenRow)
+                                        .unwrap_or(HoverTarget::None)
+                                }
+                            }
+                            screens::View::PortalConfig => {
+                                if over_back {
+                                    HoverTarget::Back
+                                } else if !portal_cfg.status.locked {
+                                    screens::portal_family_hit(w, x, y)
+                                        .map(HoverTarget::ScreenRow)
+                                        .unwrap_or(HoverTarget::None)
+                                } else {
+                                    HoverTarget::None
+                                }
+                            }
+                            screens::View::Reader
+                            | screens::View::Brief
+                            | screens::View::Status
+                            | screens::View::Playbook => {
+                                if over_back {
+                                    HoverTarget::Back
+                                } else {
+                                    HoverTarget::None
+                                }
+                            }
+                        }
+                    };
+                    let next_pressed =
+                        next_hover != HoverTarget::None && buttons & 0x01 != 0;
+                    let same_view = setup.is_finished() && hover_view == view;
+                    if !same_view {
+                        hover = HoverTarget::None;
+                        hover_pressed = false;
+                        hover_view = view;
+                    }
+                    if hover != next_hover || hover_pressed != next_pressed {
+                        if same_view && hover != HoverTarget::None {
+                            paint_hover(
+                                surface,
+                                view,
+                                hover,
+                                false,
+                                false,
+                                w,
+                                h,
+                                home_targets,
+                            );
+                        }
+                        if next_hover != HoverTarget::None {
+                            paint_hover(
+                                surface,
+                                view,
+                                next_hover,
+                                true,
+                                next_pressed,
+                                w,
+                                h,
+                                home_targets,
+                            );
+                        }
+                        hover = next_hover;
+                        hover_pressed = next_pressed;
                     }
                     if let Some((draw_x, draw_y)) = motion.step() {
                         cursor.show_at(surface, draw_x, draw_y);
@@ -1453,6 +1668,61 @@ unsafe extern "C" fn kmain() -> ! {
     // Only the framebuffer-missing/unsupported paths reach here — that is a
     // boot failure, and the smoke test must see it as one.
     serial::exit_qemu(false);
+}
+
+/// Paint one bounded interaction rail.
+///
+/// Hover is a pale intent cue; holding the primary button deepens it to the
+/// normal action blue. The shape never grows, so press feedback cannot trigger
+/// layout or a larger framebuffer transfer.
+fn paint_hover(
+    fb: &fb::Surface,
+    view: screens::View,
+    target: HoverTarget,
+    on: bool,
+    pressed: bool,
+    w: i32,
+    h: i32,
+    home: ui::HomeTargets,
+) {
+    let rect = match (view, target) {
+        (screens::View::Home, HoverTarget::StatusDot) => Some(ui::status_hover_rect(w)),
+        (screens::View::Home, HoverTarget::Home(hit)) => Some(ui::home_hover_rect(home, hit)),
+        (screens::View::Search, HoverTarget::SearchResult(i)) => {
+            Some(searchui::result_hover_rect(w, h, i))
+        }
+        (
+            screens::View::Caps | screens::View::Skills | screens::View::PortalConfig,
+            HoverTarget::ScreenRow(i),
+        ) => Some(screens::row_hover_rect(w, i)),
+        (
+            screens::View::Search
+            | screens::View::Skills
+            | screens::View::Caps
+            | screens::View::Reader
+            | screens::View::Brief
+            | screens::View::Status
+            | screens::View::Playbook
+            | screens::View::PortalConfig,
+            HoverTarget::Back,
+        ) => Some(searchui::back_hover_rect(w)),
+        _ => None,
+    };
+    if let Some(rect) = rect.filter(|r| r.w > 0 && r.h > 0) {
+        fb.fill_rect(
+            rect.x,
+            rect.y,
+            rect.w,
+            rect.h,
+            if !on {
+                ui::theme::BG
+            } else if pressed {
+                ui::theme::ACCENT
+            } else {
+                ui::theme::TINT_BORDER
+            },
+        );
+    }
 }
 
 /// Drain the native USB keyboard before falling back to PS/2/serial.
@@ -1562,8 +1832,9 @@ fn enter(screen: &fb::Screen, animate: bool, motion: &mut mouse::CursorMotion, x
     if !animate {
         // Under software emulation a slide costs 11 full-screen blits — about
         // a quarter of a second — so the "polish" reads as a stutter on every
-        // click. Dirty-rect present is ~600x cheaper; just show the frame.
-        screen.present_all();
+        // click. Full-screen transitions already dirty the whole surface;
+        // field and hover updates do not, so preserve their bounded blits.
+        screen.present();
         return;
     }
     let mut mark = serial::rdtsc();

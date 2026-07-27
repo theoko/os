@@ -62,7 +62,9 @@ mod port {
     }
 }
 
+#[allow(dead_code)]
 const CONFIG_ADDR: u16 = 0xCF8;
+#[allow(dead_code)]
 const CONFIG_DATA: u16 = 0xCFC;
 
 /// Where QEMU's `virt` machine has historically put its high ECAM window.
@@ -178,6 +180,7 @@ fn ecam_ptr(bus: u8, slot: u8, func: u8, offset: u8) -> Option<*mut u32> {
     Some((base + off) as *mut u32)
 }
 
+#[allow(dead_code)]
 fn cfg_addr(bus: u8, slot: u8, func: u8, offset: u8) -> u32 {
     0x8000_0000
         | ((bus as u32) << 16)

@@ -21,12 +21,17 @@ struct Root([u64; 512]);
 #[cfg(all(target_arch = "aarch64", target_os = "none"))]
 static mut LOW_ROOT: Root = Root([0; 512]);
 
+#[allow(dead_code)]
 const VALID: u64 = 1;
+#[allow(dead_code)]
 const ACCESS_FLAG: u64 = 1 << 10;
+#[allow(dead_code)]
 const PXN: u64 = 1 << 53;
+#[allow(dead_code)]
 const UXN: u64 = 1 << 54;
 
 /// A level-1 1-GiB block descriptor for a 4-KiB translation granule.
+#[allow(dead_code)]
 const fn device_block(phys: u64, attr_index: u8) -> u64 {
     (phys & 0x0000_FFFF_C000_0000)
         | ((attr_index as u64 & 7) << 2)

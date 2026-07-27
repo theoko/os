@@ -17,11 +17,11 @@ ARM64_KERNEL_PROFILE ?= release
 ARM64_KERNEL_PROFILE_DIR := $(if $(filter dev,$(ARM64_KERNEL_PROFILE)),debug,$(ARM64_KERNEL_PROFILE))
 ARM64_KERNEL_ELF := target/$(ARM64_KERNEL_TARGET)/$(ARM64_KERNEL_PROFILE_DIR)/kernel
 ARM64_IMAGE_NAME := os-arm64
+# Extra cargo features for the kernel. Since all bridges are removed,
+# standalone mode is now the only mode.
+KERNEL_FEATURES ?= standalone
+KERNEL_FEATURE_FLAG := $(if $(KERNEL_FEATURES),--features $(KERNEL_FEATURES),)
 LIMINE_BRANCH := v9.x-binary
-BRIDGE_ADDR ?= 127.0.0.1:7420
-# `auto` selects Gmail when the host already has a signed-in gog account;
-# otherwise the OS stays honest that email still needs connecting.
-EMAIL_BACKEND ?= auto
 
 QEMU ?= qemu-system-x86_64
 QEMUFLAGS ?= -m 512M -serial stdio -display none
@@ -57,26 +57,29 @@ endif
 RUSTUP_BIN := $(patsubst %/,%,$(dir $(CARGO)))
 WITH_RUST := PATH="$(RUSTUP_BIN):$$PATH"
 
-.PHONY: all build kernel arm64-kernel iso arm64-iso iso-arm64 virtualbox-arm64 bridge bridge-run run run-arm64 run-bridged run-best utm utm-run utm-bridged usb usb-list drive linux-vm refresh refresh-install refresh-uninstall test test-all test-host smoke smoke-arm64 smoke-bridge publish-os check-published check-published-install check-published-uninstall clean distclean
+.PHONY: all build kernel arm64-kernel iso arm64-iso iso-arm64 standalone-iso standalone-arm64-iso virtualbox-arm64 run run-arm64 run-best utm utm-run usb usb-list drive drive-selftest linux-vm refresh refresh-install refresh-uninstall test test-all test-host smoke smoke-arm64 e2e publish-os check-published check-published-install check-published-uninstall clean distclean
 
 all: build
 
 build: iso
 
 kernel:
-	$(WITH_RUST) $(CARGO) build -p kernel --target $(KERNEL_TARGET) --profile $(KERNEL_PROFILE)
+	$(WITH_RUST) $(CARGO) build -p kernel --target $(KERNEL_TARGET) --profile $(KERNEL_PROFILE) $(KERNEL_FEATURE_FLAG)
 
 # Apple Silicon VirtualBox virtualises ARM guests. This parallel target keeps
 # the existing x86 image intact while producing the ARM64 kernel binary.
 arm64-kernel:
-	$(WITH_RUST) $(CARGO) build -p kernel --target $(ARM64_KERNEL_TARGET) --profile $(ARM64_KERNEL_PROFILE)
+	$(WITH_RUST) $(CARGO) build -p kernel --target $(ARM64_KERNEL_TARGET) --profile $(ARM64_KERNEL_PROFILE) $(KERNEL_FEATURE_FLAG)
 
-bridge:
-	$(WITH_RUST) $(CARGO) build -p os-mcp-bridge
+# Bare-metal image for a machine that will never have a host on COM2: the
+# guest stops probing for a bridge and says so in its own words. The ISO name
+# differs so a standalone build cannot be mistaken for the hosted one sitting
+# next to it — they are not interchangeable and boot to different capabilities.
+standalone-iso:
+	$(MAKE) KERNEL_FEATURES=standalone IMAGE_NAME=$(IMAGE_NAME)-standalone iso
 
-bridge-run: bridge
-	OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) OS_MCP_EMAIL_BACKEND=$(EMAIL_BACKEND) \
-		$(WITH_RUST) $(CARGO) run -p os-mcp-bridge
+standalone-arm64-iso:
+	$(MAKE) KERNEL_FEATURES=standalone ARM64_IMAGE_NAME=$(ARM64_IMAGE_NAME)-standalone arm64-iso
 
 iso: limine/limine kernel
 	rm -rf iso_root
@@ -148,34 +151,30 @@ else
 		-cdrom $(ARM64_IMAGE_NAME).iso || true
 endif
 
-# COM1 = stdio, COM2 = TCP client → host MCP bridge (start bridge first, or use smoke-bridge).
-run-bridged: iso bridge
-	@echo "Start bridge in another terminal: make bridge-run EMAIL_BACKEND=gog"
-	@echo "Or with mock: make bridge-run"
-	$(QEMU) -M q35 -cdrom $(IMAGE_NAME).iso -boot d \
-		-m 512M -display none \
-		-serial stdio \
-		-serial tcp:$(BRIDGE_ADDR) \
-		$(QEMU_DEBUG_EXIT) || true
-
 # One entrypoint for a person rather than a VM compatibility quiz. VirtualBox
 # cannot execute this x86_64 guest on Apple Silicon; UTM can emulate it and is
 # the supported desktop route. Other hosts retain the lightweight QEMU path.
 run-best:
 	@if [ "$(shell uname -s)" = Darwin ] && [ "$(shell uname -m)" = arm64 ]; then \
 		echo "Apple Silicon detected: launching the x86_64 OS in UTM."; \
-		$(MAKE) utm-bridged; \
+		$(MAKE) utm; \
 	else \
 		echo "Launching with QEMU."; \
-		$(MAKE) run-bridged; \
+		$(MAKE) run; \
 	fi
 
 # Boot the ISO and drive it: setup journey, capability grants, a real query,
 # with a screenshot after every step. Catches what unit tests structurally
 # cannot - anything only visible from in front of the screen.
-drive: iso bridge
-	chmod +x scripts/drive-ui.py scripts/ensure-bridge.sh
-	./scripts/drive-ui.py
+drive: iso
+	chmod +x scripts/drive-ui.py scripts/e2e/driver.py scripts/e2e/selftest.py
+	./scripts/drive-ui.py --out $(DRIVE_OUT) $(DRIVE_ARGS)
+
+# Prove the screen checks can go red. Replays the frames the last `make drive`
+# captured, injects each bug class into the pixels, and fails if any assertion
+# survives its own defect. A test that cannot fail is worse than no test.
+drive-selftest:
+	./scripts/e2e/selftest.py --frames $(DRIVE_OUT)
 
 # Write the ISO to a USB stick for real x86-64 hardware. Destructive, so it
 # refuses internal disks and makes you retype the device before writing.
@@ -194,15 +193,6 @@ utm: iso
 utm-run: iso
 	chmod +x scripts/make-utm.sh
 	UTM_START=1 ./scripts/make-utm.sh
-
-# Host bridge on TCP :7420; UTM COM2 = Serial TcpClient to that address.
-utm-bridged: iso bridge
-	chmod +x scripts/ensure-bridge.sh scripts/make-utm.sh
-	# The helper waits for an existing bridge rather than replacing one while it
-	# is still binding. It automatically uses Gmail when an account is connected
-	# and otherwise tells the user email needs connecting (no fake inbox data).
-	OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) EMAIL_BACKEND=$(EMAIL_BACKEND) ./scripts/ensure-bridge.sh
-	UTM_BRIDGE=1 UTM_START=1 OS_MCP_BRIDGE_ADDR=$(BRIDGE_ADDR) ./scripts/make-utm.sh
 
 # Substrate proof for docs/linux-os-doc-v02.md: aarch64 Linux under Apple's
 # hypervisor, to check the frame ceiling is emulation and not our kernel.
@@ -228,15 +218,41 @@ refresh-uninstall:
 	rm -f $(HOME)/Library/LaunchAgents/com.os.refresh.plist
 	@echo ">>> removed"
 
-test: test-host smoke smoke-bridge
+test: test-host smoke
 
 # Everything `test` covers, plus proof the same sources boot on aarch64.
 test-all: test arm64-kernel smoke-arm64
 
+# Screen-level invariants: boot the real ISO, derive where you are from what is
+# drawn, drive it, and assert against the rendered result.
+#
+# Deliberately NOT part of `make test`. It needs QEMU and macOS's
+# text recogniser and several minutes; wiring it into the fast loop would mean
+# people stop running the fast loop. Run it before shipping a UI change, and
+# after any redesign that moves a control.
+#
+#   make e2e                          full run, then the proof each assertion
+#                                     can fail, evidence in /tmp/os-e2e
+#   make e2e E2E_OUT=/tmp/shots       put the evidence somewhere else
+#   make e2e E2E_ARGS="--no-sweep"    skip the click-everything wiring sweep
+#   make e2e E2E_ARGS="--key-delay 0.02"
+#                                     type faster than the guest can keep up,
+#                                     which is how the dropped-keystroke
+#                                     assertion was shown going red
+#
+# Exits non-zero if any assertion fails, or if any assertion stays green when
+# its evidence is deliberately broken.
+DRIVE_OUT ?= /tmp/os-ui
+DRIVE_ARGS ?=
+E2E_OUT ?= /tmp/os-e2e
+E2E_ARGS ?=
+e2e: iso
+	chmod +x scripts/e2e/invariants.py
+	./scripts/e2e/invariants.py --out $(E2E_OUT) $(E2E_ARGS)
+
 test-host:
 	$(WITH_RUST) $(CARGO) test -p kernel --target $$($(RUSTC) -vV | awk '/^host:/{print $$2}') --lib
 	$(WITH_RUST) $(CARGO) test -p os-core
-	$(WITH_RUST) $(CARGO) test -p os-mcp-bridge
 
 smoke: iso
 	chmod +x scripts/smoke-qemu.sh
@@ -247,10 +263,6 @@ smoke: iso
 smoke-arm64: arm64-iso
 	chmod +x scripts/smoke-arm64.sh
 	./scripts/smoke-arm64.sh
-
-smoke-bridge: iso bridge
-	chmod +x scripts/smoke-bridge.sh
-	./scripts/smoke-bridge.sh
 
 # An existing checkout is never auto-refreshed, so at least surface a
 # LIMINE_BRANCH mismatch instead of silently building with the old bootloader.
@@ -281,6 +293,29 @@ limine/limine:
 publish-os:
 	chmod +x scripts/publish-os.sh
 	./scripts/publish-os.sh
+
+# Bring a published image back down, verified. The other half of publish-os.
+#
+# Downloads the image for this architecture from the same URL a visitor uses,
+# checks it against the published checksums, and stages it outside the repo.
+# It applies nothing: these are boot media, and what a machine boots from is
+# not something a status check gets to change.
+#
+# The URL carries ?v=<commit>, because a CDN fronts the origin and the bare URL
+# serves the previous release for hours — the same reason os.html links the
+# versioned form. Without it a good release downloads as a checksum mismatch,
+# which reads to anyone verifying it as tampering.
+#
+#   make update-os                 for this machine
+#   make update-os ARCH=x86_64     for the other one
+#   make update-check              report only, download nothing
+update-os:
+	chmod +x scripts/update-os.sh scripts/ensure-bridge.sh
+	./scripts/update-os.sh $(if $(ARCH),--arch $(ARCH),)
+
+update-check:
+	chmod +x scripts/update-os.sh scripts/ensure-bridge.sh
+	./scripts/update-os.sh --check
 
 # Watch the published download from outside, on a timer.
 #

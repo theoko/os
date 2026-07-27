@@ -13,9 +13,11 @@
 //! instruction pointer to COM1 and halts where it happened, so a crash report
 //! becomes a line you can read instead of a reboot you have to guess at.
 
+#[allow(unused_imports)]
 use crate::serial::Serial;
 
 /// One 64-bit IDT gate.
+#[allow(dead_code)]
 #[repr(C, packed)]
 #[derive(Clone, Copy, Default)]
 struct Gate {
@@ -30,8 +32,10 @@ struct Gate {
 
 impl Gate {
     /// Present, DPL 0, 64-bit interrupt gate.
+    #[allow(dead_code)]
     const PRESENT_INTERRUPT: u8 = 0x8E;
 
+    #[allow(dead_code)]
     fn new(handler: unsafe extern "C" fn(), selector: u16) -> Self {
         let addr = handler as usize as u64;
         Self {
@@ -46,6 +50,7 @@ impl Gate {
     }
 }
 
+#[allow(dead_code)]
 #[repr(C, packed)]
 struct Descriptor {
     limit: u16,
@@ -53,8 +58,10 @@ struct Descriptor {
 }
 
 /// The CPU's first 32 vectors — everything the processor itself raises.
+#[allow(dead_code)]
 const VECTORS: usize = 32;
 
+#[allow(dead_code)]
 static mut IDT: [Gate; VECTORS] = [Gate {
     off_lo: 0,
     selector: 0,
@@ -71,6 +78,7 @@ static mut IDT: [Gate; VECTORS] = [Gate {
 /// The stub list below is checked against this at compile time. Disagreeing
 /// would shift the whole frame by eight bytes and print a plausible, wrong
 /// `rip` — the worst possible failure for a crash report.
+#[allow(dead_code)]
 const HAS_ERROR_CODE: [bool; VECTORS] = {
     let mut v = [false; VECTORS];
     v[8] = true; // double fault

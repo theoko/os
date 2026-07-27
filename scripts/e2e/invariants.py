@@ -775,6 +775,19 @@ ROW_TAGS = {
 }
 
 
+# Tags that name a finding. Only these can be "the same row twice"; the rest
+# describe the run, and two of them may legitimately carry the same words. A
+# one-word goal prints "Goal: opportunistic" and "Query: opportunistic" — two
+# facts about one word, not one document listed twice. The kernel draws the
+# same line and deduplicates results only (`Brief::is_result`).
+RESULT_TAGS = {"doc", "hit"}
+
+
+def row_tag(text: str) -> str:
+    words = normalise(text).split()
+    return words[0] if words and words[0] in ROW_TAGS else ""
+
+
 def row_identity(text: str) -> str:
     words = normalise(text).split()
     while words and words[0] in ROW_TAGS:
@@ -804,7 +817,7 @@ def check_no_duplicate_rows(obs: Observation, ck: Checks) -> None:
         for r in s.rows():
             body = " ".join(w.text for w in s.words_in(r))
             ident = row_identity(body)
-            if not ident:
+            if not ident or row_tag(body) not in RESULT_TAGS:
                 continue
             if ident in seen:
                 dupes.append((s, seen[ident], body))
@@ -1199,8 +1212,10 @@ def _break_duplicate_rows(obs):
     """Reproduce the arm64 Doc/Hit bug on this run's own evidence.
 
     The real defect pushes the same document twice, once tagged Doc and once
-    tagged Hit. Here the first row of a real result screen is repeated under a
-    Hit tag, which is byte-for-byte the shape the arm64 guest shows.
+    tagged Hit. Both halves have to be result rows: two metadata rows sharing
+    a word — "Goal: paper" above "Query: paper" — is not this bug, and seeding
+    one of those let the assertion stay green on broken evidence, which is how
+    a one-word goal first exposed the gap.
     """
     if not obs.result_shots:
         return
@@ -1208,12 +1223,11 @@ def _break_duplicate_rows(obs):
     rows = s.rows()
     if len(rows) < 2:
         return
-    first = row_identity(" ".join(w.text for w in s.words_in(rows[0]))) or "os identity"
-    # Re-label the second row with the first row's title, which is what the
-    # guest does when the same document arrives once as Doc and once as Hit.
-    second = rows[1]
-    s.words = [w for w in s.words if not second.intersection(w.box)]
-    s.words.append(Word("Hit " + first, 1.0, Rect(second.x + 16, second.y + 8, 200, 14)))
+    title = row_identity(" ".join(w.text for w in s.words_in(rows[0]))) or "os identity"
+    # One document arriving once as Doc and once as Hit — the arm64 shape.
+    for row, tag in ((rows[0], "Doc"), (rows[1], "Hit")):
+        s.words = [w for w in s.words if not row.intersection(w.box)]
+        s.words.append(Word(f"{tag} {title}", 1.0, Rect(row.x + 16, row.y + 8, 200, 14)))
     obs.result_shots = obs.result_shots[:-1] + [s]
 
 
@@ -1261,7 +1275,7 @@ PROOFS = [
     (check_typed_text_is_echoed, _break_echo, "a field showing different text"),
     (check_keystrokes_reach_the_bridge, _break_keystrokes, "a dropped keystroke"),
     (check_prose_count_matches_rows, _break_count, "a count two higher than the rows"),
-    (check_no_duplicate_rows, _break_duplicate_rows, "the first row repeated under a Hit tag"),
+    (check_no_duplicate_rows, _break_duplicate_rows, "one document tagged Doc and Hit"),
     (check_no_repeated_explanation, _break_repeated_explanation, "one explanation in two wordings"),
     (check_prose_names_the_real_source, _break_source_prose, "'offline' above bridge-served rows"),
     (check_field_click_stays_home, _break_field_click, "the field click landing in setup"),

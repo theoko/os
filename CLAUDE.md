@@ -13,35 +13,31 @@ booted with **Limine**. Headless runs use **QEMU**; the desktop GUI front-end is
 ## Shape
 
 ```
-kernel/          freestanding Rust kernel (Limine + framebuffer UI + COM2 MCP client)
-host/bridge/     host MCP connector bridge (email, skills, search)
-search/          curated knowledge corpus ({t,u,c,b,pr} — tSearch-style)
-skills/defaults/ agent skill playbooks
+kernel/          freestanding Rust kernel (Limine + framebuffer UI, no bridges)
+core/            shared types and capsule system
+search/          curated knowledge corpus (local index only)
+skills/defaults/ local agent skill playbooks
 docs/            versioned design notes
-scripts/         QEMU / bridge smoke
+scripts/         QEMU smoke tests
 Makefile
 ```
 
-North star: **capability-based agents**. MCP connectors (email, search, …) run on the **host bridge**,
-not in the kernel. Guest holds caps and calls tools over COM2 until a guest network stack exists.
+North star: **capability-based kernel**, now **fully standalone**.
+No host bridge, no external MCP connectors. Everything the OS does runs locally.
 
 ## NON-NEGOTIABLES
 
-1. **QEMU first for CI.** `make test` = host unit tests + QEMU serial smoke + MCP bridge smoke.
-2. **No secrets in the tree.** Gmail OAuth lives in the `gog` keyring. Saved skills live in
-   `~/Library/Application Support/os/skills/` — never bake tokens into the ISO.
-3. **Capability model.** Connectors are tools behind caps — no ambient root. `email.send` stays disabled until explicit confirm/cap policy.
-4. **Inference and HTTP stay out of the kernel.** Bridge + future userspace only. Skills are markdown playbooks, not privileged code.
+1. **QEMU for smoke tests.** `make test` = kernel unit tests + QEMU serial smoke.
+2. **Standalone only.** All queries return Offline. No bridge probing on COM2.
+3. **Capability model.** Agents operate under kernel caps. Email, search, files stay denied until cap granted.
+4. **No privileged inference.** All computation runs in userspace (future). Skills are markdown.
 5. **Tests gate commits.** Run `make test` before committing.
 
 ## Common commands
 
 ```sh
-make build           # ISO
-make run             # QEMU (MCP offline unless COM2 wired)
-make bridge-run      # host bridge on :7420 (EMAIL_BACKEND=mock|gog)
-make run-bridged     # QEMU COM2 → bridge
-make test
+make build           # ISO (now standalone-only)
+make run             # QEMU (no bridge needed)
+make test            # host + QEMU smoke
 ```
 
-Skills: defaults in `skills/defaults/`; save via bridge `CALL skills.save name=…` → Application Support.

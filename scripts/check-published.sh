@@ -86,6 +86,21 @@ if [ -z "$commit" ] || [ ! -s "$WORK/SHA256SUMS" ]; then
 fi
 ok "published release $commit"
 
+# 3b. The machine-readable descriptor. `CALL update.check` on every installed
+#     machine reads this, and /tsearch/ has a catch-all — so a missing
+#     manifest answers HTTP 200 with the homepage rather than 404. Judged by
+#     its body for that reason; a status code cannot tell the two apart.
+#
+#     A warning, not a failure: a visitor's download works without it. What it
+#     costs is that machines cannot tell whether they are behind — they report
+#     state=undetermined, because a commit and a version are not comparable.
+fetch "$SITE/os/manifest.json" "$WORK/manifest.json" || true
+if grep -q '"x86_sha256"' "$WORK/manifest.json" 2>/dev/null; then
+  ok "manifest.json (update.check can name a version)"
+else
+  warn "manifest.json is not published — the catch-all page is answering, so update.check reports state=undetermined. Fixed by the next 'make publish-os'."
+fi
+
 # 4. The images themselves, fetched the way the page links them. This is the
 #    check that matters: it is the exact bytes a visitor receives.
 tmp="$WORK/images"

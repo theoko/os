@@ -1,6 +1,7 @@
 //! Guest MCP client over COM2 (host bridge).
 
 use crate::serial::Serial;
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const TIMEOUT_PING: u32 = 80_000;
 const TIMEOUT_LINE: u32 = 200_000;
@@ -18,6 +19,73 @@ const LINE_BUF: usize = 768;
 pub enum BridgeStatus {
     Offline,
     Online,
+}
+
+/// Longest token accepted from the Limine command line. A hobby-scale shared
+/// secret (e.g. `openssl rand -hex 16` = 32 bytes) fits comfortably; anything
+/// longer is truncated rather than panicking on a malformed cmdline, which
+/// simply never matches the host's copy and fails auth closed exactly like a
+/// wrong token would.
+const AUTH_TOKEN_CAP: usize = 64;
+
+/// Boot-time-only storage for the shared bridge secret. Written at most once,
+/// by `set_auth_token()` during early boot in `main()`, strictly before the
+/// first ever `ping_bridge()` call (the boot splash's bridge probe). The
+/// kernel has no preemptive multitasking across that window, so there is no
+/// reader that could observe a partial write.
+static mut AUTH_TOKEN_BUF: [u8; AUTH_TOKEN_CAP] = [0; AUTH_TOKEN_CAP];
+static AUTH_TOKEN_LEN: AtomicUsize = AtomicUsize::new(0);
+
+/// Whether the one mandatory `AUTH <token>` line has already gone out this
+/// boot. An auth-gated bridge only treats the *first* line of a session as
+/// the credential; every line after that is a normal `PING`/`CALL`, so this
+/// must fire at most once per boot, not once per `ping_bridge()` call (there
+/// are ~20 call sites, and COM2 is one long-lived link to the bridge for the
+/// whole guest session, not a fresh connection per call).
+static AUTH_SENT: AtomicBool = AtomicBool::new(false);
+
+/// Hand the bridge session a shared secret to present, once, before its very
+/// first byte. Call this exactly once from `main()`, after reading it off the
+/// Limine command line and before the first `probe_bridge()`/`ping_bridge()`
+/// call ever executes.
+///
+/// Doing nothing (never calling this) is the default and leaves every wire
+/// exchange byte-for-byte identical to before this existed: no token means
+/// `ping_bridge()` never writes an `AUTH` line, so an unmodified bridge never
+/// sees one either.
+pub fn set_auth_token(token: &str) {
+    let bytes = token.as_bytes();
+    let n = bytes.len().min(AUTH_TOKEN_CAP);
+    unsafe {
+        // Safety: boot-time only, see the doc comment on `AUTH_TOKEN_BUF` — no
+        // concurrent reader exists yet when `main()` calls this.
+        let buf = &mut *core::ptr::addr_of_mut!(AUTH_TOKEN_BUF);
+        buf[..n].copy_from_slice(&bytes[..n]);
+    }
+    AUTH_TOKEN_LEN.store(n, Ordering::Relaxed);
+}
+
+/// The configured token, if `set_auth_token()` was ever called with a
+/// non-empty value.
+fn auth_token() -> Option<&'static str> {
+    let n = AUTH_TOKEN_LEN.load(Ordering::Relaxed);
+    if n == 0 {
+        return None;
+    }
+    // Safety: exactly `n` bytes were copied from a validated `&str` in
+    // `set_auth_token` and the buffer is never mutated again afterwards.
+    let buf = unsafe { &*core::ptr::addr_of!(AUTH_TOKEN_BUF) };
+    core::str::from_utf8(&buf[..n]).ok()
+}
+
+/// True when this image was built for bare metal, where no host will ever be
+/// attached to COM2.
+///
+/// Deliberately `cfg!` inside a function rather than `#[cfg]` around each call
+/// site: both arms keep type-checking in either configuration, so the bridge
+/// paths cannot rot while the standalone image is the one being built.
+pub const fn standalone() -> bool {
+    cfg!(feature = "standalone")
 }
 
 pub struct MailRow {
@@ -299,6 +367,24 @@ fn str_prefix(bytes: &[u8]) -> &str {
     }
 }
 
+/// Copy a URL, or store nothing when it does not fit.
+///
+/// A cut URL is worse than no URL. It still reads as non-empty, so the row
+/// is drawn as openable, and the tap resolves to a path the bridge cannot
+/// find — the same broken promise as an unarmed `Doc` row. Two documents
+/// whose paths share the first 72 bytes also compare equal once cut, so the
+/// second is dropped as a duplicate of the first.
+///
+/// Callers read an empty URL as "found it, cannot open it", which is true.
+/// Deep workspace roots reach this: the bridge sends paths up to 90 bytes.
+pub fn copy_url(dst: &mut [u8], src: &str) {
+    dst.fill(0);
+    if src.len() > dst.len() {
+        return;
+    }
+    dst[..src.len()].copy_from_slice(src.as_bytes());
+}
+
 fn copy_field(dst: &mut [u8], src: &str) {
     dst.fill(0);
     let bytes = src.as_bytes();
@@ -327,6 +413,10 @@ fn parse_row_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
 ///
 /// `email.search` is refused when `caps` does not grant [`crate::caps::Cap::EmailSearch`].
 pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
+    // This one probes inline rather than via ping_bridge; keep it gated too.
+    if standalone() {
+        return MailPeek::empty(BridgeStatus::Offline);
+    }
     let com2 = Serial::com2();
     com2.init();
 
@@ -382,7 +472,7 @@ pub fn fetch_mail_peek(caps: crate::caps::Caps) -> MailPeek {
             copy_field(&mut peek.rows[peek.count].id, id);
             copy_field(&mut peek.rows[peek.count].from, from);
             copy_field(&mut peek.rows[peek.count].subj, subj);
-            copy_field(
+            copy_url(
                 &mut peek.rows[peek.count].url,
                 parse_row_field(resp, "url").unwrap_or(""),
             );
@@ -435,7 +525,7 @@ pub fn fetch_files_peek(caps: crate::caps::Caps) -> FilePeek {
                 continue;
             }
             copy_field(&mut peek.rows[peek.count].title, title);
-            copy_field(&mut peek.rows[peek.count].url, url);
+            copy_url(&mut peek.rows[peek.count].url, url);
             peek.count += 1;
         }
     }
@@ -1320,12 +1410,30 @@ pub fn fetch_skill_body(name: &str, out: &mut [u8]) -> usize {
 }
 
 fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
+    // Standalone hardware has nothing on the far side of COM2, so asking costs
+    // TIMEOUT_PING and always answers Offline. Every caller already handles
+    // Offline; this only spares them the wait.
+    if standalone() {
+        return BridgeStatus::Offline;
+    }
     if !com2.available() {
         return BridgeStatus::Offline;
     }
     for _ in 0..64 {
         if com2.try_read_byte().is_none() {
             break;
+        }
+    }
+    // One-shot credential for the whole boot's COM2 session, not per call: an
+    // auth-gated bridge only checks the first line it ever receives on a
+    // connection, and this link stays open for every PING/CALL that follows
+    // across all ~20 call sites. Skipped entirely when no token was set
+    // (default), so an unmodified bridge never sees an unexpected line.
+    if !AUTH_SENT.swap(true, Ordering::Relaxed) {
+        if let Some(token) = auth_token() {
+            com2.write_str("AUTH ");
+            com2.write_str(token);
+            com2.write_str("\n");
         }
     }
     com2.write_str("PING\n");
@@ -1407,7 +1515,7 @@ pub fn fetch_intent_plan(caps: crate::caps::Caps, goal: &str) -> IntentPlan {
                 continue;
             }
             copy_field(&mut plan.hits[plan.hit_n].title, title);
-            copy_field(&mut plan.hits[plan.hit_n].url, url);
+            copy_url(&mut plan.hits[plan.hit_n].url, url);
             plan.hit_n += 1;
         }
     }
@@ -1430,7 +1538,7 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     match ping_bridge(&com2, &mut line) {
         // No bridge: answer from the index baked into the kernel. Search is the
         // one connector that needs no host — see `search.rs`.
-        BridgeStatus::Offline => return search_offline(),
+        BridgeStatus::Offline => return search_offline(q),
         BridgeStatus::Online => {}
     }
 
@@ -1493,7 +1601,7 @@ pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
         if resp.starts_with("ROW ") && peek.count < peek.hits.len() {
             let title = parse_row_field(resp, "title").unwrap_or("?");
             copy_field(&mut peek.hits[peek.count].title, title);
-            copy_field(
+            copy_url(
                 &mut peek.hits[peek.count].url,
                 parse_row_field(resp, "url").unwrap_or(""),
             );
@@ -1523,11 +1631,20 @@ fn max_rows_str() -> &'static str {
 /// Top hits from the in-kernel index, used when COM2 does not answer.
 ///
 /// Reported as `Offline` so the UI can still say the bridge is down while
-/// showing real results.
-fn search_offline() -> SearchPeek {
+/// showing real results. The caller's own query is what gets ranked — an
+/// earlier version searched a hardcoded showcase phrase instead, so a brief
+/// on "nvda" reported corpus docs that had nothing to do with nvda while
+/// claiming "local keywords only".
+///
+/// Titles only, deliberately: document bodies live on the bridge (the kernel
+/// bakes an index, not content — see `search.rs`), so nothing found offline
+/// can actually open. Leaving the URL empty is what makes the Brief render
+/// these as `Hit` rows instead of promising an openable `Doc`.
+fn search_offline(q: &str) -> SearchPeek {
     let mut peek = SearchPeek::empty(BridgeStatus::Offline, false);
     let mut hits = [crate::search::Hit { doc: 0, score: 0 }; crate::search::MAX_HITS];
-    let n = crate::search::query(OFFLINE_QUERY, &mut hits);
+    let q = if q.is_empty() { OFFLINE_QUERY } else { q };
+    let n = crate::search::query(q, &mut hits);
     for h in hits.iter().take(n.min(peek.hits.len())) {
         copy_field(
             &mut peek.hits[peek.count].title,
@@ -1755,10 +1872,35 @@ mod tests {
     #[test]
     fn offline_search_still_returns_hits() {
         // The whole point of the offline tier: useful results with no host.
-        let peek = search_offline();
+        // An empty ask falls back to the showcase query.
+        let peek = search_offline("");
         assert!(matches!(peek.status, BridgeStatus::Offline));
         assert!(!peek.denied);
         assert!(peek.count > 0, "baked index returned nothing");
+    }
+
+    #[test]
+    fn offline_search_ranks_the_askers_query_not_a_showcase() {
+        // A query the corpus knows nothing about must come back empty.
+        // The old code searched a hardcoded phrase instead, so a brief on
+        // "nvda" reported unrelated docs under "local keywords only".
+        let peek = search_offline("nvda");
+        assert_eq!(peek.count, 0, "corpus has no nvda doc, yet hits came back");
+
+        // A query the corpus does know answers with matching titles.
+        let peek = search_offline("skills");
+        assert!(peek.count > 0, "corpus should answer for its own topics");
+    }
+
+    #[test]
+    fn offline_hits_carry_no_url_because_nothing_can_open() {
+        // Bodies live on the bridge; the kernel bakes an index, not content.
+        // An empty URL is what demotes these to Hit rows in the Brief.
+        let peek = search_offline("");
+        assert!(peek.count > 0);
+        for i in 0..peek.count {
+            assert_eq!(peek.url_at(i), "", "offline hit {i} claims a URL");
+        }
     }
 
     #[test]
@@ -1962,5 +2104,51 @@ mod row_budget_tests {
             asked,
             SearchPeek::empty(BridgeStatus::Offline, false).hits.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod auth_token_tests {
+    use super::*;
+
+    // `AUTH_TOKEN_BUF`/`AUTH_TOKEN_LEN` are process-global statics (mirroring
+    // the real boot-once-then-read-only lifecycle), so every case that
+    // mutates them lives in one `#[test]` fn. Cargo runs `#[test]` fns as
+    // concurrent threads within a single test binary; splitting these across
+    // separate fns would race on the same statics in a way real boot never
+    // does (real boot calls `set_auth_token` exactly once, before any
+    // concurrent reader exists).
+    #[test]
+    fn set_and_read_round_trip_and_truncate() {
+        // No token configured yet (module-fresh in a fresh test binary) reads
+        // back as absent, matching an unmodified image that never calls
+        // `set_auth_token` at all.
+        assert_eq!(auth_token(), None);
+
+        set_auth_token("hunter2");
+        assert_eq!(auth_token(), Some("hunter2"));
+
+        // A later call overwrites rather than appends — there is exactly one
+        // boot-time call site in `main()`, but the API itself should not
+        // silently concatenate if that ever changes.
+        set_auth_token("second-token");
+        assert_eq!(auth_token(), Some("second-token"));
+
+        // Oversized input is truncated to AUTH_TOKEN_CAP rather than
+        // panicking or overflowing the fixed buffer — a malformed or
+        // over-long `mcp_token=` value on the cmdline must degrade to "some
+        // wrong-length token" (fails host auth closed) rather than crash the
+        // boot.
+        let long = "x".repeat(AUTH_TOKEN_CAP + 16);
+        set_auth_token(&long);
+        let got = auth_token().expect("a truncated token, not None");
+        assert_eq!(got.len(), AUTH_TOKEN_CAP);
+        assert!(long.starts_with(got));
+
+        // Setting the empty string clears back to "no token configured",
+        // the same state `ping_bridge` checks to decide whether to emit an
+        // AUTH line at all.
+        set_auth_token("");
+        assert_eq!(auth_token(), None);
     }
 }

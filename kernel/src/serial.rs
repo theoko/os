@@ -13,6 +13,16 @@ static ACTIVE_PL011: AtomicUsize = AtomicUsize::new(0);
 #[cfg(target_arch = "aarch64")]
 const VBOX_PL011: usize = 0xFFDD_E000;
 
+/// VirtualBox ARM maps its second serial port (16550A, not PL011) through the
+/// PIO bridge window at 0xFCD20000. ISA port 0x2F8 (COM2) sits directly at
+/// pio_base + 0x2F8. Registers are byte-wide u32 slots (one register per u32).
+#[cfg(target_arch = "aarch64")]
+const VBOX_COM2_BASE: usize = 0xFCD2_02F8;
+
+/// Resolved COM2 MMIO base on VirtualBox ARM. 0 = not present.
+#[cfg(target_arch = "aarch64")]
+static COM2_BASE: AtomicUsize = AtomicUsize::new(0);
+
 /// Emit the kernel log on VirtualBox's ARM PL011.
 ///
 /// Off by default: see `write_byte`. Turn on to diagnose something on that
@@ -144,6 +154,28 @@ fn pl011_page_mapped(base: usize) -> bool {
     va_mapped(base) && va_mapped(base + 0xFF4)
 }
 
+/// Does a 16550A-compatible UART answer at `base` (VirtualBox ARM PIO-mapped)?
+///
+/// We use the scratch register (offset +7) loopback: write a canary, read it
+/// back. On an empty PIO window the read returns 0xFF or 0x00 regardless of
+/// the write; a real 16550A echo confirms the device. The page must be mapped
+/// first — writing to an unmapped PIO window is a synchronous data abort.
+#[cfg(target_arch = "aarch64")]
+fn is_16550a(base: usize) -> bool {
+    // Each 16550A register is one u32 slot in the PIO window (stride = 4 bytes
+    // on VirtualBox ARM). Scratch = offset 7 → 0x1C bytes from base.
+    const SCR: usize = 7 * 4;
+    if !va_mapped(base) || !va_mapped(base + SCR) {
+        return false;
+    }
+    unsafe {
+        let ptr = (base + SCR) as *mut u32;
+        core::ptr::write_volatile(ptr, 0xA5);
+        let v = core::ptr::read_volatile(ptr as *const u32);
+        v & 0xFF == 0xA5
+    }
+}
+
 /// Find the UART before anything tries to log through it.
 ///
 /// QEMU's `virt` and VirtualBox's `armv8virtual` put their PL011 at different
@@ -232,24 +264,24 @@ impl Serial {
         #[cfg(target_arch = "x86_64")]
         return Self::new(Self::COM2);
         #[cfg(target_arch = "aarch64")]
-        return Self::new(None);
+        return Self::new(None); // base resolved at init time via COM2_BASE
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         Self::new()
     }
 
     /// Whether this serial object names a device on this architecture.
     ///
-    /// ARM COM2 is intentionally absent until a second UART is discovered.
-    /// Callers can use this to avoid a synthetic timeout loop when there is
-    /// no transport to wait for in the first place.
-    pub const fn available(&self) -> bool {
+    /// For COM1, ARM always has a PL011. For COM2, ARM needs the VirtualBox
+    /// PIO-mapped 16550A to have been detected by `init`.
+    pub fn available(&self) -> bool {
         #[cfg(target_arch = "x86_64")]
         {
             true
         }
         #[cfg(target_arch = "aarch64")]
         {
-            self.base.is_some()
+            // COM1: base is Some(). COM2: base is None but COM2_BASE may be set.
+            self.base.is_some() || COM2_BASE.load(Ordering::Relaxed) != 0
         }
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         {
@@ -271,10 +303,7 @@ impl Serial {
         }
         #[cfg(target_arch = "aarch64")]
         if let Some(preferred) = self.base {
-            // Do not infer a UART from an address alone. Both QEMU and
-            // VirtualBox expose standard PrimeCell IDs, but at different
-            // addresses. Remember the device that actually answers so every
-            // byte after this is a single MMIO path with no probing.
+            // COM1 path: PL011 detection and initialization.
             let base = [preferred, VBOX_PL011]
                 .into_iter()
                 .find(|base| pl011_present(*base))
@@ -292,6 +321,26 @@ impl Serial {
                 core::ptr::write_volatile((base + 0x2c) as *mut u32, 0x70);
                 core::ptr::write_volatile((base + 0x30) as *mut u32, 0x301);
             }
+        } else {
+            // COM2 path: probe VirtualBox's PIO-mapped 16550A.
+            // Register stride is 4 bytes (one u32 slot per ISA register).
+            if is_16550a(VBOX_COM2_BASE) {
+                COM2_BASE.store(VBOX_COM2_BASE, Ordering::Release);
+                // 115200 8N1: divisor = 1 at 1.8432 MHz base clock.
+                unsafe {
+                    let b = VBOX_COM2_BASE;
+                    // DLAB=1: enable divisor latch
+                    core::ptr::write_volatile((b + 3 * 4) as *mut u32, 0x80);
+                    core::ptr::write_volatile((b + 0 * 4) as *mut u32, 0x01); // DLL
+                    core::ptr::write_volatile((b + 1 * 4) as *mut u32, 0x00); // DLH
+                    // DLAB=0, 8 data bits, no parity, 1 stop
+                    core::ptr::write_volatile((b + 3 * 4) as *mut u32, 0x03);
+                    // FIFO enable, clear, 14-byte threshold
+                    core::ptr::write_volatile((b + 2 * 4) as *mut u32, 0xC7);
+                    // DTR + RTS (modem control)
+                    core::ptr::write_volatile((b + 4 * 4) as *mut u32, 0x0B);
+                }
+            }
         }
     }
 
@@ -308,33 +357,34 @@ impl Serial {
             port::outb(self.base, byte);
         }
         #[cfg(target_arch = "aarch64")]
-        if self.base.is_some() {
-            let base = ACTIVE_PL011.load(Ordering::Acquire);
-            if base == 0 {
-                return;
-            }
-            // VirtualBox's ARM PL011 can leave TX full indefinitely after
-            // firmware hands it off. Even inspecting the full flag then makes
-            // boot timing nondeterministic, so the framebuffer is normally the
-            // sole diagnostic surface on that platform. QEMU retains serial
-            // logs unconditionally.
-            //
-            // Set `VBOX_SERIAL` to trade that boot-timing cost for a real log
-            // when something on VirtualBox can only be diagnosed from one. The
-            // write below never spins — it drops the byte when the FIFO is
-            // full — so the cost is one emulated MMIO read per byte, not a
-            // stall.
-            if base == VBOX_PL011 && !VBOX_SERIAL {
-                return;
-            }
-            unsafe {
-                // Debug output is never allowed to pace the guest. VirtualBox
-                // can leave the PL011 FIFO full after firmware hands it off;
-                // even a short spin loop then becomes thousands of emulated
-                // MMIO reads per message and stalls boot before USB starts.
-                // Send when there is room and otherwise drop this diagnostic
-                // byte. The framebuffer remains the authoritative UI.
-                if core::ptr::read_volatile((base + 0x18) as *const u32) & (1 << 5) == 0 {
+        {
+            // COM1: write through the PL011 when self.base is Some.
+            if self.base.is_some() {
+                let base = ACTIVE_PL011.load(Ordering::Acquire);
+                if base == 0 {
+                    return;
+                }
+                if base == VBOX_PL011 && !VBOX_SERIAL {
+                    return;
+                }
+                unsafe {
+                    if core::ptr::read_volatile((base + 0x18) as *const u32) & (1 << 5) == 0 {
+                        core::ptr::write_volatile(base as *mut u32, byte as u32);
+                    }
+                }
+            } else {
+                // COM2: write through the VirtualBox PIO-mapped 16550A.
+                let base = COM2_BASE.load(Ordering::Acquire);
+                if base == 0 {
+                    return;
+                }
+                unsafe {
+                    // Spin briefly on THR Empty (LSR bit 5) at register offset 5*4.
+                    let mut spins = 0u32;
+                    while core::ptr::read_volatile((base + 5 * 4) as *const u32) & 0x20 == 0 {
+                        spins += 1;
+                        if spins > 100_000 { break; }
+                    }
                     core::ptr::write_volatile(base as *mut u32, byte as u32);
                 }
             }
@@ -367,20 +417,34 @@ impl Serial {
             }
         }
         #[cfg(target_arch = "aarch64")]
-        if self.base.is_some() {
-            let base = ACTIVE_PL011.load(Ordering::Acquire);
-            if base == 0 {
-                return None;
-            }
-            unsafe {
-                if core::ptr::read_volatile((base + 0x18) as *const u32) & (1 << 4) == 0 {
-                    Some(core::ptr::read_volatile(base as *const u32) as u8)
-                } else {
-                    None
+        {
+            if self.base.is_some() {
+                // COM1: PL011 data register (RXE empty = flag bit 4 in UARTFR).
+                let base = ACTIVE_PL011.load(Ordering::Acquire);
+                if base == 0 {
+                    return None;
+                }
+                unsafe {
+                    if core::ptr::read_volatile((base + 0x18) as *const u32) & (1 << 4) == 0 {
+                        Some(core::ptr::read_volatile(base as *const u32) as u8)
+                    } else {
+                        None
+                    }
+                }
+            } else {
+                // COM2: 16550A LSR (offset 5*4) bit 0 = Data Ready.
+                let base = COM2_BASE.load(Ordering::Acquire);
+                if base == 0 {
+                    return None;
+                }
+                unsafe {
+                    if core::ptr::read_volatile((base + 5 * 4) as *const u32) & 0x01 != 0 {
+                        Some(core::ptr::read_volatile(base as *const u32) as u8)
+                    } else {
+                        None
+                    }
                 }
             }
-        } else {
-            None
         }
         #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         None

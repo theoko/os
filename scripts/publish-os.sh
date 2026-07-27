@@ -76,9 +76,17 @@ $ARM  ARM64 — Apple Silicon and other ARM64 machines
 Verify:  shasum -a 256 -c SHA256SUMS
 EOF
 
+# The machine-readable half. SHA256SUMS carries checksums but no version, so a
+# machine reading only that can tell "different bytes" from nothing else — it
+# cannot say whether it is behind. Without this file `CALL update.check` on
+# every installed machine reports state=undetermined forever, because the URL
+# it reads answers with the /tsearch/ catch-all page instead of a manifest.
+step "release manifest"
+./scripts/make-manifest.sh
+
 if [ "$DRY_RUN" = "1" ]; then
   step "DRY RUN — would publish to $HOST:$DIR"
-  ls -la "$X86" "$ARM" SHA256SUMS BUILD-INFO.txt
+  ls -la "$X86" "$ARM" SHA256SUMS BUILD-INFO.txt manifest.json
   exit 0
 fi
 
@@ -89,8 +97,8 @@ step "uploading to $HOST:$DIR"
 ssh "$HOST" "mkdir -p '$DIR'"
 rsync -az "$X86" "$HOST:$DIR/.$X86.incoming"
 rsync -az "$ARM" "$HOST:$DIR/.$ARM.incoming"
-rsync -az SHA256SUMS BUILD-INFO.txt "$HOST:$DIR/"
-ssh "$HOST" "cd '$DIR' && mv -f '.$X86.incoming' '$X86' && mv -f '.$ARM.incoming' '$ARM' && chmod 644 '$X86' '$ARM' SHA256SUMS BUILD-INFO.txt"
+rsync -az SHA256SUMS BUILD-INFO.txt manifest.json "$HOST:$DIR/"
+ssh "$HOST" "cd '$DIR' && mv -f '.$X86.incoming' '$X86' && mv -f '.$ARM.incoming' '$ARM' && chmod 644 '$X86' '$ARM' SHA256SUMS BUILD-INFO.txt manifest.json"
 
 step "verifying on the server"
 ssh "$HOST" "cd '$DIR' && sha256sum -c SHA256SUMS" ||
@@ -105,6 +113,20 @@ for f in "$X86" "$ARM" SHA256SUMS; do
   [ "$code" = "200" ] || die "$URL/$f returned HTTP $code"
   printf '  %-16s %s\n' "$f" "HTTP $code"
 done
+
+# manifest.json is checked by its BODY, not its status. /tsearch/ has a
+# catch-all: a path that does not exist answers HTTP 200 with the homepage. A
+# 200 here would therefore prove the manifest is published *and* prove it is
+# missing, equally well — and the updater reading it would see 88 KB of HTML.
+tmp="$(mktemp -t os-publish-manifest)"
+curl -s -o "$tmp" "$URL/manifest.json"
+if ! grep -q '"x86_sha256"' "$tmp"; then
+  head -c 120 "$tmp" >&2; echo >&2
+  rm -f "$tmp"
+  die "manifest.json did not publish — the catch-all is answering, so update.check sees a web page"
+fi
+rm -f "$tmp"
+printf '  %-16s %s\n' "manifest.json" "is a manifest"
 
 # A CDN fronts this origin and caches images for hours, so the bare URL can
 # serve the PREVIOUS release long after the upload succeeded — which then fails

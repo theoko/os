@@ -46,6 +46,11 @@ but leaves it unable to receive input.
   transfer, so pointer delivery remains continuous.
 - Cursor moves save and restore the pixels beneath the arrow, preventing
   trails or a second cursor at the initial center position.
+- Pointer drawing is coalesced at 60 Hz: careful motion gets light filtering,
+  fast motion lands in one frame, and pressing snaps the visual hotspot to the
+  exact click target.
+- Setup buttons and rows show a blue intent halo on hover. After Welcome, a
+  seven-dot rail shows completed, current, and remaining setup steps.
 - The ARM64 target builds the optimized release kernel by default. Its MMIO
   helpers deliberately emit simple non-writeback loads and stores because
   VirtualBox's ARM interpreter can stall on equivalent pre/post-indexed forms.

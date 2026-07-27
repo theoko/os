@@ -82,8 +82,15 @@ pub struct Setup {
     n_zones: usize,
     focus: usize,
     keyboard_focus: bool,
+    /// Pointer target under the cursor. Kept as the action rather than a zone
+    /// index because drawing rebuilds the zone table on every frame.
+    hovered: Option<Action>,
     /// Edge detection: a held button must not advance every frame.
     was_down: bool,
+    /// Which input devices are missing, in words, or `None` when the machine
+    /// is fully driveable. Welcome is the only screen a machine with no
+    /// keyboard and no pointer will ever show, so it has to carry the message.
+    note: Option<&'static str>,
 }
 
 impl Setup {
@@ -109,15 +116,25 @@ impl Setup {
             n_zones: 0,
             focus: NO_FOCUS,
             keyboard_focus: false,
+            hovered: None,
             was_down: false,
+            note: None,
         }
     }
 
-    /// Restart the journey but keep the last Experience choice selected.
-    pub fn restart(level: Level) -> Self {
+    /// Restart the journey but keep the last Experience choice selected, and
+    /// the input note: a machine that was missing a pointer a minute ago is
+    /// still missing it now.
+    pub fn restart(level: Level, note: Option<&'static str>) -> Self {
         let mut s = Self::new();
         s.level = level;
+        s.note = note;
         s
+    }
+
+    /// Tell setup which input devices did not come up. See [`Self::note`].
+    pub fn set_note(&mut self, note: Option<&'static str>) {
+        self.note = note;
     }
 
     /// Grant set chosen on the Capabilities step.
@@ -145,6 +162,20 @@ impl Setup {
             .iter()
             .find(|z| z.contains(px, py))
             .map(|z| z.action)
+    }
+
+    /// Update the visible pointer target without activating it.
+    ///
+    /// This is separate from [`pointer`](Self::pointer) so the main loop can
+    /// redraw a hover affordance without playing a screen transition.
+    pub fn pointer_hover(&mut self, x: i32, y: i32) -> bool {
+        let next = self.hit(x, y);
+        if next == self.hovered {
+            return false;
+        }
+        self.hovered = next;
+        self.keyboard_focus = false;
+        true
     }
 
     /// Feed pointer state. Returns true when the screen needs redrawing.
@@ -214,6 +245,7 @@ impl Setup {
                     Step::Finished => Step::Finished,
                 };
                 self.focus = NO_FOCUS;
+                self.hovered = None;
                 true
             }
             Action::Back => {
@@ -227,6 +259,7 @@ impl Setup {
                     Step::Finished => Step::Finished,
                 };
                 self.focus = NO_FOCUS;
+                self.hovered = None;
                 true
             }
             Action::Row(i) => match self.step {
@@ -273,6 +306,7 @@ impl Setup {
             Step::Done => self.draw_done(fb, w, h),
             Step::Finished => {}
         }
+        self.draw_progress(fb, w);
         if self.n_zones > 0 {
             if self.focus >= self.n_zones {
                 self.focus = self.zones[..self.n_zones]
@@ -288,15 +322,40 @@ impl Setup {
 
     fn draw_focus(&self, fb: &Surface) {
         let zone = self.zones[self.focus.min(self.n_zones - 1)];
-        let x = zone.x - 4;
-        let y = zone.y - 4;
-        let w = zone.w + 8;
-        let h = zone.h + 8;
-        let thickness = 2;
-        fb.fill_rect(x, y, w, thickness, theme::ACCENT);
-        fb.fill_rect(x, y + h - thickness, w, thickness, theme::ACCENT);
-        fb.fill_rect(x, y, thickness, h, theme::ACCENT);
-        fb.fill_rect(x + w - thickness, y, thickness, h, theme::ACCENT);
+        let x = zone.x - 3;
+        let y = zone.y - 3;
+        let w = zone.w + 6;
+        let h = zone.h + 6;
+        fb.draw_round_rect_outline(x, y, w, h, 12, 2, theme::ACCENT);
+    }
+
+    /// A quiet setup rail: completed steps stay blue, the current step is
+    /// larger, and the remaining path stays grey. It answers "where am I?"
+    /// without adding another sentence to every screen.
+    fn draw_progress(&self, fb: &Surface, w: i32) {
+        let active = match self.step {
+            Step::Welcome | Step::Finished => return,
+            Step::Experience => 1,
+            Step::Region => 2,
+            Step::Bridge => 3,
+            Step::Capabilities => 4,
+            Step::Skills => 5,
+            Step::Done => 6,
+        };
+        const STEPS: i32 = 7;
+        const PITCH: i32 = 18;
+        let x0 = w / 2 - (STEPS - 1) * PITCH / 2;
+        let cy = 28;
+        for i in 0..STEPS {
+            let current = i == active;
+            let d = if current { 8 } else { 5 };
+            let color = if i <= active {
+                theme::ACCENT
+            } else {
+                theme::RULE
+            };
+            fb.fill_round_rect(x0 + i * PITCH - d / 2, cy - d / 2, d, d, d / 2, color);
+        }
     }
 
     fn draw_welcome(&mut self, fb: &Surface, w: i32, h: i32) {
@@ -305,6 +364,20 @@ impl Setup {
         let cy = h / 2 - 40;
         fb.draw_text_centered(w / 2, cy, "hello", &HERO_FACE, track, theme::INK);
         self.primary(fb, w, cy + 90, "Continue");
+        // The top bar is empty on this step — `nav_back` and `draw_progress`
+        // both bow out of Welcome — so the note goes there rather than near
+        // the button, where it would fight the footer for space on a short
+        // framebuffer.
+        if let Some(note) = self.note {
+            fb.draw_text_centered(
+                w / 2,
+                28 + SMALL_FACE.baseline(),
+                note,
+                &SMALL_FACE,
+                0,
+                theme::MUTED,
+            );
+        }
     }
 
     fn draw_experience(&mut self, fb: &Surface, w: i32, h: i32) {
@@ -353,21 +426,21 @@ impl Setup {
     fn draw_bridge(&mut self, fb: &Surface, w: i32, h: i32, mail: &MailPeek) {
         let online = matches!(mail.status, BridgeStatus::Online);
         let sub = if self.level.is_guided() {
-            "Connectors run on the host, never in the kernel."
+            crate::copy::setup_bridge_sub_guided()
         } else {
-            "Host MCP on COM2. Probe only until you grant."
+            crate::copy::setup_bridge_sub_plain()
         };
-        let top = self.header(fb, w, h, "Connect the Bridge", sub);
+        let top = self.header(fb, w, h, crate::copy::setup_bridge_title(), sub);
         let (label, detail, tint) = if online {
-            ("Host bridge", "Connected on COM2", theme::ONLINE)
+            (crate::copy::setup_bridge_label(), "Connected on COM2", theme::ONLINE)
         } else if self.level.is_guided() {
             (
-                "Host bridge",
-                "Offline - start it with 'make bridge-run'",
+                crate::copy::setup_bridge_label(),
+                crate::copy::setup_bridge_detail_guided(),
                 theme::OFFLINE,
             )
         } else {
-            ("Host bridge", "Offline - make bridge-run", theme::OFFLINE)
+            (crate::copy::setup_bridge_label(), crate::copy::setup_bridge_detail_plain(), theme::OFFLINE)
         };
         self.status_card(fb, w, top, label, detail, tint);
         self.footer(fb, w, h, top + ROW_H + 8, true);
@@ -410,7 +483,7 @@ impl Setup {
         } else if self.level.is_guided() {
             "Markdown playbooks the agent can load. Editable later."
         } else {
-            "Builtin playbooks (bridge offline)."
+            crate::copy::setup_skills_builtin()
         };
         let top = self.header(fb, w, h, "Default Skills", sub);
         let mut y = top;
@@ -483,6 +556,15 @@ impl Setup {
             0,
             theme::ACCENT,
         );
+        if self.hovered == Some(Action::Back) {
+            fb.fill_rect(
+                x,
+                y + BTN_FACE.px + 3,
+                BTN_FACE.width("Back", 0),
+                2,
+                theme::TINT_BORDER,
+            );
+        }
         self.push_zone(
             x - 12,
             y - 10,
@@ -516,15 +598,19 @@ impl Setup {
 
         let border = if on && !toggle {
             theme::ACCENT
+        } else if self.hovered == Some(action) {
+            theme::TINT_BORDER
         } else {
             theme::CARD_BORDER
         };
-        fb.fill_round_rect(x, y, cw, rh, 10, border);
         let inner = if on && !toggle {
+            theme::TINT_BG
+        } else if self.hovered == Some(action) {
             theme::TINT_BG
         } else {
             theme::BG
         };
+        fb.draw_round_rect_outline(x, y, cw, rh, 10, 1, border);
         fb.fill_round_rect(x + 1, y + 1, cw - 2, rh - 2, 9, inner);
 
         // Single baseline: label left, consequence beside it in muted grey.
@@ -566,11 +652,12 @@ impl Setup {
     fn status_card(&mut self, fb: &Surface, w: i32, y: i32, label: &str, detail: &str, tint: u32) {
         let cw = CONTENT_W.min(w - 80);
         let x = (w - cw) / 2;
-        fb.fill_round_rect(x, y, cw, ROW_H + 8, 10, theme::CARD_BORDER);
-        fb.fill_round_rect(x + 1, y + 1, cw - 2, ROW_H + 6, 9, theme::BG);
+        let card_h = ROW_H + 8;
+        fb.draw_round_rect_outline(x, y, cw, card_h, 10, 1, theme::CARD_BORDER);
+        fb.fill_round_rect(x + 1, y + 1, cw - 2, card_h - 2, 9, theme::BG);
         let pad = 18;
         let d = 9;
-        fb.fill_round_rect(x + pad, y + (ROW_H + 8 - d) / 2, d, d, d / 2, tint);
+        fb.fill_round_rect(x + pad, y + (card_h - d) / 2, d, d, d / 2, tint);
         fb.draw_text(x + pad + d + 12, y + 26, label, &BRAND_FACE, 0, theme::INK);
         fb.draw_text(
             x + pad + d + 12,
@@ -587,6 +674,16 @@ impl Setup {
         let pad = 40;
         let bw = (BTN_FACE.width(label, 0) + pad * 2).max(180);
         let x = w / 2 - bw / 2;
+        if self.hovered == Some(Action::Continue) {
+            fb.fill_round_rect(
+                x - 4,
+                y - 4,
+                bw + 8,
+                CTA_H + 8,
+                CTA_H / 2 + 4,
+                theme::TINT_BORDER,
+            );
+        }
         fb.fill_round_rect(x, y, bw, CTA_H, CTA_H / 2, theme::ACCENT);
         let base = y + (CTA_H - BTN_FACE.px) / 2 + BTN_FACE.baseline() - 2;
         fb.draw_text_centered(w / 2, base, label, &BTN_FACE, 0, theme::BG);
@@ -605,6 +702,9 @@ impl Setup {
             0,
             theme::ACCENT,
         );
+        if self.hovered == Some(Action::Back) {
+            fb.fill_rect(x, y + BTN_FACE.px + 3, tw, 2, theme::TINT_BORDER);
+        }
         // Generous target: the text alone is a 15px-tall sliver.
         self.push_zone(x - 12, y - 8, tw + 24, BTN_FACE.px + 20, Action::Back);
     }
@@ -860,6 +960,37 @@ mod tests {
         assert_eq!(s.step, Step::Region);
     }
 
+    #[test]
+    fn hover_is_feedback_not_activation() {
+        let mut s = setup();
+        s.push_zone(0, 0, 100, 100, Action::Continue);
+        assert!(
+            s.pointer_hover(10, 10),
+            "entering a target should repaint"
+        );
+        assert_eq!(s.step, Step::Welcome, "hover must not advance setup");
+        assert_eq!(s.hovered, Some(Action::Continue));
+        assert!(
+            !s.pointer_hover(20, 20),
+            "moving inside one target is stable"
+        );
+        assert!(
+            s.pointer_hover(200, 200),
+            "leaving a target should repaint"
+        );
+        assert_eq!(s.hovered, None);
+    }
+
+    #[test]
+    fn a_step_change_clears_the_old_hover_target() {
+        let mut s = setup();
+        s.push_zone(0, 0, 100, 100, Action::Continue);
+        s.pointer_hover(10, 10);
+        assert!(s.apply(Action::Continue));
+        assert_eq!(s.step, Step::Experience);
+        assert_eq!(s.hovered, None);
+    }
+
     /// Every step must be reachable by keyboard alone — a machine whose
     /// pointer never arrives has to be finishable anyway.
     ///
@@ -924,11 +1055,11 @@ mod tests {
             "You choose. Grants stay off until you turn them on.",
             "Select Your Region",
             "This sets formatting defaults. It does not leave the machine.",
-            "Connect the Bridge",
-            "Connectors run on the host, never in the kernel.",
-            "Host MCP on COM2. Probe only until you grant.",
-            "Offline - start it with 'make bridge-run'",
-            "Offline - make bridge-run",
+            crate::copy::setup_bridge_title(),
+            crate::copy::setup_bridge_sub_guided(),
+            crate::copy::setup_bridge_sub_plain(),
+            crate::copy::setup_bridge_detail_guided(),
+            crate::copy::setup_bridge_detail_plain(),
             "Connected on COM2",
             "Capabilities",
             "Every tool sits behind a grant. Turn on only what you need.",
@@ -937,12 +1068,12 @@ mod tests {
             "Markdown playbooks the agent can load. Editable later.",
             "Live from the host bridge. Tap Continue when ready.",
             "skills.list from bridge.",
-            "Builtin playbooks (bridge offline).",
+            crate::copy::setup_skills_builtin(),
             "You're all set.",
             "Continue",
             "Go Back",
             "Start",
-            "Host bridge",
+            crate::copy::setup_bridge_label(),
         ];
         all.extend(REGIONS);
         for level in Level::ALL {
@@ -1179,5 +1310,136 @@ mod no_overlap_tests {
                 }
             }
         }
+    }
+}
+
+/// The "which input is missing" note.
+///
+/// It used to be painted onto Home during boot, where setup drew over it a
+/// moment later — so on a machine that cannot be driven at all, the one
+/// sentence explaining why nothing responds was never readable. Welcome is
+/// the screen such a machine is stuck on, so Welcome carries it.
+#[cfg(test)]
+mod input_note_tests {
+    use super::*;
+    use crate::fb::Surface;
+    use crate::inputdiag::Inputs;
+    use crate::pci::UsbSurvey;
+
+    /// Every note the diagnostic can produce, so a new one cannot quietly
+    /// arrive too wide for the screen.
+    fn all_notes() -> Vec<&'static str> {
+        let mut out = Vec::new();
+        for ps2_controller in [false, true] {
+            for ps2 in [false, true] {
+                for mouse in [false, true] {
+                    for usb_kbd in [false, true] {
+                        for tablet in [false, true] {
+                            for usb in [UsbSurvey::default(), unsupported_usb()] {
+                                let i = Inputs {
+                                    ps2_controller,
+                                    ps2_keyboard: ps2,
+                                    ps2_mouse: mouse,
+                                    usb_keyboard: usb_kbd,
+                                    usb_tablet: tablet,
+                                    usb,
+                                };
+                                if let Some(n) = i.note() {
+                                    if !out.contains(&n) {
+                                        out.push(n);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        assert!(!out.is_empty(), "inputdiag produced no notes at all");
+        out
+    }
+
+    fn unsupported_usb() -> UsbSurvey {
+        let mut u = UsbSurvey::default();
+        u.xhci = 1;
+        u
+    }
+
+    /// Non-background pixels in the horizontal band `ys`.
+    fn ink_in_band(w: i32, h: i32, ys: core::ops::Range<i32>, note: Option<&'static str>) -> usize {
+        let mut s = Setup::new();
+        s.set_note(note);
+        let mut buf = vec![0u32; (w * h) as usize];
+        let surface = unsafe { Surface::in_memory(buf.as_mut_ptr(), w as usize, h as usize) };
+        let mail = crate::mcp::MailPeek::empty(crate::mcp::BridgeStatus::Offline);
+        let skills = crate::skills::SkillPeek::from_builtin();
+        s.draw(&surface, &mail, &skills);
+        assert_eq!(s.step, Step::Welcome, "this test is about the first screen");
+        buf[(ys.start * w) as usize..(ys.end * w) as usize]
+            .iter()
+            .filter(|&&p| p & 0x00FF_FFFF != theme::BG)
+            .count()
+    }
+
+    #[test]
+    fn welcome_says_which_input_is_missing() {
+        for (w, h) in [(800, 600), (1024, 768), (1280, 800)] {
+            let band = 20..52;
+            assert_eq!(
+                ink_in_band(w, h, band.clone(), None),
+                0,
+                "at {w}x{h} the top bar must stay empty when every input came up"
+            );
+            for note in all_notes() {
+                assert!(
+                    ink_in_band(w, h, band.clone(), Some(note)) > 0,
+                    "at {w}x{h} the note {note:?} was not drawn"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_note_is_too_wide_for_the_narrowest_screen() {
+        // Centred text that overruns the surface is clipped at both ends, which
+        // reads as a different sentence rather than a truncated one.
+        const NARROWEST: i32 = 800;
+        for note in all_notes() {
+            let tw = SMALL_FACE.width(note, 0);
+            assert!(
+                tw <= NARROWEST - 32,
+                "{note:?} is {tw}px wide, past the {NARROWEST}px screen it has to fit"
+            );
+        }
+    }
+
+    #[test]
+    fn the_note_clears_the_continue_button() {
+        for (w, h) in [(800, 600), (1024, 768), (1280, 800)] {
+            let mut s = Setup::new();
+            s.set_note(Some(all_notes()[0]));
+            let mut buf = vec![0u32; (w * h) as usize];
+            let surface = unsafe { Surface::in_memory(buf.as_mut_ptr(), w as usize, h as usize) };
+            let mail = crate::mcp::MailPeek::empty(crate::mcp::BridgeStatus::Offline);
+            let skills = crate::skills::SkillPeek::from_builtin();
+            s.draw(&surface, &mail, &skills);
+            for z in &s.zones[..s.n_zones] {
+                assert!(
+                    z.y > 52,
+                    "at {w}x{h} the {:?} zone starts at {} - the note is drawn there",
+                    z.action,
+                    z.y
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn restarting_setup_keeps_the_note() {
+        // The pointer did not come back while the person clicked "Ready".
+        let note = all_notes()[0];
+        let s = Setup::restart(Level::Advanced, Some(note));
+        assert_eq!(s.note, Some(note));
+        assert_eq!(s.level, Level::Advanced, "restart still keeps the level");
     }
 }

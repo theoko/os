@@ -559,6 +559,11 @@ SIGNATURES = [
     ("setup/experience", ["how should it feel"], []),
     ("setup/region", ["select your region"], []),
     ("setup/bridge", ["connect the bridge"], []),
+    # Same step in a standalone image, where there is no host to connect to.
+    # Without this the screen falls through to the catch-all "search" signature
+    # (any screen with a Back button), which sends the wrong key and loops the
+    # journey instead of reporting an unknown screen.
+    ("setup/bridge", ["runs on its own"], []),
     ("setup/capabilities", ["capabilities", "continue"], ["default skills"]),
     ("setup/skills", ["default skills"], []),
     ("setup/done", ["all set"], []),
@@ -977,6 +982,35 @@ def press_and_settle(vbox, key, snap, name, before, ocr_deadline=15, poll=1.5):
     return frame, False
 
 
+def check_first_screen_settles(checks, first, snap, wait=8.0):
+    """The screen a fresh boot lands on must be the screen it means to show.
+
+    This is the check that was missing when the harness reported "Enter on Home
+    returns to the welcome screen" on arm64. It never did. The kernel painted a
+    complete Home screen during boot and replaced it with setup Welcome about a
+    second and a half later, and `wait_for_render` returned on whichever side of
+    that flip it happened to photograph. Every keystroke this run then sent went
+    to a screen that no longer existed, and the report blamed the input path.
+
+    A guest that is finished booting owns its screen until something is typed at
+    it, so: photograph, wait, photograph again, and require the answer not to
+    have changed by itself. Nothing has been typed at this point, so a change
+    here is the guest overpainting - never the harness.
+    """
+    time.sleep(wait)
+    again = snap("01-settled")
+    checks.that(
+        "the screen the guest boots to is the screen it stays on",
+        again.screen == first.screen,
+        f"the guest landed on {first.screen!r} and turned into "
+        f"{again.screen!r} {wait:.0f}s later without a key being pressed. "
+        f"Whatever this run drives from here, it is not the screen it "
+        f"photographed - so a keystroke assertion that fails below is about "
+        f"the race, not the input path.",
+    )
+    return again
+
+
 def drive_to_home(vbox, snap, checks, max_steps=12, settle=30):
     """Walk to Home by reading each screen, not by counting clicks.
 
@@ -1076,7 +1110,7 @@ def wait_for_render(vbox, out, ocr, deadline=90, interval=3):
 class FakeFrame:
     """A screen described by its text, for testing the checks themselves."""
 
-    def __init__(self, lines, w=1280, h=800):
+    def __init__(self, lines, w=1280, h=800, screen="brief"):
         self.w, self.h = w, h
         self.lines = [
             {"text": t, "x": x, "y": y, "w": max(8, len(t) * 7), "h": 14, "conf": 1.0}
@@ -1084,7 +1118,7 @@ class FakeFrame:
         ]
         self.texts = [l["text"] for l in self.lines]
         self.blob = " │ ".join(self.texts).lower()
-        self.screen = "brief"
+        self.screen = screen
 
 
 def _cases():
@@ -1170,6 +1204,21 @@ def _cases():
         ("no Doc rows, so the denial is honest", check_openable_claim, [
             row("Info: No openable hits - refine the ask.", 418),
         ], False),
+        # The arm64 guest painted Home during boot and replaced it with setup
+        # Welcome a second and a half later. Everything this harness drove after
+        # that was aimed at a screen that no longer existed.
+        ("the boot screen turns into another one",
+         lambda c, f: check_first_screen_settles(
+             c, FakeFrame([row("Search", 241)], screen="home"),
+             lambda _n: FakeFrame([row("hello", 333)], screen="setup/welcome"),
+             wait=0,
+         ), [], True),
+        ("the boot screen stays put",
+         lambda c, f: check_first_screen_settles(
+             c, FakeFrame([row("hello", 333)], screen="setup/welcome"),
+             lambda _n: FakeFrame([row("hello", 333)], screen="setup/welcome"),
+             wait=0,
+         ), [], False),
     ]
 
 
@@ -1364,6 +1413,8 @@ def main():
     )
     check_rendering(checks, first, configured, mode)
     check_on_screen(checks, first)
+    if not args.no_boot:
+        check_first_screen_settles(checks, first, snap)
 
     try:
         print("\ndriving to Home:")

@@ -4,7 +4,9 @@
 //! controller's AUX flag is clear. Under UTM the pointer is a USB tablet, so
 //! nothing else is draining port 0x60.
 
+#[allow(dead_code)]
 const DATA: u16 = 0x60;
+#[allow(dead_code)]
 const STATUS: u16 = 0x64;
 
 #[cfg(target_arch = "x86_64")]
@@ -281,6 +283,32 @@ impl<const N: usize> TextField<N> {
         self.len = 0;
     }
 
+    pub fn pop(&mut self) -> Option<u8> {
+        if self.len == 0 {
+            None
+        } else {
+            self.len -= 1;
+            Some(self.buf[self.len])
+        }
+    }
+
+    /// Delete the last word (trailing spaces then non-spaces). Returns true if text changed.
+    pub fn delete_word(&mut self) -> bool {
+        if self.len == 0 {
+            return false;
+        }
+        let old_len = self.len;
+        // Trim trailing spaces first
+        while self.len > 0 && self.buf[self.len - 1] == b' ' {
+            self.len -= 1;
+        }
+        // Trim non-space characters
+        while self.len > 0 && self.buf[self.len - 1] != b' ' {
+            self.len -= 1;
+        }
+        self.len != old_len
+    }
+
     /// Apply a key. Returns true when the text changed.
     pub fn apply(&mut self, key: Key) -> bool {
         match key {
@@ -293,13 +321,16 @@ impl<const N: usize> TextField<N> {
                 self.len += 1;
                 true
             }
-            Key::Backspace => {
+            Key::Backspace => self.pop().is_some(),
+            Key::Escape | Key::Chord(b'U') => {
                 if self.len == 0 {
-                    return false;
+                    false
+                } else {
+                    self.clear();
+                    true
                 }
-                self.len -= 1;
-                true
             }
+            Key::Chord(b'W') => self.delete_word(),
             _ => false,
         }
     }
@@ -420,6 +451,39 @@ mod tests {
         assert!(!f.apply(Key::Char(0x07)));
         assert!(!f.apply(Key::Char(0xC3)));
         assert!(f.is_empty());
+    }
+
+    #[test]
+    fn field_clears_on_escape_or_ctrl_u() {
+        let mut f = TextField::<16>::new();
+        for c in b"hello world" {
+            f.apply(Key::Char(*c));
+        }
+        assert_eq!(f.as_str(), "hello world");
+        assert!(f.apply(Key::Escape));
+        assert!(f.is_empty());
+
+        for c in b"test" {
+            f.apply(Key::Char(*c));
+        }
+        assert_eq!(f.as_str(), "test");
+        assert!(f.apply(Key::Chord(b'U')));
+        assert!(f.is_empty());
+    }
+
+    #[test]
+    fn field_deletes_word_on_ctrl_w() {
+        let mut f = TextField::<32>::new();
+        for c in b"hello world test " {
+            f.apply(Key::Char(*c));
+        }
+        assert!(f.apply(Key::Chord(b'W')));
+        assert_eq!(f.as_str(), "hello world ");
+        assert!(f.apply(Key::Chord(b'W')));
+        assert_eq!(f.as_str(), "hello ");
+        assert!(f.apply(Key::Chord(b'W')));
+        assert_eq!(f.as_str(), "");
+        assert!(!f.apply(Key::Chord(b'W')));
     }
 }
 

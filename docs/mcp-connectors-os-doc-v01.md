@@ -45,6 +45,10 @@ Guest → host:
 | `CALL doc.read url=… [files=1] [audio=1] [email=1] [portal=1]` | Open a search hit (`file://`, `audio://`, `email://`, `os://`, teddy) |
 | `CALL email.send to=<addr> subj=<s> body=<b> email=1 confirm=1` | Mock send (needs both bits; no gog) |
 | `CALL search.query q=<keywords> k=<n> cat=<opt>` | Knowledge search (curated corpus) |
+| `CALL update.check [running=<id>]` | Is a newer build published? Reports only |
+| `CALL update.download [arch=<x86_64\|arm64>] [wait=1]` | Fetch, verify, and stage that build |
+| `CALL update.status` | Download phase and what is staged (local only, never fetches) |
+| `CALL update.forget` | Delete staged images and partials |
 
 `doc.read` uses the same wire bits as `search.query`: a caller that could not
 have found a hit must not open it by guessing the URL. Teddy / portal corpus
@@ -92,6 +96,52 @@ Ambient root is forbidden: a missing grant is a hard deny.
 Guest Search: with Recordings on, Enter on an absolute media path
 (`/…/*.wav` and friends) calls `audio.transcribe` then searches the stem.
 
+## Software updates
+
+`scripts/publish-os.sh` puts images on `teddysearch.com/tsearch/os/`;
+`update.*` brings them back. The bridge downloads, verifies against the
+published checksum, and stages into
+`~/Library/Application Support/os/updates/`. **Nothing is ever applied.** These
+are boot media: the kernel boots read-only and has no filesystem driver, and
+even once the Linux substrate makes self-replacement possible, an OS that
+rewrites its own boot image from the network is the opposite of a system whose
+accesses are explicit. A person flashes the staged image, or points a VM at it.
+
+Two published-site facts the updater is built around, both already paid for:
+
+* **`/tsearch/` has a catch-all.** A missing path answers **HTTP 200 with the
+  homepage**, not 404. So every fetch is judged by its *body* — a manifest that
+  parses, a checksum list with 64-hex lines, a build stamp with a commit.
+  Status codes prove nothing here. `manifest.json` is optional for this reason
+  and `SHA256SUMS` is the checksum authority: it is the file publish-os.sh
+  uploads and re-verifies both on the server and over HTTPS.
+* **A CDN fronts the origin.** The bare `os.iso` URL serves the *previous*
+  release for hours after a publish, which is why `os.html` links `?v=<commit>`
+  and check-published.sh only warns about the bare one. Downloads use the same
+  versioned URL. Without it a perfectly good release arrives as a checksum
+  mismatch — which reads to anyone verifying a download as tampering. The
+  commit therefore comes from `BUILD-INFO.txt` and a download **refuses** when
+  it is unreadable rather than falling back to the stale URL.
+
+`update.check` names a **version** when a manifest is published and a
+**commit** otherwise, and says which in `ROW source=`. A commit and a version
+are not comparable, so with no manifest it reports `state=undetermined` rather
+than guessing "behind".
+
+Not in `LIST`, deliberately: `every_listed_tool_is_dispatchable` calls every
+advertised tool with no arguments, and listing these would pull the release off
+teddysearch.com on every `make test`.
+
+Not behind a cap either — no personal data is read, nothing outside the staging
+directory is written, and nothing is applied. That is a deliberate position,
+not an oversight; revisit it if `update.*` ever grows the ability to install.
+
+| Env | Behavior |
+|-----|----------|
+| `OS_UPDATE_BASE` | Release directory (default `https://teddysearch.com/tsearch/os`) |
+| `OS_UPDATE_MANIFEST` | Manifest URL, if not `<base>/manifest.json` |
+| `OS_UPDATE_DIR` | Staging directory for downloaded images |
+
 ## Bridge API
 
 Also see skills in [`docs/skills-os-doc-v01.md`](skills-os-doc-v01.md) and search in [`docs/search-os-doc-v01.md`](search-os-doc-v01.md).
@@ -102,4 +152,7 @@ Also see skills in [`docs/skills-os-doc-v01.md`](skills-os-doc-v01.md) and searc
 make bridge          # build host/bridge
 make bridge-run      # listen :7420 (mock)
 make run-bridged     # QEMU COM1 stdio + COM2 → bridge (gog if set)
+make update-check    # is a newer build published?
+make update-os       # download it for this machine, verified; applies nothing
+make update-os ARCH=x86_64
 ```

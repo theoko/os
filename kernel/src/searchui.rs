@@ -10,7 +10,7 @@
 use crate::fb::Surface;
 use crate::font::{self, BODY_FACE, BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
 use crate::search;
-use crate::ui::theme;
+use crate::ui::{Rect, hover_rail_rect, paint_hover_rail, theme};
 
 /// Longest query we accept. Comfortably wider than the field renders.
 pub const QUERY_MAX: usize = 64;
@@ -159,7 +159,7 @@ impl Source {
             return Self::TEDDY;
         }
         if !self.bridge_online {
-            return "No matches. Bridge offline - only built-in docs are searchable.";
+            return crate::copy::search_no_matches();
         }
         if !self.files_in_scope {
             return "No matches. Turn on workspace.index in Capabilities to search your files.";
@@ -221,7 +221,7 @@ impl SearchView {
         self.source = Source::offline();
         set_say(
             &mut self.say,
-            "Answered from the built-in guide - the bridge is offline.",
+            crate::copy::answered_from_guide(),
         );
         if q.trim().is_empty() {
             return;
@@ -327,10 +327,34 @@ pub fn back_rect(w: i32) -> (i32, i32, i32, i32) {
     (PAD_X, (NAV_H - 24) / 2, 72, 28)
 }
 
+/// Dirty region used for the Back affordance's hover feedback.
+pub fn back_hover_rect(w: i32) -> Rect {
+    let (x, y, rw, rh) = back_rect(w);
+    hover_rail_rect(Rect { x, y, w: rw, h: rh })
+}
+
+/// Repaint only Back's 2px intent rail.
+pub fn paint_back_hover(fb: &Surface, w: i32, on: bool) {
+    let (x, y, rw, rh) = back_rect(w);
+    paint_hover_rail(fb, Rect { x, y, w: rw, h: rh }, on);
+}
+
 /// Bounding box of result row `i`, shared by drawing and hit-testing.
 pub fn row_rect(w: i32, h: i32, i: usize) -> (i32, i32, i32, i32) {
     let (fx, _, fw, _) = field_rect(w, h);
     (fx, results_top(w, h) + i as i32 * (ROW_H + 10), fw, ROW_H)
+}
+
+/// Dirty region used for a search result's hover feedback.
+pub fn result_hover_rect(w: i32, h: i32, i: usize) -> Rect {
+    let (x, y, rw, rh) = row_rect(w, h, i);
+    hover_rail_rect(Rect { x, y, w: rw, h: rh })
+}
+
+/// Repaint only one search result's 2px intent rail.
+pub fn paint_result_hover(fb: &Surface, w: i32, h: i32, i: usize, on: bool) {
+    let (x, y, rw, rh) = row_rect(w, h, i);
+    paint_hover_rail(fb, Rect { x, y, w: rw, h: rh }, on);
 }
 
 /// Y of the first result row, below the field and the agent's sentence.
@@ -345,6 +369,48 @@ pub fn result_hit(w: i32, h: i32, count: usize, x: i32, y: i32) -> Option<usize>
         let (rx, ry, rw, rh) = row_rect(w, h, i);
         x >= rx && x < rx + rw && y >= ry && y < ry + rh
     })
+}
+
+/// Repaint just the Search input field.
+///
+/// Keystrokes and caret flips do not change any other part of the screen.
+/// Keeping this painter bounded lets the dirty presenter move one small field
+/// instead of the full framebuffer on every character.
+pub fn draw_search_field(
+    fb: &Surface,
+    w: i32,
+    h: i32,
+    query: &str,
+    caret: bool,
+    level: crate::level::Level,
+) {
+    let (fx, fy, fw, fh) = field_rect(w, h);
+    fb.draw_round_rect_outline(fx, fy, fw, fh, 12, 1, theme::RULE);
+    fb.fill_round_rect(fx + 1, fy + 1, fw - 2, fh - 2, 11, theme::BG);
+
+    let tx = fx + 18;
+    let base = fy + (fh - BODY_FACE.px) / 2 + BODY_FACE.baseline();
+    if query.is_empty() {
+        fb.draw_text(
+            tx,
+            base,
+            level.search_placeholder(),
+            &BODY_FACE,
+            0,
+            theme::MUTED,
+        );
+    } else {
+        fb.draw_text(tx, base, query, &BODY_FACE, 0, theme::INK);
+    }
+    if caret {
+        let cx =
+            tx + if query.is_empty() {
+                0
+            } else {
+                BODY_FACE.width(query, 0)
+            } + 2;
+        fb.fill_rect(cx, fy + 14, 2, fh - 28, theme::INK);
+    }
 }
 
 /// Draw the search screen. `caret` blinks the insertion point on.
@@ -393,32 +459,7 @@ pub fn draw(
 
     // Input field.
     let (fx, fy, fw, fh) = field_rect(w, h);
-    fb.fill_round_rect(fx, fy, fw, fh, 12, theme::RULE);
-    fb.fill_round_rect(fx + 1, fy + 1, fw - 2, fh - 2, 11, theme::BG);
-
-    let tx = fx + 18;
-    let base = fy + (fh - BODY_FACE.px) / 2 + BODY_FACE.baseline();
-    if query.is_empty() {
-        fb.draw_text(
-            tx,
-            base,
-            level.search_placeholder(),
-            &BODY_FACE,
-            0,
-            theme::MUTED,
-        );
-    } else {
-        fb.draw_text(tx, base, query, &BODY_FACE, 0, theme::INK);
-    }
-    if caret {
-        let cx =
-            tx + if query.is_empty() {
-                0
-            } else {
-                BODY_FACE.width(query, 0)
-            } + 2;
-        fb.fill_rect(cx, fy + 14, 2, fh - 28, theme::INK);
-    }
+    draw_search_field(fb, w, h, query, caret, level);
 
     // What the agent understood. It sits above the results because it is the
     // answer to "did you get what I meant?" - the rows are the evidence.
@@ -461,7 +502,7 @@ pub fn draw(
 
     for i in 0..view.count {
         let r = &view.rows[i];
-        fb.fill_round_rect(fx, y, fw, ROW_H, 10, theme::CARD_BORDER);
+        fb.draw_round_rect_outline(fx, y, fw, ROW_H, 10, 1, theme::CARD_BORDER);
         fb.fill_round_rect(fx + 1, y + 1, fw - 2, ROW_H - 2, 9, theme::BG);
         fb.draw_text(fx + 18, y + 26, r.title(), &BRAND_FACE, 0, theme::INK);
         // Category chip, right-aligned.
@@ -562,6 +603,67 @@ mod tests {
     fn back_target_is_clickable_sized() {
         let (_x, _y, w, h) = back_rect(1024);
         assert!(w >= 44 && h >= 24, "back target too small to hit");
+    }
+
+    #[test]
+    fn hover_rails_stay_inside_back_and_result_targets() {
+        let back = back_hover_rect(1024);
+        let (bx, by, bw, bh) = back_rect(1024);
+        assert!(bx <= back.x && by <= back.y);
+        assert!(back.x + back.w <= bx + bw);
+        assert!(back.y + back.h <= by + bh);
+
+        let result = result_hover_rect(1024, 768, 1);
+        let (rx, ry, rw, rh) = row_rect(1024, 768, 1);
+        assert!(rx <= result.x && ry <= result.y);
+        assert!(result.x + result.w <= rx + rw);
+        assert!(result.y + result.h <= ry + rh);
+        assert_eq!(back.h, 2);
+        assert_eq!(result.h, 2);
+    }
+
+    #[test]
+    fn result_hover_paints_and_erases_a_two_scanline_dirty_region() {
+        const W: usize = 320;
+        const H: usize = 420;
+        let mut buf = vec![theme::BG; W * H];
+        let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), W, H) };
+        let rail = result_hover_rect(W as i32, H as i32, 0);
+
+        paint_result_hover(&fb, W as i32, H as i32, 0, true);
+        assert_eq!(
+            fb.dirty_rect(),
+            Some((rail.x, rail.y, rail.x + rail.w, rail.y + rail.h))
+        );
+        assert_eq!(fb.get_pixel(rail.x, rail.y), theme::TINT_BORDER);
+
+        fb.clear_dirty();
+        paint_result_hover(&fb, W as i32, H as i32, 0, false);
+        assert_eq!(
+            fb.dirty_rect(),
+            Some((rail.x, rail.y, rail.x + rail.w, rail.y + rail.h))
+        );
+        assert_eq!(fb.get_pixel(rail.x, rail.y), theme::BG);
+    }
+
+    #[test]
+    fn search_field_repaint_is_bounded_to_the_field() {
+        const W: usize = 640;
+        const H: usize = 360;
+        let mut buf = vec![theme::BG; W * H];
+        let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), W, H) };
+        let (x, y, w, h) = field_rect(W as i32, H as i32);
+
+        draw_search_field(
+            &fb,
+            W as i32,
+            H as i32,
+            "nvda",
+            true,
+            crate::level::Level::ALL[0],
+        );
+        assert_eq!(fb.dirty_rect(), Some((x, y, x + w, y + h)));
+        assert!(fb.dirty_rect2().is_none());
     }
 }
 
@@ -761,7 +863,7 @@ pub fn draw_reader(fb: &Surface, title: &str, page: &crate::mcp::DocPage, scroll
     if page.count == 0 {
         let msg = match page.status {
             crate::mcp::BridgeStatus::Online => "Nothing readable here.",
-            crate::mcp::BridgeStatus::Offline => "Bridge offline - cannot open documents.",
+            crate::mcp::BridgeStatus::Offline => crate::copy::cannot_open_documents(),
         };
         fb.draw_text(fx, 160, msg, &BODY_FACE, 0, theme::MUTED);
         return;

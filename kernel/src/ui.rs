@@ -23,6 +23,30 @@ pub fn status_dot_rect(w: i32) -> Rect {
     }
 }
 
+/// A tiny hover rail below the status dot, leaving the live status colour
+/// untouched.
+pub fn status_hover_rect(w: i32) -> Rect {
+    let dot = status_dot_rect(w);
+    Rect {
+        x: dot.x - 4,
+        y: dot.y + dot.h + 4,
+        w: dot.w + 8,
+        h: 2,
+    }
+}
+
+/// Repaint only the status dot's nearby intent rail.
+pub fn paint_status_hover(fb: &Surface, w: i32, on: bool) {
+    let rail = status_hover_rect(w);
+    fb.fill_rect(
+        rail.x,
+        rail.y,
+        rail.w,
+        rail.h,
+        if on { theme::TINT_BORDER } else { theme::BG },
+    );
+}
+
 fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
     let base = (NAV_H - BRAND_FACE.px) / 2 + BRAND_FACE.baseline();
     fb.draw_text(PAD_X, base, "os", &BRAND_FACE, 0, theme::INK);
@@ -104,6 +128,41 @@ pub struct Rect {
 impl Rect {
     pub fn contains(self, px: i32, py: i32) -> bool {
         px >= self.x && py >= self.y && px < self.x + self.w && py < self.y + self.h
+    }
+}
+
+/// A quiet 2px interaction rail inside a clickable region.
+///
+/// The lower interior edge is deliberately used rather than tinting the whole
+/// card: it stays clear of labels and borders, and changing hover only dirties
+/// a handful of scanlines on slow virtual framebuffers.
+pub(crate) fn hover_rail_rect(target: Rect) -> Rect {
+    if target.w <= 16 || target.h < 6 {
+        return Rect {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+        };
+    }
+    Rect {
+        x: target.x + 8,
+        y: target.y + target.h - 4,
+        w: target.w - 16,
+        h: 2,
+    }
+}
+
+pub(crate) fn paint_hover_rail(fb: &Surface, target: Rect, on: bool) {
+    let rail = hover_rail_rect(target);
+    if rail.w > 0 && rail.h > 0 {
+        fb.fill_rect(
+            rail.x,
+            rail.y,
+            rail.w,
+            rail.h,
+            if on { theme::TINT_BORDER } else { theme::BG },
+        );
     }
 }
 
@@ -215,6 +274,44 @@ impl HomeTargets {
     }
 }
 
+/// The small region repainted when a home target gains or loses hover.
+pub fn home_hover_rect(targets: HomeTargets, hit: HomeHit) -> Rect {
+    let target = match hit {
+        HomeHit::Cta(CtaId::Ready) => targets.ctas.ready,
+        HomeHit::Cta(CtaId::Skills) => targets.ctas.skills,
+        HomeHit::Card(CardId::Connectors) => targets.cards.connectors,
+        HomeHit::Card(CardId::Capabilities) => targets.cards.capabilities,
+        HomeHit::Card(CardId::Skills) => targets.cards.skills,
+        HomeHit::Brief => targets.brief,
+        HomeHit::Mail(i) if i < targets.mail_n.min(targets.mail.len()) => targets.mail[i],
+        HomeHit::File(i) if i < targets.files_n.min(targets.files.len()) => targets.files[i],
+        HomeHit::Mail(_) | HomeHit::File(_) => Rect {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+        },
+    };
+    hover_rail_rect(target)
+}
+
+/// Repaint only the home target's intent rail.
+///
+/// Call with `on = false` for the previous target, then `on = true` for the
+/// new one. Both updates stay bounded to two scanlines.
+pub fn paint_home_hover(fb: &Surface, targets: HomeTargets, hit: HomeHit, on: bool) {
+    let rail = home_hover_rect(targets, hit);
+    if rail.w > 0 && rail.h > 0 {
+        fb.fill_rect(
+            rail.x,
+            rail.y,
+            rail.w,
+            rail.h,
+            if on { theme::TINT_BORDER } else { theme::BG },
+        );
+    }
+}
+
 /// Draw the home composition on `fb`.
 ///
 /// `status` is a short Capabilities-tile line (ASCII). `brief` is the last
@@ -260,7 +357,7 @@ pub fn draw_search_field(
     level: crate::level::Level,
 ) {
     let (fx, fy, fw, fh) = search_rect(w, h);
-    fb.fill_round_rect(fx, fy, fw, fh, 12, theme::RULE);
+    fb.draw_round_rect_outline(fx, fy, fw, fh, 12, 1, theme::RULE);
     fb.fill_round_rect(fx + 1, fy + 1, fw - 2, fh - 2, 11, theme::BG);
     let base = fy + (fh - BODY_FACE.px) / 2 + BODY_FACE.baseline();
     if query.is_empty() {
@@ -331,7 +428,7 @@ pub fn draw_home_full(
     ];
     for (i, (title, sub)) in tiles.iter().enumerate() {
         let tx = x0 + (tw + gap) * i as i32;
-        fb.fill_round_rect(tx, ty, tw, TILE_H, 12, theme::CARD_BORDER);
+        fb.draw_round_rect_outline(tx, ty, tw, TILE_H, 12, 1, theme::CARD_BORDER);
         fb.fill_round_rect(tx + 1, ty + 1, tw - 2, TILE_H - 2, 11, theme::BG);
         fb.draw_text_clipped(tx + 18, ty + 34, title, &H2_FACE, 0, theme::INK, tw - 36);
         fb.draw_text_clipped(tx + 18, ty + 58, sub, &SMALL_FACE, 0, theme::MUTED, tw - 36);
@@ -367,7 +464,7 @@ pub fn draw_home_full(
         }
     } else if !brief.has_report() && files.count == 0 {
         let empty_mail = match mail.status {
-            BridgeStatus::Offline => "Bridge offline - run: make utm-bridged",
+            BridgeStatus::Offline => crate::copy::offline_remedy(),
             BridgeStatus::Online if !caps.allows(Cap::EmailSearch) => {
                 "Grant Email to show recent mail."
             }
@@ -808,6 +905,169 @@ mod tests {
         Brief::empty()
     }
 
+    fn hover_targets() -> HomeTargets {
+        let a = Rect {
+            x: 10,
+            y: 10,
+            w: 80,
+            h: 32,
+        };
+        let b = Rect {
+            x: 100,
+            y: 10,
+            w: 80,
+            h: 32,
+        };
+        let c = Rect {
+            x: 190,
+            y: 10,
+            w: 80,
+            h: 32,
+        };
+        HomeTargets {
+            ctas: CtaTargets {
+                ready: a,
+                skills: b,
+            },
+            cards: CardTargets {
+                connectors: a,
+                capabilities: b,
+                skills: c,
+            },
+            brief: Rect {
+                x: 10,
+                y: 52,
+                w: 260,
+                h: 48,
+            },
+            mail: [
+                Rect {
+                    x: 10,
+                    y: 110,
+                    w: 260,
+                    h: 34,
+                },
+                Rect {
+                    x: 10,
+                    y: 144,
+                    w: 260,
+                    h: 34,
+                },
+                Rect {
+                    x: 10,
+                    y: 178,
+                    w: 260,
+                    h: 34,
+                },
+            ],
+            mail_n: 2,
+            files: [
+                Rect {
+                    x: 10,
+                    y: 222,
+                    w: 260,
+                    h: 34,
+                },
+                Rect {
+                    x: 10,
+                    y: 256,
+                    w: 260,
+                    h: 34,
+                },
+                Rect {
+                    x: 10,
+                    y: 290,
+                    w: 260,
+                    h: 34,
+                },
+            ],
+            files_n: 2,
+        }
+    }
+
+    #[test]
+    fn every_home_hover_rail_stays_inside_its_target() {
+        let targets = hover_targets();
+        let cases = [
+            (HomeHit::Cta(CtaId::Ready), targets.ctas.ready),
+            (HomeHit::Cta(CtaId::Skills), targets.ctas.skills),
+            (
+                HomeHit::Card(CardId::Connectors),
+                targets.cards.connectors,
+            ),
+            (
+                HomeHit::Card(CardId::Capabilities),
+                targets.cards.capabilities,
+            ),
+            (HomeHit::Card(CardId::Skills), targets.cards.skills),
+            (HomeHit::Brief, targets.brief),
+            (HomeHit::Mail(0), targets.mail[0]),
+            (HomeHit::File(1), targets.files[1]),
+        ];
+        for (hit, target) in cases {
+            let rail = home_hover_rect(targets, hit);
+            assert_eq!(rail.h, 2);
+            assert!(target.contains(rail.x, rail.y), "{hit:?}");
+            assert!(
+                target.contains(rail.x + rail.w - 1, rail.y + rail.h - 1),
+                "{hit:?}"
+            );
+        }
+        assert_eq!(home_hover_rect(targets, HomeHit::Mail(2)).w, 0);
+        assert_eq!(home_hover_rect(targets, HomeHit::File(9)).w, 0);
+    }
+
+    #[test]
+    fn home_hover_paints_and_erases_only_the_rail() {
+        let targets = hover_targets();
+        let hit = HomeHit::Brief;
+        let rail = home_hover_rect(targets, hit);
+        let mut buf = vec![theme::BG; 320 * 160];
+        let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), 320, 160) };
+
+        paint_home_hover(&fb, targets, hit, true);
+        assert_eq!(
+            fb.dirty_rect(),
+            Some((rail.x, rail.y, rail.x + rail.w, rail.y + rail.h))
+        );
+        assert_eq!(fb.get_pixel(rail.x, rail.y), theme::TINT_BORDER);
+        assert_eq!(fb.get_pixel(targets.brief.x, targets.brief.y), theme::BG);
+
+        fb.clear_dirty();
+        paint_home_hover(&fb, targets, hit, false);
+        assert_eq!(
+            fb.dirty_rect(),
+            Some((rail.x, rail.y, rail.x + rail.w, rail.y + rail.h))
+        );
+        assert_eq!(fb.get_pixel(rail.x, rail.y), theme::BG);
+    }
+
+    #[test]
+    fn status_hover_never_paints_over_the_live_dot() {
+        const W: usize = 320;
+        const H: usize = 80;
+        let mut buf = vec![theme::BG; W * H];
+        let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), W, H) };
+        let dot = status_dot_rect(W as i32);
+        let centre = (dot.x + dot.w / 2, dot.y + dot.h / 2);
+        fb.fill_rect(dot.x, dot.y, dot.w, dot.h, theme::ONLINE);
+        fb.clear_dirty();
+
+        paint_status_hover(&fb, W as i32, true);
+        let rail = status_hover_rect(W as i32);
+        assert_eq!(
+            fb.dirty_rect(),
+            Some((rail.x, rail.y, rail.x + rail.w, rail.y + rail.h))
+        );
+        assert_eq!(fb.get_pixel(rail.x, rail.y), theme::TINT_BORDER);
+        assert_eq!(fb.get_pixel(centre.0, centre.1), theme::ONLINE);
+
+        fb.clear_dirty();
+        paint_status_hover(&fb, W as i32, false);
+        assert_eq!(fb.get_pixel(rail.x, rail.y), theme::BG);
+        assert_eq!(fb.get_pixel(centre.0, centre.1), theme::ONLINE);
+    }
+
     #[test]
     fn search_field_is_not_a_cta() {
         // Clicking the query box used to fire CtaId::Ready and restart setup.
@@ -895,7 +1155,7 @@ mod tests {
             "Inbox empty right now.",
             "Grant Email to show recent mail.",
             "Connect email on this Mac to show your inbox.",
-            "Bridge offline - run: make utm-bridged",
+            crate::copy::offline_remedy(),
             "bridge connected",
             "bridge offline",
             "os",

@@ -7,11 +7,15 @@
 
 use crate::fb::Surface;
 
+#[allow(dead_code)]
 const DATA: u16 = 0x60;
+#[allow(dead_code)]
 const STATUS: u16 = 0x64;
+#[allow(dead_code)]
 const CMD: u16 = 0x64;
 
 /// Keep PS/2 probes short so a missing controller can't stall the UI.
+#[allow(dead_code)]
 const SPIN: u32 = 20_000;
 
 #[cfg(target_arch = "x86_64")]
@@ -35,6 +39,7 @@ mod port {
     }
 }
 
+#[allow(dead_code)]
 fn wait_ibf_clear(spins: u32) -> bool {
     #[cfg(target_arch = "x86_64")]
     unsafe {
@@ -53,6 +58,7 @@ fn wait_ibf_clear(spins: u32) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn wait_obf_set(spins: u32) -> bool {
     #[cfg(target_arch = "x86_64")]
     unsafe {
@@ -71,6 +77,7 @@ fn wait_obf_set(spins: u32) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn write_cmd(cmd: u8) -> bool {
     if !wait_ibf_clear(SPIN) {
         return false;
@@ -84,6 +91,7 @@ fn write_cmd(cmd: u8) -> bool {
     true
 }
 
+#[allow(dead_code)]
 fn write_data(data: u8) -> bool {
     if !wait_ibf_clear(SPIN) {
         return false;
@@ -97,6 +105,7 @@ fn write_data(data: u8) -> bool {
     true
 }
 
+#[allow(dead_code)]
 fn read_data(spins: u32) -> Option<u8> {
     if !wait_obf_set(spins) {
         return None;
@@ -112,10 +121,12 @@ fn read_data(spins: u32) -> Option<u8> {
     }
 }
 
+#[allow(dead_code)]
 fn write_mouse(byte: u8) -> bool {
     write_cmd(0xD4) && write_data(byte)
 }
 
+#[allow(dead_code)]
 fn mouse_expect_ack() -> bool {
     matches!(read_data(SPIN), Some(0xFA))
 }
@@ -126,18 +137,21 @@ pub struct Mouse {
     pub y: i32,
     pub buttons: u8,
     pub present: bool,
+    #[allow(dead_code)]
     packet: [u8; 3],
+    #[allow(dead_code)]
     packet_i: usize,
     /// The controller has produced at least one byte with the AUX flag set —
     /// from then on we can trust the flag and reject keyboard bytes.
+    #[allow(dead_code)]
     aux_seen: bool,
 }
 
 impl Mouse {
-    pub fn new(screen_w: i32, screen_h: i32) -> Self {
+    pub const fn new(w: i32, h: i32) -> Self {
         Self {
-            x: screen_w / 2,
-            y: screen_h / 2,
+            x: w / 2,
+            y: h / 2,
             buttons: 0,
             present: false,
             packet: [0; 3],
@@ -146,43 +160,49 @@ impl Mouse {
         }
     }
 
-    /// Best-effort PS/2 enable. Returns whether streaming was enabled.
+    /// Ask the i8042 to enable the mouse port and streaming mode.
+    ///
+    /// Returns true when the controller and mouse both ACKed their commands.
     pub fn init(&mut self) -> bool {
-        if !write_cmd(0xA8) {
-            return false;
-        }
-        // Drain any stale output (boot-time keyboard/self-test bytes) so the
-        // 0x20 reply below is really the command byte and not leftovers.
-        for _ in 0..16 {
-            if read_data(1).is_none() {
-                break;
+        #[cfg(target_arch = "x86_64")]
+        {
+            if !write_cmd(0xA8) {
+                return false;
             }
+            if !write_cmd(0x20) {
+                return false;
+            }
+            let mut comp = match read_data(SPIN) {
+                Some(b) => b,
+                None => return false,
+            };
+            comp |= 0x02;
+            comp &= !0x20;
+            if !write_cmd(0x60) || !write_data(comp) {
+                return false;
+            }
+            if !write_mouse(0xF6) || !mouse_expect_ack() {
+                return false;
+            }
+            if !write_mouse(0xF4) || !mouse_expect_ack() {
+                return false;
+            }
+            self.present = true;
+            true
         }
-        if !write_cmd(0x20) {
-            return false;
+        #[cfg(not(target_arch = "x86_64"))]
+        {
+            false
         }
-        let mut status = match read_data(SPIN) {
-            Some(s) => s,
-            None => return false,
-        };
-        status |= 0x02;
-        status &= !0x20;
-        if !write_cmd(0x60) || !write_data(status) {
-            return false;
-        }
-        if !write_mouse(0xF6) || !mouse_expect_ack() {
-            return false;
-        }
-        if !write_mouse(0xF4) || !mouse_expect_ack() {
-            return false;
-        }
-        self.present = true;
-        true
     }
 
     /// Drain available bytes; update position. `w`/`h` clamp.
     pub fn poll(&mut self, w: i32, h: i32) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        #[allow(unused_mut)]
         let mut moved = false;
+        #[cfg(not(target_arch = "x86_64"))]
+        let moved = false;
         #[cfg(target_arch = "x86_64")]
         {
             loop {
@@ -250,10 +270,11 @@ pub struct CursorMotion {
 }
 
 const MOTION_ONE: i32 = 1 << 16;
-/// Soft follow — chill game-pad glide for precise moves.
-const GENTLE_FOLLOW: i32 = 14_000;
-/// Still catches up on flicks, without snapping like a desktop OS.
-const FAST_FOLLOW: i32 = 42_000;
+/// Precise motion settles over two or three frames: enough filtering to hide
+/// report jitter without making the pointer feel detached from the hand.
+const GENTLE_FOLLOW: i32 = 42_000;
+/// A flick should land in the next frame, like a desktop pointer.
+const FAST_FOLLOW: i32 = MOTION_ONE;
 const FAST_INPUT_PX: i32 = 48;
 
 impl CursorMotion {
@@ -538,16 +559,30 @@ mod tests {
     #[test]
     fn cursor_motion_glides_then_lands_exactly() {
         let mut motion = CursorMotion::new(10, 10);
-        motion.set_target(110, 10);
+        motion.set_target(30, 10);
         let first = motion.step().expect("first frame should move");
-        assert!(first.0 > 10 && first.0 < 110, "first frame should ease, not jump");
+        assert!(first.0 > 10 && first.0 < 30, "a precise move should ease");
         for _ in 0..32 {
             motion.step();
             if !motion.active() {
                 break;
             }
         }
-        assert!(!motion.active(), "motion should settle rather than drift forever");
+        assert!(
+            !motion.active(),
+            "motion should settle rather than drift forever"
+        );
+    }
+
+    #[test]
+    fn cursor_motion_flick_lands_in_the_next_frame() {
+        let mut motion = CursorMotion::new(10, 10);
+        motion.set_target(110, 10);
+        assert_eq!(motion.step(), Some((110, 10)));
+        assert!(
+            !motion.active(),
+            "a fast move must not leave the pointer behind"
+        );
     }
 
     #[test]

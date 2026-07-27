@@ -21,7 +21,7 @@ use crate::setup::{N_CAPS, cap_rows};
 #[cfg(test)]
 use crate::skills::BUILTIN;
 use crate::skills::{SkillPeek, Workflow};
-use crate::ui::theme;
+use crate::ui::{Rect, hover_rail_rect, paint_hover_rail, theme};
 
 /// Which full-screen view is showing.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -61,6 +61,21 @@ fn column(w: i32) -> (i32, i32) {
 pub fn row_rect(w: i32, i: usize) -> (i32, i32, i32, i32) {
     let (x, cw) = column(w);
     (x, TOP + i as i32 * (ROW_H + ROW_GAP), cw, ROW_H)
+}
+
+/// Dirty region used for a list row's hover feedback.
+pub fn row_hover_rect(w: i32, i: usize) -> Rect {
+    let (x, y, rw, rh) = row_rect(w, i);
+    hover_rail_rect(Rect { x, y, w: rw, h: rh })
+}
+
+/// Repaint only one row's calm 2px intent rail.
+///
+/// Capabilities, Skills, and the hidden portal picker share this geometry, so
+/// they get one interaction language without changing their full draw paths.
+pub fn paint_row_hover(fb: &Surface, w: i32, i: usize, on: bool) {
+    let (x, y, rw, rh) = row_rect(w, i);
+    paint_hover_rail(fb, Rect { x, y, w: rw, h: rh }, on);
 }
 
 /// Which capability row contains this point, if any.
@@ -110,7 +125,7 @@ fn row(
     } else {
         theme::CARD_BORDER
     };
-    fb.fill_round_rect(x, y, cw, h, 10, border);
+    fb.draw_round_rect_outline(x, y, cw, h, 10, 1, border);
     fb.fill_round_rect(x + 1, y + 1, cw - 2, h - 2, 9, theme::BG);
     fb.draw_text(x + 18, y + 26, title, &BRAND_FACE, 0, theme::INK);
     fb.draw_text(x + 18, y + 46, sub, &SMALL_FACE, 0, theme::MUTED);
@@ -141,7 +156,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek, caps: Caps) {
         } else if crate::agent::is_runnable(name) {
             "Tap to run under current grants"
         } else if peek.from_bridge {
-            "From host bridge"
+            crate::copy::skills_source()
         } else {
             "Shipped with the ISO"
         };
@@ -164,7 +179,7 @@ pub fn draw_skills(fb: &Surface, peek: &SkillPeek, caps: Caps) {
 
     let (x, cw) = column(w);
     let note = if caps.allows(Cap::SkillsSave) {
-        "Saved playbooks CALL granted tools. Save starter needs the bridge."
+        crate::copy::save_starter_hint()
     } else if peek.from_bridge {
         "Builtins run under grants. Saved CALL only tools you already turned on."
     } else if peek.count > 0 {
@@ -218,30 +233,35 @@ pub fn draw_brief(fb: &Surface, brief: &Brief) {
 
     if brief.plan_n > 0 {
         fb.draw_text(x, y, "Plan", &BRAND_FACE, 0, theme::INK);
-        y += 22;
+        y += 24;
         for i in 0..brief.plan_n {
-            let mut step = [0u8; 56];
-            let mut n = 0;
-            step[n] = b'0' + (i as u8 + 1);
-            n += 1;
-            step[n] = b'.';
-            n += 1;
-            step[n] = b' ';
-            n += 1;
-            for &b in brief.plan_at(i).as_bytes() {
-                if n < step.len() {
-                    step[n] = b;
-                    n += 1;
-                }
-            }
-            let s = core::str::from_utf8(&step[..n]).unwrap_or(brief.plan_at(i));
-            fb.draw_text(x, y, s, &SMALL_FACE, 0, theme::MUTED);
-            y += 18;
+            // Numbered badge + step text on a single line.
+            let badge_d = 18;
+            let bx = x;
+            let by_ = y - badge_d / 2;
+            let badge_c = theme::TINT_BORDER;
+            fb.fill_round_rect(bx, by_, badge_d, badge_d, badge_d / 2, badge_c);
+            let digit: [u8; 1] = [b'1' + i as u8];
+            let digit_str = core::str::from_utf8(&digit).unwrap_or("?");
+            fb.draw_text_centered(
+                bx + badge_d / 2,
+                by_ + (badge_d - SMALL_FACE.px) / 2 + SMALL_FACE.baseline(),
+                digit_str,
+                &SMALL_FACE,
+                0,
+                theme::ACCENT,
+            );
+            fb.draw_text(x + badge_d + 8, y, brief.plan_at(i), &SMALL_FACE, 0, theme::MUTED);
+            y += 20;
         }
-        y += 10;
+        y += 8;
     }
 
     if brief.count > 0 {
+        // Thin divider above the Report section when there was a Plan above it.
+        if brief.plan_n > 0 {
+            fb.fill_rect(x, y - 4, cw, 1, theme::RULE);
+        }
         fb.draw_text(x, y, "Report", &BRAND_FACE, 0, theme::INK);
         y += 8;
         for i in 0..brief.count {
@@ -251,7 +271,7 @@ pub fn draw_brief(fb: &Surface, brief: &Brief) {
                 cw,
                 ROW_H - 14,
             );
-            fb.fill_round_rect(rx, ry, rw, rh, 10, theme::CARD_BORDER);
+            fb.draw_round_rect_outline(rx, ry, rw, rh, 10, 1, theme::CARD_BORDER);
             fb.fill_round_rect(rx + 1, ry + 1, rw - 2, rh - 2, 9, theme::BG);
             let tag = brief.lines[i].tag();
             let accent = matches!(tag, "Urgent" | "Reply" | "Need" | "Event" | "Doc");
@@ -277,7 +297,7 @@ pub fn draw_brief(fb: &Surface, brief: &Brief) {
 
     if brief.send_ready {
         let (sx, sy, sw, sh) = brief_send_rect(w, h);
-        fb.fill_round_rect(sx, sy, sw, sh, 10, theme::ACCENT);
+        fb.draw_round_rect_outline(sx, sy, sw, sh, 10, 1, theme::ACCENT);
         fb.fill_round_rect(sx + 1, sy + 1, sw - 2, sh - 2, 9, theme::BG);
         fb.draw_text(sx + 18, sy + 26, "Confirm send", &BRAND_FACE, 0, theme::ACCENT);
         let mut sub = [0u8; 64];
@@ -387,7 +407,7 @@ pub fn draw_playbook(
     chrome(fb, w, "Playbook", flow.title);
     let (x, cw) = column(w);
     let gy = 130;
-    fb.fill_round_rect(x, gy, cw, 44, 10, theme::RULE);
+    fb.draw_round_rect_outline(x, gy, cw, 44, 10, 1, theme::RULE);
     fb.fill_round_rect(x + 1, gy + 1, cw - 2, 42, 9, theme::BG);
     let base = gy + (44 - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
     if goal.is_empty() {
@@ -409,22 +429,52 @@ pub fn draw_playbook(
     let active = step.min(flow.steps.len().saturating_sub(1));
     for (i, text) in flow.steps.iter().take(5).enumerate() {
         let y = 198 + i as i32 * (ROW_H + ROW_GAP);
-        let border = if i == active {
+        let done = i < active;
+        let is_active = i == active;
+        let border = if is_active {
             theme::ACCENT
         } else {
             theme::CARD_BORDER
         };
-        fb.fill_round_rect(x, y, cw, ROW_H, 10, border);
+        fb.draw_round_rect_outline(x, y, cw, ROW_H, 10, 1, border);
         fb.fill_round_rect(x + 1, y + 1, cw - 2, ROW_H - 2, 9, theme::BG);
-        fb.draw_text_clipped(x + 18, y + 26, text, &BRAND_FACE, 0, theme::INK, cw - 36);
-        let state = if i < active {
-            "Done"
-        } else if i == active {
-            "Next"
+
+        // Step number badge: filled circle with number for done/active, hollow for later.
+        let badge_d = 24;
+        let bx = x + cw - 18 - badge_d;
+        let by_ = y + (ROW_H - badge_d) / 2;
+        let badge_color = if done {
+            theme::ACCENT
+        } else if is_active {
+            theme::ACCENT
         } else {
-            "Later"
+            theme::RULE
         };
-        fb.draw_text(x + 18, y + 46, state, &SMALL_FACE, 0, theme::MUTED);
+        fb.fill_round_rect(bx, by_, badge_d, badge_d, badge_d / 2, badge_color);
+        // Number glyph inside the badge.
+        let digit: [u8; 1] = [b'1' + i as u8];
+        let digit_str = core::str::from_utf8(&digit).unwrap_or("?");
+        let glyph_color = if done || is_active { theme::BG } else { theme::MUTED };
+        fb.draw_text_centered(
+            bx + badge_d / 2,
+            by_ + (badge_d - SMALL_FACE.px) / 2 + SMALL_FACE.baseline(),
+            digit_str,
+            &SMALL_FACE,
+            0,
+            glyph_color,
+        );
+
+        let text_color = if done { theme::MUTED } else { theme::INK };
+        fb.draw_text_clipped(x + 18, y + 26, text, &BRAND_FACE, 0, text_color, cw - badge_d - 54);
+        let state_label = if done {
+            "Done"
+        } else if is_active {
+            "In progress"
+        } else {
+            "Pending"
+        };
+        let label_color = if is_active { theme::ACCENT } else { theme::MUTED };
+        fb.draw_text(x + 18, y + 46, state_label, &SMALL_FACE, 0, label_color);
     }
     let (x, y, bw, bh) = playbook_next_rect(w, step, flow.steps.len());
     let done = step + 1 >= flow.steps.len();
@@ -574,7 +624,7 @@ impl ConfigNote {
             ConfigNote::BadPass => "That password did not match. Try again.",
             ConfigNote::NotConfigured => "No portal password is set on this Mac yet.",
             ConfigNote::TooMany => "Too many attempts. Wait a moment, then retry.",
-            ConfigNote::Offline => "Bridge offline - run: make utm-bridged",
+            ConfigNote::Offline => crate::copy::offline_remedy(),
             ConfigNote::Unsendable => "No spaces or line breaks in the password.",
             ConfigNote::Saved => "Saved.",
             ConfigNote::Relocked => "The session locked again. Enter the password.",
@@ -728,7 +778,7 @@ fn draw_portal_locked(fb: &Surface, w: i32, cfg: &PortalConfig, caret: bool) {
 
     let (x, cw) = column(w);
     let y = TOP;
-    fb.fill_round_rect(x, y, cw, PASS_FIELD_H, 10, theme::RULE);
+    fb.draw_round_rect_outline(x, y, cw, PASS_FIELD_H, 10, 1, theme::RULE);
     fb.fill_round_rect(x + 1, y + 1, cw - 2, PASS_FIELD_H - 2, 9, theme::BG);
 
     let base = y + (PASS_FIELD_H - SMALL_FACE.px) / 2 + SMALL_FACE.baseline();
@@ -839,6 +889,42 @@ mod tests {
     }
 
     #[test]
+    fn row_hover_rail_stays_inside_the_shared_row() {
+        for i in 0..N_CAPS {
+            let rail = row_hover_rect(1024, i);
+            let (x, y, w, h) = row_rect(1024, i);
+            assert!(x <= rail.x && y <= rail.y);
+            assert!(rail.x + rail.w <= x + w);
+            assert!(rail.y + rail.h <= y + h);
+            assert_eq!(rail.h, 2);
+        }
+    }
+
+    #[test]
+    fn row_hover_paints_and_erases_only_two_scanlines() {
+        const W: usize = 320;
+        const H: usize = 260;
+        let mut buf = vec![theme::BG; W * H];
+        let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), W, H) };
+        let rail = row_hover_rect(W as i32, 0);
+
+        paint_row_hover(&fb, W as i32, 0, true);
+        assert_eq!(
+            fb.dirty_rect(),
+            Some((rail.x, rail.y, rail.x + rail.w, rail.y + rail.h))
+        );
+        assert_eq!(fb.get_pixel(rail.x, rail.y), theme::TINT_BORDER);
+
+        fb.clear_dirty();
+        paint_row_hover(&fb, W as i32, 0, false);
+        assert_eq!(
+            fb.dirty_rect(),
+            Some((rail.x, rail.y, rail.x + rail.w, rail.y + rail.h))
+        );
+        assert_eq!(fb.get_pixel(rail.x, rail.y), theme::BG);
+    }
+
+    #[test]
     fn toggle_flips_only_the_named_capability() {
         let g = Caps::none();
         let after = toggle(g, 0);
@@ -934,14 +1020,14 @@ mod tests {
             "Run a playbook, or save a starter",
             "Tap a playbook: builtins run; saved CALL only granted tools.",
             "Builtins run under grants. Saved CALL only tools you already turned on.",
-            "Saved playbooks CALL granted tools. Save starter needs the bridge.",
+            crate::copy::save_starter_hint(),
             "Playbook body unavailable.",
             "No skills loaded.",
             "Skills",
             "Capabilities",
             "Brief",
             "Back",
-            "From host bridge",
+            crate::copy::skills_source(),
             "Shipped with the ISO",
             "Saved - CALL granted tools",
             "Save starter",
@@ -1298,7 +1384,7 @@ pub fn draw_status(
     let mut y = TOP;
 
     let line = |fb: &Surface, y: i32, name: &str, state: &str, ok: bool| {
-        fb.fill_round_rect(x, y, cw, ROW_H, 10, theme::CARD_BORDER);
+        fb.draw_round_rect_outline(x, y, cw, ROW_H, 10, 1, theme::CARD_BORDER);
         fb.fill_round_rect(x + 1, y + 1, cw - 2, ROW_H - 2, 9, theme::BG);
         let d = 9;
         fb.fill_round_rect(
@@ -1388,4 +1474,90 @@ fn fmt_usize(buf: &mut [u8; 24], mut v: usize) -> usize {
         }
     }
     n
+}
+
+#[cfg(test)]
+mod status_tests {
+    use super::*;
+    use crate::mcp::{BridgeStatus, MailPeek, PortalStatus};
+
+    fn mail_online() -> MailPeek {
+        MailPeek {
+            status: BridgeStatus::Online,
+            ..MailPeek::empty(BridgeStatus::Online)
+        }
+    }
+
+    fn mail_offline() -> MailPeek {
+        MailPeek {
+            status: BridgeStatus::Offline,
+            ..MailPeek::empty(BridgeStatus::Offline)
+        }
+    }
+
+    fn portal_ready() -> PortalStatus {
+        PortalStatus {
+            reachable: true,
+            cached: true,
+            docs: 42,
+            syncing: false,
+        }
+    }
+
+    #[test]
+    fn drawing_status_screen_does_not_panic() {
+        let mut buf = vec![0u32; 1024 * 768];
+        let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), 1024, 768) };
+        for online in [true, false] {
+            let mail = if online { mail_online() } else { mail_offline() };
+            let portal = portal_ready();
+            draw_status(&fb, &mail, &portal, Caps::default_grants());
+        }
+    }
+
+    #[test]
+    fn status_rows_fit_a_768_screen() {
+        // Three rows: bridge + teddy + files.
+        let bottom_y = TOP + 3 * (ROW_H + ROW_GAP);
+        assert!(bottom_y + 40 < 768, "status rows overflow 768px screen: {bottom_y}");
+    }
+
+    #[test]
+    fn doc_count_note_only_appears_when_portal_is_cached() {
+        const W: usize = 1024;
+        const H: usize = 768;
+        let mut buf_on = vec![0u32; W * H];
+        let mut buf_off = vec![0u32; W * H];
+        let grants = Caps::default_grants();
+
+        {
+            let fb = unsafe { Surface::in_memory(buf_on.as_mut_ptr(), W, H) };
+            let mut grants_with = grants;
+            grants_with.set(Cap::PortalSync, true);
+            draw_status(&fb, &mail_online(), &portal_ready(), grants_with);
+        }
+        {
+            let fb = unsafe { Surface::in_memory(buf_off.as_mut_ptr(), W, H) };
+            draw_status(&fb, &mail_online(), &PortalStatus { reachable: true, cached: false, docs: 0, syncing: false }, grants);
+        }
+        // The frames must differ (one has the doc count note, the other doesn't).
+        assert_ne!(buf_on, buf_off, "doc count note should change the frame");
+    }
+
+    #[test]
+    fn fmt_usize_zero() {
+        let mut buf = [0u8; 24];
+        let n = fmt_usize(&mut buf, 0);
+        let s = core::str::from_utf8(&buf[..n]).unwrap();
+        assert!(s.starts_with('0'), "zero should render as '0 ...' not empty");
+    }
+
+    #[test]
+    fn fmt_usize_large() {
+        let mut buf = [0u8; 24];
+        let n = fmt_usize(&mut buf, 12_448);
+        let s = core::str::from_utf8(&buf[..n]).unwrap();
+        assert!(s.starts_with("12448"), "wrong digits: {s}");
+        assert!(s.contains("documents cached"));
+    }
 }

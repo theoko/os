@@ -10,8 +10,11 @@
 
 use crate::serial::rdtsc;
 
+#[allow(dead_code)]
 const PIT_CMD: u16 = 0x43;
+#[allow(dead_code)]
 const PIT_CH2: u16 = 0x42;
+#[allow(dead_code)]
 const SPEAKER: u16 = 0x61;
 
 /// PIT input clock.
