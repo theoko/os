@@ -20,7 +20,9 @@ ARM64_IMAGE_NAME := os-arm64
 # Extra cargo features for the kernel. Since all bridges are removed,
 # standalone mode is now the only mode.
 KERNEL_FEATURES ?= standalone
+ARM64_KERNEL_FEATURES ?= standalone
 KERNEL_FEATURE_FLAG := $(if $(KERNEL_FEATURES),--features $(KERNEL_FEATURES),)
+ARM64_KERNEL_FEATURE_FLAG := $(if $(ARM64_KERNEL_FEATURES),--features $(ARM64_KERNEL_FEATURES),)
 LIMINE_BRANCH := v9.x-binary
 
 QEMU ?= qemu-system-x86_64
@@ -69,7 +71,7 @@ kernel:
 # Apple Silicon VirtualBox virtualises ARM guests. This parallel target keeps
 # the existing x86 image intact while producing the ARM64 kernel binary.
 arm64-kernel:
-	$(WITH_RUST) $(CARGO) build -p kernel --target $(ARM64_KERNEL_TARGET) --profile $(ARM64_KERNEL_PROFILE) $(KERNEL_FEATURE_FLAG)
+	$(WITH_RUST) $(CARGO) build -p kernel --target $(ARM64_KERNEL_TARGET) --profile $(ARM64_KERNEL_PROFILE) $(ARM64_KERNEL_FEATURE_FLAG)
 
 # Bare-metal image for a machine that will never have a host on COM2: the
 # guest stops probing for a bridge and says so in its own words. The ISO name

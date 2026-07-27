@@ -15,7 +15,7 @@
 
 use crate::anim::{ease_out_cubic, lerp, lerp_color, ONE};
 use crate::fb::Surface;
-use crate::font::{BRAND_FACE, BTN_FACE, SMALL_FACE, TITLE_FACE};
+use crate::font::{BRAND_FACE, SMALL_FACE};
 use crate::ui::theme;
 
 pub const TOTAL_FRAMES: u32 = 110;
