@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Install teddyOS.
+
+       Was `Icon=drive-harddisk`, which the icon theme renders as a grey slab
+       that reads as a card reader. Semantically defensible, visually useless:
+       nothing about it says "keep this computer the way it is now", which is
+       the one thing this button does.
+
+       An arrow going down into a tray is the most universally understood
+       install glyph there is, and it survives being drawn at 48px. Green
+       because it is the only affirmative action in the dock — everything else
+       opens something, this one commits. Same tile geometry and stroke weight
+       as the rest so the row still reads as one set. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#57C878"/>
+      <stop offset="100%" stop-color="#1E8F49"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#tile)"/>
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#sheen)"/>
+
+  <g fill="none" stroke="#ffffff" stroke-width="72" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M512 250 V566"/>
+    <path d="M382 446 L512 578 L642 446"/>
+    <!-- The tray. Open at the top so the arrow reads as going INTO it. -->
+    <path d="M300 662 V722 A40 40 0 0 0 340 762 H684 A40 40 0 0 0 724 722 V662"/>
+  </g>
+</svg>

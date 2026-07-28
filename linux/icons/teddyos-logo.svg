@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <!-- The mark used where teddyOS needs a logo rather than an app icon:
+       the Calamares sidebar and its welcome page.
+
+       No tile and no gradient, unlike the dock icons. This is drawn on the
+       installer's dark sidebar and on its light welcome page, so it has to be a
+       shape rather than a coloured square — a blue rounded tile on a dark slate
+       sidebar looks like a sticker somebody left on the window.
+
+       Same magnifier as the Search icon, because that is the thing this OS is
+       for and the person installing it has been looking at that glyph in the
+       dock for the last ten minutes. -->
+  <g fill="none" stroke="#ffffff" stroke-width="34" stroke-linecap="round">
+    <circle cx="222" cy="220" r="120"/>
+    <path d="M308 306 L392 390"/>
+  </g>
+</svg>

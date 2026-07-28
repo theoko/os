@@ -1,0 +1,185 @@
+#!/usr/bin/env python3
+"""Get Started — what to do with the machine you just set up.
+
+The setup journey ends, the window closes, and you are looking at a wallpaper
+and four icons. Someone technical reads that as "ready"; someone else reads it
+as "now what?" — and the honest answer, until this existed, was that they had
+to guess. A permissions screen that carefully explains what the machine may
+touch, followed by no explanation of what it can DO, is a strange thing to
+hand a stranger.
+
+Every row here performs the thing it describes. A welcome screen that only
+tells you about features is a leaflet; one where "Search for something" opens
+search is a starting point. Nothing on it is a link to documentation, because
+documentation is where you send someone when you have run out of product.
+
+It shows what is actually true for THIS machine: the rows adapt to what was
+granted on the setup screen, so it never suggests searching the web to someone
+who left that off.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "/usr/lib/teddyos")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "teddyos-search"))
+
+import gi  # noqa: E402
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+
+import caps  # noqa: E402
+
+APP_ID = "com.teddyos.Welcome"
+SEEN = Path(
+    __import__("os").environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
+) / "teddyos" / "welcome-seen"
+
+
+def launch(argv: list[str]) -> None:
+    try:
+        Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE)
+    except GLib.Error:
+        pass
+
+
+class WelcomeWindow(Adw.ApplicationWindow):
+    def __init__(self, app: Adw.Application):
+        super().__init__(application=app, title="Get Started")
+        self.set_default_size(620, 560)
+
+        grants = caps.load()
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=20,
+                      margin_top=36, margin_bottom=28,
+                      margin_start=32, margin_end=32)
+
+        title = Gtk.Label(xalign=0.5)
+        title.set_markup("<span size='xx-large' weight='bold'>You're set up</span>")
+        box.append(title)
+
+        sub = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
+        sub.add_css_class("dim-label")
+        sub.set_text("Three things worth knowing. Click any of them to try it.")
+        box.append(sub)
+
+        group = Adw.PreferencesGroup()
+
+        # 1. The thing this OS is for.
+        group.add(self._row(
+            "Ask it something",
+            "The magnifying glass in the dock searches everything you allowed — "
+            "in one place, without opening a browser first.",
+            "system-search-symbolic",
+            lambda: launch(["teddyos-search-app"]),
+        ))
+
+        # 2. The promise the setup screen made, and where to revisit it.
+        on = [caps.text(c, "label", True) for c in caps.CAPABILITIES
+              if grants.get(c["id"])]
+        off = [caps.text(c, "label", True) for c in caps.CAPABILITIES
+               if not grants.get(c["id"])]
+        state = ("Right now it can use: " + ", ".join(on).lower() + "."
+                 if on else "Right now everything is switched off.")
+        if off:
+            state += " Not: " + ", ".join(off).lower() + "."
+        group.add(self._row(
+            "Change what it can touch",
+            state + " Nothing here is permanent — change it whenever you like.",
+            "preferences-system-symbolic",
+            lambda: launch(["teddyos-setup"]),
+        ))
+
+        # 3. The ordinary thing people came to a computer to do.
+        group.add(self._row(
+            "Browse the web",
+            "The globe opens the internet. Its address bar searches "
+            "teddysearch rather than a company that follows you around.",
+            "web-browser-symbolic",
+            lambda: launch(["chromium"]),
+        ))
+        box.append(group)
+
+        note = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
+        note.add_css_class("dim-label")
+        note.add_css_class("caption")
+        note.set_text(
+            "You can open this again any time — it's called Get Started."
+        )
+        box.append(note)
+
+        close = Gtk.Button(label="Start using teddyOS", halign=Gtk.Align.CENTER)
+        close.add_css_class("suggested-action")
+        close.add_css_class("pill")
+        close.connect("clicked", lambda *_: self.close())
+        box.append(close)
+
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        scroller.set_child(Adw.Clamp(maximum_size=560, child=box))
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(Adw.HeaderBar(show_title=False))
+        toolbar.set_content(scroller)
+        self.set_content(toolbar)
+
+        self._mark_seen()
+
+    def _row(self, title: str, subtitle: str, icon: str, action) -> Adw.ActionRow:
+        row = Adw.ActionRow(title=title, subtitle=subtitle)
+        row.set_subtitle_lines(4)
+        row.add_prefix(Gtk.Image.new_from_icon_name(icon))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect("activated", lambda *_a: action())
+        return row
+
+    def _mark_seen(self) -> None:
+        # Written when the window OPENS, not when it closes. If it is only
+        # marked on a clean exit then a crash, a logout, or someone closing it
+        # from the dock brings it back on the next login — and a welcome screen
+        # that keeps reappearing stops reading as helpful very quickly.
+        try:
+            SEEN.parent.mkdir(parents=True, exist_ok=True)
+            SEEN.touch()
+        except OSError:
+            pass
+
+
+class WelcomeApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID,
+                         flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
+
+    def do_command_line(self, command_line):
+        args = command_line.get_arguments()
+        # --if-needed is what the autostart passes: show once, after setup has
+        # been answered. Before that the setup journey owns the screen and two
+        # windows competing for a first impression is worse than either alone.
+        if "--if-needed" in args:
+            if SEEN.exists() or not caps.is_configured():
+                return 0
+        self.activate()
+        return 0
+
+    def do_activate(self):
+        (self.props.active_window or WelcomeWindow(self)).present()
+
+
+if __name__ == "__main__":
+    # X11 needs this, and X11 is exactly where this image ends up.
+    #
+    # GNOME binds a window to its launcher by WM_CLASS. Under Wayland that is the
+    # GApplication id, which is what StartupWMClass in the .desktop already says.
+    # Under X11 it comes from the program name instead — "teddyos-search-app" — so
+    # the match fails, the running window does not light up its pinned dock tile,
+    # and it appears a second time as a stray entry with a fallback icon.
+    #
+    # That was visible the moment the desktop came up on a machine with no GPU,
+    # because a machine with no GPU is one running the X11 session. Setting prgname
+    # to the application id makes both worlds agree.
+    GLib.set_prgname(APP_ID)
+    sys.exit(WelcomeApp().run(sys.argv))

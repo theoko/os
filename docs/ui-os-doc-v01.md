@@ -20,7 +20,7 @@ one supporting line, one CTA. First viewport is a composition, not a dashboard.
 | INK | `#0E1621` | Primary type / wordmark |
 | INK_MUTED | `#5A6674` | Supporting line |
 | SIGNAL | `#006ACC` | CTA + accent rule |
-| ONLINE / OFFLINE | green / red | Tiny bridge dot only |
+| ONLINE / OFFLINE | green / red | Tiny bridge dot only (standalone builds: always OFFLINE) |
 
 ## Composition (first viewport)
 
@@ -51,30 +51,56 @@ Code: [`kernel/src/level.rs`](../kernel/src/level.rs), setup Experience step.
 
 ## Home agent (v0.9.26 / v0.9.27)
 
-Typing a natural ask on Home and pressing Enter runs the guest plan/act loop
-(`agent::run_goal`). The host `intent.resolve` tool supplies the smart plan
-(act + expanded query + ranked `file://` hits when Your files is on). The
-guest arms **Doc** rows and may still CALL `search.query`. Example:
-`i wanna work on my paper` → open act → paper/thesis/draft query → workspace
-rank → Reader. No model in the kernel — missing caps stay Need.
+**Standalone note (since the 2026-07-27 bridge removal):** the smart half of
+this feature is gone, not the feature. `agent::run_goal` still runs on every
+build. What changed is where the plan comes from: `intent.resolve` was a host
+bridge tool, and `kernel/src/mcp.rs` now returns `BridgeStatus::Offline`
+unconditionally in a standalone build (`fetch_intent_plan`), so the guest
+never gets host-side synonym expansion, act classification, or ranked
+`file://` hits. `run_goal_with_plan` (`kernel/src/agent.rs`) falls back to a
+local path that was always there for the "bridge not started yet" case and is
+now the only path: keywords pulled straight from the goal text
+(`keywords_from_goal`), a fixed 4-line generic plan (restate → pick tools from
+grants → search under those grants → report openable hits), and an inline
+"local search only" notice. It still CALLs `search.query` under the
+`SearchQuery` grant, which still answers — see Recent files/search below.
+Example: `i wanna work on my paper` → generic plan → keyword query `paper` →
+local corpus hits → Reader. No model in the kernel — missing caps stay Need,
+same as before.
 
-## Recent mail (v0.9.22)
+## Recent mail, recent files, calendar events — removed (standalone)
 
-Home lists recent inbox rows when Email is granted. Each row is clickable and
-opens `email://{id}` in the Reader — same `doc.read` path as Search. The id
-comes from the bridge `email.search` ROW (graph-stable hash of from+subject).
+All three of these (v0.9.22, v0.9.25, v0.9.24) were host-bridge features with
+no standalone equivalent, and are gone in a standalone build:
 
-## Recent files (v0.9.25)
+- **Recent mail** listed inbox rows from bridge `email.search`, opened via
+  `email://{id}` in the Reader.
+- **Recent files** listed top-ranked workspace files from bridge
+  `workspace.recent` (after `workspace.index`), opened via `file://…`.
+- **Calendar events** listed upcoming events from bridge `calendar.list`,
+  opened via `cal://{id}`.
 
-Home lists top-ranked workspace files when Your files is granted. Each row is
-clickable and opens `file://…` in the Reader (`doc.read` + `files=1`). Rows
-come from bridge `workspace.recent` after `workspace.index`.
+All three needed a live host process reading the user's real mailbox,
+filesystem, or calendar and handing rows back over COM2. `host/bridge/` was
+deleted by the standalone refactor, and the guest query paths for all three
+now return `BridgeStatus::Offline` unconditionally
+(`kernel/src/mcp.rs`: `fetch_mail_peek`, `fetch_files_peek`,
+`fetch_calendar_peek`) — Home and Briefs simply render nothing for these
+rows rather than erroring. There is no local-only version of "read my actual
+inbox/files/calendar" the way there is for search: those three depend on
+host state a standalone kernel has no way to reach, not on data that could be
+baked in at compile time. If bridge-mode features come back, restore
+`host/bridge/src/{workspace,tsearch}.rs` (recovered at
+`git show f2ccb72~1:host/bridge/src/workspace.rs`, etc.) alongside the calls
+into these three functions.
 
-## Calendar events (v0.9.24)
+## Search (works standalone)
 
-Morning / inbox Briefs list upcoming events when Email is on. An Event row is
-clickable and opens `cal://{id}` in the Reader (`doc.read` + `email=1`). Ids
-come from `calendar.list` ROWs (hash of title+when).
+`search.query` is the one connector that never needed the bridge to begin
+with (`kernel/src/search.rs`): when the bridge isn't there, the guest answers
+from a static index built from `search/corpus.json` at compile time. This is
+what still backs the Home agent's Doc rows above — it needs no network, no
+credentials, no host state, so it is unaffected by the standalone refactor.
 
 ## Chill 60 Hz loop (v0.9.19)
 

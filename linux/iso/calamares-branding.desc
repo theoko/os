@@ -1,0 +1,59 @@
+---
+# Calamares branding for teddyOS.
+#
+# Without this the installer is calamares-settings-debian's, and it says so:
+# window titled "Debian GNU/Linux Installer", a Debian swirl down the sidebar,
+# "Welcome to the Calamares installer for Debian 13", and footer links to
+# Debian Support and the Debian release notes.
+#
+# That is the worst possible moment for the branding to slip. Every other leak
+# — the Safari compass on Chromium, Debian.org in the bookmark bar, "Live
+# system (amd64)" in the boot menu — costs a moment of confusion. This one
+# arrives when someone has decided they like teddyOS and is about to give it
+# their disk, and it tells them they are installing an operating system they
+# have never heard of. People stop at that screen.
+#
+# Debian is still underneath and the About page still says so, which is both
+# honest and required. What changes is that the product asking for the disk is
+# the product they have been using.
+componentName:   teddyos
+welcomeStyleCalamares: true
+welcomeExpandingLogo: true
+windowExpanding: normal
+windowSize: 800px,580px
+windowPlacement: center
+
+strings:
+    productName:         teddyOS
+    shortProductName:    teddyOS
+    version:             0.13
+    shortVersion:        0.13
+    versionedName:       teddyOS
+    shortVersionedName:  teddyOS
+    bootloaderEntryName: teddyOS
+    productUrl:          https://teddysearch.com/tsearch/os.html
+    supportUrl:          https://teddysearch.com/tsearch/os.html
+    knownIssuesUrl:      https://teddysearch.com/tsearch/os.html
+    releaseNotesUrl:     https://teddysearch.com/tsearch/os.html
+    donateUrl:           https://teddysearch.com/tsearch/
+
+sidebar: widget
+navigation: widget
+
+images:
+    productLogo:         "teddyos-logo.png"
+    productIcon:         "teddyos-logo.png"
+    productWelcome:      "teddyos-logo.png"
+
+# No slideshow. Debian's branding ships show.qml, a carousel of slides about
+# Debian; replacing it with a carousel about teddyOS would mean writing
+# marketing to read while a disk is being partitioned. An installer that just
+# gets on with it is better than one that talks.
+
+style:
+   SidebarBackground:    "#1f2430"
+   SidebarText:          "#c8ccd6"
+   SidebarTextCurrent:   "#ffffff"
+   SidebarBackgroundCurrent: "#0a6fe0"
+
+slideshowAPI: 2

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- teddyOS Web.
+
+       This one is a correctness fix as much as a design one. The launcher said
+       `Icon=web-browser`, and the icon theme resolves that to a Safari compass
+       — so the dock has been showing Apple's browser mark on top of Chromium.
+       It misleads the person clicking it, and it is someone else's trademark on
+       an application that is not theirs.
+
+       A globe instead: it says "the internet" without claiming to be anybody's
+       product. Teal rather than blue so it is distinguishable from Search at a
+       glance in a four-icon dock, and away from WhatsApp's green. Same tile
+       geometry and stroke weight as Search, because a row of icons only reads
+       as a set if the optical weight matches. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#3FC7B4"/>
+      <stop offset="100%" stop-color="#0C8C7E"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#tile)"/>
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#sheen)"/>
+
+  <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-width="66">
+    <circle cx="512" cy="512" r="252"/>
+    <!-- Equator and one meridian. Two lines read as a globe at 48px; three
+         turn into a grey smudge. -->
+    <path d="M 260 512 H 764"/>
+    <ellipse cx="512" cy="512" rx="126" ry="252"/>
+  </g>
+</svg>

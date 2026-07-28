@@ -1,0 +1,509 @@
+#!/usr/bin/env python3
+"""Search — the window teddyOS was missing.
+
+The engine has been reachable only as `teddyos-search` on a command line. On a
+machine whose entire premise is "ask it things", that means the premise is
+invisible: someone finishes the setup journey, grants what they are willing to
+grant, lands on a desktop, and has no way to use the thing they just decided
+about. A terminal is not an answer for most people, and "the feature exists,
+you just have to type" is the same defect as a permission screen that is
+technically accurate and unreadable.
+
+Three things this does that the CLI cannot:
+
+  It runs the search off the main thread. The portal corpus is 67 MB; parsing
+  it blocks for seconds, and a frozen window reads as a crash.
+
+  It shows denials as an offer rather than an error. "Search the web is off"
+  with a button that opens the setup screen is useful; a silent absence of
+  results is not, and is indistinguishable from finding nothing.
+
+  It opens things. A result you cannot click is a lookup, not a search.
+"""
+
+from __future__ import annotations
+
+import json
+import shutil
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+sys.path.insert(0, "/usr/lib/teddyos")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import gi  # noqa: E402
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+import caps  # noqa: E402
+import search as engine  # noqa: E402
+
+APP_ID = "com.teddyos.Search"
+
+# Queries run in `teddyos-search`, not in this process.
+#
+# This window is the only search anyone actually uses — it is the first icon in
+# the dock — and the setup screen tells the user, in as many words, that a
+# capability left off means "the computer stopping it, not teddyOS promising to
+# behave". That sentence was false here. The CLI calls sandbox.reexec() before
+# it touches a single source, so denied capabilities are absent from the
+# process; this window called search.search() in-process, where a grant is only
+# an `if` statement. One missed branch and a capability the user switched off is
+# quietly on, which is precisely the failure the copy promises cannot happen.
+#
+# The window cannot simply sandbox itself: the namespace masks /home and cuts
+# the network, and a GTK application that loses its home directory mid-flight
+# loses its settings, its theme and its dconf. So the split is by job — the UI
+# stays out here where it can draw, and everything that reads a file or opens a
+# socket happens over there, inside the namespace.
+SEARCH_CLI = "teddyos-search"
+# Exit codes that mean "the sandbox itself did not come up". They must surface
+# as an error, never as a reason to retry the search unconfined: a fallback that
+# quietly runs without the namespace is worse than no search at all, because it
+# would break the promise at exactly the moment the machinery for keeping it is
+# known to be broken.
+_SANDBOX_FAILED = {5} | set(range(200, 243))
+_QUERY_TIMEOUT_S = 120
+
+# Where a query goes when this machine cannot answer it.
+#
+# The corpus is a general crawl, so anything institution-specific — a college's
+# Canvas, a company intranet, a bank — is not in it and never will be. A
+# student typing "canvas" gets needlepoint, and that is not a ranking bug to
+# fix; it is the corpus not containing their school. Better ranking would only
+# return better needlepoint.
+#
+# So every search ends with a way out. It is always present, never a fallback
+# that appears only on failure: "no results" is not the only case where what
+# you wanted was on the open web, and a row that appears sometimes is a row
+# nobody learns to look for.
+WEB_SEARCH = "https://teddysearch.com/tsearch/?q="
+
+SOURCE_LABEL = {
+    "teddysearch": "teddysearch",
+    "portal": "the web",
+    "your files": "your files",
+    "built-in": "built-in help",
+}
+
+
+_worker: subprocess.Popen | None = None
+_worker_lock = threading.Lock()
+
+
+def _start_worker() -> subprocess.Popen | None:
+    """Spawn the sandboxed worker and wait for it to say it is ready."""
+    exe = shutil.which(SEARCH_CLI)
+    if not exe:
+        return None
+    proc = subprocess.Popen(
+        [exe, "--serve"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, bufsize=1)
+    # It prints {"ready":true} after entering the sandbox and warming the
+    # corpus. Waiting for that here means the readiness cost is paid once, at
+    # startup, instead of landing on whoever types first.
+    line = proc.stdout.readline()
+    if not line:
+        proc.kill()
+        return None
+    return proc
+
+
+def _decode(data: dict) -> engine.Outcome:
+    # Tolerate a payload from a newer or older teddyos-search than this window:
+    # take the fields Result declares and ignore the rest, rather than throwing
+    # a TypeError into the worker thread and showing the user a traceback.
+    fields = set(engine.Result.__dataclass_fields__)
+    results = [
+        engine.Result(**{k: v for k, v in row.items() if k in fields})
+        for row in data.get("results", []) if isinstance(row, dict)
+    ]
+    return engine.Outcome(
+        results=results,
+        denied=data.get("denied", []),
+        errors=data.get("errors", []),
+        notes=data.get("notes", []),
+        portal_age=data.get("portal_age_seconds"),
+    )
+
+
+def _confined_search(query: str) -> engine.Outcome:
+    """Ask the sandboxed worker, starting or restarting it if needed.
+
+    Everything that could read a file or open a socket happens over there, so a
+    bug on this side cannot widen what the search was allowed to reach.
+
+    One worker, not one per query. Spawning a process per keystroke meant the
+    67 MB portal corpus was parsed and tokenised every single time — its cache
+    is a module global and cannot outlive the process — which is what began
+    OOM-killing the desktop on a live system.
+    """
+    global _worker
+    with _worker_lock:
+        for attempt in (1, 2):
+            if _worker is None or _worker.poll() is not None:
+                _worker = _start_worker()
+            if _worker is None:
+                # Refuse rather than degrade. Falling back to an in-process
+                # search would work, look identical, and silently drop the
+                # enforcement the setup screen promised — the one failure mode
+                # worth being loud about.
+                return engine.Outcome(errors=[
+                    "Search could not be confined to what you allowed, so "
+                    "nothing was searched."])
+            try:
+                _worker.stdin.write(query + "\n")
+                _worker.stdin.flush()
+                line = _worker.stdout.readline()
+            except (BrokenPipeError, OSError):
+                line = ""
+            if line:
+                try:
+                    return _decode(json.loads(line))
+                except json.JSONDecodeError:
+                    return engine.Outcome(
+                        errors=["The search returned nothing readable."])
+            # Worker died mid-query. Reap it and try once more; a crash on one
+            # query should not take search out for the rest of the session.
+            if _worker is not None:
+                _worker.kill()
+                _worker = None
+            if attempt == 2:
+                return engine.Outcome(errors=[
+                    "Search stopped unexpectedly and could not be restarted."])
+    return engine.Outcome(errors=["Search did not answer."])
+
+
+class SearchWindow(Adw.ApplicationWindow):
+    def __init__(self, app: Adw.Application):
+        super().__init__(application=app, title="Search")
+        self.set_default_size(720, 480)
+        # No title bar. There is exactly one control in this window and it is
+        # the search field; a chrome bar above it holding three buttons and a
+        # word is furniture around a thing that needs none. Escape closes,
+        # because an undecorated window with no way out is a trap.
+        self.set_decorated(False)
+        esc = Gtk.EventControllerKey()
+        esc.connect("key-pressed", self._on_key)
+        self.add_controller(esc)
+
+        # Bumped on every keystroke. A slow search that finishes after a newer
+        # one must not overwrite it — without this, typing "nolan" can end up
+        # showing results for "nol" because the bigger corpus answered later.
+        self._generation = 0
+        self._pending: str | None = None
+        self._busy_timer: int | None = None
+
+        self.entry = Gtk.SearchEntry(
+            placeholder_text="Ask anything",
+            hexpand=True,
+        )
+        self.entry.add_css_class("teddyos-ask")
+        self.entry.connect("search-changed", self._on_typed)
+        self.entry.connect("activate", lambda *_: self._run(self.entry.get_text()))
+
+        # The field IS the window's top edge. Not inside a header bar — that
+        # was a title widget in a bar whose only other job was drawing buttons
+        # we no longer have.
+        # A spinner beside the field, not replacing the results. Searching the
+        # 67 MB corpus takes a second or two, and with no feedback the window
+        # looks frozen — the same keystroke either did nothing or is still
+        # working, and you cannot tell which. Beside the field rather than in
+        # place of the list so that refining a query does not blank out the
+        # results you are reading.
+        self.spinner = Gtk.Spinner()
+        self.spinner.set_valign(Gtk.Align.CENTER)
+        self.spinner.set_margin_start(10)
+        self.spinner.set_visible(False)
+
+        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        top.append(self.entry)
+        top.append(self.spinner)
+        top.set_margin_top(14)
+        top.set_margin_bottom(14)
+        top.set_margin_start(16)
+        top.set_margin_end(16)
+
+        self.banner = Adw.Banner(button_label="Open settings")
+        self.banner.connect("button-clicked", self._open_setup)
+
+        self.results = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.results.add_css_class("boxed-list")
+        self.results.set_margin_top(12)
+        self.results.set_margin_bottom(24)
+        self.results.set_margin_start(18)
+        self.results.set_margin_end(18)
+
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        scroller.set_child(Adw.Clamp(maximum_size=760, child=self.results))
+
+        # Empty state: one quiet line, no illustration. A 180px magnifier above
+        # the words "Ask anything" next to a field that already says "Ask
+        # anything" is the same instruction three times, and it fills the window
+        # with something to look at instead of leaving it calm.
+        self.status = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
+        self.status.add_css_class("dim-label")
+        self.status.set_vexpand(True)
+        self.status.set_valign(Gtk.Align.CENTER)
+        self.status.set_text(self._idle_description())
+
+        self.stack = Gtk.Stack()
+        self.stack.add_named(self.status, "idle")
+        self.stack.add_named(scroller, "results")
+        self.stack.set_visible_child_name("idle")
+
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        body.append(self.banner)
+        body.append(self.stack)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        outer.append(top)
+        outer.append(body)
+        self.set_content(outer)
+
+        css = Gtk.CssProvider()
+        css.load_from_data(b"""
+            .teddyos-ask { font-size: 20px; padding: 10px 8px; }
+            window { border-radius: 14px; }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        self._refresh_banner()
+        self.entry.grab_focus()
+
+    def _on_key(self, _c, keyval, _code, _state) -> bool:
+        if keyval == Gdk.KEY_Escape:
+            self.close()
+            return True
+        return False
+
+    # --- what the machine is currently allowed to do ------------------------
+
+    def _idle_description(self) -> str:
+        grants = caps.load()
+        on = [caps.text(c, "label", True) for c in caps.CAPABILITIES
+              if grants.get(c["id"])]
+        if not on:
+            return "Nothing is switched on yet, so there is nowhere to look."
+        return "Searching " + ", ".join(on).lower() + "."
+
+    def _refresh_banner(self) -> None:
+        grants = caps.load()
+        off = [caps.text(c, "label", True) for c in caps.CAPABILITIES
+               if not grants.get(c["id"])]
+        if off:
+            # An offer, not a warning. These are choices the user made, and the
+            # only reason to mention them is that "no results" and "no results
+            # because I was not allowed to look" are indistinguishable.
+            self.banner.set_title(f"Not searching: {', '.join(off).lower()}")
+            self.banner.set_revealed(True)
+        else:
+            self.banner.set_revealed(False)
+
+    def _open_setup(self, *_a) -> None:
+        try:
+            Gio.Subprocess.new(["teddyos-setup"], Gio.SubprocessFlags.NONE)
+        except GLib.Error:
+            pass
+
+    # --- searching ----------------------------------------------------------
+
+    def _on_typed(self, entry: Gtk.SearchEntry) -> None:
+        text = entry.get_text().strip()
+        if not text:
+            self._generation += 1          # cancel anything in flight
+            self._cancel_busy()
+            self.status.set_text(self._idle_description())
+            self.stack.set_visible_child_name("idle")
+            return
+        self._run(text)
+
+    def _run(self, query: str) -> None:
+        query = query.strip()
+        if not query:
+            return
+        self._generation += 1
+        generation = self._generation
+        self._begin_busy(generation)
+
+        def work() -> None:
+            try:
+                outcome = _confined_search(query)
+            except Exception as exc:  # noqa: BLE001 - never kill the UI thread
+                outcome = engine.Outcome(errors=[str(exc)])
+            GLib.idle_add(self._show, generation, query, outcome)
+
+        # Daemon: a 67 MB parse in flight must not keep the app alive after the
+        # window is closed.
+        threading.Thread(target=work, daemon=True).start()
+
+    def _begin_busy(self, generation: int) -> None:
+        """Show the spinner, but only if the search is slow enough to notice.
+
+        A spinner that appears and vanishes inside 100ms is a flicker, not
+        feedback — and searches that hit only the small index do finish that
+        fast. The delay means the indicator appears exactly when there is
+        something to wait for.
+        """
+        self._cancel_busy()
+        self._busy_timer = GLib.timeout_add(120, self._enter_busy, generation)
+
+    def _enter_busy(self, generation: int) -> bool:
+        self._busy_timer = None
+        if generation == self._generation:
+            self.spinner.set_visible(True)
+            self.spinner.start()
+            if self.stack.get_visible_child_name() == "idle":
+                self.status.set_text("Searching…")
+        return False  # one-shot
+
+    def _cancel_busy(self) -> None:
+        if self._busy_timer is not None:
+            GLib.source_remove(self._busy_timer)
+            self._busy_timer = None
+        self.spinner.stop()
+        self.spinner.set_visible(False)
+
+    def _show(self, generation: int, query: str, outcome) -> bool:
+        if generation != self._generation:
+            return False  # a newer query already answered
+        self._cancel_busy()
+
+        child = self.results.get_first_child()
+        while child:
+            self.results.remove(child)
+            child = self.results.get_first_child()
+
+        if not outcome.results:
+            # Not an empty screen. "Nothing found" with no next step is where
+            # someone gives up; the same screen with one obvious action is not.
+            #
+            # And the reason comes FIRST when there is nothing else. An empty
+            # list reads as "this is broken"; an empty list under a sentence
+            # saying the index is still downloading reads as "wait a minute".
+            self._append_notices(outcome)
+            self.results.append(self._web_row(query))
+            self.stack.set_visible_child_name("results")
+            self._refresh_banner()
+            return False
+
+        for res in outcome.results:
+            self.results.append(self._row(res))
+        self._append_notices(outcome)
+        self.results.append(self._web_row(query))
+        self.stack.set_visible_child_name("results")
+        self._refresh_banner()
+        return False
+
+    def _append_notices(self, outcome) -> None:
+        """Show what the search knows about its own limits.
+
+        The engine already works out why a search came back thin — the index is
+        still downloading, a source errored, a capability is off — and returns
+        it in Outcome.notes/errors. This window used to drop all of it on the
+        floor, so someone who searched and got nothing was shown an empty list
+        and no reason, while the CLI printed the explanation to a terminal
+        nobody was looking at.
+
+        That is the difference between "this is broken" and "this is not ready
+        yet", and the machine already knew which.
+        """
+        for text in getattr(outcome, "errors", []) or []:
+            self.results.append(self._notice_row(text, "dialog-warning-symbolic"))
+        for text in getattr(outcome, "notes", []) or []:
+            self.results.append(self._notice_row(text, "dialog-information-symbolic"))
+
+    def _notice_row(self, text: str, icon: str) -> Gtk.Widget:
+        row = Adw.ActionRow(title=GLib.markup_escape_text(text))
+        row.set_title_lines(3)
+        row.add_prefix(Gtk.Image.new_from_icon_name(icon))
+        row.add_css_class("dim-label")
+        # Not activatable: it is an explanation, and a row that looks clickable
+        # and does nothing is worse than one that plainly does not.
+        row.set_activatable(False)
+        return row
+
+    def _row(self, res) -> Gtk.Widget:
+        row = Adw.ActionRow(title=GLib.markup_escape_text(res.title))
+        snippet = " ".join((res.snippet or "").split())[:160]
+        row.set_subtitle(GLib.markup_escape_text(snippet))
+        row.set_subtitle_lines(2)
+
+        badge = Gtk.Label(label=SOURCE_LABEL.get(res.source, res.source))
+        badge.add_css_class("caption")
+        badge.add_css_class("dim-label")
+        badge.set_valign(Gtk.Align.CENTER)
+        row.add_suffix(badge)
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+
+        row.set_activatable(True)
+        row.connect("activated", lambda *_a, r=res: self._open(r))
+        return row
+
+    def _web_row(self, query: str) -> Gtk.Widget:
+        # Truncate. The title interpolates the query, and a stuck key or a
+        # pasted paragraph turns one row into a wall of text taller than the
+        # window — found exactly that way. The full query still goes to the
+        # web search; only the label is shortened.
+        shown = query if len(query) <= 48 else query[:48].rstrip() + "…"
+        row = Adw.ActionRow(
+            title=f"Search the web for “{GLib.markup_escape_text(shown)}”")
+        row.set_title_lines(1)
+        row.set_subtitle("Opens teddysearch — for anything not on this "
+                         "computer, like your school or work sites")
+        row.set_subtitle_lines(2)
+        row.add_prefix(Gtk.Image.new_from_icon_name("web-browser-symbolic"))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect("activated", lambda *_a: self._open_web(query))
+        return row
+
+    def _open_web(self, query: str) -> None:
+        try:
+            Gtk.UriLauncher.new(WEB_SEARCH + GLib.uri_escape_string(query, None, True)) \
+                .launch(self, None, None, None)
+        except GLib.Error:
+            pass
+
+    def _open(self, res) -> None:
+        target = res.url
+        if not target:
+            return
+        # A local file has no scheme; handing a bare path to the URI opener
+        # silently does nothing, which looks exactly like a dead row.
+        if not target.startswith(("http://", "https://", "file://")):
+            target = Gio.File.new_for_path(target).get_uri()
+        try:
+            Gtk.UriLauncher.new(target).launch(self, None, None, None)
+        except GLib.Error:
+            pass
+
+
+class SearchApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID)
+
+    def do_activate(self):
+        (self.props.active_window or SearchWindow(self)).present()
+
+
+if __name__ == "__main__":
+    # X11 needs this, and X11 is exactly where this image ends up.
+    #
+    # GNOME binds a window to its launcher by WM_CLASS. Under Wayland that is the
+    # GApplication id, which is what StartupWMClass in the .desktop already says.
+    # Under X11 it comes from the program name instead — "teddyos-search-app" — so
+    # the match fails, the running window does not light up its pinned dock tile,
+    # and it appears a second time as a stray entry with a fallback icon.
+    #
+    # That was visible the moment the desktop came up on a machine with no GPU,
+    # because a machine with no GPU is one running the X11 session. Setting prgname
+    # to the application id makes both worlds agree.
+    GLib.set_prgname(APP_ID)
+    sys.exit(SearchApp().run(sys.argv))

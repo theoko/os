@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Claude launcher icon.
+
+       Same tile geometry and stroke weight as Search and Web, so the dock still
+       reads as one set. Clay rather than blue or teal because that is Claude's
+       colour and this launcher is Claude — using it here is describing the
+       thing, not borrowing someone's mark.
+
+       What it deliberately is NOT is a redrawn copy of Anthropic's logo. That
+       is the mistake the browser icon made in the other direction: shipping
+       Safari's compass on Chromium put a company's trademark on software that
+       was not theirs. A spark reads as "the assistant" without either forging a
+       logo or pretending to be a different product. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#E0855F"/>
+      <stop offset="100%" stop-color="#C05A32"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#tile)"/>
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#sheen)"/>
+
+  <!-- Eight rays. Fewer reads as a plus sign; more turns to mush at 48px. -->
+  <g stroke="#ffffff" stroke-width="74" stroke-linecap="round">
+    <path d="M512 268 V756"/>
+    <path d="M268 512 H756"/>
+    <path d="M339 339 L685 685"/>
+    <path d="M685 339 L339 685"/>
+  </g>
+</svg>

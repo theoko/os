@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- teddyOS Search.
+
+       Drawn rather than borrowed. `Icon=system-search` resolved to the icon
+       theme's thin symbolic magnifier on a flat tile: correct, generic, and the
+       weakest thing in a dock whose first slot belongs to the one app this OS
+       exists for.
+
+       Proportions follow the macOS icons it sits beside — a 1024 canvas with a
+       ~120 corner radius at 88% bleed, a glyph occupying a little over half the
+       tile, and a stroke heavy enough to survive being drawn at 48px. The stock
+       glyph was thin and small, which is why it read as a placeholder. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5AB0FF"/>
+      <stop offset="100%" stop-color="#0A6FE0"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#tile)"/>
+  <!-- Top sheen only, no drop shadow: the dock already casts one, and a second
+       baked into the art makes the icon look detached from the row. -->
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#sheen)"/>
+
+  <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-width="74">
+    <circle cx="455" cy="452" r="186"/>
+    <path d="M 590 588 L 716 714"/>
+  </g>
+</svg>

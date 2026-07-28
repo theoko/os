@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>teddy OS — download</title>
+<meta name="description" content="A desktop operating system you can try from a USB stick without installing it. It asks before it touches your files or the network, and everything is off until you turn it on.">
+<meta property="og:title" content="teddy OS — download">
+<meta property="og:description" content="A desktop you can try without installing. It asks before it touches anything.">
+<meta property="og:image" content="https://teddysearch.com/tsearch/og-card.png">
+<meta property="og:url" content="https://teddysearch.com/tsearch/os.html">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="tSearch">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<meta name="theme-color" content="#fafafa">
+<style>
+  body { background:#fafafa; color:#37474f; font-family:Helvetica,Arial,sans-serif; margin:0; }
+  #wrap { max-width:720px; margin:0 auto; padding:0 16px 80px; }
+  #topbar { display:flex; align-items:center; gap:18px; padding:16px 0; border-bottom:1px solid #eceff1; }
+  .mini-logo { font-weight:300; font-size:1.9rem; letter-spacing:-1px; cursor:pointer; text-decoration:none; color:#455a64; }
+  .mini-logo .t { color:#039be5; }
+  h1.title { font-weight:300; font-size:1.9rem; margin:26px 0 4px; }
+  .sub { color:#90a4ae; font-size:.9rem; margin:0 0 26px; line-height:1.6; }
+  .card { border:1px solid #eceff1; border-radius:10px; background:#fff; padding:20px; margin-bottom:14px; }
+  .card.primary { border-color:#b3e5fc; }
+  .card h2 { font-size:1rem; font-weight:600; margin:0 0 4px; color:#37474f; }
+  .card .why { color:#90a4ae; font-size:.82rem; margin:0 0 14px; }
+  a.dl { display:inline-block; background:#039be5; color:#fff; text-decoration:none;
+         border-radius:22px; padding:10px 22px; font-size:.9rem; }
+  a.dl:hover { background:#0288d1; }
+  a.dl.secondary { background:#fff; color:#039be5; border:1px solid #b3e5fc; }
+  a.dl.secondary:hover { background:#f3fafe; }
+  .meta { color:#b0bec5; font-size:.76rem; margin-top:10px; }
+  .detected { color:#546e7a; font-size:.82rem; margin:0 0 18px; }
+  .detected b { color:#039be5; }
+  h3 { font-size:.86rem; text-transform:uppercase; letter-spacing:.5px; color:#90a4ae;
+       font-weight:600; margin:34px 0 10px; }
+  ol, ul { color:#546e7a; font-size:.9rem; line-height:1.9; padding-left:20px; margin:0; }
+  code { background:#eceff1; border-radius:4px; padding:1px 6px; font-size:.85em; }
+  footer { color:#b0bec5; font-size:.78rem; margin-top:44px; line-height:1.7;
+           border-top:1px solid #eceff1; padding-top:18px; }
+  footer a { color:#039be5; }
+  .note { color:#90a4ae; font-size:.82rem; line-height:1.7; margin:0 0 18px; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <div id="topbar">
+    <a class="mini-logo" href="index.html"><span class="t">t</span><span class="rest">eddy</span></a>
+  </div>
+
+  <h1 class="title">teddy OS</h1>
+  <!-- What this paragraph must not do is describe the research kernel. The old
+       copy said it "boots in a couple of seconds straight to a search field — no
+       desktop, no login", which is true of the no_std kernel and false of the
+       thing being downloaded here: a full desktop with a dock and a setup
+       journey. Someone who reads the old sentence and then watches a Debian
+       desktop appear has been told the wrong thing before they even start. -->
+  <p class="sub">
+    A desktop operating system built around one idea: the machine should do what
+    you ask, and nothing you did not grant. It runs from a USB stick or a virtual
+    machine without touching what is already on your computer. The first thing it
+    does is ask what it is allowed to use — your files, the network — and every
+    answer is off until you turn it on, and changeable afterwards.
+  </p>
+
+  <p class="detected" id="detected">Pick the image that matches your machine.</p>
+
+  <div id="picks"></div>
+
+  <h3>What you get</h3>
+  <ul>
+    <li>A desktop that starts without an account, a password, or a login screen.</li>
+    <li>A setup journey on first boot, in plain language, where you choose what it may touch.</li>
+    <li>Search in the dock. Its built-in answers work with no network; searching the
+        web is a separate switch you turn on yourself.</li>
+    <li>An <b>Install</b> option if you decide to keep it — until you pick that, nothing
+        is written to your disk.</li>
+  </ul>
+
+  <h3>Trying it safely</h3>
+  <ul>
+    <li>Easiest: run the image in a virtual machine — nothing on your computer is touched.</li>
+    <li><b>Apple Silicon Mac</b>: use <a href="https://mac.getutm.app/">UTM</a> with the
+        ARM64 image. VirtualBox's Apple Silicon build is a developer preview and will
+        boot this image to a blank screen — that is a limitation of VirtualBox, not of
+        the image, and there is nothing you can set to work around it.</li>
+    <li><b>Intel Mac, PC or Linux</b>: any virtual machine, or write the x86-64 image to
+        a USB stick and boot real hardware.</li>
+    <li>Give the machine <b>4 GB of memory</b> or more. It is a full desktop.</li>
+  </ul>
+
+  <h3>Writing it to a USB stick</h3>
+  <ol>
+    <li>Find the disk: <code>diskutil list</code> (macOS) or <code>lsblk</code> (Linux).</li>
+    <li>Write it, replacing <code>diskN</code> with your stick — this erases that disk:
+      <br><code>sudo dd if=teddyos-amd64.iso of=/dev/rdiskN bs=4m</code></li>
+    <li>Boot from it. On a Mac, hold Option at the chime; on a PC, the one-time boot menu key.</li>
+  </ol>
+
+  <h3>The research kernel</h3>
+  <p class="note">
+    There is a second, much smaller thing with the same name: a Rust kernel that
+    boots in a couple of seconds straight to a search field, with no desktop and no
+    login. It is a research build rather than something to use day to day, and it is
+    where the ideas here get tried first.
+    <br><a href="os/os.iso">x86-64 kernel image</a> ·
+    <a href="os/os-arm64.iso">ARM64 kernel image</a>
+  </p>
+
+  <footer>
+    Free and unfinished — it is a personal project, not a product, and it will have
+    rough edges. It never phones home: there is no telemetry, and the only network
+    access is a connector you switch on.
+    <br><a href="index.html">← back to search</a>
+  </footer>
+</div>
+
+<script>
+// Two images, two machines. Offering the wrong one is worse than offering none —
+// an ARM Mac cannot boot the x86 image, and it fails in a way that looks like the
+// OS is broken rather than like the download was wrong. So guess, say what was
+// guessed, and keep the other one visible and one click away.
+//
+// The filenames here are deliberately stable aliases rather than the versioned
+// build names. A live image is teddyos-0.13.0-arm64-20260728-1641.iso on disk;
+// putting that in the markup means the page has to be edited for every release,
+// and a page edited by hand on every release is a page that will eventually point
+// at a file that is not there. The publish step is what points the alias at the
+// current build, and the exact build is shown in the meta line below each button.
+var IMAGES = {
+  arm64: {
+    file: 'teddyos-arm64.iso',
+    label: 'ARM64 image',
+    why: 'Apple Silicon Macs (M1 and later) and other ARM64 machines. Runs in UTM.'
+  },
+  x86: {
+    file: 'teddyos-amd64.iso',
+    label: 'x86-64 image',
+    why: 'Intel and AMD machines — Intel Macs, PCs, and most laptops.'
+  }
+};
+
+// `nav` is injectable so the guess can be tested against real user-agent
+// shapes without a browser; it defaults to the live navigator.
+function guessArch(nav) {
+  nav = nav || navigator;
+  var ua = nav.userAgent || '';
+  var platform = (nav.platform || '') + ' ' + ua;
+  // Apple Silicon is deliberately hard to detect: Safari still reports an Intel
+  // platform string on ARM Macs. Treat a Mac with more than a handful of cores
+  // as Apple Silicon — the lowest-core ARM Mac has 8, the common Intel ones 4.
+  var isMac = /Mac/i.test(platform);
+  var manyCores = (nav.hardwareConcurrency || 0) >= 8;
+  if (/aarch64|arm64|armv8/i.test(platform)) return 'arm64';
+  if (isMac && manyCores) return 'arm64';
+  if (/Win|Intel|x86_64|x86-64|amd64|Linux/i.test(platform)) return 'x86';
+  return null;
+}
+
+// Appended to every download URL. A CDN sits in front of these files and
+// caches them for hours: after a release the edge will happily keep serving the
+// previous image, which then fails its own published checksum and looks to the
+// visitor like a tampered download. Making the URL change per release is the
+// fix that needs no purge and no credentials. Filled in from BUILD-INFO.txt.
+var VERSION = '';
+
+// The exact build each alias currently points at, also from BUILD-INFO.txt, so
+// the page can name the real file without being edited per release.
+var BUILDS = {};
+
+function card(key, primary) {
+  var img = IMAGES[key];
+  var href = 'os/' + img.file + (VERSION ? '?v=' + encodeURIComponent(VERSION) : '');
+  var build = BUILDS[key] ? '<br>This is <code>' + BUILDS[key] + '</code>.' : '';
+  return '<div class="card' + (primary ? ' primary' : '') + '">' +
+    '<h2>' + img.label + '</h2>' +
+    '<p class="why">' + img.why + '</p>' +
+    '<a class="dl' + (primary ? '' : ' secondary') + '" href="' + href + '" download>' +
+      'Download ' + img.file + '</a>' +
+    '<p class="meta">Bootable ISO, about 2.8 GB. Verify with <code>shasum -a 256 ' +
+      img.file + '</code> against <a href="os/SHA256SUMS">SHA256SUMS</a>.' + build +
+    '</p>' +
+  '</div>';
+}
+
+function render() {
+  var arch = guessArch();
+  var picks = document.getElementById('picks');
+  var detected = document.getElementById('detected');
+  if (arch) {
+    var other = arch === 'arm64' ? 'x86' : 'arm64';
+    detected.innerHTML = 'Looks like you are on <b>' +
+      (arch === 'arm64' ? 'an ARM64 machine' : 'an x86-64 machine') +
+      '</b>. If that is wrong, the other image is below.';
+    picks.innerHTML = card(arch, true) + card(other, false);
+  } else {
+    // No confident guess: never pick for them silently.
+    picks.innerHTML = card('x86', false) + card('arm64', false);
+  }
+}
+
+// Learn the release, then draw. If BUILD-INFO is unreachable the links still
+// work — they just lose the cache-busting suffix, which is the old behaviour.
+fetch('os/BUILD-INFO.txt', { cache: 'no-store' })
+  .then(function (r) { return r.ok ? r.text() : ''; })
+  .then(function (t) {
+    var m = /commit:\s*(\S+)/.exec(t || '');
+    if (m) { VERSION = m[1]; }
+    // live-arm64: teddyos-0.13.0-arm64-20260728-1641.iso
+    var re = /live-(arm64|amd64):\s*(\S+)/g, hit;
+    while ((hit = re.exec(t || ''))) {
+      BUILDS[hit[1] === 'amd64' ? 'x86' : 'arm64'] = hit[2];
+    }
+  })
+  .catch(function () {})
+  .then(render, render);
+</script>
+</body>
+</html>
