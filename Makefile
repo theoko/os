@@ -252,8 +252,13 @@ e2e: iso
 	chmod +x scripts/e2e/invariants.py
 	./scripts/e2e/invariants.py --out $(E2E_OUT) $(E2E_ARGS)
 
+# Two passes on purpose. The bare pass keeps the bridge-mode code honest while
+# it still exists; the second is the configuration every shipped ISO is built
+# in. Without it, `standalone()` branches are only ever compiled out during
+# testing — which is how a nav dot that can only be red reached first boot.
 test-host:
 	$(WITH_RUST) $(CARGO) test -p kernel --target $$($(RUSTC) -vV | awk '/^host:/{print $$2}') --lib
+	$(WITH_RUST) $(CARGO) test -p kernel --target $$($(RUSTC) -vV | awk '/^host:/{print $$2}') --lib --features standalone
 	$(WITH_RUST) $(CARGO) test -p os-core
 
 smoke: iso
@@ -312,11 +317,11 @@ publish-os:
 #   make update-os ARCH=x86_64     for the other one
 #   make update-check              report only, download nothing
 update-os:
-	chmod +x scripts/update-os.sh scripts/ensure-bridge.sh
+	chmod +x scripts/update-os.sh
 	./scripts/update-os.sh $(if $(ARCH),--arch $(ARCH),)
 
 update-check:
-	chmod +x scripts/update-os.sh scripts/ensure-bridge.sh
+	chmod +x scripts/update-os.sh
 	./scripts/update-os.sh --check
 
 # Watch the published download from outside, on a timer.

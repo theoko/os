@@ -1,58 +1,36 @@
 #!/usr/bin/env bash
-# Refresh what search knows: re-index workspace files, re-sync the portal corpus.
+# Refresh what search knows — DISABLED, standalone build.
 #
-# Consent rule: the portal corpus is only re-synced if it has ALREADY been
-# synced once. portal.sync is granted inside the OS, and a host-side timer must
-# not be a way to start talking to the network on the user's behalf. Refreshing
-# something they already opted into is fine; opting them in is not.
+# This used to re-index workspace files and re-sync the portal corpus by
+# calling a host bridge (`CALL workspace.index`, `CALL tsearch.sync`) and
+# writing the result to ~/Library/Application Support/os/knowledge/teddy.json
+# for a guest to query later. Both halves are gone:
+#
+#   * host/bridge/ was deleted (chore: convert to fully standalone OS), so
+#     there is no process to send those CALLs to.
+#   * even if it were re-synced, the kernel's guest query path returns
+#     BridgeStatus::Offline unconditionally in a standalone build (see
+#     kernel/src/mcp.rs, and CLAUDE.md: "No bridge probing on COM2") — nothing
+#     in the shipped kernel ever reads that cache file anymore.
+#
+# What search a standalone guest gets is a small, hand-curated snapshot baked
+# into the kernel at compile time from search/corpus.json (see
+# kernel/src/search.rs / kernel/build.rs). Refreshing *that* means editing
+# search/corpus.json and rebuilding — there is no live index to keep warm on
+# a schedule, so there's nothing for a daily timer to do here anymore.
+#
+# Kept as a no-op (exit 0, not an error) rather than removed outright, since
+# `make refresh` and the com.os.refresh LaunchAgent both still call it — a
+# LaunchAgent firing daily should not show up as a failure in .refresh.log.
 set -uo pipefail
-
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-cd "$ROOT"
-
-ADDR="${OS_MCP_BRIDGE_ADDR:-127.0.0.1:7420}"
-HOST="${ADDR%:*}"
-PORT="${ADDR##*:}"
-BIN="$ROOT/target/debug/os-mcp-bridge"
-CORPUS="$HOME/Library/Application Support/os/knowledge/teddy.json"
-STARTED=""
 
 log() { printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"; }
 
-call() {
-  # One request, one response. nc exits when the bridge closes or we time out.
-  printf '%s\n' "$1" | nc -w "${2:-120}" "$HOST" "$PORT" 2>/dev/null | head -1
-}
-
-if [[ ! -x "$BIN" ]]; then
-  log "bridge binary missing — run: make bridge"
-  exit 1
-fi
-
-# Reuse a running bridge rather than fighting it for the port.
-if ! nc -z "$HOST" "$PORT" 2>/dev/null; then
-  log "starting bridge on $ADDR"
-  OS_MCP_BRIDGE_ADDR="$ADDR" OS_MCP_EMAIL_BACKEND="${EMAIL_BACKEND:-mock}" \
-    "$BIN" >>"$ROOT/.refresh-bridge.log" 2>&1 &
-  STARTED=$!
-  for _ in $(seq 1 40); do
-    nc -z "$HOST" "$PORT" 2>/dev/null && break
-    sleep 0.25
-  done
-else
-  log "reusing bridge already on $ADDR"
-fi
-
-log "workspace: $(call 'CALL workspace.index files=1' 300)"
-
-if [[ -f "$CORPUS" ]]; then
-  log "portal: $(call 'CALL tsearch.sync portal=1' 600)"
-else
-  log "portal: skipped — never synced, so the grant was never given in the OS"
-fi
-
-if [[ -n "$STARTED" ]]; then
-  log "stopping bridge we started (pid $STARTED)"
-  kill "$STARTED" 2>/dev/null || true
-fi
+log "refresh-index.sh is disabled in this standalone build — no host bridge"
+log "  to sync, and no consumer for the result even if there were one."
+log "  Search now comes from a compile-time corpus (search/corpus.json)."
+log "  If bridge-mode search comes back, restore this script's sync logic"
+log "  from git history alongside host/bridge/, or run 'make refresh-uninstall'"
+log "  to stop this LaunchAgent from firing on a schedule that no longer does"
+log "  anything."
 log "done"

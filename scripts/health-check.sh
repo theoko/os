@@ -9,6 +9,15 @@
 #
 # Fast checks only - no VM boots. Under a minute, so it can run on a schedule
 # and be believed. Prints a line per check and exits non-zero if any FAILed.
+#
+# STANDALONE NOTE: host/bridge/ (os-mcp-bridge) was removed by the standalone
+# refactor, and the kernel's guest query path returns Offline unconditionally
+# in a standalone build (kernel/src/mcp.rs; CLAUDE.md: "No bridge probing on
+# COM2"). The old "== bridge ==" section built/tested a package that no
+# longer exists and pinged a process that has nothing to serve, so it's
+# replaced below with "== search ==", the equivalent check for what a
+# standalone guest actually has: the compile-time corpus baked from
+# search/corpus.json.
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -28,11 +37,9 @@ for target in x86_64-unknown-none aarch64-unknown-none; do
     fail "kernel builds for $target" "$(grep -m1 '^error' <<<"$out")"
   fi
 done
-if out=$(cargo build -p os-mcp-bridge 2>&1); then pass "bridge builds"
-else fail "bridge builds" "$(grep -m1 '^error' <<<"$out")"; fi
 
 echo "== tests =="
-for pkg in "kernel --lib" "os-core" "os-mcp-bridge"; do
+for pkg in "kernel --lib" "os-core"; do
   name="${pkg%% *}"
   if out=$(cargo test -p $pkg 2>&1); then
     pass "$name tests ($(grep -oE '[0-9]+ passed' <<<"$out" | head -1))"
@@ -51,24 +58,19 @@ else
   warn "$dirty uncommitted path(s)" "$(git status --porcelain | head -3 | tr '\n' ' ')"
 fi
 
-echo "== bridge =="
-if nc -z 127.0.0.1 7420 2>/dev/null; then
-  reply=$(printf 'PING\n' | nc -w 5 127.0.0.1 7420 2>/dev/null | head -1)
-  if [[ "$reply" == *pong* ]]; then pass "bridge answers PING"
-  else fail "bridge answers PING" "got: ${reply:-nothing}"; fi
-
-  # The end-to-end path a guest actually uses. Built-in corpus, so it needs no
-  # optional cached data.
-  rows=$(BRIDGE_ADDR=127.0.0.1:7420 ./linux/agent-shell capability 2>/dev/null | grep -cE '^ *[0-9]+\. ')
-  if [[ "${rows:-0}" -gt 0 ]]; then pass "agent-shell returns $rows rows"
-  else fail "agent-shell returns rows" "the shipped client got nothing back"; fi
-
-  status=$(printf 'CALL portal.status\n' | nc -w 5 127.0.0.1 7420 2>/dev/null | head -1)
-  n=$(sed -n 's/.*n=\([0-9]*\).*/\1/p' <<<"$status")
-  if [[ "${n:-0}" -gt 0 ]]; then pass "teddy corpus cached ($n docs)"
-  else warn "teddy corpus" "not synced — portal queries will return nothing"; fi
+echo "== search =="
+# What a standalone guest actually has: a corpus baked into the kernel at
+# compile time from search/corpus.json (kernel/src/search.rs, kernel/build.rs).
+# There is no live index and nothing to ping — just a file to validate.
+if [[ -f search/corpus.json ]]; then
+  docs=$(python3 -c "import json,sys; print(len(json.load(open('search/corpus.json')).get('docs', [])))" 2>/dev/null || echo "")
+  if [[ "$docs" =~ ^[0-9]+$ ]] && [[ "$docs" -gt 0 ]]; then
+    pass "search/corpus.json parses ($docs docs)"
+  else
+    fail "search/corpus.json parses" "unreadable, not JSON, or has no docs"
+  fi
 else
-  warn "bridge" "not running (start: ./scripts/ensure-bridge.sh)"
+  fail "search/corpus.json present" "missing — the kernel would bake an empty corpus"
 fi
 
 echo "== artifacts =="

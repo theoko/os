@@ -17,6 +17,12 @@
 utm-diag*.out
 /docs/ui-preview.png
 /.linux-vm/
+/.teddyos-vm/
+# Build output: 2.8 GB ISOs per build, their checksums, and the screenshots
+# taken to prove a build boots. Reproducible from build-iso.sh; the ISO glob
+# below already covered the images themselves, but the directory kept filling
+# with proof PNGs that are evidence, not source.
+/dist/
 .refresh.log
 .refresh-bridge.log
 /scripts/e2e/.screentext

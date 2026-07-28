@@ -1,8 +1,233 @@
 ---
-version: 0.12.0
+version: 0.13.0
 ---
 
 # Changelog
+
+## 0.13.0 — 2026-07-28
+
+### teddyOS runs on VirtualBox
+
+The live image booted to a black screen on VirtualBox's Apple Silicon build and
+stayed there. Five images shipped before the cause was found, because every
+symptom pointed one layer too low: a frozen boot menu, then a hypervisor
+assertion, then a missing DRM device. All three were real; none was it.
+
+The cause was a missing package. GNOME's session is Wayland, which needs a
+DRM/KMS device. VirtualBox's ARM machine exposes its framebuffer only through
+EFI GOP, so the kernel registers `efi-framebuffer.0`, `simpledrm` has nothing
+to bind to and `/dev/dri` never appears. GDM turns Wayland off by itself,
+looks for an X session, finds `/usr/share/xsessions` empty, and dies with
+`no session desktop files installed` — restarting forever behind a black
+screen while the text console works perfectly.
+
+`gnome-session-xsession` is only a *Recommends* of `gnome-core`, so
+`--apt-recommends false` had silently removed it. The same flag removed
+`user-setup` once before.
+
+- `gnome-session-xsession`, `xserver-xorg-core`, `xserver-xorg-video-fbdev`
+  and `xserver-xorg-input-libinput` ship now. fbdev draws on `/dev/fb0` and
+  needs no GPU at all, and GNOME Shell keeps its X11 backend in 48, so this is
+  the real desktop — dock, theme and extensions — not a reduced one.
+- The build asserts a Wayland session, an X session and the fbdev driver are
+  all present. Losing any of them now fails the build instead of shipping a
+  black screen.
+- A machine with genuinely no graphics device explains itself on the console
+  instead of showing nothing.
+
+### Search no longer needs a terminal
+
+Making the search box return anything took four commands and two error
+messages: `teddyos-search`, `teddyos-setup`, search again, then
+`teddyos-search --sync`. Granting "Search the web" was permission, not an
+index — nothing ever downloaded the 68 MB corpus, so the machine could only
+say so in a note under an empty result list.
+
+- Setup downloads the index itself, on its last screen, with a progress bar.
+  Detached, so clicking through does not cancel it.
+- Every command name is gone from the GUI. The window said
+  `run teddyos-search --sync` to people who have never opened a terminal.
+- The Search window renders `notes` and `errors`. It computed the reason a
+  search came back empty and discarded it, so "nothing found" and "the index
+  is still downloading" looked identical.
+
+### Search stopped eating the machine
+
+Moving the dock's Search through the capability sandbox — which it had never
+entered, making the setup screen's central promise false — turned a
+once-per-session 67 MB corpus parse into a per-keystroke one. The cache is a
+module global and cannot outlive a process, so every query allocated 475 MB
+and threw it away. On a live system whose cache directory is in RAM, that
+OOM-killed the desktop.
+
+- `teddyos-search --serve` enters the sandbox once, parses once and answers
+  queries over a pipe. 475 MB once; requeries in 0.08 s.
+- It still refuses rather than falling back to an unconfined search.
+
+### The desktop stops advertising Debian
+
+- The installer said "Welcome to the Calamares installer for Debian 13" with a
+  Debian swirl — at the moment someone commits their disk to an OS they have
+  never heard of. It carries teddyOS branding now.
+- **Install teddyOS** is in the dock. The live image had no way to keep
+  itself short of rebooting into a different menu entry.
+- The bookmark bar was Debian.org, Latest News and Help. It is now six links
+  named for what they are for.
+- The browser icon was **Safari's compass on Chromium** — misleading, and
+  someone else's trademark. Search, Web, Claude and Install are drawn.
+- On amd64 the BIOS boot menu was stock Debian with `timeout 0`, which in
+  syslinux means wait forever. Both menus are branded and timed now.
+
+### Claude is an application
+
+It was installed, symlinked to `/usr/local/bin/claude`, and reachable only by
+opening a terminal and typing a name you had to already know — on a desktop
+whose stated audience does not know what a terminal is.
+
+- A window: a terminal with one job, no shell prompt, no tabs, nothing left
+  running when it closes.
+- `teddyos-whatsapp.desktop` was listed as a dock favourite and never created
+  by anything, so GNOME silently dropped it and the dock showed three icons
+  where four were intended.
+- Apps set `prgname` to their application id. GNOME matches a window to its
+  launcher by WM_CLASS, which under X11 comes from the program name — so on
+  exactly the machines the X11 fix rescued, a running app appeared twice.
+
+### Builds say which build they are
+
+- Images are named `teddyos-VERSION-ARCH-BUILDID.iso` and the id is on the
+  boot splash and in `/etc/teddyos-build`. Three fixes were reported as "still
+  broken" while an older image was being booted.
+- Both live entries carry a serial console, `tty0` named last so `/dev/console`
+  stays the screen. A VM that boots to a black rectangle can now be handed a
+  log instead of guessed at.
+
+## 0.13.0 — 2026-07-27
+
+### The mouse works again after setup
+
+Every click outside the setup wizard had stopped registering. `prev_buttons`
+— the previous frame's button state, which is what a press is measured
+against — was being advanced at the top of the input loop, before any handler
+ran, so `was_down` always equalled `left_down` and no press ever read as a new
+press. Back, the home tiles, Brief `Doc` rows, Search results and the
+capability switches all went dead together, while the pointer still moved and
+still painted its hover rails, so the machine looked alive and answered
+nothing. Setup kept working because it reads the button state rather than its
+edge — which is exactly why the failure began the moment setup ended.
+
+The assignment at the bottom of the loop, which is the correct one, was always
+there. Removing the early one restores every click.
+
+- `make e2e` — the only suite here that clicks — has been unrunnable since the
+  standalone conversion: it defaulted to starting a bridge through a script
+  that commit deleted, and died in argument handling before booting anything.
+  It defaults to offline now, the way every shipped image runs.
+
+### Documents found offline can be opened
+
+The corpus already carried a 320-character extract per document; `build.rs`
+read it for tokens and threw it away. So the machine could find a document and
+never show one, and every row on a device that is never anything but offline
+dead-ended at "cannot open documents".
+
+- The extract is baked into the kernel alongside the title and URL, and
+  `mcp::fetch_doc` reads it when there is no bridge — one place, so a Search
+  row, a Brief `Doc` row and anything added later all open the same document.
+  The reader wraps it at word boundaries and ends with a line saying it is an
+  extract, so a stored opening is never mistaken for a whole document.
+  The ISO grows 70 KB.
+- A row is drawn openable exactly when the image stores its text. Offline rows
+  used to carry a URL whatever was behind it, which is what made every one of
+  them invite a tap and then refuse. `search.rs::body_for` is the single
+  answer to "does this open?", and the Search screen, the offline query and
+  `Brief::push_result` all ask it.
+- The knowledge and playbook lanes push through `Brief::push_result` like
+  every other lane, instead of tagging their rows `Hit` and discarding the
+  URL — the same query used to answer openable rows on Search and dead titles
+  on the Brief.
+- Copy follows: "Titles only - no text stored for these." replaces "the local
+  index cannot open documents", and the note under the search field no longer
+  says "Bridge offline" on a machine with no bridge to start.
+
+### A finished answer stops looking like a stuck one
+
+Asking the machine for "nvda" left a screen titled **Working on it** above four
+cards, the last of which said nothing was found. Nothing draws a Brief until the
+run has returned, so that title was false every time anyone read it — the words
+in the largest type on the screen said the machine was still thinking.
+
+- The Brief title now reports the outcome: `2 to open`, `3 found`,
+  `Nothing found`, `Needs a grant`, `Draft ready`. Openable rows lead the count,
+  because tapping one is the next thing to do; a missing grant outranks any
+  count, because it is the thing to fix.
+- A one-word goal no longer prints itself twice. `Goal: nvda` and `Query: nvda`
+  are one fact on two cards; the Query card now appears only when the machine
+  searched for something other than what was typed.
+- An empty answer says what to try, not only what failed. "Nothing on this
+  device matches that." is followed by a `Next` row, and the old "Bridge
+  offline - local keywords only." caption is gone from standalone builds — it
+  printed on every run this build can do, so it was a caption, not news,
+  costing a row on a screen whose whole answer was four cards.
+
+Four cards became three, and the card that ends the screen now points somewhere.
+
+### The machine can find your own work
+
+Every question about the owner's own files came back "No offline hits for that
+query." Search was not broken — the shelf was empty. The kernel could only
+answer from `search/corpus.json`, and that held sixteen documents, all about
+the OS itself.
+
+- `scripts/bake-corpus.py` merges the workspace index into the baked corpus:
+  275 documents now, 259 of them the owner's. `search/seed.json` keeps the
+  curated OS documents that were there before.
+- Non-ASCII is folded on the way in, Greek transliterated rather than dropped.
+  The font atlas covers 0x20..=0x7E and the tokenizer emits ASCII runs only, so
+  140 of the 320 titles would otherwise have drawn as holes and indexed as
+  nothing — baked in and unreachable. `build.rs` now fails the build on a
+  character the atlas cannot draw instead of shipping it.
+- Generated files are left out: `.egg-info`, lockfiles, `requirements.txt`, and
+  anything under twelve tokens. The scorer divides term frequency by document
+  length, so a four-word `top_level.txt` outranks a real document that discusses
+  the term at length. 54 such entries were dropped.
+- Result-row URL slots hold 128 bytes, up from 72, and `search.rs` const-asserts
+  that every baked title and URL fits. Truncation here is not cosmetic: 38 of
+  the owner's paths were over the old slot, `copy_into` cuts in silence, and two
+  paths agreeing for 72 bytes collapse into one row — a document silently erased
+  from every answer it belongs in.
+- `make publish-os` refuses to upload an image built from a personal corpus. The
+  index is compiled into the ISO, so publishing one baked from the workspace
+  would put the owner's titles and 320-character snippets on a public download.
+
+### The status dot stops reporting a fault that cannot happen
+
+Since the standalone conversion `ping_bridge` answers Offline for every caller
+forever — there is no bridge to answer otherwise. The nav dot went red on first
+boot and stayed red on a machine with nothing wrong with it, which reads as
+"your search is disconnected" and sends people looking for a host this image
+deliberately does not ship.
+
+- A standalone build draws the word `status` where the dot was. It opens the
+  same screen and claims no fault. Hit-testing follows what was drawn.
+- `make test-host` now runs the suite twice, the second time with
+  `--features standalone`. Every shipped ISO is built that way, and until now no
+  test ever compiled those branches — which is how a dot that could only be red
+  reached first boot.
+
+### Two ranking tests measured the corpus, not the scorer
+
+Both asserted a specific document title. Re-baking the index broke them, and one
+was not testing what it claimed: term frequency is divided by document length,
+so a four-word file beats a long one on any shared term whatever the weights are.
+
+- `rare_terms_outweigh_common_ones` checks the score `query` delivers against the
+  whole formula, on a term in exactly one document — the case where the answer is
+  knowable.
+- `pagerank_outranks_a_stronger_tf_idf_match` watches a real ranking for a
+  document delivered above one with strictly higher term frequency, which nothing
+  but the blend can do. It recomputed the blend before, which only proved the test
+  could multiply — it passed with the blend deleted.
 
 ## 0.12.0 — 2026-07-27
 

@@ -45,6 +45,22 @@ if [ "$ALLOW_DIRTY" != "1" ]; then
   fi
 fi
 
+# 1b. Whose documents are in the image. Search is compiled in, so whatever
+#     search/corpus.json holds at build time ships inside the ISO — every
+#     title, and 320 characters of every document. A corpus baked from the
+#     workspace index is personal: family papers, resumes, trading notes.
+#     This target uploads to a public URL, so that build must never be the
+#     one a stranger downloads.
+if grep -q '"personal": true' search/corpus.json 2>/dev/null; then
+  die "search/corpus.json is baked from your workspace index — publishing it
+       would put your own documents on $URL.
+
+       Build a public corpus first, then put yours back:
+
+         ./scripts/bake-corpus.py --seed-only && make publish-os
+         ./scripts/bake-corpus.py && make arm64-iso"
+fi
+
 step "building release images at $COMMIT"
 make iso KERNEL_PROFILE=release
 make arm64-iso
