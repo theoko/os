@@ -20,9 +20,37 @@ pub const fn search_local_only() -> &'static str {
     }
 }
 
+/// The empty answer from the index that ships inside the image.
+///
+/// "No offline hits" names offline as the reason, which invites the reader to
+/// go back online and try again. On a standalone image there is no other
+/// state to reach: the index inside the ISO is the whole world, and the honest
+/// sentence is that this machine does not know that word.
+pub const fn no_local_hits() -> &'static str {
+    if standalone() {
+        "Nothing on this device matches that."
+    } else {
+        "No offline hits for that query."
+    }
+}
+
+/// The way forward after an empty answer.
+pub const fn retry_broader() -> &'static str {
+    if standalone() {
+        "Try a broader word - the built-in index is small."
+    } else {
+        "Try a broader word, or start the bridge."
+    }
+}
+
+/// Why a screen of findings has nothing to tap.
+///
+/// Not "the index cannot open documents" any more — it can, for everything
+/// baked with an extract. These particular rows are the ones it holds no text
+/// for, and saying otherwise would tell the reader to stop trying.
 pub const fn titles_only() -> &'static str {
     if standalone() {
-        "Titles only - the local index cannot open documents."
+        "Titles only - no text stored for these."
     } else {
         "Titles only - reading needs the bridge."
     }
@@ -86,6 +114,15 @@ pub const fn search_no_matches() -> &'static str {
     }
 }
 
+/// Where answers come from, under the search field.
+pub const fn search_source_note() -> &'static str {
+    if standalone() {
+        "Answers come from the index built into this device."
+    } else {
+        "Bridge offline - answering from the index baked into the kernel."
+    }
+}
+
 pub const fn answered_from_guide() -> &'static str {
     if standalone() {
         "Answered from the built-in guide - this device is offline."
@@ -94,11 +131,28 @@ pub const fn answered_from_guide() -> &'static str {
     }
 }
 
+/// Shown when a row was opened and the image holds no text for it.
+///
+/// Not a connection failure and not a promise that opening is impossible —
+/// documents baked with an extract do open. This one is simply not stored.
 pub const fn cannot_open_documents() -> &'static str {
     if standalone() {
-        "This device is offline - it cannot open documents."
+        "This device stores no text for that document."
     } else {
         "Bridge offline - cannot open documents."
+    }
+}
+
+/// Footer under a document read from the baked corpus.
+///
+/// The reader would otherwise present a stored opening as the whole document,
+/// which is the same lie in the other direction: a page that ends mid-thought
+/// with nothing saying why.
+pub const fn extract_only() -> &'static str {
+    if standalone() {
+        "-- extract: this device stores the opening of each document --"
+    } else {
+        "-- extract from the baked index, not the full document --"
     }
 }
 
@@ -207,6 +261,8 @@ mod tests {
     /// in only one configuration and go unnoticed.
     const ALL: &[fn() -> &'static str] = &[
         search_local_only,
+        no_local_hits,
+        retry_broader,
         titles_only,
         mail_unavailable,
         mail_unreadable,
@@ -215,8 +271,10 @@ mod tests {
         portals_unavailable,
         cannot_save,
         search_no_matches,
+        search_source_note,
         answered_from_guide,
         cannot_open_documents,
+        extract_only,
         offline_remedy,
         builtin_docs_titles_only,
         skills_source,

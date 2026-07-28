@@ -1,7 +1,6 @@
 //! Guest MCP client over COM2 (host bridge).
 
 use crate::serial::Serial;
-use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 const TIMEOUT_PING: u32 = 80_000;
 const TIMEOUT_LINE: u32 = 200_000;
@@ -19,63 +18,6 @@ const LINE_BUF: usize = 768;
 pub enum BridgeStatus {
     Offline,
     Online,
-}
-
-/// Longest token accepted from the Limine command line. A hobby-scale shared
-/// secret (e.g. `openssl rand -hex 16` = 32 bytes) fits comfortably; anything
-/// longer is truncated rather than panicking on a malformed cmdline, which
-/// simply never matches the host's copy and fails auth closed exactly like a
-/// wrong token would.
-const AUTH_TOKEN_CAP: usize = 64;
-
-/// Boot-time-only storage for the shared bridge secret. Written at most once,
-/// by `set_auth_token()` during early boot in `main()`, strictly before the
-/// first ever `ping_bridge()` call (the boot splash's bridge probe). The
-/// kernel has no preemptive multitasking across that window, so there is no
-/// reader that could observe a partial write.
-static mut AUTH_TOKEN_BUF: [u8; AUTH_TOKEN_CAP] = [0; AUTH_TOKEN_CAP];
-static AUTH_TOKEN_LEN: AtomicUsize = AtomicUsize::new(0);
-
-/// Whether the one mandatory `AUTH <token>` line has already gone out this
-/// boot. An auth-gated bridge only treats the *first* line of a session as
-/// the credential; every line after that is a normal `PING`/`CALL`, so this
-/// must fire at most once per boot, not once per `ping_bridge()` call (there
-/// are ~20 call sites, and COM2 is one long-lived link to the bridge for the
-/// whole guest session, not a fresh connection per call).
-static AUTH_SENT: AtomicBool = AtomicBool::new(false);
-
-/// Hand the bridge session a shared secret to present, once, before its very
-/// first byte. Call this exactly once from `main()`, after reading it off the
-/// Limine command line and before the first `probe_bridge()`/`ping_bridge()`
-/// call ever executes.
-///
-/// Doing nothing (never calling this) is the default and leaves every wire
-/// exchange byte-for-byte identical to before this existed: no token means
-/// `ping_bridge()` never writes an `AUTH` line, so an unmodified bridge never
-/// sees one either.
-pub fn set_auth_token(token: &str) {
-    let bytes = token.as_bytes();
-    let n = bytes.len().min(AUTH_TOKEN_CAP);
-    unsafe {
-        // Safety: boot-time only, see the doc comment on `AUTH_TOKEN_BUF` — no
-        // concurrent reader exists yet when `main()` calls this.
-        let buf = &mut *core::ptr::addr_of_mut!(AUTH_TOKEN_BUF);
-        buf[..n].copy_from_slice(&bytes[..n]);
-    }
-    AUTH_TOKEN_LEN.store(n, Ordering::Relaxed);
-}
-
-/// The configured token, if `set_auth_token()` was ever called with a
-/// non-empty value.
-fn auth_token() -> Option<&'static str> {
-    let n = AUTH_TOKEN_LEN.load(Ordering::Relaxed);
-    if n == 0 {
-        return None;
-    }
-    // Safety: exactly `n` bytes were copied from a validated `&str` in
-    // `set_auth_token` and the buffer is never mutated again afterwards.
-    let buf = unsafe { &*core::ptr::addr_of!(AUTH_TOKEN_BUF) };
-    core::str::from_utf8(&buf[..n]).ok()
 }
 
 /// True when this image was built for bare metal, where no host will ever be
@@ -673,7 +615,11 @@ pub fn fetch_doc(caps: crate::caps::Caps, url: &str) -> DocPage {
     let mut line = [0u8; LINE_BUF];
 
     match ping_bridge(&com2, &mut line) {
-        BridgeStatus::Offline => return DocPage::empty(BridgeStatus::Offline, false),
+        // No bridge: read the extract baked into the kernel, the same way a
+        // query falls back to the baked index. Doing it here rather than in
+        // each caller means every route to the reader — a Search row, a Brief
+        // Doc row — opens the same document.
+        BridgeStatus::Offline => return doc_offline(url),
         BridgeStatus::Online => {}
     }
 
@@ -1424,18 +1370,6 @@ fn ping_bridge(com2: &Serial, line: &mut [u8]) -> BridgeStatus {
             break;
         }
     }
-    // One-shot credential for the whole boot's COM2 session, not per call: an
-    // auth-gated bridge only checks the first line it ever receives on a
-    // connection, and this link stays open for every PING/CALL that follows
-    // across all ~20 call sites. Skipped entirely when no token was set
-    // (default), so an unmodified bridge never sees an unexpected line.
-    if !AUTH_SENT.swap(true, Ordering::Relaxed) {
-        if let Some(token) = auth_token() {
-            com2.write_str("AUTH ");
-            com2.write_str(token);
-            com2.write_str("\n");
-        }
-    }
     com2.write_str("PING\n");
     let Some(n) = com2.read_line(line, TIMEOUT_PING) else {
         return BridgeStatus::Offline;
@@ -1646,13 +1580,79 @@ fn search_offline(q: &str) -> SearchPeek {
     let q = if q.is_empty() { OFFLINE_QUERY } else { q };
     let n = crate::search::query(q, &mut hits);
     for h in hits.iter().take(n.min(peek.hits.len())) {
-        copy_field(
-            &mut peek.hits[peek.count].title,
-            crate::search::DOCS[h.doc].title,
-        );
+        let doc = &crate::search::DOCS[h.doc];
+        copy_field(&mut peek.hits[peek.count].title, doc.title);
+        // The URL is the promise that the row opens, so it is carried only
+        // when this image stores something to open. A document baked without
+        // an extract stays a finding — `Brief::push_result` reads the same
+        // absence and tags it `Hit`.
+        if crate::search::body_for(doc.url).is_some() {
+            copy_url(&mut peek.hits[peek.count].url, doc.url);
+        }
         peek.count += 1;
     }
     peek
+}
+
+/// Fill a reader page from the extract this image stores for `url`.
+///
+/// A page with no lines is not a broken connection here: it means the image
+/// holds no text for that document, which is what the reader then says.
+fn doc_offline(url: &str) -> DocPage {
+    let mut page = DocPage::empty(BridgeStatus::Offline, false);
+    let Some(body) = crate::search::body_for(url) else {
+        return page;
+    };
+    wrap_into(&mut page, body);
+    // Without this the stored opening reads as the whole document. Say where
+    // the text stops — once, at the end, after a blank line.
+    if page.count + 2 <= DocPage::MAX {
+        page.count += 1;
+        copy_field(&mut page.lines[page.count], crate::copy::extract_only());
+        page.count += 1;
+    }
+    page
+}
+
+/// Wrap prose into the reader's fixed line slots, breaking at spaces.
+///
+/// A word wider than a line is broken rather than dropped: these slots cut in
+/// silence, and half a path is a different path.
+fn wrap_into(page: &mut DocPage, text: &str) {
+    const WRAP: usize = 76;
+    let mut line = [0u8; 84];
+    let mut w = 0usize;
+    let flush = |line: &mut [u8; 84], w: &mut usize, page: &mut DocPage| {
+        if *w > 0 && page.count < DocPage::MAX {
+            copy_field(&mut page.lines[page.count], str_prefix(&line[..*w]));
+            page.count += 1;
+        }
+        line.fill(0);
+        *w = 0;
+    };
+    for word in text.split(' ') {
+        if word.is_empty() {
+            continue;
+        }
+        if w > 0 && w + 1 + word.len() > WRAP {
+            flush(&mut line, &mut w, page);
+        }
+        if w > 0 {
+            line[w] = b' ';
+            w += 1;
+        }
+        for &b in word.as_bytes() {
+            if w == WRAP {
+                flush(&mut line, &mut w, page);
+            }
+            line[w] = b;
+            w += 1;
+        }
+        if page.count >= DocPage::MAX {
+            return;
+        }
+    }
+    flush(&mut line, &mut w, page);
 }
 
 /// What the home screen asks for when nothing else was requested.
@@ -1893,14 +1893,81 @@ mod tests {
     }
 
     #[test]
-    fn offline_hits_carry_no_url_because_nothing_can_open() {
-        // Bodies live on the bridge; the kernel bakes an index, not content.
-        // An empty URL is what demotes these to Hit rows in the Brief.
+    fn an_offline_hit_carries_a_url_exactly_when_its_text_is_stored() {
+        // The kernel used to bake an index and no content, so no offline hit
+        // could open and none carried a URL. It bakes the extract now, and the
+        // URL follows the text: carried when there is something to read,
+        // withheld when there is not — which is what demotes a row to `Hit`.
         let peek = search_offline("");
         assert!(peek.count > 0);
+        let mut openable = 0;
         for i in 0..peek.count {
-            assert_eq!(peek.url_at(i), "", "offline hit {i} claims a URL");
+            let url = peek.url_at(i);
+            if url.is_empty() {
+                continue;
+            }
+            assert!(
+                crate::search::body_for(url).is_some(),
+                "offline hit {i} claims a URL with nothing behind it"
+            );
+            openable += 1;
         }
+        assert!(
+            openable > 0,
+            "the baked corpus stores extracts, so some hit must open"
+        );
+    }
+
+    #[test]
+    fn a_document_opened_offline_reads_from_the_baked_extract() {
+        let url = crate::search::DOCS
+            .iter()
+            .find(|d| !d.body.is_empty())
+            .map(|d| d.url)
+            .expect("a baked corpus with at least one extract");
+        let page = doc_offline(url);
+        assert!(!page.denied);
+        assert!(page.count > 1, "an opened document showed nothing");
+        // Every line fits its slot, and the last one says where the text ends.
+        for i in 0..page.count {
+            assert!(page.line_at(i).len() <= 83);
+        }
+        assert_eq!(page.line_at(page.count - 1), crate::copy::extract_only());
+
+        // A URL the image does not store opens to nothing, and the reader
+        // says so rather than showing an empty page as a document.
+        let missing = doc_offline("file://nothing/here.md");
+        assert_eq!(missing.count, 0);
+    }
+
+    #[test]
+    fn wrapping_breaks_lines_without_dropping_words() {
+        let mut page = DocPage::empty(BridgeStatus::Offline, false);
+        // A word wider than a line, among ordinary prose: fixed slots in this
+        // kernel cut in silence, so the check is that nothing is lost.
+        let long = "capability-based-agents-with-a-very-long-hyphenated-name-that-will-not-fit-on-one-line";
+        let text = "the kernel bakes an index and now an extract too";
+        let mut src = [0u8; 256];
+        let joined = {
+            let mut n = 0;
+            for part in [text, " ", long, " ", text] {
+                for &b in part.as_bytes() {
+                    src[n] = b;
+                    n += 1;
+                }
+            }
+            str_prefix(&src[..n])
+        };
+        wrap_into(&mut page, joined);
+        assert!(page.count > 1, "nothing wrapped");
+        let mut seen = 0usize;
+        for i in 0..page.count {
+            let line = page.line_at(i);
+            assert!(line.len() <= 76, "line {i} is wider than the wrap");
+            seen += line.bytes().filter(|b| !b.is_ascii_whitespace()).count();
+        }
+        let sent = joined.bytes().filter(|b| !b.is_ascii_whitespace()).count();
+        assert_eq!(seen, sent, "wrapping dropped characters");
     }
 
     #[test]
@@ -2104,51 +2171,5 @@ mod row_budget_tests {
             asked,
             SearchPeek::empty(BridgeStatus::Offline, false).hits.len()
         );
-    }
-}
-
-#[cfg(test)]
-mod auth_token_tests {
-    use super::*;
-
-    // `AUTH_TOKEN_BUF`/`AUTH_TOKEN_LEN` are process-global statics (mirroring
-    // the real boot-once-then-read-only lifecycle), so every case that
-    // mutates them lives in one `#[test]` fn. Cargo runs `#[test]` fns as
-    // concurrent threads within a single test binary; splitting these across
-    // separate fns would race on the same statics in a way real boot never
-    // does (real boot calls `set_auth_token` exactly once, before any
-    // concurrent reader exists).
-    #[test]
-    fn set_and_read_round_trip_and_truncate() {
-        // No token configured yet (module-fresh in a fresh test binary) reads
-        // back as absent, matching an unmodified image that never calls
-        // `set_auth_token` at all.
-        assert_eq!(auth_token(), None);
-
-        set_auth_token("hunter2");
-        assert_eq!(auth_token(), Some("hunter2"));
-
-        // A later call overwrites rather than appends — there is exactly one
-        // boot-time call site in `main()`, but the API itself should not
-        // silently concatenate if that ever changes.
-        set_auth_token("second-token");
-        assert_eq!(auth_token(), Some("second-token"));
-
-        // Oversized input is truncated to AUTH_TOKEN_CAP rather than
-        // panicking or overflowing the fixed buffer — a malformed or
-        // over-long `mcp_token=` value on the cmdline must degrade to "some
-        // wrong-length token" (fails host auth closed) rather than crash the
-        // boot.
-        let long = "x".repeat(AUTH_TOKEN_CAP + 16);
-        set_auth_token(&long);
-        let got = auth_token().expect("a truncated token, not None");
-        assert_eq!(got.len(), AUTH_TOKEN_CAP);
-        assert!(long.starts_with(got));
-
-        // Setting the empty string clears back to "no token configured",
-        // the same state `ping_bridge` checks to decide whether to emit an
-        // AUTH line at all.
-        set_auth_token("");
-        assert_eq!(auth_token(), None);
     }
 }

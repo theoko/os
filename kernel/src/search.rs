@@ -18,6 +18,13 @@ pub struct Doc {
     pub title: &'static str,
     pub cat: &'static str,
     pub url: &'static str,
+    /// The opening of the document, as `bake-corpus.py` stored it.
+    ///
+    /// This is what makes an offline row openable. An index alone can only say
+    /// that a document exists, which is why every result on this device used
+    /// to dead-end at "cannot open documents": the machine knew the title and
+    /// had nothing to show. Empty for a document baked without one.
+    pub body: &'static str,
     /// PageRank, 0..1024.
     pub pr_q10: i32,
     /// Token count, for length normalisation.
@@ -41,6 +48,32 @@ pub struct Posting {
 }
 
 include!(concat!(env!("OUT_DIR"), "/corpus.rs"));
+
+/// Widest title a result row can hold (`Row::title` in `searchui.rs`).
+///
+/// Titles are cut to fit by `scripts/bake-corpus.py`, deliberately and at a
+/// word boundary, then made unique again — because `copy_into` would
+/// otherwise cut them here, in silence, and the Brief de-duplicates rows by
+/// their text.
+pub const TITLE_SLOT: usize = 56;
+
+/// Widest URL a result row can hold (`Row::url` in `searchui.rs`).
+///
+/// Nothing may ever be truncated into this one. A cut path is a different
+/// document, and two paths that agree for the first N bytes would collapse
+/// into a single row — one real document silently erased from every answer.
+/// The slot is sized to the corpus rather than the corpus to the slot; if a
+/// bake pushes past it, the const assert below fails the build.
+pub const URL_SLOT: usize = 128;
+
+const _: () = assert!(
+    BAKED_TITLE_MAX <= TITLE_SLOT,
+    "a baked title is wider than Row::title — it would be truncated on screen"
+);
+const _: () = assert!(
+    BAKED_URL_MAX <= URL_SLOT,
+    "a baked URL is wider than Row::url — distinct documents would collapse"
+);
 
 /// Max hits returned. Matches the bridge's home-screen peek.
 /// Rows a result screen can hold.
@@ -120,6 +153,21 @@ fn find_term(tok: &str) -> Option<&'static Term> {
         }
     }
     None
+}
+
+/// The extract this image stores for `url`, if it stores one.
+///
+/// The single source of truth for "does this row open?". Rows are drawn
+/// openable from this answer and the reader fills from it, so a row can never
+/// promise a document the image does not hold.
+pub fn body_for(url: &str) -> Option<&'static str> {
+    if url.is_empty() {
+        return None;
+    }
+    DOCS.iter()
+        .find(|d| d.url == url)
+        .map(|d| d.body)
+        .filter(|b| !b.is_empty())
 }
 
 /// Rank documents for `query`. Returns hits in descending score order.

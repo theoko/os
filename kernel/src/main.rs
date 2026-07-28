@@ -5,7 +5,7 @@ use core::hint::black_box;
 
 #[allow(unused_imports)]
 use kernel::{
-    acpi, agent, anim, arm64_mmio, beep, boot_splash, caps, fault, fb, hello_message, inputdiag, keyboard, level,
+    acpi, agent, anim, arm64_mmio, beep, boot_splash, caps, copy, fault, fb, hello_message, inputdiag, keyboard, level,
     mcp, mouse, ohci, pci, screens, searchui, serial, setup, skills, time, ui, usb_tablet,
 };
 use limine::BaseRevision;
@@ -105,27 +105,6 @@ unsafe extern "C" fn kmain() -> ! {
     // check triple-faults and the machine silently resets, which is
     // indistinguishable from "it just randomly crashes".
     fault::init();
-
-    // Optional shared secret for the host MCP bridge, passed in via the
-    // Limine `cmdline:` directive so the ISO carries no baked-in credential
-    // in the ELF itself — the token is minted fresh per install/session by
-    // the host tooling and only ever lands here at boot. Absent entirely on
-    // any image built without a bridge pairing (e.g. bare metal, or a dev
-    // ISO remastered without a token), in which case `mcp::ping_bridge`
-    // simply never emits an AUTH line, matching its behavior before this
-    // existed.
-    if let Some(resp) = CMDLINE_REQUEST.get_response() {
-        if let Ok(cmdline) = resp.cmdline().to_str() {
-            for tok in cmdline.split_whitespace() {
-                if let Some(v) = tok.strip_prefix("mcp_token=") {
-                    if !v.is_empty() {
-                        mcp::set_auth_token(v);
-                    }
-                    break;
-                }
-            }
-        }
-    }
 
     serial_port.write_str(hello_message());
     serial_port.write_str(serial::LINE_ENDING);
@@ -530,7 +509,17 @@ unsafe extern "C" fn kmain() -> ! {
                             moved = true;
                         }
                     }
-                    prev_buttons = buttons;
+                    // `prev_buttons` is what this frame's buttons are compared
+                    // against, so it may only be advanced after the handlers
+                    // have run — it is, at the bottom of the loop. Updating it
+                    // here as well made `was_down` equal `left_down` for every
+                    // handler below, so no press ever read as a new press:
+                    // Back, the home tiles, Brief Doc rows, Search results and
+                    // the capability switches all stopped responding to the
+                    // mouse at once. Setup still worked, because
+                    // `setup.pointer` takes the button state rather than its
+                    // edge — which is why the machine looked clickable right
+                    // up to the moment setup ended.
                     if moved {
                         motion.set_target(x, y);
                     }
@@ -622,12 +611,14 @@ unsafe extern "C" fn kmain() -> ! {
                             setup.draw(surface, &mail, &skill_peek);
                         }
                     } else if view == screens::View::Home {
-                        // The nav dot is the only nav affordance; clicking it
-                        // shows every source's state, which the dot alone
-                        // cannot express.
+                        // The nav status affordance is the only way to reach
+                        // this screen, which shows every source's state — more
+                        // than a dot (or a word) can express on its own. Ask
+                        // `ui` where it drew that affordance rather than
+                        // assuming the dot: a standalone build draws a word.
                         let left_down = buttons & 0x01 != 0;
                         let was_down = prev_buttons & 0x01 != 0;
-                        if left_down && !was_down && ui::status_dot_rect(w).contains(x, y) {
+                        if left_down && !was_down && ui::status_hit_rect(w).contains(x, y) {
                             portal = mcp::portal_status();
                             view = screens::View::Status;
                             cursor.hide(surface);
@@ -1534,7 +1525,7 @@ unsafe extern "C" fn kmain() -> ! {
                     } else {
                         match view {
                             screens::View::Home => {
-                                if ui::status_dot_rect(w).contains(x, y) {
+                                if ui::status_hit_rect(w).contains(x, y) {
                                     HoverTarget::StatusDot
                                 } else {
                                     home_targets
@@ -1729,12 +1720,15 @@ fn poll_key(
 }
 
 /// One line telling the user where answers come from right now.
+///
+/// The offline half lives in `copy` with every other sentence a standalone
+/// image can print. This one was written inline and kept saying "Bridge
+/// offline" above the search field of a machine that has no bridge to bring
+/// up — the first line a new owner reads, naming a repair they cannot make.
 fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
     match mail.status {
         mcp::BridgeStatus::Online => "Answers come from the local index and the host bridge.",
-        mcp::BridgeStatus::Offline => {
-            "Bridge offline - answering from the index baked into the kernel."
-        }
+        mcp::BridgeStatus::Offline => copy::search_source_note(),
     }
 }
 

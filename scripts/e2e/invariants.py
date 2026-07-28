@@ -1657,7 +1657,11 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--out", default="/tmp/os-e2e", help="where the evidence lands")
     ap.add_argument("--iso", default=str(ROOT / "os.iso"))
-    ap.add_argument("--bridge", default="127.0.0.1:7420", help="empty string to run offline")
+    # Offline by default, because that is the only way this product runs now.
+    # The default named a bridge on 127.0.0.1:7420 and the script that started
+    # it went with the standalone conversion, so `make e2e` died before it
+    # booted anything — and it is the only suite here that clicks.
+    ap.add_argument("--bridge", default="", help="host:port of a bridge to drive against")
     ap.add_argument("--query", default="find the nvda paper")
     ap.add_argument(
         "--grant",

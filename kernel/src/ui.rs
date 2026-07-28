@@ -9,7 +9,7 @@ use crate::agent::Brief;
 use crate::caps::{Cap, Caps};
 use crate::fb::Surface;
 use crate::font::{BODY_FACE, BRAND_FACE, H2_FACE, SMALL_FACE};
-use crate::mcp::{BridgeStatus, FilePeek, MailPeek};
+use crate::mcp::{standalone, BridgeStatus, FilePeek, MailPeek};
 use crate::skills::SkillPeek;
 
 /// Where the status dot sits, for drawing and hit-testing.
@@ -23,14 +23,42 @@ pub fn status_dot_rect(w: i32) -> Rect {
     }
 }
 
-/// A tiny hover rail below the status dot, leaving the live status colour
-/// untouched.
-pub fn status_hover_rect(w: i32) -> Rect {
-    let dot = status_dot_rect(w);
+/// The word that replaces the dot on a standalone build.
+pub fn status_label_rect(w: i32) -> Rect {
+    let label_w = SMALL_FACE.width(STATUS_LABEL, 0);
     Rect {
-        x: dot.x - 4,
-        y: dot.y + dot.h + 4,
-        w: dot.w + 8,
+        x: w - PAD_X - label_w,
+        y: (NAV_H - 28) / 2,
+        w: label_w,
+        h: 28,
+    }
+}
+
+/// Nav copy for the status affordance on a standalone build.
+const STATUS_LABEL: &str = "status";
+
+/// What a click or hover on the status affordance has to hit.
+///
+/// A standalone build has no bridge that could be up or down, so `draw_nav`
+/// paints a word instead of a coloured dot — and the word is a different size
+/// and a different place. Hit-testing has to follow the thing that is actually
+/// on screen, or the affordance is invisible to the pointer.
+pub fn status_hit_rect(w: i32) -> Rect {
+    if crate::mcp::standalone() {
+        status_label_rect(w)
+    } else {
+        status_dot_rect(w)
+    }
+}
+
+/// A tiny hover rail below the status affordance, leaving the live status
+/// colour (or word) untouched.
+pub fn status_hover_rect(w: i32) -> Rect {
+    let hit = status_hit_rect(w);
+    Rect {
+        x: hit.x - 4,
+        y: hit.y + hit.h + 4,
+        w: hit.w + 8,
         h: 2,
     }
 }
@@ -65,12 +93,31 @@ fn draw_nav(fb: &Surface, w: i32, mail: &MailPeek) {
     // Just the dot. "bridge connected" was a label that answered half the
     // question — it said nothing about the portal — and repeated on every
     // screen. Clicking it opens the full picture instead.
-    let dot = match mail.status {
-        BridgeStatus::Online => theme::ONLINE,
-        BridgeStatus::Offline => theme::OFFLINE,
-    };
-    let r = status_dot_rect(w);
-    fb.fill_round_rect(r.x, r.y, r.w, r.h, r.w / 2, dot);
+    //
+    // On a standalone build there is no bridge, so `ping_bridge` returns
+    // Offline for every caller forever and the dot could only ever be red.
+    // A permanent red light is not a status, it is a false alarm: it sends
+    // people to reconnect something this image deliberately does not have,
+    // and it says nothing about local search, which is up. A word opens the
+    // same screen and claims no fault.
+    if standalone() {
+        let r = status_label_rect(w);
+        fb.draw_text(
+            r.x,
+            r.y + (r.h - SMALL_FACE.px) / 2 + SMALL_FACE.baseline(),
+            STATUS_LABEL,
+            &SMALL_FACE,
+            0,
+            theme::MUTED,
+        );
+    } else {
+        let dot = match mail.status {
+            BridgeStatus::Online => theme::ONLINE,
+            BridgeStatus::Offline => theme::OFFLINE,
+        };
+        let r = status_dot_rect(w);
+        fb.fill_round_rect(r.x, r.y, r.w, r.h, r.w / 2, dot);
+    }
 
     fb.fill_rect(0, NAV_H, w, 1, theme::RULE);
 }
@@ -1048,7 +1095,9 @@ mod tests {
         const H: usize = 80;
         let mut buf = vec![theme::BG; W * H];
         let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), W, H) };
-        let dot = status_dot_rect(W as i32);
+        // Whatever the nav actually drew — dot or word — the rail sits under
+        // it and must not touch it.
+        let dot = status_hit_rect(W as i32);
         let centre = (dot.x + dot.w / 2, dot.y + dot.h / 2);
         fb.fill_rect(dot.x, dot.y, dot.w, dot.h, theme::ONLINE);
         fb.clear_dirty();
@@ -1066,6 +1115,40 @@ mod tests {
         paint_status_hover(&fb, W as i32, false);
         assert_eq!(fb.get_pixel(rail.x, rail.y), theme::BG);
         assert_eq!(fb.get_pixel(centre.0, centre.1), theme::ONLINE);
+    }
+
+    /// The bug this pins: after the standalone conversion `ping_bridge` began
+    /// answering Offline for every caller forever, so the nav dot went red on
+    /// first boot and stayed red on a machine with nothing wrong with it. It
+    /// read as "your search is disconnected" and sent the owner looking for a
+    /// bridge this image does not ship, while local search answered fine.
+    #[test]
+    fn standalone_nav_claims_no_fault_but_stays_clickable() {
+        const W: usize = 1280;
+        const H: usize = NAV_H as usize + 2;
+        let mut buf = vec![theme::BG; W * H];
+        let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), W, H) };
+        draw_nav(&fb, W as i32, &MailPeek::empty(BridgeStatus::Offline));
+
+        // Whatever it drew, the pointer must be able to find it — otherwise
+        // the Status screen becomes unreachable.
+        let hit = status_hit_rect(W as i32);
+        let inked = (hit.y..hit.y + hit.h)
+            .flat_map(|y| (hit.x..hit.x + hit.w).map(move |x| (x, y)))
+            .any(|(x, y)| fb.get_pixel(x, y) != theme::BG);
+        assert!(inked, "nothing drawn where the status affordance is hit-tested");
+
+        if standalone() {
+            for y in 0..NAV_H {
+                for x in 0..W as i32 {
+                    assert_ne!(
+                        fb.get_pixel(x, y),
+                        theme::OFFLINE,
+                        "standalone nav paints the offline dot at {x},{y}"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

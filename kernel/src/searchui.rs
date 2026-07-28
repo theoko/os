@@ -73,16 +73,16 @@ pub fn media_stem(q: &str) -> &str {
 /// fixed slots keeps the whole path free of unsafe lifetime tricks.
 #[derive(Clone, Copy)]
 pub struct Row {
-    title: [u8; 56],
-    url: [u8; 72],
+    title: [u8; search::TITLE_SLOT],
+    url: [u8; search::URL_SLOT],
     cat: &'static str,
 }
 
 impl Row {
     pub const fn empty() -> Self {
         Self {
-            title: [0; 56],
-            url: [0; 72],
+            title: [0; search::TITLE_SLOT],
+            url: [0; search::URL_SLOT],
             cat: "",
         }
     }
@@ -230,7 +230,16 @@ impl SearchView {
         let n = search::query(q, &mut hits);
         for h in hits.iter().take(n) {
             let d = &search::DOCS[h.doc];
-            self.rows[self.count].set(d.title, d.url, d.cat);
+            // The URL is what makes a row look tappable, so it is carried only
+            // for documents this image stores text for. It used to be copied
+            // unconditionally: every row invited a tap and answered "cannot
+            // open documents", on a device that is never anything but offline.
+            let url = if search::body_for(d.url).is_some() {
+                d.url
+            } else {
+                ""
+            };
+            self.rows[self.count].set(d.title, url, d.cat);
             self.count += 1;
         }
     }
@@ -950,6 +959,28 @@ mod reader_tests {
             !v.rows[0].url().is_empty(),
             "offline results must be openable too"
         );
+    }
+
+    #[test]
+    fn a_row_looks_openable_exactly_when_its_text_is_stored() {
+        // The tap and the affordance read the same fact. Offline rows used to
+        // carry a URL whatever the image held, so every one of them invited a
+        // tap and answered "cannot open documents".
+        let mut v = SearchView::new();
+        v.run("capability agent");
+        assert!(v.count > 0);
+
+        let mut hits = [search::Hit { doc: 0, score: 0 }; search::MAX_HITS];
+        let n = search::query("capability agent", &mut hits);
+        assert_eq!(n, v.count);
+        for (i, h) in hits.iter().take(n).enumerate() {
+            let stored = search::body_for(search::DOCS[h.doc].url).is_some();
+            assert_eq!(
+                !v.rows[i].url().is_empty(),
+                stored,
+                "row {i}: the affordance and the stored text disagree"
+            );
+        }
     }
 }
 

@@ -281,6 +281,12 @@ fn build_corpus(manifest_dir: &Path) -> String {
     let n = docs.len();
     let _ = writeln!(out, "pub const N_DOCS: usize = {n};");
     out.push_str("pub static DOCS: [Doc; N_DOCS] = [\n");
+    // Widest title and URL baked in, so `search.rs` can const-assert that both
+    // still fit the fixed row slots. Checking here rather than at runtime is
+    // the point: `copy_into` truncates in silence, so a corpus that outgrew
+    // the slots would ship looking fine and quietly merge distinct documents.
+    let mut title_max = 0usize;
+    let mut url_max = 0usize;
     for (i, d) in docs.iter().enumerate() {
         let esc = |k: &str| -> String {
             d[k].as_str()
@@ -288,18 +294,42 @@ fn build_corpus(manifest_dir: &Path) -> String {
                 .replace('\\', "\\\\")
                 .replace('"', "\\\"")
         };
+        // The font atlas covers 0x20..=0x7E only (`font.rs`), and the
+        // tokenizer emits ASCII runs only. Anything else is a document that
+        // draws as holes and cannot be found by what it says — bake-corpus.py
+        // folds it to ASCII, and this is the check that it did.
+        for k in ["t", "c", "u", "b"] {
+            let v = d[k].as_str().unwrap_or("");
+            if let Some(bad) = v.chars().find(|c| !(' '..='~').contains(c)) {
+                panic!(
+                    "corpus doc {i} field {k:?} has {bad:?}, which the font atlas \
+                     cannot draw and the tokenizer cannot index — run \
+                     ./scripts/bake-corpus.py"
+                );
+            }
+        }
+        title_max = title_max.max(d["t"].as_str().unwrap_or("").len());
+        url_max = url_max.max(d["u"].as_str().unwrap_or("").len());
         // PageRank as 0..1024 fixed point.
         let pr = (d["pr"].as_f64().unwrap_or(0.0).clamp(0.0, 1.0) * 1024.0).round() as i32;
+        // The extract is baked, not only indexed. Without it the image could
+        // find a document and never show one: every offline row led to
+        // "cannot open documents", which is a search engine that answers in
+        // titles you may not touch. It is already in `corpus.json` — it was
+        // read here for tokens and then thrown away.
         let _ = writeln!(
             out,
-            "  Doc {{ title: \"{}\", cat: \"{}\", url: \"{}\", pr_q10: {pr}, n_tokens: {} }},",
+            "  Doc {{ title: \"{}\", cat: \"{}\", url: \"{}\", body: \"{}\", pr_q10: {pr}, n_tokens: {} }},",
             esc("t"),
             esc("c"),
             esc("u"),
+            esc("b"),
             doc_tokens[i].len().max(1)
         );
     }
     out.push_str("];\n");
+    let _ = writeln!(out, "pub const BAKED_TITLE_MAX: usize = {title_max};");
+    let _ = writeln!(out, "pub const BAKED_URL_MAX: usize = {url_max};");
 
     // term -> doc -> tf
     let mut index: BTreeMap<String, BTreeMap<usize, u32>> = BTreeMap::new();

@@ -300,21 +300,86 @@ mod tests {
 
     #[test]
     fn rare_terms_outweigh_common_ones() {
-        // Scoring must actually apply idf, not just term presence: "bridge"
-        // is spread across the corpus while "agentd" and "scheduling" belong
-        // to one document. Weighted by term frequency alone, the bridge doc
-        // wins and the answer is wrong.
-        let hit = top("agentd scheduling bridge").expect("corpus phrase");
-        assert_eq!(hit, "Architecture capability IPC");
+        // Scoring must apply idf, not just term presence. This checks the
+        // score `query` actually delivers against the whole formula, so a
+        // scorer that dropped the idf factor — or the PageRank blend, or the
+        // exact-AND bonus — fails here with the term it disagreed about.
+        //
+        // A term in exactly one document is the case where the delivered
+        // score is knowable: nothing else contributes to it, and the document
+        // is certain to come back rather than falling outside MAX_HITS.
+        //
+        // The old version named "bridge" as a common term and asserted a
+        // title. That held only for a 16-document corpus — and it was not
+        // measuring idf at all: tf is divided by document length, so a
+        // four-word file outscores a long one on any shared term whatever the
+        // weights are. Re-baking the index broke a test about arithmetic.
+        let rare = TERMS
+            .iter()
+            .find(|t| t.len == 1)
+            .expect("a term in exactly one document");
+        let p = &POSTINGS[rare.start];
+
+        let hit = query(rare.word).first().copied().expect("corpus phrase");
+        assert_eq!(hit.doc, p.doc, "{:?} answered another document", rare.word);
+
+        // tf/len * idf, blended with PageRank, times the exact-AND bonus the
+        // one-term query earns by carrying every term.
+        let expected = p.tf * rare.idf * (1.0 + 4.0 * DOCS[p.doc].pr) * 1.35;
+        assert!(
+            (hit.score - expected).abs() < 1e-9,
+            "{:?} scored {} against {expected} — the delivered score is not \
+             tf * idf * PageRank * exact-AND",
+            rare.word,
+            hit.score
+        );
+
+        // And the weight is doing work: the commonest word in the corpus
+        // would have scored the same document far lower.
+        let common = TERMS.iter().max_by_key(|t| t.len).expect("vocabulary");
+        assert!(
+            rare.idf > common.idf,
+            "a term in one document does not outweigh one in {}",
+            common.len
+        );
     }
 
     #[test]
     fn pagerank_outranks_a_stronger_tf_idf_match() {
-        // "Architecture capability IPC" carries less tf-idf mass for this
-        // query than "knowledge-search skill" does; it wins only because the
-        // (1 + 4*pr) blend is applied. Drop the blend and the answer flips.
-        let hit = top("live architecture skill boot").expect("corpus phrase");
-        assert_eq!(hit, "Architecture capability IPC");
+        // The (1 + 4*pr) blend has to change an answer somewhere, or it is
+        // dead arithmetic. Watch a real ranking rather than recomputing the
+        // formula — recomputing it here only proves the test can multiply.
+        //
+        // For a one-word query every document scores tf * idf with the same
+        // idf and the same exact-AND bonus, so without the blend `query` can
+        // only ever return them in descending tf. A document delivered above
+        // one with strictly higher tf therefore got there on PageRank and
+        // nothing else. Ties are ignored on purpose: the selection sort in
+        // `take_top` is free to order equal scores however it likes.
+        let flipped = TERMS
+            .iter()
+            // Whole posting list has to fit in one answer, or the documents
+            // missing from it would look like a reordering.
+            .filter(|t| (2..=MAX_HITS).contains(&t.len))
+            .find(|t| {
+                let tf_of = |doc: usize| {
+                    POSTINGS[t.start..t.start + t.len]
+                        .iter()
+                        .find(|p| p.doc == doc)
+                        .map(|p| p.tf)
+                        .expect("delivered a document with no posting")
+                };
+                let delivered: Vec<usize> = query(t.word).iter().map(|h| h.doc).collect();
+                delivered
+                    .iter()
+                    .enumerate()
+                    .any(|(i, &a)| delivered[i + 1..].iter().any(|&b| tf_of(a) < tf_of(b)))
+            });
+        assert!(
+            flipped.is_some(),
+            "no query is ordered by anything but term frequency — PageRank is \
+             not reaching the ranking"
+        );
     }
 
     #[test]

@@ -232,9 +232,10 @@ impl Brief {
 
     /// Is this tag a search result rather than a piece of report metadata?
     ///
-    /// Only results are deduplicated. `Goal` and `Query` frequently carry the
-    /// same text as each other — running a brief on "paper" prints
-    /// `Goal: paper` and `Query: paper`, and both belong there.
+    /// Only results are deduplicated. `Goal` and `Query` can legitimately
+    /// carry the same text when the machine restated the ask in the words it
+    /// searched with — see `run_goal_with_plan`, which drops the second card
+    /// when the two are identical.
     fn is_result(tag: &str) -> bool {
         matches!(tag, "Doc" | "Hit")
     }
@@ -243,6 +244,24 @@ impl Brief {
     fn result_rows(&self) -> usize {
         (0..self.count)
             .filter(|&i| Self::is_result(self.lines[i].tag()))
+            .count()
+    }
+
+    /// Rows that are findings of any lane, not commentary about the run.
+    ///
+    /// Wider than [`Self::result_rows`]: a mail lane reports `Urgent` and
+    /// `FYI` rows, which are things it found even though they are not search
+    /// results. What is left — `Goal`, `Query`, `Info`, `Next`, `Need` — is
+    /// the run describing itself, and a screen holding only those found
+    /// nothing.
+    pub fn finding_rows(&self) -> usize {
+        (0..self.count)
+            .filter(|&i| {
+                !matches!(
+                    self.lines[i].tag(),
+                    "Goal" | "Query" | "Info" | "Next" | "Need"
+                )
+            })
             .count()
     }
 
@@ -353,9 +372,16 @@ pub fn run_goal_with_plan(goal: &str, caps: Caps, intent: &IntentPlan) -> Brief 
     };
     if q.is_empty() {
         brief.push_line("Info", "Try naming the file, topic, or inbox.");
+        brief.set_heading("Nothing to search");
         return brief;
     }
-    brief.push_line("Query", q);
+    // The Query card is a second fact only when the machine searched for
+    // something other than what was typed. A one-word goal makes the two
+    // identical — "nvda" printed as both Goal and Query is one word twice, on
+    // a screen whose whole answer was four cards.
+    if !q.eq_ignore_ascii_case(restated) {
+        brief.push_line("Query", q);
+    }
 
     if intent.plan_n > 0 {
         for i in 0..intent.plan_n.min(4) {
@@ -366,7 +392,11 @@ pub fn run_goal_with_plan(goal: &str, caps: Caps, intent: &IntentPlan) -> Brief 
         brief.push_plan("Pick tools from grants");
         brief.push_plan("Search under those grants");
         brief.push_plan("Report openable hits");
-        if intent.status == BridgeStatus::Offline {
+        // Worth saying on a machine that has a bridge and is not using it.
+        // A standalone image is never anything else, so the same card would
+        // print on every run this build can ever do — a caption, not news,
+        // costing a row on the one screen the answer has to fit in.
+        if intent.status == BridgeStatus::Offline && !mcp::standalone() {
             brief.push_line("Info", copy::search_local_only());
         }
     }
@@ -437,7 +467,50 @@ pub fn run_goal_with_plan(goal: &str, caps: Caps, intent: &IntentPlan) -> Brief 
     {
         brief.push_line(tag, text);
     }
+    let mut hbuf = [0u8; 40];
+    let outcome = goal_outcome(&brief, &mut hbuf);
+    brief.set_heading(outcome);
     brief
+}
+
+/// What the run amounted to, for the screen title.
+///
+/// The title starts as "Working on it" because that is true while the plan is
+/// being carried out. Nothing draws the Brief until `run_goal` has returned,
+/// so by the time a human reads that title the work is over — and a finished
+/// report under a progress title reads as a machine that hung. The arm64 guest
+/// showed "Working on it" above "No offline hits for that query.", which is a
+/// finished answer wearing the face of a stuck one.
+///
+/// Counts come from what the screen can act on: openable rows first, because
+/// tapping one is the next thing to do.
+fn goal_outcome<'a>(brief: &Brief, buf: &'a mut [u8; 40]) -> &'a str {
+    if brief.denied {
+        return "Needs a grant";
+    }
+    if brief.send_ready {
+        return "Draft ready";
+    }
+    let (n, tail) = if brief.doc_n > 0 {
+        (brief.doc_n, " to open")
+    } else {
+        (brief.finding_rows(), " found")
+    };
+    if n == 0 {
+        return "Nothing found";
+    }
+    buf.fill(0);
+    // Counts are bounded by the line and doc slots, so one digit is enough.
+    let n = n.min(9);
+    buf[0] = b'0' + n as u8;
+    let mut w = 1;
+    for &b in tail.as_bytes() {
+        if w < buf.len() {
+            buf[w] = b;
+            w += 1;
+        }
+    }
+    core::str::from_utf8(&buf[..w]).unwrap_or("Done")
 }
 
 /// The last line of a goal run: what to do next, or why nothing opens.
@@ -464,7 +537,13 @@ fn closing_line(
     if status != BridgeStatus::Offline {
         return Some(("Info", "No openable hits - refine the ask."));
     }
-    (result_rows > 0).then_some(("Info", copy::titles_only()))
+    if result_rows > 0 {
+        return Some(("Info", copy::titles_only()));
+    }
+    // An empty answer used to end the screen. Saying nothing matched is a
+    // fact, not a way forward: the reader is left holding a word the machine
+    // does not know and no idea what would work instead.
+    Some(("Next", copy::retry_broader()))
 }
 
 /// Drop filler words so "i wanna work on my paper" becomes `paper`.
@@ -578,7 +657,7 @@ fn fill_goal_hits_remaining(brief: &mut Brief, peek: &SearchPeek) {
         brief.push_line(
             "Info",
             if peek.status == BridgeStatus::Offline {
-                "No offline hits for that query."
+                copy::no_local_hits()
             } else {
                 "No search hits."
             },
@@ -793,13 +872,14 @@ pub fn run_playbook_allowed(brief: &mut Brief, caps: Caps, body: &str) {
         } else if peek.count > 0 {
             let room = brief.lines.len().saturating_sub(brief.count).min(3);
             for i in 0..peek.count.min(room) {
-                brief.push_line("Hit", peek.title_at(i));
+                // Same sink as every other lane: the tag follows the URL.
+                brief.push_result(peek.title_at(i), peek.url_at(i));
             }
         } else {
             brief.push_line(
                 "Info",
                 if peek.status == BridgeStatus::Offline {
-                    "No offline hits for that query."
+                    copy::no_local_hits()
                 } else {
                     "No corpus hits."
                 },
@@ -1103,7 +1183,7 @@ fn fill_search_lines(brief: &mut Brief, peek: &SearchPeek) {
         brief.push_line(
             "Info",
             if peek.status == BridgeStatus::Offline {
-                "No offline hits for that query."
+                copy::no_local_hits()
             } else {
                 "No corpus hits."
             },
@@ -1111,7 +1191,12 @@ fn fill_search_lines(brief: &mut Brief, peek: &SearchPeek) {
         return;
     }
     for i in 0..peek.count.min(5) {
-        brief.push_line("Hit", peek.title_at(i));
+        // Through the sink, so a row that can be opened is drawn as one. This
+        // lane threw the URL away and tagged everything `Hit`, which was true
+        // while the image held no document text and became a lie the moment
+        // it did — the same query answered openable rows on Search and dead
+        // titles here.
+        brief.push_result(peek.title_at(i), peek.url_at(i));
     }
 }
 
@@ -1139,12 +1224,17 @@ fn fill_corpus_lines(brief: &mut Brief, peek: &SearchPeek) {
     // explanatory row would not have been dropped loudly — `push_line` swallows
     // pushes past the end — it would have silently evicted the "Recordings on"
     // line off the bottom of the same screen this is trying to fix.
+    // Provenance has to describe the rows below it, and offline is no longer
+    // the thing that decides whether they open — the image either stores the
+    // text or it does not. Asked before the rows are pushed, using the same
+    // rule the sink will apply, so the sentence cannot outlive its rows.
+    let openable = (0..peek.count).any(|i| brief.armable(peek.url_at(i)));
     brief.push_line(
         "Info",
-        if peek.status == BridgeStatus::Offline {
-            copy::builtin_docs_titles_only()
-        } else {
+        if openable {
             "Built-in docs - tap a Doc row to read it."
+        } else {
+            copy::builtin_docs_titles_only()
         },
     );
     // Keep room: at most 3 knowledge hits after mail lines.
@@ -1886,6 +1976,12 @@ mod tests {
             "email.send: Confirm send on an inbox Brief.",
             "Mock queued on the bridge",
             "Working on it",
+            "Nothing to search",
+            "Nothing found",
+            "Needs a grant",
+            "Draft ready",
+            copy::no_local_hits(),
+            copy::retry_broader(),
             "Try naming the file, topic, or inbox.",
             "Grant Built-in docs or Your files.",
             "No openable hits - refine the ask.",
@@ -1922,13 +2018,62 @@ mod tests {
         // Synthetic offline plan — must not open COM2.
         let intent = IntentPlan::empty(BridgeStatus::Offline);
         let b = run_goal_with_plan("i wanna work on my paper", Caps::none(), &intent);
-        assert_eq!(b.heading(), "Working on it");
+        assert_eq!(b.heading(), "Needs a grant");
         assert!(b.plan_n >= 3);
         assert!(b.lines.iter().any(|l| l.tag() == "Goal"));
         assert!(b.lines.iter().any(|l| l.tag() == "Query" && l.text() == "paper"));
         assert!(b.denied);
         assert_eq!(b.deny_name(), "search.query");
         assert_eq!(b.doc_n, 0);
+    }
+
+    #[test]
+    fn the_title_reports_the_outcome_not_the_intention() {
+        // Nothing draws a Brief until `run_goal` has returned, so a title
+        // that says the work is under way is wrong every time it is read.
+        let mut buf = [0u8; 40];
+        let mut b = Brief::empty();
+        assert_eq!(goal_outcome(&b, &mut buf), "Nothing found");
+
+        // Commentary about the run is not a finding, however many cards it
+        // fills — the empty arm64 answer had four.
+        b.push_line("Goal", "nvda");
+        b.push_line("Info", copy::no_local_hits());
+        b.push_line("Next", copy::retry_broader());
+        assert_eq!(goal_outcome(&b, &mut buf), "Nothing found");
+
+        // A title carrying titles-only findings must not promise opening.
+        b.push_result("os identity", "");
+        assert_eq!(goal_outcome(&b, &mut buf), "1 found");
+
+        // Once something opens, that is the next thing to do, so it leads.
+        b.push_result("Q2 paper", "file://q2.md");
+        assert_eq!(goal_outcome(&b, &mut buf), "1 to open");
+
+        // A missing grant outranks any count: it is what to fix.
+        b.denied = true;
+        assert_eq!(goal_outcome(&b, &mut buf), "Needs a grant");
+    }
+
+    #[test]
+    fn a_one_word_goal_does_not_print_itself_twice() {
+        // Caps::none() keeps COM2 closed on the host.
+        let intent = IntentPlan::empty(BridgeStatus::Offline);
+        let b = run_goal_with_plan("nvda", Caps::none(), &intent);
+        assert!(b.lines.iter().any(|l| l.tag() == "Goal" && l.text() == "nvda"));
+        assert_eq!(
+            (0..b.count).filter(|&i| b.lines[i].tag() == "Query").count(),
+            0,
+            "Goal and Query said the same word on two cards"
+        );
+
+        // A sentence still earns the second card: the words searched for are
+        // not the words typed, and the reader should see which won.
+        let b2 = run_goal_with_plan("i wanna work on my paper", Caps::none(), &intent);
+        assert!(
+            b2.lines.iter().any(|l| l.tag() == "Query" && l.text() == "paper"),
+            "the restated query is a fact the goal does not carry"
+        );
     }
 
     #[test]
@@ -2013,11 +2158,20 @@ mod tests {
         // The arm64 guest stacked "Bridge offline - local keywords only.",
         // "No offline hits for that query." and "No openable hits - refine
         // the ask." under one empty answer: three sentences, one fact.
-        assert_eq!(
-            closing_line(BridgeStatus::Offline, 0, 0, true, false),
-            None,
-            "the search already said nothing was found"
-        );
+        //
+        // One line may still follow, and it has to carry a fact the report
+        // does not already hold: what to try next. Anything that says "no"
+        // or "nothing" a second time is the old stack coming back.
+        let line = closing_line(BridgeStatus::Offline, 0, 0, true, false);
+        let (tag, text) = line.expect("an empty answer needs a way forward");
+        assert_eq!((tag, text), ("Next", copy::retry_broader()));
+        let lower = text.to_ascii_lowercase();
+        for repeat in ["no ", "nothing", "not found"] {
+            assert!(
+                !lower.contains(repeat),
+                "the closing line retells the empty answer: {text}"
+            );
+        }
     }
 
     #[test]
