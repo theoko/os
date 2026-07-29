@@ -2,10 +2,18 @@
 title: The thesis after the substrate move
 version: v01
 date: 2026-07-26
-status: current — settles the enforcement question deferred by linux-os-doc-v02.md
+status: historical decision record — not Live product docs for this tip
 ---
 
 # The thesis after the substrate move
+
+> **Tip note (teddyOS / `fix/bridge-prewarm`).** This essay settled the
+> enforcement question *before* the standalone Linux live tip. Citations of
+> `host/bridge/src/main.rs`, COM2, and MCP connector north-star wording describe
+> the **pre-standalone / MCP-era tree** (or MCP `main`), not what this tip ships
+> today. Current product truth: `AGENTS.md`, `STATUS.md`,
+> `docs/architecture-os-doc-v01.md`. Do not treat path/line references here as
+> Live on this fork.
 
 `linux-os-doc-v02.md` ends with a sequence whose first step is *"settle the
 enforcement question. Everything else follows from it."* Nothing follows until

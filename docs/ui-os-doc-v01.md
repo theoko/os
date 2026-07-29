@@ -51,22 +51,23 @@ Code: [`kernel/src/level.rs`](../kernel/src/level.rs), setup Experience step.
 
 ## Home agent (v0.9.26 / v0.9.27)
 
-**Standalone note (since the 2026-07-27 bridge removal):** the smart half of
-this feature is gone, not the feature. `agent::run_goal` still runs on every
-build. What changed is where the plan comes from: `intent.resolve` was a host
-bridge tool, and `kernel/src/mcp.rs` now returns `BridgeStatus::Offline`
-unconditionally in a standalone build (`fetch_intent_plan`), so the guest
-never gets host-side synonym expansion, act classification, or ranked
-`file://` hits. `run_goal_with_plan` (`kernel/src/agent.rs`) falls back to a
-local path that was always there for the "bridge not started yet" case and is
-now the only path: keywords pulled straight from the goal text
-(`keywords_from_goal`), a fixed 4-line generic plan (restate → pick tools from
-grants → search under those grants → report openable hits), and an inline
-"local search only" notice. It still CALLs `search.query` under the
-`SearchQuery` grant, which still answers — see Recent files/search below.
-Example: `i wanna work on my paper` → generic plan → keyword query `paper` →
-local corpus hits → Reader. No model in the kernel — missing caps stay Need,
-same as before.
+> **Standalone note (since the 2026-07-27 bridge removal):** the smart half of
+> this feature is gone, not the feature. `agent::run_goal` still runs on every
+> build. What changed is where the plan comes from: `intent.resolve` was a host
+> bridge tool, and `kernel/src/mcp.rs` now returns `BridgeStatus::Offline`
+> unconditionally in a standalone build (`fetch_intent_plan`), so the guest
+> never gets host-side synonym expansion, act classification, or ranked
+> `file://` hits. `run_goal_with_plan` (`kernel/src/agent.rs`) falls back to a
+> local path that was always there for the "bridge not started yet" case and is
+> now the only path: keywords pulled straight from the goal text
+> (`keywords_from_goal`), a fixed 4-line generic plan (restate → pick tools from
+> grants → search under those grants → report openable hits), and an inline
+> "local search only" notice. Corpus hits still come from the in-kernel index
+> (`kernel/src/search.rs` / `mcp::fetch_search_peek` → `search_offline`) under
+> the `SearchQuery` grant — wire name `search.query` in Advanced mode only.
+> Example: `i wanna work on my paper` → generic plan → keyword query `paper` →
+> local corpus hits → Reader. No model in the kernel — missing caps stay Need,
+> same as before.
 
 ## Recent mail, recent files, calendar events — removed (standalone)
 

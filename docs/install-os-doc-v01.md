@@ -2,10 +2,15 @@
 title: Running on real hardware
 version: v01
 date: 2026-07-25
-status: current
+status: current — freestanding ISO path; see tip note
 ---
 
 # Running on real hardware
+
+> **Tip note.** This tip is **standalone**: there is no Live host MCP bridge
+> over COM2. Bare-metal boots still matter for native-speed freestanding ISO
+> demos; daily-driver on Apple Silicon is the Linux live path (`linux/`,
+> VirtualBox ARM64). See `AGENTS.md` / `STATUS.md`.
 
 ## Why this document exists
 
@@ -75,7 +80,7 @@ where the surprise lives.
 | framebuffer | yes | yes, via UEFI GOP |
 | keyboard | yes (i8042) | **only if the machine has an i8042** |
 | pointer | yes (UHCI tablet) | **unlikely — see below** |
-| host bridge over COM2 | yes | no serial port on most laptops |
+| host MCP bridge over COM2 | not on this tip (standalone) | N/A — no Live bridge |
 
 ### The input problem
 
@@ -100,22 +105,20 @@ then the boot succeeded and the input drivers are the gap. An older desktop
 with PS/2 ports, or any machine exposing a UHCI/EHCI controller, will be
 driveable. Writing an xHCI driver is the work that changes this.
 
-### The bridge
+### Connectors (standalone)
 
-Email, your files, the teddy corpus, and portal results all come from the host
-bridge over COM2. On a real machine there is no second serial port and no host
-to reach, so the OS falls back to the index baked into the kernel and says the
-bridge is offline — which is true.
-
-Making connectors work on real hardware means giving the guest a network
-stack, and that is a much larger piece of work than the USB driver.
+On this tip there is **no** host MCP bridge. Search answers from the corpus
+baked into the ISO. Mail, host files, and live portals are Offline stubs —
+same on QEMU and bare metal. Giving the guest a network stack (or restoring a
+bridge product) is separate work and is **not** implied by booting a USB stick.
 
 ## Recommendation
 
-Boot real hardware to see the OS run at native speed and to prove the boot path
-end to end. Expect input to be the thing that decides whether a given machine
-is usable, and check the status line on the home screen first — it now tells
-you which half is missing.
+Boot real hardware to see the freestanding OS run at native speed and to prove
+the boot path end to end. Expect input to be the thing that decides whether a
+given machine is usable, and check the status line on the home screen first —
+it now tells you which half is missing.
 
-For day-to-day work on the OS, UTM remains the right environment, because the
-bridge is what makes the product interesting and the bridge needs a host.
+For day-to-day product work on this tip, prefer the **Linux live** path under
+`linux/` (VirtualBox ARM64 / UTM as documented). The freestanding ISO remains
+the QEMU smoke artifact; it is not the daily-driver surface.

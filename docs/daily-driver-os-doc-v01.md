@@ -2,10 +2,14 @@
 title: Replacing macOS — route A, and what it costs
 version: v01
 date: 2026-07-27
-status: current — implements the substrate decision in thesis-os-doc-v01.md
+status: current — Linux live daily-driver path on this tip
 ---
 
 # Replacing macOS — route A, and what it costs
+
+> **Tip note.** Route A (`linux/` live image) is the daily-driver path on
+> `fix/bridge-prewarm` / this review branch. It does **not** restore MCP
+> `host/bridge` connectors. See `STATUS.md` and `AGENTS.md`.
 
 ## The question this answers
 

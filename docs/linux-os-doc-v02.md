@@ -3,10 +3,16 @@ title: Substrate and architecture — two separate decisions
 version: v02
 supersedes: linux-os-doc-v01.md
 date: 2026-07-25
-status: proposal — not started
+status: partially landed — Linux live under linux/; freestanding kernel remains
 ---
 
 # Substrate and architecture — two separate decisions
+
+> **Tip note (teddyOS / `fix/bridge-prewarm`).** Linux live apps under `linux/`
+> shipped; the freestanding kernel remains for ISO/QEMU. Sections below that
+> treat `host/bridge` as kept / COM2 as load-bearing are **proposal-era** —
+> this tip is standalone (no Live host MCP). See `STATUS.md`, `AGENTS.md`,
+> `docs/daily-driver-os-doc-v01.md`.
 
 v01 got the diagnosis wrong, in a way that would have been expensive.
 
@@ -264,18 +270,22 @@ restrictions nothing applies.
 
 ## Suggested sequence
 
-Nothing here is started. In order:
+**Progress on this tip (honest):** Linux live image + teddyOS desktop apps
+exist under `linux/`. Freestanding ISO/QEMU remains. Host MCP / COM2 bridge was
+**removed**, not relocated over vsock — connectors are Offline stubs + baked
+corpus, not a kept `host/bridge`.
+
+Original proposal order (for the historical record):
 
 1. **Settle the enforcement question** above. Everything else follows from it.
-2. **Prove the substrate**: minimal Linux image, our shell, bridge over vsock
-   or a unix socket. Measure frame times before porting UI.
-3. **Port the logic** — `caps`, `search`, `skills` — with their tests. These
-   should pass unchanged.
+2. **Prove the substrate**: minimal Linux image, our shell (proposal: bridge
+   over vsock / unix socket — **not** how this tip landed).
+3. **Port the logic** — `caps`, `search`, `skills` — with their tests.
 4. **Rebuild the UI** against a real toolkit, reusing layouts and copy.
 5. **Delete the drivers** last, once the replacement demonstrably works.
 
-Keep `main` bootable throughout. The current kernel is a working artifact and
-should stay that way until the replacement is better, not merely newer.
+Keep a bootable freestanding artifact throughout. MCP `main` is a separate
+product tip; do not conflate the two.
 
 ## Recommendation
 
