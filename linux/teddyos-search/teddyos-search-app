@@ -61,13 +61,6 @@ APP_ID = "com.teddyos.Search"
 # stays out here where it can draw, and everything that reads a file or opens a
 # socket happens over there, inside the namespace.
 SEARCH_CLI = "teddyos-search"
-# Exit codes that mean "the sandbox itself did not come up". They must surface
-# as an error, never as a reason to retry the search unconfined: a fallback that
-# quietly runs without the namespace is worse than no search at all, because it
-# would break the promise at exactly the moment the machinery for keeping it is
-# known to be broken.
-_SANDBOX_FAILED = {5} | set(range(200, 243))
-_QUERY_TIMEOUT_S = 120
 
 # Where a query goes when this machine cannot answer it.
 #

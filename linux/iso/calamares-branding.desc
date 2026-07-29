@@ -18,7 +18,7 @@
 # the product they have been using.
 componentName:   teddyos
 welcomeStyleCalamares: true
-welcomeExpandingLogo: true
+welcomeExpandingLogo: false
 windowExpanding: normal
 windowSize: 800px,580px
 windowPlacement: center
@@ -45,10 +45,13 @@ images:
     productIcon:         "teddyos-logo.png"
     productWelcome:      "teddyos-logo.png"
 
-# No slideshow. Debian's branding ships show.qml, a carousel of slides about
-# Debian; replacing it with a carousel about teddyOS would mean writing
-# marketing to read while a disk is being partitioned. An installer that just
-# gets on with it is better than one that talks.
+# One slide, and it is not optional. This originally omitted
+# `slideshow:` on the reasoning that an installer which gets on with the
+# job beats one that runs a carousel at you. Calamares disagreed: a
+# descriptor declaring slideshowAPI without a slideshow makes it refuse the
+# whole branding component and exit before drawing anything — which is
+# exactly what "clicking Install teddyOS does nothing" was.
+slideshow:               "show.qml"
 
 style:
    SidebarBackground:    "#1f2430"

@@ -321,10 +321,11 @@ def fetch_portal_index(force: bool = False) -> tuple[dict | None, str | None]:
         # this as an error worth showing.
         if PORTAL_CACHE.exists():
             try:
-                return json.loads(PORTAL_CACHE.read_text()), f"offline; using cached index ({exc})"
+                return (json.loads(PORTAL_CACHE.read_text()),
+                        "Showing what was saved last time — this computer isn't online.")
             except (OSError, ValueError):
                 pass
-        return None, str(exc)
+        return None, humanise(exc)
 
 
 def search_portal(query: str, limit: int) -> tuple[list[Result], str | None, float | None]:
@@ -354,6 +355,38 @@ def search_portal(query: str, limit: int) -> tuple[list[Result], str | None, flo
     return out[:limit], error, _cache_age()
 
 
+def humanise(exc: object) -> str:
+    """Turn an exception into a sentence somebody can act on.
+
+    These strings are rendered in the Search window, not just printed to a
+    terminal, and the raw ones are Python's:
+
+        <urlopen error [Errno -3] Temporary failure in name resolution>
+
+    Which is accurate, useless, and alarming — it looks like the machine is
+    broken when the actual news is "you are not online". Anyone who has never
+    seen a traceback reads an errno as damage.
+
+    Both the window and the CLI get the sentence. Keeping the raw string for
+    terminal users was tempting and wrong: the two would drift, and the version
+    that gets read least is the one that stays accurate least.
+    """
+    text = str(exc).lower()
+    if "name resolution" in text or "nodename nor servname" in text \
+            or "temporary failure" in text or "name or service not known" in text:
+        return "This computer isn't online, so the web wasn't searched."
+    if "timed out" in text or "timeout" in text:
+        return "teddysearch took too long to answer. It may be busy."
+    if "connection refused" in text or "network is unreachable" in text \
+            or "no route to host" in text:
+        return "Couldn't reach teddysearch. The connection may have dropped."
+    if "certificate" in text or "ssl" in text:
+        return "Couldn't verify teddysearch's security certificate, so nothing was fetched."
+    if "http error 4" in text or "http error 5" in text:
+        return "teddysearch answered with an error. Try again in a moment."
+    return "Something went wrong reaching the web, so those results are missing."
+
+
 def _get_json(url: str, timeout: int) -> tuple[object | None, str | None]:
     req = urllib.request.Request(
         url, headers={"User-Agent": "teddyOS/1.0 (+https://teddysearch.com)"})
@@ -361,7 +394,7 @@ def _get_json(url: str, timeout: int) -> tuple[object | None, str | None]:
         with urllib.request.urlopen(req, timeout=timeout) as resp:
             return json.loads(resp.read()), None
     except (urllib.error.URLError, OSError, ValueError) as exc:
-        return None, str(exc)
+        return None, humanise(exc)
 
 
 def portal_corpus_status() -> dict:
@@ -393,7 +426,7 @@ def sync_portal_corpus(force: bool = False, progress=None) -> tuple[bool, str]:
     if local["present"] and not force:
         delta, err = _get_json(PORTAL_DELTA_URL, PORTAL_TIMEOUT)
         if delta is None:
-            return False, f"could not check for updates ({err})"
+            return False, f"Couldn't check for updates. {err}"
         remote_at = (delta.get("latest") or {}).get("at")
         if remote_at and remote_at == local["crawled_at"]:
             return True, f"already current ({remote_at}, {local['bytes'] // 1_000_000} MB)"
@@ -430,7 +463,7 @@ def sync_portal_corpus(force: bool = False, progress=None) -> tuple[bool, str]:
         return True, f"portal corpus: {docs} documents, {total // 1_000_000} MB"
     except (urllib.error.URLError, OSError, ValueError) as exc:
         tmp.unlink(missing_ok=True)
-        return False, f"portal sync failed ({exc})"
+        return False, f"The download didn't finish. {humanise(exc)}"
 
 
 # Parsed once, kept. The corpus is 67 MB of JSON and takes seconds to parse;
@@ -454,7 +487,7 @@ def _load_portal_corpus() -> tuple[list, str | None]:
     try:
         raw = json.loads(PORTAL_CORPUS_CACHE.read_text()).get("docs", [])
     except (OSError, ValueError) as exc:
-        return [], f"portal corpus unreadable ({exc})"
+        return [], "The saved search index is damaged. It will be downloaded again."
 
     docs = []
     for d in raw:
@@ -598,7 +631,7 @@ def search_builtin(query: str, limit: int) -> tuple[list[Result], str | None]:
     try:
         corpus = json.loads(BUILTIN_CORPUS.read_text())
     except (OSError, ValueError) as exc:
-        return [], f"built-in corpus unavailable ({exc})"
+        return [], "The built-in help couldn't be read."
 
     docs = corpus.get("docs", corpus if isinstance(corpus, list) else [])
     tokens = query_terms(query)

@@ -543,8 +543,30 @@ install -Dm644 "$HERE/initial_bookmarks.html" \
 # Every other branding leak costs a moment of confusion; this one arrives at the
 # moment somebody is about to hand over their disk, and tells them they are
 # installing something they have never heard of.
+# The login banner. getty prints /etc/issue above the prompt, and Debian's
+# reads "Debian GNU/Linux 13 \\n \\l" — so every text console, every serial
+# session and every failed-boot rescue shell announces a distribution the
+# person has never chosen. Found on the amd64 serial console, which is the one
+# place nobody thought to look.
+#
+# \\n and \\l are getty escapes for the hostname and the tty name; they are
+# kept because "which machine, which terminal" is the one useful thing this
+# line says.
+install -Dm644 /dev/stdin config/includes.chroot/etc/issue <<'ISSUE'
+teddyOS \n \l
+
+ISSUE
+install -Dm644 /dev/stdin config/includes.chroot/etc/issue.net <<'ISSUENET'
+teddyOS
+ISSUENET
+
 install -Dm644 "$HERE/calamares-branding.desc" \
   config/includes.chroot/etc/calamares/branding/teddyos/branding.desc
+# Required, not decorative: a branding component that declares slideshowAPI
+# without a slideshow is rejected wholesale, and Calamares then exits before
+# drawing anything — which presents as the Install button doing nothing at all.
+install -Dm644 "$HERE/calamares-show.qml" \
+  config/includes.chroot/etc/calamares/branding/teddyos/show.qml
 if command -v rsvg-convert >/dev/null; then
   rsvg-convert -w 512 -h 512 -o /tmp/teddyos-logo.png "$REPO/linux/icons/teddyos-logo.svg"
   install -Dm644 /tmp/teddyos-logo.png \
@@ -565,7 +587,7 @@ fi
 # Installed into hicolor rather than into WhiteSur. hicolor is the fallback
 # every icon theme inherits, so these survive a theme change instead of
 # vanishing with it.
-for icon in teddyos-search teddyos-web teddyos-claude teddyos-install; do
+for icon in teddyos-search teddyos-claude teddyos-install; do
   install -Dm644 "$REPO/linux/icons/$icon.svg" \
     "config/includes.chroot/usr/share/icons/hicolor/scalable/apps/$icon.svg"
 done
@@ -985,11 +1007,21 @@ if [ -n "$ISOLINUX" ]; then
   # menuentry keyword and no quotes, so these patterns are deliberately looser
   # than the GRUB ones above. Speech before the general installer pattern, for
   # the same prefix reason as GRUB.
+  # \^\? everywhere, because syslinux marks its keyboard accelerator with a
+  # caret INSIDE the label — "Start ^installer", "with ^speech synthesis",
+  # "^Advanced install options". Patterns written against the plain words match
+  # some of those and not others, which is worse than matching none: the speech
+  # entry failed while the generic one succeeded, leaving the nonsense
+  # "Install teddyOS with ^speech synthesis" on the menu.
+  #
+  # Speech first, for the same prefix reason as GRUB.
   sed -i \
     -e 's|Live system (\([a-z0-9]*\) fail-safe mode)|Try teddyOS (safe graphics)|g' \
     -e 's|Live system (\([a-z0-9]*\))|Try teddyOS - nothing is written to your disk|g' \
-    -e 's|Start installer with speech synthesis|Install teddyOS (screen reader)|g' \
-    -e 's|Start installer|Install teddyOS|g' \
+    -e 's|Start \^\?installer with \^\?speech synthesis|Install teddyOS (screen reader)|g' \
+    -e 's|Start \^\?installer|Install teddyOS|g' \
+    -e 's|\^\?Advanced install options|Other options|g' \
+    -e 's|\^\?Utilities|Hardware tools|g' \
     -e 's|^menu title .*|menu title teddyOS|' \
     "$ISOLINUX"/*.cfg
 fi
@@ -1002,8 +1034,11 @@ fi
 # still stock. It was GRUB-only, which meant an amd64 build could print
 # "boot menu: renamed", exit 0, and hand a legacy-BIOS PC the Debian menu.
 for stale in 'Live system' 'Advanced install options' 'Start installer'; do
-  if grep -rq "$stale" "$GRUB/grub.cfg" "$GRUB/install_start.cfg" \
-       ${ISOLINUX:+"$ISOLINUX"} 2>/dev/null; then
+  # $ISOLINUX/*.cfg, not $ISOLINUX. Passing the directory greps the syslinux
+  # binaries too, and libgpl.c32 contains the word "Utilities" — so the
+  # assertion could never pass on amd64 no matter what the menus said.
+  if grep -q "$stale" "$GRUB/grub.cfg" "$GRUB/install_start.cfg" \
+       ${ISOLINUX:+$ISOLINUX/*.cfg} 2>/dev/null; then
     echo "ERROR: boot menu rename did not apply - still matches: $stale" >&2
     exit 1
   fi
@@ -1048,6 +1083,41 @@ grep -q '^branding: teddyos$' "$CONF" || {
 echo "calamares: branded teddyOS"
 HOOK
 chmod +x config/hooks/live/0700-teddyos-calamares.hook.chroot
+
+cat > config/hooks/live/0800-teddyos-webicon.hook.chroot <<'HOOK'
+#!/bin/sh
+# The Web launcher wears Chromium's own icon.
+#
+# It started as `Icon=web-browser`, which the icon theme resolves to SAFARI's
+# compass — Apple's mark, on a browser that is not Apple's, misleading about
+# what the button opens. It was then a drawn globe, and then a drawn browser
+# window, both of which are honest but neither of which anybody recognises as
+# "the internet" the way a browser's real icon is.
+#
+# Chromium's own artwork is the answer: it IS Chromium, so it is accurate and
+# raises no trademark question at all, and the pinwheel silhouette reads as
+# Chrome-family to anyone who has used a computer.
+#
+# Copied to our own icon name rather than referencing `chromium` directly,
+# because WhiteSur themes common applications and could substitute Chrome's
+# four-colour mark — which would put Google's trademark back where Apple's just
+# was. Under our name in hicolor, nothing can override it.
+set -e
+found=0
+for size in 16 24 32 48 64 128 256; do
+  src="/usr/share/icons/hicolor/${size}x${size}/apps/chromium.png"
+  if [ -f "$src" ]; then
+    install -Dm644 "$src" "/usr/share/icons/hicolor/${size}x${size}/apps/teddyos-web.png"
+    found=$((found + 1))
+  fi
+done
+if [ "$found" -eq 0 ]; then
+  echo "ERROR: chromium ships no hicolor icon to copy — the Web tile would be blank" >&2
+  exit 1
+fi
+echo "web icon: chromium artwork at $found sizes"
+HOOK
+chmod +x config/hooks/live/0800-teddyos-webicon.hook.chroot
 
 chmod +x config/hooks/live/0*-teddyos-*.hook.chroot
 

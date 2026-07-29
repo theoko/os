@@ -21,6 +21,8 @@
 // not a setting, it is damage.
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import St from 'gi://St';
+import Clutter from 'gi://Clutter';
 
 const HIDE = ['_nightLight', '_darkMode', '_backgroundApps'];
 
@@ -55,6 +57,7 @@ export default class TeddyOSShell {
         if (!quick)
             return;
 
+        this._labelDock();
         this._relabel(quick);
 
         for (const key of HIDE) {
@@ -145,7 +148,64 @@ export default class TeddyOSShell {
         walk(menu.box ?? menu.actor);
     }
 
+
+    // Names under the dock icons.
+    //
+    // Six tiles and no words. A magnifying glass, a spark, a pinwheel, a green
+    // phone, a folder and a downward arrow are obvious to anyone who has used a
+    // computer for a decade and a guessing game to the people this desktop is
+    // for — and hovering to find out is a thing you only do if you already
+    // suspect a tooltip exists.
+    //
+    // Dash to Dock has no persistent-label option; its labels are hover
+    // tooltips. So the name is added as a child of each icon's own container,
+    // which means it follows the icon when the dock moves, hides and rescales
+    // with it, and needs no polling.
+    //
+    // Wrapped in try/catch per item rather than around the loop: these are a
+    // third-party extension's internals, so a GNOME or Dash to Dock update can
+    // rename any of them. Losing one label is a blemish; throwing here takes
+    // the whole shell down on someone's first boot.
+    _labelDock() {
+        this._labels = [];
+        const dash = Main.overview?.dash ?? Main.uiGroup.find_child_by_name?.('dashtodockContainer');
+        const items = dash?._box?.get_children?.() ?? [];
+        for (const item of items) {
+            try {
+                const app = item.child?._delegate?.app ?? item.child?.app;
+                const name = app?.get_name?.();
+                if (!name || item._teddyosLabel)
+                    continue;
+                const label = new St.Label({
+                    text: name,
+                    style_class: 'teddyos-dock-label',
+                    // Small, dimmed, and centred under the tile. Loud enough to
+                    // read at a glance, quiet enough that the icons stay the
+                    // thing you look at.
+                    style: 'font-size: 9pt; color: rgba(255,255,255,0.92); ' +
+                           'text-align: center; padding-top: 2px;',
+                    x_align: Clutter.ActorAlign.CENTER,
+                });
+                item.child?.add_child?.(label);
+                item._teddyosLabel = label;
+                this._labels.push([item, label]);
+            } catch {
+                // This tile keeps its tooltip and loses its label. Acceptable.
+            }
+        }
+    }
+
     disable() {
+        for (const [item, label] of this._labels ?? []) {
+            try {
+                label.destroy();
+                delete item._teddyosLabel;
+            } catch {
+                // Already destroyed with the dock; nothing to undo.
+            }
+        }
+        this._labels = null;
+
         for (const item of this._hidden ?? [])
             item.visible = true;
         this._hidden = null;

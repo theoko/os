@@ -6,6 +6,54 @@ version: 0.13.0
 
 ## 0.13.0 — 2026-07-28
 
+### amd64 boots, and the BIOS menu is teddyOS
+
+The first amd64 image. Verified by booting it, not by reading the build tree:
+isolinux -> kernel -> GNOME -> the setup journey, on SeaBIOS, which is the
+firmware VirtualBox on x86 defaults to and therefore the path most people who
+download this will actually take.
+
+Getting there needed two fixes the build's own assertion caught before either
+could ship.
+
+- syslinux writes its keyboard accelerator as a caret INSIDE the label —
+  `Start ^installer`, `with ^speech synthesis`. Patterns written against the
+  plain words matched some labels and not others, which is worse than matching
+  none: the speech entry failed while the generic one succeeded, leaving
+  "Install teddyOS with ^speech synthesis" on the menu. And `Advanced install
+  options` and `Utilities` had no BIOS rename at all.
+- The staleness assertion grepped the whole isolinux directory, and syslinux
+  ships `libgpl.c32` — a binary containing the string "Utilities". It could
+  never have passed on amd64 no matter what the menus said. It reads
+  `*.cfg` now.
+
+### Nothing in the desktop says Debian any more
+
+- The installer opened as "Welcome to the Calamares installer for Debian 13"
+  with a Debian swirl, at the moment somebody commits their disk. It carries
+  teddyOS branding, and a slideshow — which is not optional: a branding
+  component declaring `slideshowAPI` without a `slideshow` is rejected whole,
+  and Calamares then exits before drawing anything. That presented as the
+  Install button doing nothing at all.
+- The login banner read "Debian GNU/Linux 13 teddyos" on every text console and
+  serial session. Found on the amd64 serial console, which is the one place
+  nobody thought to look.
+- The Web tile wears Chromium's own icon, copied at all seven sizes into our
+  own icon name so the theme cannot substitute Chrome's four-colour mark —
+  which would put Google's trademark exactly where Safari's compass was.
+
+### Errors read as sentences
+
+`<urlopen error [Errno -3] Temporary failure in name resolution>` was being
+rendered in the Search window. Accurate, useless, and alarming: it looks like
+damage when the news is "you are not online". Network failures are translated
+at the point they are produced, so the window and the terminal agree.
+
+- Names under the dock icons. Six tiles and no words is a guessing game for
+  the people this is for, and Dash to Dock's labels only appear on hover —
+  something you do only if you already suspect a tooltip exists.
+
+
 ### teddyOS runs on VirtualBox
 
 The live image booted to a black screen on VirtualBox's Apple Silicon build and
