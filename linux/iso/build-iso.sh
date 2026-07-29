@@ -391,6 +391,7 @@ install -Dm755 "$REPO/linux/teddyos-agent/teddyos-agent"        config/includes.
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-ask-all"      config/includes.chroot/usr/bin/teddyos-ask-all
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-perplexity"   config/includes.chroot/usr/bin/teddyos-perplexity
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-accounts"     config/includes.chroot/usr/bin/teddyos-accounts
+install -Dm755 "$REPO/linux/teddyos-agent/teddyos-open-signin"  config/includes.chroot/usr/bin/teddyos-open-signin
 install -Dm755 "$REPO/linux/teddyos-update/teddyos-update"      config/includes.chroot/usr/bin/teddyos-update
 # Account / sign-in helpers used by teddyos-accounts and Search.
 install -Dm644 "$REPO/linux/teddyos-search/accounts.py" \

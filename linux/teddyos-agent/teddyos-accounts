@@ -14,7 +14,6 @@ import shutil
 import subprocess
 import sys
 import threading
-import webbrowser
 from pathlib import Path
 
 import gi
@@ -41,6 +40,40 @@ _CODE_RE = re.compile(
     r"\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b|\benter code[:\s]+([A-Z0-9-]{6,})\b",
     re.I,
 )
+
+
+def _open_signin_url(url: str) -> None:
+    """Always Chromium app window — never a random Firefox tab."""
+    opener = shutil.which("teddyos-open-signin")
+    if opener:
+        argv = [opener, url]
+    else:
+        chromium = (
+            shutil.which("chromium")
+            or shutil.which("chromium-browser")
+        )
+        if chromium:
+            data = os.path.expanduser("~/.config/teddyos-signin")
+            os.makedirs(data, exist_ok=True)
+            argv = [
+                chromium,
+                f"--app={url}",
+                f"--user-data-dir={data}",
+                "--class=teddyos-signin",
+                "--new-window",
+            ]
+        else:
+            argv = ["xdg-open", url]
+    try:
+        subprocess.Popen(  # noqa: S603
+            argv,
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        log.error("open sign-in url failed: %s", exc)
 
 
 class SignInWindow(Adw.ApplicationWindow):
@@ -129,12 +162,24 @@ class SignInWindow(Adw.ApplicationWindow):
         env["PATH"] = path
         env["TERM"] = "dumb"
         env["NO_COLOR"] = "1"
-        # Prefer system browser for OAuth redirects.
-        if not env.get("BROWSER"):
-            for b in ("xdg-open", "chromium", "firefox-esr", "firefox"):
-                if shutil.which(b):
-                    env["BROWSER"] = b
-                    break
+        # Force Chromium for every helper that shells out to $BROWSER / xdg-open.
+        # Firefox is installed for general browsing but OAuth in a random FF
+        # window confuses people on a Chromium-first desktop.
+        signin = shutil.which("teddyos-open-signin")
+        if signin:
+            env["BROWSER"] = signin
+        else:
+            env["BROWSER"] = (
+                shutil.which("chromium")
+                or shutil.which("chromium-browser")
+                or "xdg-open"
+            )
+        # Some tools (Electron/Google) respect these too.
+        env["CHROME_PATH"] = (
+            shutil.which("chromium")
+            or shutil.which("chromium-browser")
+            or env.get("CHROME_PATH", "")
+        )
         try:
             self._proc = subprocess.Popen(  # noqa: S603
                 argv,
@@ -172,20 +217,7 @@ class SignInWindow(Adw.ApplicationWindow):
             if url not in self._opened_urls and "localhost" not in url:
                 self._opened_urls.add(url)
                 GLib.idle_add(self._show_url, url)
-                try:
-                    webbrowser.open(url)
-                except Exception:  # noqa: BLE001
-                    # xdg-open fallback
-                    try:
-                        subprocess.Popen(  # noqa: S603
-                            ["xdg-open", url],
-                            start_new_session=True,
-                            stdin=subprocess.DEVNULL,
-                            stdout=subprocess.DEVNULL,
-                            stderr=subprocess.DEVNULL,
-                        )
-                    except OSError:
-                        pass
+                _open_signin_url(url)
         for m in _CODE_RE.finditer(line):
             code = m.group(1) or m.group(2)
             if code:
@@ -209,16 +241,7 @@ class SignInWindow(Adw.ApplicationWindow):
 
     def _reopen_link(self, *_a) -> None:
         if self._last_url:
-            try:
-                webbrowser.open(self._last_url)
-            except Exception:  # noqa: BLE001
-                subprocess.Popen(  # noqa: S603
-                    ["xdg-open", self._last_url],
-                    start_new_session=True,
-                    stdin=subprocess.DEVNULL,
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
+            _open_signin_url(self._last_url)
 
     def _login_process_finished(self, code: int, tail: str) -> bool:
         self._spinner.stop()
