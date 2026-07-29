@@ -8,7 +8,13 @@
 # script freezes a copy under /var/log/teddyos/snapshots/ so "what happened
 # yesterday" is still answerable after a reboot.
 #
-#   teddyos-log-collect              # write a fresh snapshot
+# Consent: diagnostics.share must be granted in setup (Help improve teddyOS).
+# Without it this is a no-op, so a daily timer cannot collect logs the person
+# never allowed. Operators can pass --force for local debugging on a machine
+# they own; that path is intentional and loud.
+#
+#   teddyos-log-collect              # write a fresh snapshot (if granted)
+#   teddyos-log-collect --force      # ignore the grant (operator escape hatch)
 #   teddyos-log-collect --out DIR    # write somewhere else
 #   teddyos-log-collect --list       # show existing snapshots
 set -euo pipefail
@@ -17,13 +23,15 @@ OUT_ROOT="${TEDDYOS_LOG_ROOT:-/var/log/teddyos}"
 STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
 OUT=""
 LIST=0
+FORCE=0
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --out) OUT="$2"; shift 2 ;;
     --list) LIST=1; shift ;;
+    --force) FORCE=1; shift ;;
     --help|-h)
-      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+      sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "error: unknown argument $1" >&2; exit 2 ;;
   esac
 done
@@ -31,6 +39,31 @@ done
 if [[ "$LIST" == 1 ]]; then
   ls -1dt "$OUT_ROOT"/snapshots/*/ 2>/dev/null || echo "(no snapshots yet)"
   exit 0
+fi
+
+# --- consent ----------------------------------------------------------------
+# Setup writes diagnostics.share into the user's capabilities.json. The timer
+# runs as root, so we ask caps.py rather than trusting $HOME.
+share_allowed() {
+  python3 - <<'PY' 2>/dev/null
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+try:
+    import caps
+    sys.exit(0 if caps.diagnostics_share_allowed() else 1)
+except Exception:
+    sys.exit(1)
+PY
+}
+
+if [[ "$FORCE" != 1 ]]; then
+  if ! share_allowed; then
+    echo "diagnostics.share is off — not collecting logs."
+    echo "Turn on “Help improve teddyOS” in Permissions (or setup), or pass --force."
+    exit 0
+  fi
+else
+  echo "warning: --force: collecting without diagnostics.share consent" >&2
 fi
 
 OUT="${OUT:-$OUT_ROOT/snapshots/$STAMP}"
@@ -53,6 +86,8 @@ note "collected_at=$STAMP"
 note "host=$(hostname 2>/dev/null || echo unknown)"
 note "kernel=$(uname -r 2>/dev/null || echo unknown)"
 note "user=$(id -un 2>/dev/null || echo unknown)"
+note "diagnostics.share=granted"
+note "force=$FORCE"
 if [[ -r /etc/teddyos-software ]]; then
   note "software=$(tr '\n' ' ' </etc/teddyos-software)"
 fi

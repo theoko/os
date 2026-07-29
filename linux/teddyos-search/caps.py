@@ -112,6 +112,25 @@ CAPABILITIES = [
                    "teddyos-search --sync.",
         "default": False,
     },
+    {
+        "id": "diagnostics.share",
+        "label": "Help improve teddyOS",
+        "label_adv": "Diagnostics sharing",
+        "detail": "Allow system logs to be collected so we can fix problems",
+        "detail_adv": "Permit diagnostics.share log collection",
+        "enforced": True,
+        "badge": "the system enforces this",
+        "badge_adv": "enforced",
+        "why": "Off by default. When on, teddyOS may keep and snapshot system "
+               "logs (journal, boot, app trails) so problems can be studied. "
+               "It does not send what you type in Search, and it does not "
+               "upload anything until you (or a tool you run) share a snapshot.",
+        "why_adv": "When denied, teddyos-log-collect and the daily timer "
+                   "no-op. When granted, snapshots land under "
+                   "/var/log/teddyos/snapshots. No ambient network upload — "
+                   "sharing a snapshot is a separate, explicit step.",
+        "default": False,
+    },
 ]
 
 
@@ -262,3 +281,32 @@ def save(granted: dict, workspace: list[str] | None = None,
 def is_configured() -> bool:
     """True once the setup screen has been answered at least once."""
     return USER_CONF.exists()
+
+
+def diagnostics_share_allowed() -> bool:
+    """True when any configured user granted diagnostics.share.
+
+    The log collector and its timer run as root (or as a service user), so
+    they cannot rely on load() alone — that reads *this* process's home.
+    A consent given by the desktop user must still be visible to them.
+    """
+    if load().get("diagnostics.share"):
+        return True
+    homes: list[Path] = []
+    home_root = Path("/home")
+    if home_root.is_dir():
+        homes.extend(p for p in home_root.iterdir() if p.is_dir())
+    # Also the service's own home, and root, for odd setups.
+    for extra in (Path.home(), Path("/root")):
+        if extra not in homes:
+            homes.append(extra)
+    for home in homes:
+        conf = home / ".config" / "teddyos" / "capabilities.json"
+        try:
+            data = json.loads(conf.read_text())
+        except (OSError, ValueError):
+            continue
+        granted = data.get("granted", {})
+        if isinstance(granted, dict) and granted.get("diagnostics.share") is True:
+            return True
+    return False

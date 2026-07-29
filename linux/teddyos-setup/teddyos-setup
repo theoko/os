@@ -461,7 +461,8 @@ class SetupWindow(Adw.ApplicationWindow):
             # One sentence of fact, one of consequence.
             "Ranking happens here, so what you type is never sent. That needs "
             "a copy of the index — about 68 MB, downloaded once at the end of "
-            "setup."
+            "setup. “Help improve teddyOS” is separate: it only allows log "
+            "snapshots on this machine, off unless you turn it on."
         )
         box.append(note)
 
@@ -714,6 +715,38 @@ class SetupWindow(Adw.ApplicationWindow):
         # so the first search finds something.
         if granted.get("portal.sync"):
             self._start_corpus_download()
+
+        # Diagnostics consent arms the log collector. Without this, the daily
+        # timer would still fire but collect nothing — take one snapshot now
+        # so a problem on day one is already in /var/log/teddyos/snapshots.
+        if granted.get("diagnostics.share"):
+            self._arm_diagnostics()
+        else:
+            log.info("diagnostics.share off — log collector stays idle")
+
+    def _arm_diagnostics(self) -> None:
+        """Start the snapshot timer and take one snapshot if we can.
+
+        Best-effort: a live session without passwordless sudo still saved the
+        grant to capabilities.json, and the next boot's timer will see it.
+        """
+        log.info("diagnostics.share on — arming log collector")
+        try:
+            Gio.Subprocess.new(
+                ["systemctl", "--user", "start", "teddyos-log-collect.service"],
+                Gio.SubprocessFlags.NONE,
+            )
+        except GLib.Error:
+            pass
+        # System timer is the real path (root). Prefer pkexec-free enable.
+        for argv in (
+            ["systemctl", "start", "teddyos-log-collect.service"],
+            ["teddyos-log-collect"],
+        ):
+            try:
+                Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE)
+            except GLib.Error:
+                continue
 
 
 class SetupApp(Adw.Application):

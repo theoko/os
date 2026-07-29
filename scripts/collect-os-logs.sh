@@ -56,10 +56,22 @@ echo ">>> collecting into $OUT"
 echo "    guest $TARGET"
 
 if ssh "${SSH_OPTS[@]}" -o BatchMode=yes "$TARGET" true 2>/dev/null; then
-  echo ">>> snapshot on guest"
-  # Prefer rootless path if sudo is not available; collect script falls back.
+  echo ">>> check diagnostics.share on guest"
   ssh "${SSH_OPTS[@]}" "$TARGET" \
-    'sudo -n teddyos-log-collect 2>/dev/null || teddyos-log-collect 2>/dev/null || true' \
+    'python3 -c "import sys; sys.path.insert(0,\"/usr/lib/teddyos\"); import caps; print(\"diagnostics.share\", caps.diagnostics_share_allowed())"' \
+    | tee "$OUT/guest-consent.txt" || true
+
+  echo ">>> snapshot on guest (respects diagnostics.share; use FORCE=1 to override)"
+  # Prefer rootless path if sudo is not available; collect script falls back.
+  # FORCE=1 is for operators debugging a machine they own — it is not the
+  # product default and is never set by setup.
+  FORCE_FLAG=""
+  if [[ "${FORCE:-0}" == "1" ]]; then
+    FORCE_FLAG="--force"
+    echo "    FORCE=1: collecting even without consent" | tee -a "$OUT/guest-consent.txt"
+  fi
+  ssh "${SSH_OPTS[@]}" "$TARGET" \
+    "sudo -n teddyos-log-collect $FORCE_FLAG 2>/dev/null || teddyos-log-collect $FORCE_FLAG 2>/dev/null || true" \
     | tee "$OUT/guest-collect.txt" || true
 
   echo ">>> rsync /var/log/teddyos"

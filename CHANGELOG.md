@@ -14,6 +14,10 @@ via `teddyos-log-collect`. Apps tag the journal as `teddyos-*`. From the Mac,
 `./scripts/collect-os-logs.sh` pulls the guest tree plus host serial crumbs into
 `logs/os/`.
 
+Snapshots require an explicit setup grant — **Help improve teddyOS**
+(`diagnostics.share`), off by default. Without it the collector no-ops;
+`--force` is the operator escape hatch only.
+
 ### “Work on …” opens an AI tool picker
 
 Typing a goal into Search (for example `i wanna work on iakovos-trading`) no

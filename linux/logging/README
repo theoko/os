@@ -10,7 +10,17 @@ Where to look when something goes wrong.
   journalctl -t 'teddyos-*'       only teddyOS apps
   journalctl -b -1                previous boot (the one people reboot away from)
 
-Take a fresh snapshot right now:
+Consent
+-------
+
+Snapshots and the daily collector require the setup grant
+
+  “Help improve teddyOS”  (diagnostics.share)
+
+Off by default. Without it, `teddyos-log-collect` exits without writing.
+Operators on a machine they own can pass --force.
+
+Take a fresh snapshot (if granted):
 
   sudo teddyos-log-collect
 
