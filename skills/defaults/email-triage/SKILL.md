@@ -16,7 +16,7 @@ description: >-
    invent subjects, senders, or bodies.
 3. Propose next actions from the count (open host Gmail, wait, draft offline).
    `email.send` always returns `ERR … disabled_until_cap_confirm` (policy stub —
-   no guest Cap / confirm path yet). Do not CALL it.
+   no guest Cap / confirm path). Do not CALL it.
 4. Secrets and OAuth stay on the host bridge (`gog` keyring) — never ask to
    paste tokens into the guest.
 

@@ -10,8 +10,10 @@ status: active
 ## Principle
 
 Connectors (**email**, search, skills, …) are **not** linked into the kernel.
-They are MCP-shaped tools behind **capabilities**. Until the guest has a network
-stack, the guest talks to a **host bridge** on the Mac over COM2 (QEMU TCP serial).
+They are MCP-shaped tools on the host bridge. Cap-gated guest CALLs and
+`files=1` / `audio=1` scopes need grants; some tools are ungated (`skills.list`)
+or policy stubs (`email.send`). Until the guest has a network stack, the guest
+talks to a **host bridge** on the Mac over COM2 (QEMU TCP serial).
 
 ```
 UI / agent  --(cap: email.search)-->  guest MCP client (COM2 TcpServer :7420)
