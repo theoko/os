@@ -64,7 +64,7 @@ class WelcomeWindow(Adw.ApplicationWindow):
 
         sub = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
         sub.add_css_class("dim-label")
-        sub.set_text("Three things worth knowing. Click any of them to try it.")
+        sub.set_text("A few things worth knowing. Click any of them to try it.")
         box.append(sub)
 
         group = Adw.PreferencesGroup()
@@ -72,13 +72,22 @@ class WelcomeWindow(Adw.ApplicationWindow):
         # 1. The thing this OS is for.
         group.add(self._row(
             "Ask it something",
-            "The magnifying glass in the dock searches everything you allowed — "
-            "in one place, without opening a browser first.",
+            "The magnifying glass in the bar at the bottom searches everything "
+            "you allowed — in one place, without opening a browser first.",
             "system-search-symbolic",
             lambda: launch(["teddyos-search-app"]),
         ))
 
-        # 2. The promise the setup screen made, and where to revisit it.
+        # 2. How to switch apps without learning keys.
+        group.add(self._row(
+            "Switch apps from the bottom bar",
+            "That bar stays on screen. Tap an icon to open or switch — "
+            "you don’t need keyboard shortcuts to move between windows.",
+            "view-grid-symbolic",
+            lambda: None,
+        ))
+
+        # 3. The promise the setup screen made, and where to revisit it.
         on = [caps.text(c, "label", True) for c in caps.CAPABILITIES
               if grants.get(c["id"])]
         off = [caps.text(c, "label", True) for c in caps.CAPABILITIES
@@ -94,7 +103,7 @@ class WelcomeWindow(Adw.ApplicationWindow):
             lambda: launch(["teddyos-setup"]),
         ))
 
-        # 3. The ordinary thing people came to a computer to do.
+        # 4. The ordinary thing people came to a computer to do.
         group.add(self._row(
             "Browse the web",
             "The globe opens the internet. Its address bar uses teddyOS search "

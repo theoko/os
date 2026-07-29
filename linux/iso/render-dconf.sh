@@ -91,13 +91,16 @@ animation=2
 [org/gnome/shell/extensions/dash-to-dock]
 dock-position='BOTTOM'
 extend-height=false
-dock-fixed=false
-autohide=true
-intellihide=true
-intellihide-mode='FOCUS_APPLICATION_WINDOWS'
+# Always visible. Autohide + intellihide made the dock vanish the moment a
+# window opened — then non-technical people had no idea other apps existed,
+# and no hint that Super/Command reveals the overview. A permanent dock is
+# how you switch apps without learning keyboard chords.
+dock-fixed=true
+autohide=false
+intellihide=false
+require-pressure-to-show=false
 show-apps-at-top=false
-# The app-grid tile is the one icon in the dock that is not an app. The grid is
-# still a keystroke away.
+# App grid is still Super+A or Overview; keep the dock for real apps only.
 show-show-apps-button=false
 apply-custom-theme=false
 custom-theme-shrink=true
@@ -115,11 +118,21 @@ icon-size-fixed=false
 animate-show-apps=false
 show-mounts=false
 show-trash=false
+# Click the open app again to peek its windows — click another icon to switch.
+# Non-technical people treat the dock like a phone home screen.
 click-action='minimize-or-previews'
 scroll-action='cycle-windows'
 running-indicator-style='DOTS'
 disable-overview-on-startup=true
-hot-keys=false
+# Super+1..9 launch dock slots. On by default so muscle memory from macOS
+# (Cmd+number is less common) still has *some* shortcut, but the visible
+# dock remains the real path.
+hot-keys=true
+# Multi-monitor: show the dock on the primary display, always.
+multi-monitor=false
+# Keep icons readable when many windows are open.
+isolate-workspaces=false
+isolate-monitors=false
 
 [org/gnome/shell/extensions/blur-my-shell/panel]
 # Off, and this is the counter-intuitive one. Blurring the panel samples the
