@@ -60,7 +60,7 @@
       "t": "capability-safe-tools skill",
       "u": "os://skills/defaults/capability-safe-tools/SKILL.md",
       "c": "skills",
-      "b": "Invoke tools through explicit capabilities. Least privilege. Stop on disabled_until_cap_confirm.",
+      "b": "Cap-gated guest CALLs need an explicit grant. Least privilege. Stop on policy stubs like email.send. Do not invent Caps for ungated tools.",
       "pr": 0.8
     },
     {
