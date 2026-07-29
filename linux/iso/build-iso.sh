@@ -597,12 +597,18 @@ done
 # /etc/teddyos-build` settles "am I testing the thing you just fixed?" without
 # needing to remember what the boot splash said.
 # What software this image shipped with, in the format teddyos-update reads.
+#
+# TEDDYOS_COMMIT is passed in because this script runs on the build guest, and
+# the guest receives the tree by scp rather than by cloning it — so git here
+# finds no repository and the field came out "unknown". A machine recording
+# "unknown" differs from every published commit, so a brand-new install
+# announced an update the moment it booted.
 # Without it the first check has nothing to compare against: a machine with no
 # recorded commit would either look permanently up to date or download on every
 # boot, depending on which way the comparison fell.
 install -Dm644 /dev/stdin config/includes.chroot/etc/teddyos-software <<SOFTWARE
 version=$VERSION
-commit=$(cd "$REPO" && git rev-parse --short HEAD 2>/dev/null || echo unknown)
+commit=${TEDDYOS_COMMIT:-$(cd "$REPO" && git rev-parse --short HEAD 2>/dev/null || echo unknown)}
 applied=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 SOFTWARE
 
