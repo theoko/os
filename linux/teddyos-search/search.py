@@ -89,6 +89,10 @@ BUILTIN_CORPUS = Path(
 )
 
 _WORD = re.compile(r"[a-z0-9]+")
+# owner/repo and folder paths the user types as one unit ("iakovos/trading").
+# Emitted alongside the split words so a path-shaped query can still hit a
+# path-shaped filename without requiring both halves in the body.
+_PATHISH = re.compile(r"[a-z0-9]+(?:/[a-z0-9._-]+)+")
 
 # BM25. k1 controls how fast repeated terms stop helping; b how hard length is
 # normalised. These are the standard values and there is no reason to invent
@@ -97,6 +101,31 @@ _WORD = re.compile(r"[a-z0-9]+")
 BM25_K1 = 1.5
 BM25_B = 0.75
 TITLE_REPEAT = 5
+
+# People type goals into a field that says "Ask anything". The ranking index
+# only understands keywords. Leading intent is stripped so
+# "i wanna work on iakovos/trading" ranks as "iakovos trading", not as a
+# four-term query where "wanna" and "work" drown the rare name.
+#
+# Applied once, at the front of the query only — "work on trading" mid-sentence
+# is content, not a wrapper.
+_INTENT_PREFIX = re.compile(
+    r"""^
+    (?:
+        (?:hey\s+|hi\s+|please\s+)?
+        (?:i\s+)?
+        (?:wanna|want\s+to|need\s+to|gonna|gotta|would\s+like\s+to)\s+
+    )?
+    (?:
+        work\s+on|working\s+on|
+        open|find|search\s+for|look\s+(?:up|for)|
+        show(?:\s+me)?|go\s+to|take\s+me\s+to|
+        start|continue|resume|help\s+(?:me\s+)?(?:with|on)
+    )
+    \s+
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
 
 
 def normalise_url(raw: str) -> str:
@@ -144,32 +173,75 @@ for with about into over after is are was were be been being do does did doing
 have has had having i me my we us our you your he him his she her it its they
 them their what which who whom whose when where why how can could should would
 will shall may might must please tell show find get give know like want need
+wanna gonna gotta
 """.split())
 
 _HYPHENATED = re.compile(r"[a-z0-9]+(?:-[a-z0-9]+)+")
+
+
+def focus_query(text: str) -> str:
+    """Strip leading chat-intent so ranking sees the subject, not the wrapper.
+
+    "i wanna work on iakovos/trading" → "iakovos/trading"
+    "open ~/Desktop/notes.md" → "~/Desktop/notes.md"
+    "immigration paradise" is unchanged (no leading intent verb).
+    """
+    stripped = text.strip()
+    if not stripped:
+        return stripped
+    focused = _INTENT_PREFIX.sub("", stripped, count=1).strip()
+    # Never return empty: if the whole query was intent ("show me"), keep the
+    # original so query_terms can still fall back to stopwords.
+    return focused or stripped
 
 
 def query_terms(text: str) -> list[str]:
     """Tokens worth ranking on. Falls back to the raw tokens when a query is
     nothing but stopwords, because returning nothing for "how do i" is worse
     than returning something loosely related — and a user who typed only
-    filler is going to rephrase either way."""
-    tokens = tokenize(text)
-    meaningful = [t for t in tokens if t not in STOPWORDS and len(t) > 1]
-    return meaningful or tokens
+    filler is going to rephrase either way.
+
+    Path-shaped tokens (`iakovos/trading`) are intentionally left out here.
+    They almost never appear in the web corpus, so counting them as required
+    coverage terms made every portal result look like a partial match and let
+    common words win. Workspace search still uses them via path_terms().
+    """
+    tokens = tokenize(focus_query(text))
+    meaningful = [
+        t for t in tokens
+        if t not in STOPWORDS and len(t) > 1 and "/" not in t
+    ]
+    return meaningful or [t for t in tokens if t not in STOPWORDS] or tokens
+
+
+def path_terms(text: str) -> list[str]:
+    """Slash-joined segments from the focused query, for workspace path boosts."""
+    return [m.group(0) for m in _PATHISH.finditer(focus_query(text).lower())]
 
 
 def tokenize(text: str) -> list[str]:
-    """Words, plus the joined form of anything hyphenated.
+    """Words, plus the joined form of anything hyphenated or path-shaped.
 
     "H-1B" splits into h / 1 / b, so a search for "h1b" matched nothing and the
     document titled "H-1B visa" ranked below "Visa Inc". Emitting BOTH forms
     means h-1b is findable as "h-1b" and as "h1b" without deciding which one
     the user will type. Same for covid-19/covid19, e-mail/email, 401-k/401k.
+
+    "iakovos/trading" also yields the path token so a local file under that
+    folder can match the path shape; query_terms() drops the slash form so the
+    web index is not forced to cover a token it never contains.
     """
     lowered = text.lower()
     tokens = _WORD.findall(lowered)
     tokens.extend(m.group(0).replace("-", "") for m in _HYPHENATED.finditer(lowered))
+    for m in _PATHISH.finditer(lowered):
+        path = m.group(0)
+        tokens.append(path)
+        # Also the last segment alone — "…/trading/README.md" should still
+        # answer a query that ends in /trading.
+        tail = path.rsplit("/", 1)[-1]
+        if tail and tail not in tokens:
+            tokens.append(tail)
     return tokens
 
 
@@ -279,6 +351,29 @@ def _score(query_tokens: list[str], text: str, title: str = "") -> float:
     return score * (coverage ** 2)
 
 
+def _score_matched(
+    query_tokens: list[str], text: str, title: str = ""
+) -> tuple[float, int]:
+    """Like _score, but also returns how many query terms hit.
+
+    Needed so Result.matched/terms are set for prune() across every source,
+    not only the BM25 portal corpus path.
+    """
+    if not query_tokens:
+        return 0.0, 0
+    # Recompute match count the same way _score does, without drifting.
+    body = set(tokenize(text))
+    head = set(tokenize(title))
+    bag = body | head
+    matched = 0
+    for term in query_tokens:
+        if term in bag or (
+            len(term) >= 3 and any(k.startswith(term) for k in bag)
+        ):
+            matched += 1
+    return _score(query_tokens, text, title), matched
+
+
 # --- portal -----------------------------------------------------------------
 
 def _cache_age() -> float | None:
@@ -340,7 +435,7 @@ def search_portal(query: str, limit: int) -> tuple[list[Result], str | None, flo
     out: list[Result] = []
     for entry in index.get("index", []):
         text = entry.get("search_text") or f"{entry.get('name','')} {entry.get('desc','')}"
-        score = _score(tokens, text, entry.get("name", ""))
+        score, matched = _score_matched(tokens, text, entry.get("name", ""))
         if score <= 0:
             continue
         out.append(Result(
@@ -350,9 +445,11 @@ def search_portal(query: str, limit: int) -> tuple[list[Result], str | None, flo
             source="teddysearch",
             score=score,
             category=entry.get("category", ""),
+            matched=matched,
+            terms=len(tokens),
         ))
     out.sort(key=lambda r: r.score, reverse=True)
-    return out[:limit], error, _cache_age()
+    return prune(out)[:limit], error, _cache_age()
 
 
 def humanise(exc: object) -> str:
@@ -640,7 +737,7 @@ def search_builtin(query: str, limit: int) -> tuple[list[Result], str | None]:
         if not isinstance(doc, dict):
             continue
         text = " ".join(str(doc.get(k, "")) for k in ("url", "text", "body"))
-        score = _score(tokens, text, str(doc.get("title", "")))
+        score, matched = _score_matched(tokens, text, str(doc.get("title", "")))
         if score > 0:
             out.append(Result(
                 title=doc.get("title", "(untitled)"),
@@ -648,9 +745,11 @@ def search_builtin(query: str, limit: int) -> tuple[list[Result], str | None]:
                 snippet=(doc.get("text") or doc.get("body") or "")[:200],
                 source="built-in",
                 score=score,
+                matched=matched,
+                terms=len(tokens),
             ))
     out.sort(key=lambda r: r.score, reverse=True)
-    return out[:limit], None
+    return prune(out)[:limit], None
 
 
 # --- workspace --------------------------------------------------------------
@@ -696,6 +795,7 @@ def search_workspace(query: str, limit: int) -> tuple[list[Result], str | None]:
         return [], None
 
     tokens = query_terms(query)
+    paths = path_terms(query)
     out: list[Result] = []
     seen = 0
     skipped = 0
@@ -718,7 +818,20 @@ def search_workspace(query: str, limit: int) -> tuple[list[Result], str | None]:
                 skipped += 1
                 continue
             seen += 1
-            score = _score(tokens, head, path.name)
+            # Title is the basename; the path string rides in the body so
+            # parent folders ("iakovos/trading/…") participate in ranking.
+            # Without that, a query for a project folder only hit files whose
+            # *names* contained the words — never the tree they live in.
+            path_text = str(path).replace("\\", "/").lower()
+            score, matched = _score_matched(
+                tokens, f"{head}\n{path_text}", path.name
+            )
+            # Strong boost when the query literally names a path segment of
+            # this file — "iakovos/trading" against …/iakovos/trading/x.py.
+            for term in paths:
+                if term in path_text:
+                    score = (score or 1.0) * 3.0
+                    break
             if score > 0:
                 out.append(Result(
                     title=path.name,
@@ -726,10 +839,12 @@ def search_workspace(query: str, limit: int) -> tuple[list[Result], str | None]:
                     snippet=head.strip().replace("\n", " ")[:200],
                     source="your files",
                     score=score,
+                    matched=matched,
+                    terms=len(tokens),
                 ))
     out.sort(key=lambda r: r.score, reverse=True)
     note = f"{skipped} file(s) in your folders could not be read" if skipped else None
-    return out[:limit], note
+    return prune(out)[:limit], note
 
 
 # --- the front door ---------------------------------------------------------
@@ -737,9 +852,12 @@ def search_workspace(query: str, limit: int) -> tuple[list[Result], str | None]:
 def search(query: str, limit: int = 10) -> Outcome:
     grants = caps.load()
     outcome = Outcome()
+    paths = path_terms(query)
+    workspace_hits = 0
 
     if grants.get("workspace.index"):
         results, err = search_workspace(query, limit)
+        workspace_hits = len(results)
         outcome.results += results
         if err:
             outcome.errors.append(err)
@@ -781,6 +899,19 @@ def search(query: str, limit: int = 10) -> Outcome:
     else:
         outcome.denied.append("Built-in docs")
 
+    # A path-shaped goal ("iakovos/trading") that never hit a local file is
+    # almost always "the project is not on this machine", not "the web has no
+    # page about those words". Say so above the noisy partial web hits.
+    if paths and grants.get("workspace.index") and workspace_hits == 0:
+        roots = caps.workspace_paths()
+        where = ", ".join(str(r) for r in roots) if roots else "no folders yet"
+        outcome.notes.append(
+            f"No files under {paths[0]} in your indexed folders ({where}). "
+            "Copy the project into one of those folders, or add its folder in "
+            "Setup → Your files.")
+
     outcome.results.sort(key=lambda r: r.score, reverse=True)
-    outcome.results = outcome.results[:limit]
+    # Full-match prune across sources, not only inside each one — otherwise a
+    # perfect local hit still sits under a pile of single-term web noise.
+    outcome.results = prune(outcome.results)[:limit]
     return outcome
