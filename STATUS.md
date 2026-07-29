@@ -1,16 +1,17 @@
 ---
 project: teddyOS / os
-purpose: review-only status for the standalone 0.13 fork
-status: parked — not a land candidate for MCP main
+purpose: status for the standalone 0.13 tip
+status: active on fix/bridge-prewarm — not a land candidate for MCP main
 ---
 
 # STATUS — `fix/bridge-prewarm` / teddyOS 0.13
 
-## What this branch is
+## What this tip is
 
-A **separate product tip** (changelog **0.13.0**), currently tracked as
-`origin/fix/bridge-prewarm` and mirrored here as
-`cursor/teddyos-0.13-review-492f` for review visibility.
+A **separate product tip** (changelog **0.13.0**) on `origin/fix/bridge-prewarm`.
+
+Standalone honesty review landed via [#21](https://github.com/theoko/os/pull/21)
+(`cursor/teddyos-0.13-review-492f` → this branch).
 
 Shape (see `AGENTS.md` on this tip):
 
@@ -20,16 +21,16 @@ Shape (see `AGENTS.md` on this tip):
 - Work-on goals, AI tool picker, durable guest journals, GitHub clone for
   projects, plain-language UI pass
 
-Tip at latest review push: see `git log -1` on this branch.
+Tip: see `git log -1` on `fix/bridge-prewarm`.
 
 ## SAFE densify floor (docs + standalone copy)
 
-Honesty cuts on this review tip are at a **SAFE floor** for:
+Honesty cuts on this tip are at a **SAFE floor** for:
 
 - Design docs (search/skills/architecture/thesis/linux/install/utm/…)
 - Baked corpus (no `os://host/bridge` seed rows)
 - User-visible standalone status/remedy copy (`kernel/src/copy.rs` + status
-  bar Offline lines) — never tell owners to `make bridge-run` / `utm-bridged`
+  bar offline lines) — never tell owners to `make bridge-run` / `utm-bridged`
 - Default skill playbooks (`agent-plan-act`, `capability-safe-tools`, …)
 - E2E selfcheck fixtures use standalone copy (`Local keywords only.`), not
   hosted “Bridge offline …” strings
@@ -37,7 +38,7 @@ Honesty cuts on this review tip are at a **SAFE floor** for:
 **Do not invent** without a product brief: restoring Live COM2 connectors,
 merging this tip into MCP `main`, or new `email.send` confirm UX.
 
-## What this branch is not
+## What this tip is not
 
 - **Not** a merge candidate for bridge-centric `main` (0.10.0 MCP guest + host
   bridge on `:7420`).
@@ -52,18 +53,5 @@ After the 0.10.0 integration land (#15) and Cap/`agent.act` honesty follow-ups
 parked; dial topology (#14) was won't-merge against listen-mode.
 
 This fork remains the **standalone / Linux daily-driver** experiment. Keep it
-on its own line until a product decision chooses:
-
-1. Continue as teddyOS 0.13+ (own release / own default branch story), or
-2. Explicitly abandon / archive, or
-3. A deliberate (non-ff) port of selected ideas into MCP `main` under a brief.
-
-## How to review
-
-```sh
-git fetch origin
-git checkout cursor/teddyos-0.13-review-492f   # or origin/fix/bridge-prewarm
-# Read AGENTS.md, CHANGELOG 0.13.0, linux/README.md
-```
-
-Do not `git merge` this into `main` without an explicit product brief.
+on `fix/bridge-prewarm` (or a renamed long-lived tip) until an explicit
+product decision: continue, archive, or deliberate port into MCP `main`.
