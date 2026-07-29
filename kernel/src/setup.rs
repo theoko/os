@@ -160,7 +160,7 @@ impl Setup {
         let top = self.header(
             fb,
             "Capabilities",
-            "Every tool sits behind a grant. Turn on only what you need.",
+            "Turn on only the grants you need.",
         );
         let mut y = top;
         for i in 0..Cap::ALL.len() {
@@ -388,7 +388,7 @@ mod tests {
             crate::mcp::BRIDGE_OFFLINE_HINT,
             "Connected on COM2",
             "Capabilities",
-            "Every tool sits behind a grant. Turn on only what you need.",
+            "Turn on only the grants you need.",
             "Default Skills",
             "Markdown playbooks the agent can load. Editable later.",
             "Live from the host bridge. Tap Continue when ready.",

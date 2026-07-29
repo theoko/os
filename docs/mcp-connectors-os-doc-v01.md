@@ -58,13 +58,14 @@ Four `Cap::ALL` grants (setup / Caps screen), no ambient root:
 
 | Cap | Guest wire |
 |-----|------------|
-| Inbox (`EmailSearch`) | required for `CALL email.search` |
+| Inbox (`EmailSearch`) | required for `CALL email.search` (guest gate) |
 | Knowledge (`SearchQuery`) | required for `CALL search.query` (guest gate) |
-| Files (`WorkspaceIndex`) | `files=1` on search/doc (host producer `workspace.index`) |
-| Transcripts (`AudioTranscribe`) | `audio=1` on search/doc (host producer `audio.transcribe`) |
+| Files (`WorkspaceIndex`) | `files=1` on search/doc (host-enforced scope) |
+| Transcripts (`AudioTranscribe`) | `audio=1` on search/doc (host-enforced scope) |
 
 `doc.read` opens a hit URL with the same scope flags; the guest does not
-re-check Knowledge (bridge enforces files/audio per source).
+re-check Knowledge (bridge enforces files/audio per source). Host does not
+Cap-check Inbox/Knowledge — the guest skips those CALLs when ungated.
 
 Revoke of Files/Transcripts purges via `workspace.forget` / `audio.forget`.
 

@@ -10,13 +10,15 @@ description: >-
 
 ## Non-negotiables
 
-- No ambient root. Every tool call needs a matching capability.
-- Prefer least privilege: mint/grant the smallest cap that works.
-- If a tool returns `ERR … disabled_until_cap_confirm`, stop — that tool is a
-  policy stub (today: `email.send`), not a missing grant to mint.
+- No ambient root. Cap-gated guest CALLs (Inbox/Knowledge and `files=1` /
+  `audio=1` scopes) need a matching grant before you CALL.
+- Prefer least privilege: mint/grant the smallest Cap that works.
+- Some bridge tools are not Cap-gated (`skills.list`) or are policy stubs
+  (`email.send` → always `ERR … disabled_until_cap_confirm`). Do not invent a
+  Cap for those — stop on the stub; use `skills.list` freely.
 
 ## Checklist before CALL
 
-1. Which cap is required?
-2. Is it granted to this agent?
+1. Is this Cap-gated, ungated, or a policy stub?
+2. If gated: which Cap, and is it granted?
 3. Is the blast radius acceptable?
