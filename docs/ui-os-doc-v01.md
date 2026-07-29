@@ -11,7 +11,7 @@ status: active
 
 Home is a **launcher**, not a landing page: type into search on arrival, three
 destination tiles (Search, Capabilities, Skills), inbox count in the footer
-when `email.search` is granted.
+when a granted peek returns `ROW n=` (grant alone / offline / ERR → no count).
 
 ## Palette
 

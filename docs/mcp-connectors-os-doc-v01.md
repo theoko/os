@@ -59,9 +59,12 @@ Four `Cap::ALL` grants (setup / Caps screen), no ambient root:
 | Cap | Guest wire |
 |-----|------------|
 | Inbox (`EmailSearch`) | required for `CALL email.search` |
-| Knowledge (`SearchQuery`) | required for `CALL search.query` / `doc.read` |
+| Knowledge (`SearchQuery`) | required for `CALL search.query` (guest gate) |
 | Files (`WorkspaceIndex`) | `files=1` on search/doc (host producer `workspace.index`) |
 | Transcripts (`AudioTranscribe`) | `audio=1` on search/doc (host producer `audio.transcribe`) |
+
+`doc.read` opens a hit URL with the same scope flags; the guest does not
+re-check Knowledge (bridge enforces files/audio per source).
 
 Revoke of Files/Transcripts purges via `workspace.forget` / `audio.forget`.
 

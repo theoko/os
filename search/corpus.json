@@ -46,14 +46,14 @@
       "t": "UI home screen",
       "u": "os://docs/ui-os-doc-v01.md",
       "c": "docs",
-      "b": "Home is a launcher. Search field on arrival. Tiles for Search Capabilities Skills. Inbox count in the footer when email.search is granted.",
+      "b": "Home is a launcher. Search field on arrival. Tiles for Search Capabilities Skills. Inbox count in the footer when a granted peek returns ROW n.",
       "pr": 0.6
     },
     {
       "t": "email-triage skill",
       "u": "os://skills/defaults/email-triage/SKILL.md",
       "c": "skills",
-      "b": "Triage inbox via email MCP peek count. Read ROW n only. Never invent message contents. Never send without email.send cap.",
+      "b": "Triage inbox via email MCP peek count. Read ROW n only. Never invent message contents. Never CALL email.send (always refused).",
       "pr": 0.75
     },
     {

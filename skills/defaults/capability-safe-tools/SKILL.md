@@ -12,7 +12,8 @@ description: >-
 
 - No ambient root. Every tool call needs a matching capability.
 - Prefer least privilege: mint/grant the smallest cap that works.
-- If a tool returns `ERR … disabled_until_cap_confirm`, stop and ask the user.
+- If a tool returns `ERR … disabled_until_cap_confirm`, stop — that tool is a
+  policy stub (today: `email.send`), not a missing grant to mint.
 
 ## Checklist before CALL
 
