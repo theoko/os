@@ -1,11 +1,17 @@
 ---
-project: os
+project: teddyOS / os
 type: architecture
 purpose: agent-centric OS design north star
-status: active
+status: active — aspirational; see tip note
 ---
 
 # Architecture — agent-centric OS (v01)
+
+> **Tip note (teddyOS / `fix/bridge-prewarm`).** This doc is the long-range
+> north star (`agentd` + capability IPC). **Shipped shape on this tip** is
+> freestanding kernel + Linux live (`linux/`) + baked corpus — **no** host MCP
+> bridge / COM2 connectors. MCP `main` is the separate bridge product. See
+> `STATUS.md` and `AGENTS.md`.
 
 ## Intent
 
@@ -61,7 +67,8 @@ Planned syscall sketch (names may change before Phase 3):
 | 3 | Ring-3 userspace + capability IPC |
 | 4 | `agentd` + sandboxed tools |
 | 5 | Thin chat UI |
-| bridge (now) | Host MCP connectors (email via COM2); moves into guest userspace once networking exists |
+| standalone (this tip) | No host MCP / COM2 connectors; corpus baked into the ISO; Linux live apps under `linux/` |
+| bridge (MCP `main` only) | Host MCP connectors (email via COM2); not landed on this fork |
 
 ## Explicit non-goals (v0.x)
 

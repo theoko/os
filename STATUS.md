@@ -21,7 +21,8 @@ Shape (see `AGENTS.md` on this tip):
   projects, plain-language UI pass
 
 Tip at latest review push: see `git log -1` on this branch (includes hosted
-COM2 unit-test PIO stub + linux/UTM docs honesty).
+COM2 unit-test PIO stub, linux/UTM/corpus honesty, and search/skills/
+architecture docs rewritten for standalone).
 
 ## What this branch is not
 
