@@ -946,7 +946,14 @@ node --version
 # NOT >/dev/null 2>&1. Every masked command in this file has cost an hour: the
 # theme hook hid a TERM error, WhiteSur hid its own stderr, and this hid the
 # EBADENGINE that explained the whole thing.
+# AI tools for Search "work on …". Claude is the default; Codex and Gemini
+# give people a choice without hunting package names. Installs that fail must
+# not kill the image — Claude is load-bearing, the others are best-effort.
 npm install -g --silent @anthropic-ai/claude-code 2>&1 | tail -20
+npm install -g --silent @openai/codex 2>&1 | tail -10 || \
+  echo "note: codex npm install failed (non-fatal)"
+npm install -g --silent @google/gemini-cli 2>&1 | tail -10 || \
+  echo "note: gemini-cli npm install failed (non-fatal)"
 
 # Presence is the authoritative check; execution is not. `claude` ships as a
 # native ELF binary now, and running it inside a chroot without /proc, /dev and
@@ -958,6 +965,13 @@ PKG="$NODE_DIR/lib/node_modules/@anthropic-ai/claude-code"
 [ -d "$PKG" ] || { echo "ERROR: claude-code package not installed" >&2; exit 1; }
 [ -x "$NODE_DIR/bin/claude" ] || { echo "ERROR: claude binary missing" >&2; exit 1; }
 ln -sf "$NODE_DIR/bin/claude" /usr/local/bin/claude
+# Symlink optional tools when npm put them next to node.
+for b in codex gemini; do
+  if [ -x "$NODE_DIR/bin/$b" ]; then
+    ln -sf "$NODE_DIR/bin/$b" /usr/local/bin/$b
+    echo "$b: linked"
+  fi
+done
 
 if ver=$("$NODE_DIR/bin/claude" --version 2>/dev/null); then
   echo "claude-code: $ver"

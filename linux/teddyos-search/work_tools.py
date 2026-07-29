@@ -61,93 +61,115 @@ class CreditStatus:
 
 # Catalog of tools we know how to launch. Order is the default preference when
 # nothing has been used yet (Claude first). Only entries whose binary exists
-# on PATH are offered — an empty Cursor row on a machine that never shipped
-# Cursor is worse than a short list.
+# (PATH, ~/.local/bin, desktop file, flatpak) are offered.
 #
-# Each entry: id, title, subtitle, icon, metered, is_ai, candidate binaries
-# (first hit wins), argv template after the binary (use "{path}" for the
-# project directory; empty means [binary, path]).
+# Each entry: id, title, subtitle, icon, metered, is_ai, candidate binaries,
+# argv after the binary ({path} = project dir), optional .desktop basenames.
 _CATALOG: list[tuple] = [
     (
-        "claude", "Claude", "Open this project in Claude Code",
+        "claude", "Claude", "Open this project in Claude",
         "teddyos-claude", True, True,
         ("teddyos-claude", "claude"),
         ("{path}",),
+        ("teddyos-claude.desktop",),
     ),
     (
         "cursor", "Cursor", "Open this project in Cursor",
         "text-editor", True, True,
         ("cursor", "cursor-agent"),
         ("{path}",),
+        ("cursor.desktop", "Cursor.desktop"),
     ),
     (
         "windsurf", "Windsurf", "Open this project in Windsurf",
         "text-editor", True, True,
-        ("windsurf",),
+        ("windsurf", "windsurf-bin"),
         ("{path}",),
+        ("windsurf.desktop", "Windsurf.desktop"),
     ),
     (
-        "codex", "Codex", "Open this project with OpenAI Codex",
+        "codex", "Codex", "Open this project with Codex",
         "text-editor", True, True,
         ("codex",),
         ("{path}",),
+        (),
     ),
     (
-        "gemini", "Gemini", "Open this project with Gemini CLI",
+        "gemini", "Gemini", "Open this project with Gemini",
         "text-editor", True, True,
         ("gemini",),
         ("{path}",),
+        (),
     ),
     (
-        "aider", "Aider", "Pair-program on this project with Aider",
+        "aider", "Aider", "Work on this project with Aider",
         "utilities-terminal-symbolic", True, True,
         ("aider",),
         ("{path}",),
+        (),
     ),
     (
         "amp", "Amp", "Open this project with Amp",
         "text-editor", True, True,
         ("amp",),
         ("{path}",),
+        (),
     ),
     (
         "crush", "Crush", "Open this project with Crush",
         "utilities-terminal-symbolic", True, True,
         ("crush",),
         ("{path}",),
+        (),
     ),
     (
         "goose", "Goose", "Open this project with Goose",
         "utilities-terminal-symbolic", True, True,
         ("goose",),
         ("{path}",),
+        (),
     ),
     (
         "ollama", "Ollama", "Chat with a local model in this project",
         "utilities-terminal-symbolic", False, True,
         ("ollama",),
-        # Interactive run; cwd is set by the launcher.
+        (),
         (),
     ),
     (
         "code", "VS Code", "Open this project in VS Code",
         "text-editor", False, True,
-        ("code", "code-insiders"),
+        ("code", "code-insiders", "code-oss"),
         ("{path}",),
+        (
+            "code.desktop",
+            "code-url-handler.desktop",
+            "code-oss.desktop",
+            "com.visualstudio.code.desktop",
+            "visual-studio-code.desktop",
+        ),
     ),
     (
         "codium", "VSCodium", "Open this project in VSCodium",
         "text-editor", False, True,
-        ("codium",),
+        ("codium", "vscodium"),
         ("{path}",),
+        ("codium.desktop", "vscodium.desktop"),
     ),
     (
         "zed", "Zed", "Open this project in Zed",
         "text-editor", False, True,
-        ("zed",),
+        ("zed", "zeditor"),
         ("{path}",),
+        ("zed.desktop", "dev.zed.Zed.desktop"),
     ),
 ]
+
+# .desktop basenames we map to catalog ids (also scanned the other way).
+_DESKTOP_TO_ID: dict[str, str] = {}
+for _e in _CATALOG:
+    for _desk in _e[8]:
+        _DESKTOP_TO_ID[_desk.lower()] = _e[0]
 
 
 def available_work_tools() -> list[WorkTool]:
@@ -158,10 +180,11 @@ def available_work_tools() -> list[WorkTool]:
     """
     found: list[WorkTool] = []
     seen_ids: set[str] = set()
+    desktop_execs = _desktop_exec_map()
 
     for entry in _CATALOG:
-        tid, title, subtitle, icon, metered, is_ai, binaries, args = entry
-        exe = _first_which(binaries)
+        tid, title, subtitle, icon, metered, is_ai, binaries, args, desks = entry
+        exe = _resolve_binary(binaries, desks, desktop_execs)
         if not exe:
             continue
         argv = (exe,) + tuple(args)
@@ -232,11 +255,105 @@ def available_work_tools() -> list[WorkTool]:
     return ordered + helpers
 
 
-def _first_which(binaries: tuple[str, ...]) -> str | None:
+def _extra_bin_dirs() -> list[Path]:
+    """Places tools often land that are not always on PATH for GUI apps."""
+    home = Path.home()
+    dirs = [
+        home / ".local" / "bin",
+        Path("/usr/local/bin"),
+        Path("/opt/homebrew/bin"),  # harmless on Linux
+        Path("/snap/bin"),
+    ]
+    # Node global bins (Claude / Codex / Gemini on the image).
+    for base in (Path("/usr/local/lib/nodejs"), home / ".npm-global" / "bin"):
+        if base.is_dir():
+            for child in base.iterdir():
+                if child.is_dir():
+                    b = child / "bin"
+                    if b.is_dir():
+                        dirs.append(b)
+    return dirs
+
+
+def _resolve_binary(
+    binaries: tuple[str, ...],
+    desktops: tuple[str, ...],
+    desktop_execs: dict[str, str],
+) -> str | None:
     for name in binaries:
         hit = shutil.which(name)
         if hit:
             return hit
+        for d in _extra_bin_dirs():
+            cand = d / name
+            if cand.is_file() and os.access(cand, os.X_OK):
+                return str(cand)
+    for desk in desktops:
+        exe = desktop_execs.get(desk.lower())
+        if exe:
+            return exe
+    return None
+
+
+def _desktop_exec_map() -> dict[str, str]:
+    """basename.desktop (lower) → first executable token from Exec=."""
+    out: dict[str, str] = {}
+    search_dirs = [
+        Path("/usr/share/applications"),
+        Path("/usr/local/share/applications"),
+        Path.home() / ".local" / "share" / "applications",
+        Path("/var/lib/flatpak/exports/share/applications"),
+        Path.home() / ".local" / "share" / "flatpak" / "exports" / "share" / "applications",
+    ]
+    for d in search_dirs:
+        if not d.is_dir():
+            continue
+        try:
+            entries = list(d.glob("*.desktop"))
+        except OSError:
+            continue
+        for path in entries:
+            key = path.name.lower()
+            if key not in _DESKTOP_TO_ID and not any(
+                k in key for k in (
+                    "cursor", "code", "codium", "windsurf", "zed", "claude",
+                )
+            ):
+                continue
+            try:
+                text = path.read_text(errors="ignore")
+            except OSError:
+                continue
+            exe = _parse_desktop_exec(text)
+            if exe:
+                out[key] = exe
+                # Also map by catalog id if we know this desktop file.
+                tid = _DESKTOP_TO_ID.get(key)
+                if tid:
+                    out[key] = exe
+    return out
+
+
+def _parse_desktop_exec(text: str) -> str | None:
+    for line in text.splitlines():
+        if not line.startswith("Exec="):
+            continue
+        raw = line[5:].strip()
+        # Drop field codes %f %F %u %U %i %c %k
+        parts = [p for p in raw.split() if not p.startswith("%")]
+        if not parts:
+            continue
+        cmd = parts[0]
+        # flatpak run app.id → keep full argv as single string? We only need
+        # one executable for argv[0]; flatpak needs multi-token.
+        if cmd == "flatpak" and len(parts) >= 3 and parts[1] == "run":
+            # Store as "flatpak\0run\0app" joined later — use a marker path.
+            # Simpler: return the app binary if /var/lib/flatpak has it.
+            return " ".join(parts)  # handled specially in launch if space
+        if cmd.startswith("/"):
+            return cmd if Path(cmd).exists() or True else cmd
+        hit = shutil.which(cmd)
+        return hit or cmd
     return None
 
 

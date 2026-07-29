@@ -497,16 +497,25 @@ class SearchWindow(Adw.ApplicationWindow):
             rows.append(self._section_label(f"Work on “{label}”"))
             recent_tools = [t for t in tools if t.is_ai and t.id in recent]
             other_tools = [t for t in tools if t not in recent_tools]
-            if recent_tools:
+            # Split AI helpers from Files/Terminal so a machine with only
+            # Claude does not look like Claude is the entire product.
+            ai_recent = [t for t in recent_tools if t.is_ai]
+            ai_other = [t for t in other_tools if t.is_ai]
+            open_with = [t for t in other_tools if not t.is_ai]
+            if ai_recent:
                 rows.append(self._section_label("Recently used"))
-                for tool in recent_tools:
+                for tool in ai_recent:
                     rows.append(self._tool_row(tool, project, recent=True))
-            if other_tools:
-                if recent_tools:
-                    rows.append(self._section_label("All tools"))
-                for tool in other_tools:
+            if ai_other:
+                rows.append(self._section_label(
+                    "AI helpers" if not ai_recent else "More AI helpers"))
+                for tool in ai_other:
                     rows.append(self._tool_row(
                         tool, project, recent=tool.id in recent))
+            if open_with:
+                rows.append(self._section_label("Also open with"))
+                for tool in open_with:
+                    rows.append(self._tool_row(tool, project, recent=False))
 
     def _begin_git_lookup(self, subject: str, generation: int) -> None:
         def work() -> None:
@@ -781,12 +790,19 @@ class SearchWindow(Adw.ApplicationWindow):
         # Record before spawn so a crashy tool still counts as a choice.
         work_tools.record_use(tool.id)
         path = str(project)
-        argv = [a.replace("{path}", path) for a in tool.argv]
+        raw = [a.replace("{path}", path) for a in tool.argv]
+        # Desktop/flatpak entries may store "flatpak run app.id" as one token.
+        argv: list[str] = []
+        for part in raw:
+            if " " in part and not Path(part).exists():
+                argv.extend(part.split())
+            else:
+                argv.append(part)
         log.info("launch tool=%s project=%s argv=%s", tool.id, path, argv)
         try:
             launcher = Gio.SubprocessLauncher.new(Gio.SubprocessFlags.NONE)
-            # Working directory matters when the tool is a bare `claude` that
-            # does not take a path argument — it still starts inside the project.
+            # Working directory matters when the tool is a bare CLI that does
+            # not take a path argument — it still starts inside the project.
             launcher.set_cwd(path)
             launcher.spawnv(argv)
         except GLib.Error:
