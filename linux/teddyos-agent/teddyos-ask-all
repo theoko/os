@@ -47,7 +47,9 @@ _TIMEOUT = 180
 _MAX_CHARS = 24_000
 
 # id → (title, build_argv(prompt) -> list[str])
-def _headless_argv(tool_id: str, prompt: str) -> list[str] | None:
+def _headless_argv(
+    tool_id: str, prompt: str, project: str = "",
+) -> list[str] | None:
     """One-shot CLI that prints an answer and exits. cwd is the project."""
     text = (prompt or "").strip()
     if not text:
@@ -60,17 +62,37 @@ def _headless_argv(tool_id: str, prompt: str) -> list[str] | None:
         return [exe, "-p", text] if exe else None
     if tool_id == "codex":
         exe = shutil.which("codex") or _find("codex")
-        return [exe, "exec", text] if exe else None
+        # Non-interactive; allow writing inside the project folder only.
+        return (
+            [exe, "exec", "--sandbox", "workspace-write", text]
+            if exe else None
+        )
     if tool_id == "grok":
         exe = shutil.which("grok") or _find("grok")
         # -p / --single: print response and exit
         return [exe, "-p", text] if exe else None
     if tool_id == "copilot":
         exe = shutil.which("copilot") or _find("copilot")
-        return [exe, "-p", text] if exe else None
+        if not exe:
+            return None
+        # Non-interactive (-p) requires auto-approved tools or Copilot only
+        # replies "permission denied" and does nothing useful.
+        cmd = [
+            exe,
+            "-p", text,
+            "--allow-all-tools",
+            "--allow-all-paths",
+        ]
+        if project:
+            cmd.extend(["-C", project, "--add-dir", project])
+        return cmd
     if tool_id == "antigravity":
         exe = shutil.which("agy") or _find("agy") or shutil.which("antigravity")
-        return [exe, "-p", text] if exe else None
+        if not exe:
+            return None
+        # Allow tools in print mode so the agent can actually answer.
+        cmd = [exe, "-p", text, "--dangerously-skip-permissions"]
+        return cmd
     if tool_id == "aider":
         # Aider is interactive-first; skip one-shot for now.
         return None
@@ -304,7 +326,7 @@ class AskAllWindow(Adw.ApplicationWindow):
             card = ToolCard(tid, project, prompt, on_done=self._mark_done)
             self._cards[tid] = card
             cards_box.append(card)
-            if _headless_argv(tid, prompt):
+            if _headless_argv(tid, prompt, project):
                 runnable.append(tid)
                 self._total += 1
             else:
@@ -360,7 +382,7 @@ class AskAllWindow(Adw.ApplicationWindow):
             )
 
     def _run_one(self, tool_id: str) -> None:
-        argv = _headless_argv(tool_id, self._prompt)
+        argv = _headless_argv(tool_id, self._prompt, self._project)
         title = _TITLES.get(tool_id, tool_id)
         if not argv:
             GLib.idle_add(
@@ -379,6 +401,8 @@ class AskAllWindow(Adw.ApplicationWindow):
         # Prefer non-interactive; some tools honor these.
         env["CI"] = "1"
         env["NO_COLOR"] = "1"
+        # Copilot non-interactive without this often only says "permission denied".
+        env["COPILOT_ALLOW_ALL"] = "1"
         try:
             proc = subprocess.run(  # noqa: S603
                 argv,
@@ -428,13 +452,17 @@ class AskAllWindow(Adw.ApplicationWindow):
             s in low
             for s in (
                 "auth", "login", "sign in", "not logged", "api key",
-                "unauthorized", "401", "403", "please run",
+                "unauthorized", "401", "please run", "not authenticated",
             )
         ):
             return (
                 f"{title} needs a quick sign-in first. "
-                f"Close this, open {title} from Search, finish in the browser, "
-                "then ask again."
+                "Open Connect your helpers, connect this one, then ask again."
+            )
+        if "permission denied" in low or "permissions" in low and "denied" in low:
+            return (
+                f"{title} couldn’t use tools on this project. "
+                "Try Connect your helpers for this account, or ask again in a moment."
             )
         if any(
             s in low
@@ -444,9 +472,14 @@ class AskAllWindow(Adw.ApplicationWindow):
                 f"{title} is out of free uses for now. "
                 "Try another helper, or try again later."
             )
+        if "403" in low:
+            return (
+                f"{title} was refused access. Connect the account again in "
+                "Connect your helpers, then retry."
+            )
         return (
             f"{title} couldn’t answer this time. "
-            "Try again, or open it on its own from Search."
+            "Try again, or open Connect your helpers if you haven’t signed in."
         )
 
 
