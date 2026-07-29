@@ -18,6 +18,12 @@ and `claude usage` (so “Credit balance is too low” or “Not signed in” sh
 before you click). Files and Terminal report that they need no credits; Cursor
 admits when only “installed” is knowable.
 
+The catalog is every AI tool we know how to launch (Claude, Cursor, Windsurf,
+Codex, Gemini, Aider, Amp, Crush, Goose, Ollama, VS Code, VSCodium, Zed) —
+only installed binaries appear. Choosing a tool records it for 30 days under
+**Recently used**, sorted above the rest with a badge on the row.
+
+
 
 ### Live ISO records the host commit
 

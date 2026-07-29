@@ -1,21 +1,34 @@
-"""AI tools for 'work on …' goals, plus whether each one still has credits.
+"""AI tools for 'work on …' goals: discovery, credits, and recent use.
 
-Search lists Claude / Cursor / VS Code when they are installed. Offering a tool
-that is out of credits looks like it works until the person is halfway into a
-session — so we probe each tool and put the answer on the row before they click.
-
-Probes are best-effort and never raise. A probe that times out or is not
-understood reports "unknown" rather than pretending the tool is free.
+Search lists every AI tool that is actually installed, checks remaining
+credits where we can, and marks tools the person opened recently so the
+next "work on …" does not bury Claude under Files.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
+
+
+# How long "Recently used" stays true after a launch. Thirty days is long
+# enough that a weekly project still shows the badge, short enough that a
+# tool abandoned last quarter does not.
+RECENT_DAYS = 30
+# Cap the recents list so a noisy machine cannot grow the file without bound.
+RECENT_MAX = 24
+
+CONFIG_DIR = Path(
+    os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
+) / "teddyos"
+RECENTS_FILE = CONFIG_DIR / "work-tools.json"
 
 
 @dataclass(frozen=True)
@@ -29,6 +42,8 @@ class WorkTool:
     argv: tuple[str, ...]
     # True for tools that spend a metered account (Claude, Cursor, …).
     metered: bool = False
+    # AI / coding agents, as opposed to Files/Terminal helpers.
+    is_ai: bool = True
 
 
 @dataclass(frozen=True)
@@ -44,78 +59,264 @@ class CreditStatus:
     label: str
 
 
-def available_work_tools() -> list[WorkTool]:
-    """AI / editor tools installed on this machine, Claude first.
+# Catalog of tools we know how to launch. Order is the default preference when
+# nothing has been used yet (Claude first). Only entries whose binary exists
+# on PATH are offered — an empty Cursor row on a machine that never shipped
+# Cursor is worse than a short list.
+#
+# Each entry: id, title, subtitle, icon, metered, is_ai, candidate binaries
+# (first hit wins), argv template after the binary (use "{path}" for the
+# project directory; empty means [binary, path]).
+_CATALOG: list[tuple] = [
+    (
+        "claude", "Claude", "Open this project in Claude Code",
+        "teddyos-claude", True, True,
+        ("teddyos-claude", "claude"),
+        ("{path}",),
+    ),
+    (
+        "cursor", "Cursor", "Open this project in Cursor",
+        "text-editor", True, True,
+        ("cursor", "cursor-agent"),
+        ("{path}",),
+    ),
+    (
+        "windsurf", "Windsurf", "Open this project in Windsurf",
+        "text-editor", True, True,
+        ("windsurf",),
+        ("{path}",),
+    ),
+    (
+        "codex", "Codex", "Open this project with OpenAI Codex",
+        "text-editor", True, True,
+        ("codex",),
+        ("{path}",),
+    ),
+    (
+        "gemini", "Gemini", "Open this project with Gemini CLI",
+        "text-editor", True, True,
+        ("gemini",),
+        ("{path}",),
+    ),
+    (
+        "aider", "Aider", "Pair-program on this project with Aider",
+        "utilities-terminal-symbolic", True, True,
+        ("aider",),
+        ("{path}",),
+    ),
+    (
+        "amp", "Amp", "Open this project with Amp",
+        "text-editor", True, True,
+        ("amp",),
+        ("{path}",),
+    ),
+    (
+        "crush", "Crush", "Open this project with Crush",
+        "utilities-terminal-symbolic", True, True,
+        ("crush",),
+        ("{path}",),
+    ),
+    (
+        "goose", "Goose", "Open this project with Goose",
+        "utilities-terminal-symbolic", True, True,
+        ("goose",),
+        ("{path}",),
+    ),
+    (
+        "ollama", "Ollama", "Chat with a local model in this project",
+        "utilities-terminal-symbolic", False, True,
+        ("ollama",),
+        # Interactive run; cwd is set by the launcher.
+        (),
+    ),
+    (
+        "code", "VS Code", "Open this project in VS Code",
+        "text-editor", False, True,
+        ("code", "code-insiders"),
+        ("{path}",),
+    ),
+    (
+        "codium", "VSCodium", "Open this project in VSCodium",
+        "text-editor", False, True,
+        ("codium",),
+        ("{path}",),
+    ),
+    (
+        "zed", "Zed", "Open this project in Zed",
+        "text-editor", False, True,
+        ("zed",),
+        ("{path}",),
+    ),
+]
 
-    Only tools that actually exist are offered. An empty row for Cursor on a
-    machine that never shipped Cursor is worse than a short list.
+
+def available_work_tools() -> list[WorkTool]:
+    """Installed tools, recently used AI first, then the rest of the catalog.
+
+    Files and Terminal always trail — they are escapes, not the point of a
+    "work on …" goal.
     """
-    tools: list[WorkTool] = []
-    if shutil.which("teddyos-claude") or shutil.which("claude"):
-        # Prefer the windowed launcher so the person never sees a raw terminal.
-        exe = shutil.which("teddyos-claude") or "claude"
-        tools.append(WorkTool(
-            id="claude",
-            title="Claude",
-            subtitle="Open this project in Claude Code",
-            icon="teddyos-claude",
-            argv=(exe, "{path}"),
-            metered=True,
+    found: list[WorkTool] = []
+    seen_ids: set[str] = set()
+
+    for entry in _CATALOG:
+        tid, title, subtitle, icon, metered, is_ai, binaries, args = entry
+        exe = _first_which(binaries)
+        if not exe:
+            continue
+        argv = (exe,) + tuple(args)
+        found.append(WorkTool(
+            id=tid,
+            title=title,
+            subtitle=subtitle,
+            icon=icon,
+            argv=argv,
+            metered=metered,
+            is_ai=is_ai,
         ))
-    if shutil.which("cursor"):
-        tools.append(WorkTool(
-            id="cursor",
-            title="Cursor",
-            subtitle="Open this project in Cursor",
-            icon="text-editor",
-            argv=("cursor", "{path}"),
-            metered=True,
-        ))
-    if shutil.which("code"):
-        tools.append(WorkTool(
-            id="code",
-            title="VS Code",
-            subtitle="Open this project in VS Code",
-            icon="text-editor",
-            argv=("code", "{path}"),
-            metered=False,
-        ))
-    # Always offer Files so "work on X" can still open the folder when no AI
-    # tool is installed.
+        seen_ids.add(tid)
+
+    # Helpers — always available when the binary exists.
     file_mgr = (
         shutil.which("nautilus")
         or shutil.which("xdg-open")
         or "xdg-open"
     )
-    tools.append(WorkTool(
-        id="files",
-        title="Files",
-        subtitle="Open the project folder",
-        icon="folder",
-        argv=(file_mgr, "{path}"),
-        metered=False,
-    ))
+    helpers: list[WorkTool] = [
+        WorkTool(
+            id="files",
+            title="Files",
+            subtitle="Open the project folder",
+            icon="folder",
+            argv=(file_mgr, "{path}"),
+            metered=False,
+            is_ai=False,
+        ),
+    ]
     if shutil.which("gnome-terminal"):
-        tools.append(WorkTool(
+        helpers.append(WorkTool(
             id="terminal",
             title="Terminal",
             subtitle="Open a terminal in this project",
             icon="utilities-terminal-symbolic",
             argv=("gnome-terminal", "--working-directory={path}"),
             metered=False,
+            is_ai=False,
         ))
-    return tools
+    elif shutil.which("kgx"):  # GNOME Console
+        helpers.append(WorkTool(
+            id="terminal",
+            title="Terminal",
+            subtitle="Open a terminal in this project",
+            icon="utilities-terminal-symbolic",
+            argv=("kgx", "--working-directory={path}"),
+            metered=False,
+            is_ai=False,
+        ))
 
+    recent = recent_ids()
+    rank = {tid: i for i, tid in enumerate(recent)}
+    catalog_order = {entry[0]: i for i, entry in enumerate(_CATALOG)}
+
+    def sort_key(t: WorkTool) -> tuple:
+        # AI with a recency rank first (lower index = more recent), then other
+        # AI in catalog order (Claude before Aider), then helpers.
+        cat = catalog_order.get(t.id, 999)
+        if t.is_ai and t.id in rank:
+            return (0, rank[t.id], cat)
+        if t.is_ai:
+            return (1, cat, 0)
+        return (2, cat, 0)
+
+    ordered = sorted(found, key=sort_key)
+    return ordered + helpers
+
+
+def _first_which(binaries: tuple[str, ...]) -> str | None:
+    for name in binaries:
+        hit = shutil.which(name)
+        if hit:
+            return hit
+    return None
+
+
+# --- recents ----------------------------------------------------------------
+
+def recent_ids() -> list[str]:
+    """Tool ids most-recently launched, newest first."""
+    data = _load_recents()
+    now = time.time()
+    cutoff = now - RECENT_DAYS * 86400
+    kept: list[tuple[str, float]] = []
+    for row in data.get("recent", []):
+        if not isinstance(row, dict):
+            continue
+        tid = row.get("id")
+        at = row.get("at")
+        if not isinstance(tid, str) or not isinstance(at, (int, float)):
+            continue
+        if at >= cutoff:
+            kept.append((tid, float(at)))
+    kept.sort(key=lambda p: p[1], reverse=True)
+    # Unique, preserving order.
+    out: list[str] = []
+    seen: set[str] = set()
+    for tid, _ in kept:
+        if tid not in seen:
+            seen.add(tid)
+            out.append(tid)
+    return out
+
+
+def is_recent(tool_id: str) -> bool:
+    return tool_id in recent_ids()
+
+
+def record_use(tool_id: str) -> None:
+    """Remember that this tool was chosen for a project."""
+    if not tool_id:
+        return
+    data = _load_recents()
+    rows = [
+        r for r in data.get("recent", [])
+        if isinstance(r, dict) and r.get("id") != tool_id
+    ]
+    rows.insert(0, {"id": tool_id, "at": time.time()})
+    data["recent"] = rows[:RECENT_MAX]
+    _save_recents(data)
+
+
+def _load_recents() -> dict:
+    try:
+        return json.loads(RECENTS_FILE.read_text())
+    except (OSError, ValueError):
+        return {"recent": []}
+
+
+def _save_recents(data: dict) -> None:
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = RECENTS_FILE.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(data, indent=2) + "\n")
+        tmp.replace(RECENTS_FILE)
+    except OSError:
+        # Preference file is best-effort; a full disk must not block launch.
+        pass
+
+
+# --- credits ----------------------------------------------------------------
 
 def probe_credits(tool: WorkTool) -> CreditStatus:
     """Best-effort remaining-credit check for one tool."""
-    if tool.id == "claude":
-        return _probe_claude()
-    if tool.id == "cursor":
-        return _probe_cursor()
+    probe = PROBES.get(tool.id)
+    if probe is not None:
+        return probe()
     if not tool.metered:
         return CreditStatus(ok=True, label="No credits needed")
-    return CreditStatus(ok=None, label="Credits unknown")
+    return CreditStatus(
+        ok=None,
+        label="Installed · open the app to see remaining credits",
+    )
 
 
 def probe_all(tools: list[WorkTool] | None = None) -> dict[str, CreditStatus]:
@@ -123,8 +324,6 @@ def probe_all(tools: list[WorkTool] | None = None) -> dict[str, CreditStatus]:
     tools = tools if tools is not None else available_work_tools()
     return {t.id: probe_credits(t) for t in tools}
 
-
-# --- probes -----------------------------------------------------------------
 
 _LOW = re.compile(
     r"credit balance is too low|"
@@ -151,7 +350,6 @@ def _run(argv: list[str], timeout: float = 8.0) -> tuple[int, str]:
             capture_output=True,
             text=True,
             timeout=timeout,
-            env=None,  # inherit PATH so claude from /usr/local/bin is found
         )
     except FileNotFoundError:
         return 127, "not installed"
@@ -164,38 +362,28 @@ def _run(argv: list[str], timeout: float = 8.0) -> tuple[int, str]:
 
 
 def _probe_claude() -> CreditStatus:
-    """Use `claude auth status` + `claude usage`.
-
-    `claude usage` is the account-level check when signed in. Observed outputs:
-      - "Credit balance is too low"
-      - "Not logged in · Please run /login"
-      - session cost tables (still means the account answered)
-    """
+    """Use `claude auth status` + `claude usage`."""
     if not shutil.which("claude"):
         return CreditStatus(ok=False, label="Claude is not installed")
 
     code, auth_text = _run(["claude", "auth", "status"], timeout=6)
     logged_in = False
     try:
-        # Prefer the last JSON object in the stream — banners sometimes precede it.
         blob = auth_text
         start = blob.find("{")
         if start >= 0:
             data = json.loads(blob[start:])
             logged_in = bool(data.get("loggedIn"))
     except (json.JSONDecodeError, TypeError, ValueError):
-        logged_in = "loggedIn\": true" in auth_text or '"loggedIn": true' in auth_text
+        logged_in = '"loggedIn": true' in auth_text
 
-    if not logged_in:
-        # API-key auth still reports loggedIn true on some builds; if status
-        # failed entirely, keep going to `usage` which is more decisive.
-        if code == 0 and "loggedIn" in auth_text:
-            return CreditStatus(
-                ok=False,
-                label="Not signed in — open Claude to log in",
-            )
+    if not logged_in and code == 0 and "loggedIn" in auth_text:
+        return CreditStatus(
+            ok=False,
+            label="Not signed in — open Claude to log in",
+        )
 
-    code, usage = _run(["claude", "usage"], timeout=10)
+    _code, usage = _run(["claude", "usage"], timeout=10)
     text = usage.strip()
     if not text:
         if logged_in:
@@ -203,34 +391,27 @@ def _probe_claude() -> CreditStatus:
         return CreditStatus(ok=False, label="Not signed in — open Claude to log in")
 
     first = text.splitlines()[0].strip()
-    low = _LOW.search(text)
-    if low or "not logged in" in text.lower():
-        if "not logged in" in text.lower():
-            return CreditStatus(
-                ok=False,
-                label="Not signed in — open Claude to log in",
-            )
+    if "not logged in" in text.lower():
+        return CreditStatus(
+            ok=False,
+            label="Not signed in — open Claude to log in",
+        )
+    if _LOW.search(text):
         return CreditStatus(ok=False, label=first or "No credits left")
 
-    if _OKISH.search(text) or code == 0:
-        # Keep the message short enough for a list row.
+    if _OKISH.search(text) or _code == 0:
         label = first if len(first) <= 72 else first[:69] + "…"
         if not label or label.lower().startswith("usage:"):
             label = "Credits available"
-        else:
-            label = f"Credits · {label}" if "credit" not in label.lower() else label
+        elif "credit" not in label.lower():
+            label = f"Credits · {label}"
         return CreditStatus(ok=True, label=label)
 
     return CreditStatus(ok=None, label="Could not check Claude credits")
 
 
 def _probe_cursor() -> CreditStatus:
-    """Cursor does not expose a stable CLI for remaining fast requests.
-
-    We can only say it is installed. Pretending we know the balance would be
-    a lie the person notices the first time a request is refused.
-    """
-    if not shutil.which("cursor"):
+    if not shutil.which("cursor") and not shutil.which("cursor-agent"):
         return CreditStatus(ok=False, label="Cursor is not installed")
     return CreditStatus(
         ok=None,
@@ -238,8 +419,23 @@ def _probe_cursor() -> CreditStatus:
     )
 
 
-# Probe registry for tests / extension.
+def _probe_generic_installed(name: str, binary: str) -> CreditStatus:
+    if not shutil.which(binary):
+        return CreditStatus(ok=False, label=f"{name} is not installed")
+    return CreditStatus(
+        ok=None,
+        label=f"Installed · open {name} to see remaining credits",
+    )
+
+
 PROBES: dict[str, Callable[[], CreditStatus]] = {
     "claude": _probe_claude,
     "cursor": _probe_cursor,
+    "windsurf": lambda: _probe_generic_installed("Windsurf", "windsurf"),
+    "codex": lambda: _probe_generic_installed("Codex", "codex"),
+    "gemini": lambda: _probe_generic_installed("Gemini", "gemini"),
+    "aider": lambda: _probe_generic_installed("Aider", "aider"),
+    "amp": lambda: _probe_generic_installed("Amp", "amp"),
+    "crush": lambda: _probe_generic_installed("Crush", "crush"),
+    "goose": lambda: _probe_generic_installed("Goose", "goose"),
 }

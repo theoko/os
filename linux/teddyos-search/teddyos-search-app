@@ -198,6 +198,9 @@ class SearchWindow(Adw.ApplicationWindow):
         # the list is already on screen without rebuilding the whole stack.
         self._tool_rows: dict[str, Adw.ActionRow] = {}
         self._credit_generation = 0
+        # tool_id -> base credit subtitle (without the "Recently used" tag), so
+        # a late credit probe does not wipe the recency badge.
+        self._credit_labels: dict[str, str] = {}
 
         self.entry = Gtk.SearchEntry(
             placeholder_text="Ask anything",
@@ -436,6 +439,7 @@ class SearchWindow(Adw.ApplicationWindow):
         tools = work_tools.available_work_tools()
         rows: list[Gtk.Widget] = []
         self._tool_rows = {}
+        self._credit_labels = {}
 
         if not projects:
             rows.append(self._notice_row(
@@ -446,14 +450,27 @@ class SearchWindow(Adw.ApplicationWindow):
             ))
             return rows
 
+        recent = set(work_tools.recent_ids())
         # One project is the usual case. Several matches: one tool group per
         # folder so the person can pick which tree.
         for project in projects[:5]:
             label = project.name
             parent = str(project.parent).replace(str(Path.home()), "~")
             rows.append(self._section_label(f"Work on {label}  ·  {parent}/{label}"))
-            for tool in tools:
-                rows.append(self._tool_row(tool, project))
+            # Split the list so "Recently used" is a real section, not a tag
+            # the eye has to hunt for in a long catalog.
+            recent_tools = [t for t in tools if t.is_ai and t.id in recent]
+            other_tools = [t for t in tools if t not in recent_tools]
+            if recent_tools:
+                rows.append(self._section_label("Recently used"))
+                for tool in recent_tools:
+                    rows.append(self._tool_row(tool, project, recent=True))
+            if other_tools:
+                if recent_tools:
+                    rows.append(self._section_label("All tools"))
+                for tool in other_tools:
+                    rows.append(self._tool_row(
+                        tool, project, recent=tool.id in recent))
 
         # Credits are checked after the list is shown. Claude's `auth`/`usage`
         # probes can take a second or two, and blocking the UI thread for that
@@ -461,17 +478,27 @@ class SearchWindow(Adw.ApplicationWindow):
         self._begin_credit_probes(tools)
         return rows
 
-    def _tool_row(self, tool: WorkTool, project: Path) -> Gtk.Widget:
+    def _tool_row(
+        self, tool: WorkTool, project: Path, *, recent: bool = False
+    ) -> Gtk.Widget:
         row = Adw.ActionRow(title=GLib.markup_escape_text(tool.title))
         # Placeholder until the credit probe returns. Metered tools show that
         # we are checking; free tools can state the answer immediately.
         if tool.metered:
-            row.set_subtitle("Checking credits…")
+            base = "Checking credits…"
         else:
-            row.set_subtitle(GLib.markup_escape_text(
-                f"{tool.subtitle} · No credits needed"))
+            base = "No credits needed"
+        self._credit_labels[tool.id] = base
+        row.set_subtitle(GLib.markup_escape_text(
+            self._format_tool_subtitle(tool.id, base, recent)))
         row.set_subtitle_lines(2)
         row.add_prefix(Gtk.Image.new_from_icon_name(tool.icon))
+        if recent:
+            badge = Gtk.Label(label="Recently used")
+            badge.add_css_class("caption")
+            badge.add_css_class("dim-label")
+            badge.set_valign(Gtk.Align.CENTER)
+            row.add_suffix(badge)
         row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
         row.set_activatable(True)
         row.connect(
@@ -483,15 +510,30 @@ class SearchWindow(Adw.ApplicationWindow):
         self._tool_rows[tool.id] = row
         return row
 
+    def _format_tool_subtitle(
+        self, tool_id: str, credit_label: str, recent: bool | None = None
+    ) -> str:
+        if recent is None:
+            recent = work_tools.is_recent(tool_id)
+        # Credit line is the substance; "Recently used" is also a section
+        # header, so only repeat it in the subtitle when the row is not already
+        # under that section — still useful as a suffix on "All tools".
+        if recent:
+            return f"{credit_label} · Recently used"
+        return credit_label
+
     def _begin_credit_probes(self, tools: list[WorkTool]) -> None:
-        metered = [t for t in tools if t.metered]
-        if not metered:
+        # Probe everything that is metered, plus free AI tools that still have
+        # a probe (so "Installed · …" can replace "No credits needed" when
+        # that is more honest).
+        to_probe = [t for t in tools if t.is_ai]
+        if not to_probe:
             return
         self._credit_generation += 1
         generation = self._credit_generation
 
         def work() -> None:
-            statuses = {t.id: work_tools.probe_credits(t) for t in metered}
+            statuses = {t.id: work_tools.probe_credits(t) for t in to_probe}
             GLib.idle_add(self._apply_credit_statuses, generation, statuses)
 
         threading.Thread(target=work, daemon=True).start()
@@ -507,7 +549,9 @@ class SearchWindow(Adw.ApplicationWindow):
             row = self._tool_rows.get(tool_id)
             if row is None:
                 continue
-            row.set_subtitle(GLib.markup_escape_text(status.label))
+            self._credit_labels[tool_id] = status.label
+            row.set_subtitle(GLib.markup_escape_text(
+                self._format_tool_subtitle(tool_id, status.label)))
             # Dim and still clickable when empty: the person may want to open
             # Claude to top up or re-login. A hard-disabled row looks broken.
             if status.ok is False:
@@ -517,6 +561,8 @@ class SearchWindow(Adw.ApplicationWindow):
         return False
 
     def _launch_tool(self, tool: WorkTool, project: Path) -> None:
+        # Record before spawn so a crashy tool still counts as a choice.
+        work_tools.record_use(tool.id)
         path = str(project)
         argv = [a.replace("{path}", path) for a in tool.argv]
         try:
