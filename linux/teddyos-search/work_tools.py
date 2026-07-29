@@ -69,7 +69,7 @@ _CATALOG: list[tuple] = [
     (
         # binaries = commands that mean "this tool is installed"
         # Terminal TUIs are launched via teddyos-agent (see _argv_for).
-        "claude", "Claude", "Get help writing and changing code",
+        "claude", "Claude", "Ready · tap to open",
         "teddyos-claude", True, True,
         ("claude", "teddyos-claude"),
         ("{path}",),
@@ -77,42 +77,42 @@ _CATALOG: list[tuple] = [
     ),
     (
         # Official xAI Grok Build CLI (`npm i -g @xai-official/grok` → `grok`).
-        "grok", "Grok", "Get help writing and changing code",
+        "grok", "Grok", "Ready · tap to open",
         "teddyos-grok", True, True,
         ("grok",),
         ("{path}",),
         (),
     ),
     (
-        "cursor", "Cursor", "Open this project in Cursor",
+        "cursor", "Cursor", "Open in the Cursor app",
         "text-editor", True, True,
         ("cursor", "cursor-agent"),
         ("{path}",),
         ("cursor.desktop", "Cursor.desktop"),
     ),
     (
-        "windsurf", "Windsurf", "Open this project in Windsurf",
+        "windsurf", "Windsurf", "Open in the Windsurf app",
         "text-editor", True, True,
         ("windsurf", "windsurf-bin"),
         ("{path}",),
         ("windsurf.desktop", "Windsurf.desktop"),
     ),
     (
-        "codex", "Codex", "Get help writing and changing code",
+        "codex", "Codex", "Ready · tap to open",
         "teddyos-codex", True, True,
         ("codex",),
         ("{path}",),
         (),
     ),
     (
-        "gemini", "Gemini", "Get help writing and changing code",
+        "gemini", "Gemini", "Ready · tap to open",
         "teddyos-gemini", True, True,
         ("gemini",),
         ("{path}",),
         (),
     ),
     (
-        "aider", "Aider", "Get help writing and changing code",
+        "aider", "Aider", "Ready · tap to open",
         "utilities-terminal-symbolic", True, True,
         ("aider",),
         ("{path}",),
@@ -238,6 +238,11 @@ def tools_ready_for_broadcast(
     return [t for t in tools if ready_for_broadcast(t, statuses.get(t.id))]
 
 
+def is_chat_helper(tool_id: str) -> bool:
+    """True for helpers that answer a typed question (not editors/folders)."""
+    return tool_id in _PROMPT_TOOLS
+
+
 def available_work_tools() -> list[WorkTool]:
     """Installed tools, recently used AI first, then the rest of the catalog.
 
@@ -275,7 +280,7 @@ def available_work_tools() -> list[WorkTool]:
         WorkTool(
             id="files",
             title="Files",
-            subtitle="Open the project folder",
+            subtitle="See the project’s files",
             icon="folder",
             argv=(file_mgr, "{path}"),
             metered=False,
@@ -285,8 +290,8 @@ def available_work_tools() -> list[WorkTool]:
     if shutil.which("gnome-terminal"):
         helpers.append(WorkTool(
             id="terminal",
-            title="Terminal",
-            subtitle="Open a command window in this project",
+            title="Command window",
+            subtitle="For advanced use",
             icon="utilities-terminal-symbolic",
             argv=("gnome-terminal", "--working-directory={path}"),
             metered=False,
@@ -295,8 +300,8 @@ def available_work_tools() -> list[WorkTool]:
     elif shutil.which("kgx"):  # GNOME Console
         helpers.append(WorkTool(
             id="terminal",
-            title="Terminal",
-            subtitle="Open a command window in this project",
+            title="Command window",
+            subtitle="For advanced use",
             icon="utilities-terminal-symbolic",
             argv=("kgx", "--working-directory={path}"),
             metered=False,
@@ -516,10 +521,10 @@ def probe_credits(tool: WorkTool) -> CreditStatus:
     if not tool.is_ai:
         return CreditStatus(ok=True, label="")
     if not tool.metered:
-        return CreditStatus(ok=True, label="Ready to use")
+        return CreditStatus(ok=True, label="Ready · tap to open")
     return CreditStatus(
         ok=None,
-        label="Installed — open the app to check your plan",
+        label="Ready · tap to open",
     )
 
 
@@ -568,7 +573,7 @@ def _run(argv: list[str], timeout: float = 8.0) -> tuple[int, str]:
 def _probe_claude() -> CreditStatus:
     """Use `claude auth status` + `claude usage`."""
     if not shutil.which("claude"):
-        return CreditStatus(ok=False, label="Claude is not installed")
+        return CreditStatus(ok=False, label="Not on this computer")
 
     code, auth_text = _run(["claude", "auth", "status"], timeout=6)
     logged_in = False
@@ -584,54 +589,46 @@ def _probe_claude() -> CreditStatus:
     if not logged_in and code == 0 and "loggedIn" in auth_text:
         return CreditStatus(
             ok=False,
-            label="Not signed in — open Claude to sign in",
+            label="Needs sign-in · tap to connect",
         )
 
     _code, usage = _run(["claude", "usage"], timeout=10)
     text = usage.strip()
     if not text:
         if logged_in:
-            return CreditStatus(ok=None, label="Signed in — usage unknown")
-        return CreditStatus(ok=False, label="Not signed in — open Claude to sign in")
+            return CreditStatus(ok=None, label="Ready · tap to open")
+        return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
 
     first = text.splitlines()[0].strip()
     if "not logged in" in text.lower():
         return CreditStatus(
             ok=False,
-            label="Not signed in — open Claude to sign in",
+            label="Needs sign-in · tap to connect",
         )
     if _LOW.search(text):
-        # Prefer a calm human line over the raw vendor message when we can.
-        if "too low" in first.lower() or "out of" in first.lower():
-            return CreditStatus(ok=False, label="No usage left right now")
-        return CreditStatus(ok=False, label=first or "No usage left right now")
+        return CreditStatus(ok=False, label="Out of uses for now")
 
     if _OKISH.search(text) or _code == 0:
-        label = first if len(first) <= 72 else first[:69] + "…"
-        if not label or label.lower().startswith("usage:"):
-            label = "Ready to use"
-        elif "credit" in label.lower() and "too low" not in label.lower():
-            label = "Ready to use"
-        return CreditStatus(ok=True, label=label)
+        return CreditStatus(ok=True, label="Ready · tap to open")
 
-    return CreditStatus(ok=None, label="Couldn’t check Claude’s plan")
+    return CreditStatus(ok=None, label="Ready · tap to open")
 
 
 def _probe_cursor() -> CreditStatus:
     if not shutil.which("cursor") and not shutil.which("cursor-agent"):
-        return CreditStatus(ok=False, label="Cursor isn’t installed")
+        return CreditStatus(ok=False, label="Not on this computer")
     return CreditStatus(
         ok=None,
-        label="Installed — open Cursor to check your plan",
+        label="Ready · tap to open",
     )
 
 
 def _probe_generic_installed(name: str, binary: str) -> CreditStatus:
     if not shutil.which(binary):
-        return CreditStatus(ok=False, label=f"{name} isn’t installed")
+        return CreditStatus(ok=False, label="Not on this computer")
     return CreditStatus(
         ok=None,
-        label=f"Installed — open {name} to check your plan",
+        label="Ready · tap to open",
     )
 
 
