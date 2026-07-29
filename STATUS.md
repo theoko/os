@@ -11,7 +11,8 @@ status: active on fix/bridge-prewarm — not a land candidate for MCP main
 A **separate product tip** (changelog **0.13.0**) on `origin/fix/bridge-prewarm`.
 
 Standalone honesty review landed via [#21](https://github.com/theoko/os/pull/21)
-(`cursor/teddyos-0.13-review-492f` → this branch).
+(+ [#22](https://github.com/theoko/os/pull/22) STATUS follow-up). Product work
+continues on this tip (e.g. work-on AI picker / “Ask every ready AI”).
 
 Shape (see `AGENTS.md` on this tip):
 
@@ -46,12 +47,14 @@ merging this tip into MCP `main`, or new `email.send` confirm UX.
 - Opening a PR **into `main`** from this tip would be the wrong product story
   and a large conflict bomb (~50 commits / different tree shape).
 
-## Relationship to `main` (all-branches review)
+## All-branches review — complete
 
-After the 0.10.0 integration land (#15) and Cap/`agent.act` honesty follow-ups
-(#16–#20), MCP `main` is the live bridge tip. Drafts #9–#14 were closed or
-parked; dial topology (#14) was won't-merge against listen-mode.
+| Tip | State |
+|-----|--------|
+| MCP `main` | **0.10.0** + Cap / `agent.act` / `email.send` honesty (#15–#20, #23). Soft leftover comment fixed. |
+| `fix/bridge-prewarm` | Standalone teddyOS 0.13; honesty densify landed (#21–#22). Product tip continues here. |
+| Dial / obsolete drafts | #9–#14 closed or won't-merge (dial vs listen). |
 
-This fork remains the **standalone / Linux daily-driver** experiment. Keep it
-on `fix/bridge-prewarm` (or a renamed long-lived tip) until an explicit
-product decision: continue, archive, or deliberate port into MCP `main`.
+No open land PRs remain from this review. Next product work needs an explicit
+brief (new feature on either tip, archive this fork, or deliberate port into
+MCP `main`) — not more densify.
