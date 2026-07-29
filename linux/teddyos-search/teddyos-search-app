@@ -293,7 +293,7 @@ class SearchWindow(Adw.ApplicationWindow):
 
         self._refresh_banner()
         self.entry.grab_focus()
-        log.info("search-app ready (launch=terminal-first for TTY tools)")
+        log.info("search-app ready (launch=app-window for AI tools)")
 
     def _on_key(self, _c, keyval, _code, _state) -> bool:
         if keyval == Gdk.KEY_Escape:
