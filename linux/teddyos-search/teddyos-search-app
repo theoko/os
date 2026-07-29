@@ -841,33 +841,31 @@ class SearchWindow(Adw.ApplicationWindow):
         path = str(project)
         self._notify(f"Opening {tool.title}…")
 
-        # Order matters for non-technical users: a window they can see first.
-        # 1) Claude has a dedicated app window.
-        # 2) Other TTY tools open in Terminal (always visible on this desktop).
-        # 3) teddyos-agent is a nicer private window if Terminal is missing.
+        # Non-technical first: never drop people into a raw Terminal.
+        # 1) Claude → dedicated app window.
+        # 2) Other TTY AI → teddyos-agent (app chrome + plain-language hint).
+        # 3) gnome-terminal only as a last resort if the agent binary is gone.
         # 4) Non-TTY tools (Files, VS Code, …) use their normal argv.
-        # Never spawn bare `gemini /path` — no TTY, dies instantly, looks dead.
+        # Never bare-spawn gemini/codex/grok — no TTY, dies, looks dead.
         ok = False
         if tool.id == "claude" and shutil.which("teddyos-claude"):
             ok = self._spawn(["teddyos-claude", path], cwd=path)
         if not ok and tool.id in self._TTY_TOOLS:
-            ok = self._launch_via_terminal(tool, path)
-        if not ok and tool.id in self._TTY_TOOLS:
             agent = shutil.which("teddyos-agent")
             if agent:
                 ok = self._spawn([agent, tool.id, path], cwd=path)
+        if not ok and tool.id in self._TTY_TOOLS:
+            ok = self._launch_via_terminal(tool, path)
         if not ok:
             argv = self._launch_argv(tool, path)
             ok = self._spawn(argv, cwd=path)
         if ok:
-            # Get out of the way. Search is often full-window in front; the
-            # new Terminal/Claude window opened behind it and looked like a
-            # dead click.
+            # Get out of the way so the helper isn’t hidden behind Search.
             GLib.timeout_add(250, self._yield_to_launched_app)
             return
         log.error("all launch paths failed tool=%s project=%s", tool.id, path)
         self._notify(
-            f"Couldn’t open {tool.title}. Try Terminal from the dock.",
+            f"Couldn’t open {tool.title}. Try again in a moment.",
             timeout=5,
         )
         try:

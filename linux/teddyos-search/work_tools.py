@@ -69,7 +69,7 @@ _CATALOG: list[tuple] = [
     (
         # binaries = commands that mean "this tool is installed"
         # Terminal TUIs are launched via teddyos-agent (see _argv_for).
-        "claude", "Claude", "Open this project in Claude",
+        "claude", "Claude", "Get help writing and changing code",
         "teddyos-claude", True, True,
         ("claude", "teddyos-claude"),
         ("{path}",),
@@ -77,7 +77,7 @@ _CATALOG: list[tuple] = [
     ),
     (
         # Official xAI Grok Build CLI (`npm i -g @xai-official/grok` → `grok`).
-        "grok", "Grok", "Open this project with Grok",
+        "grok", "Grok", "Get help writing and changing code",
         "teddyos-grok", True, True,
         ("grok",),
         ("{path}",),
@@ -98,21 +98,21 @@ _CATALOG: list[tuple] = [
         ("windsurf.desktop", "Windsurf.desktop"),
     ),
     (
-        "codex", "Codex", "Open this project with Codex",
+        "codex", "Codex", "Get help writing and changing code",
         "teddyos-codex", True, True,
         ("codex",),
         ("{path}",),
         (),
     ),
     (
-        "gemini", "Gemini", "Open this project with Gemini",
+        "gemini", "Gemini", "Get help writing and changing code",
         "teddyos-gemini", True, True,
         ("gemini",),
         ("{path}",),
         (),
     ),
     (
-        "aider", "Aider", "Work on this project with Aider",
+        "aider", "Aider", "Get help writing and changing code",
         "utilities-terminal-symbolic", True, True,
         ("aider",),
         ("{path}",),

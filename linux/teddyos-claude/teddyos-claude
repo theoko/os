@@ -76,14 +76,52 @@ class ClaudeWindow(Adw.ApplicationWindow):
         super().__init__(application=app, title=title)
         self.set_default_size(900, 620)
 
+        project = os.path.basename(self._cwd.rstrip("/")) if (
+            self._cwd != os.path.expanduser("~")
+        ) else ""
         header = Adw.HeaderBar()
         header.set_title_widget(Adw.WindowTitle(
             title="Claude",
-            subtitle=self._cwd if self._cwd != os.path.expanduser("~") else "",
+            subtitle=(
+                f"Working on {project}" if project else "Ready when you are"
+            ),
         ))
 
         exe = shutil.which(CLAUDE)
-        content = self._terminal(exe) if exe else self._missing()
+        if exe:
+            body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            hint = Gtk.Label(
+                label=(
+                    "Type what you want help with. If Claude asks you to sign "
+                    "in, a browser will open — finish there, then come back here."
+                ),
+                wrap=True,
+                xalign=0.0,
+            )
+            hint.add_css_class("dim-label")
+            hint.set_margin_top(10)
+            hint.set_margin_bottom(6)
+            hint.set_margin_start(16)
+            hint.set_margin_end(16)
+            body.append(hint)
+            if project:
+                where = Gtk.Label(
+                    label=f"You’re in the “{project}” folder.",
+                    wrap=True,
+                    xalign=0.0,
+                )
+                where.add_css_class("caption")
+                where.add_css_class("dim-label")
+                where.set_margin_bottom(8)
+                where.set_margin_start(16)
+                where.set_margin_end(16)
+                body.append(where)
+            term = self._terminal(exe)
+            term.set_vexpand(True)
+            body.append(term)
+            content = body
+        else:
+            content = self._missing()
 
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(header)
@@ -120,7 +158,9 @@ class ClaudeWindow(Adw.ApplicationWindow):
         bg.parse("#fbfbfa")
         term.set_colors(fg, bg, None)
 
-        term.connect("child-exited", lambda *_: self.close())
+        # Keep the window open if Claude exits on "please sign in" so the
+        # person can still read the message (and the header hint).
+        term.connect("child-exited", lambda *_: None)
 
         term.spawn_async(
             Vte.PtyFlags.DEFAULT,
