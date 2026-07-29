@@ -311,6 +311,10 @@ def probe_credits(tool: WorkTool) -> CreditStatus:
     probe = PROBES.get(tool.id)
     if probe is not None:
         return probe()
+    # Files / Terminal are not credit products — empty label means the UI
+    # keeps the action subtitle ("Open the project folder") as-is.
+    if not tool.is_ai:
+        return CreditStatus(ok=True, label="")
     if not tool.metered:
         return CreditStatus(ok=True, label="No credits needed")
     return CreditStatus(
