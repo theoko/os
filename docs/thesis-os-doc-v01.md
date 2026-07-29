@@ -461,7 +461,7 @@ This is the worst instance. A user typing "capability" into the built-in search
 gets told the system enforces something it does not. `search.query` is the one
 capability granted by default (`caps.rs:102-106`), so this is reachable on a
 first boot with nothing else enabled. It must be corrected in the same change as
-`AGENTS.md`, and `scripts/refresh-index.sh` re-run.
+`AGENTS.md`, and a corpus re-bake (`./scripts/bake-corpus.py`).
 
 **`kernel/src/caps.rs:5`**:
 

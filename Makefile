@@ -1,4 +1,4 @@
-# Agent-centric OS — x86_64 Limine + QEMU + host MCP bridge
+# Agent-centric OS — freestanding Rust kernel (x86_64 + ARM64), Limine, QEMU
 #
 # macOS /usr/bin/make (BSD) does not apply `export PATH := …` to direct execvp
 # recipe lines, so bare `cargo` fails when rustup is not on the ambient PATH.
@@ -59,7 +59,7 @@ endif
 RUSTUP_BIN := $(patsubst %/,%,$(dir $(CARGO)))
 WITH_RUST := PATH="$(RUSTUP_BIN):$$PATH"
 
-.PHONY: all build kernel arm64-kernel iso arm64-iso iso-arm64 standalone-iso standalone-arm64-iso virtualbox-arm64 run run-arm64 run-best utm utm-run usb usb-list drive drive-selftest linux-vm refresh refresh-install refresh-uninstall test test-all test-host smoke smoke-arm64 e2e publish-os check-published check-published-install check-published-uninstall clean distclean
+.PHONY: all build kernel arm64-kernel iso arm64-iso iso-arm64 standalone-iso standalone-arm64-iso virtualbox-arm64 run run-arm64 run-best utm utm-run usb usb-list drive drive-selftest linux-vm test test-all test-host smoke smoke-arm64 e2e publish-os check-published check-published-install check-published-uninstall clean distclean
 
 all: build
 
@@ -73,10 +73,9 @@ kernel:
 arm64-kernel:
 	$(WITH_RUST) $(CARGO) build -p kernel --target $(ARM64_KERNEL_TARGET) --profile $(ARM64_KERNEL_PROFILE) $(ARM64_KERNEL_FEATURE_FLAG)
 
-# Bare-metal image for a machine that will never have a host on COM2: the
-# guest stops probing for a bridge and says so in its own words. The ISO name
-# differs so a standalone build cannot be mistaken for the hosted one sitting
-# next to it — they are not interchangeable and boot to different capabilities.
+# Explicit standalone-named ISO. Default `make iso` already enables standalone;
+# these targets keep a distinct filename for people who still keep an old
+# non-standalone image next to it.
 standalone-iso:
 	$(MAKE) KERNEL_FEATURES=standalone IMAGE_NAME=$(IMAGE_NAME)-standalone iso
 
@@ -202,24 +201,6 @@ linux-vm:
 	chmod +x scripts/linux-vm.sh
 	./scripts/linux-vm.sh -serial stdio -display none
 
-# Daily search refresh. Re-indexes workspace files and re-syncs the portal
-# corpus, but only if that corpus was already synced once — a host-side timer
-# must not be a way to start talking to the network on the user's behalf.
-refresh:
-	./scripts/refresh-index.sh
-
-refresh-install:
-	mkdir -p $(HOME)/Library/LaunchAgents
-	cp deploy/com.os.refresh.plist $(HOME)/Library/LaunchAgents/
-	launchctl unload $(HOME)/Library/LaunchAgents/com.os.refresh.plist 2>/dev/null || true
-	launchctl load $(HOME)/Library/LaunchAgents/com.os.refresh.plist
-	@echo ">>> daily at 08:00 — log: .refresh.log"
-
-refresh-uninstall:
-	launchctl unload $(HOME)/Library/LaunchAgents/com.os.refresh.plist 2>/dev/null || true
-	rm -f $(HOME)/Library/LaunchAgents/com.os.refresh.plist
-	@echo ">>> removed"
-
 test: test-host smoke
 
 # Everything `test` covers, plus proof the same sources boot on aarch64.
@@ -252,10 +233,11 @@ e2e: iso
 	chmod +x scripts/e2e/invariants.py
 	./scripts/e2e/invariants.py --out $(E2E_OUT) $(E2E_ARGS)
 
-# Two passes on purpose. The bare pass keeps the bridge-mode code honest while
-# it still exists; the second is the configuration every shipped ISO is built
-# in. Without it, `standalone()` branches are only ever compiled out during
-# testing — which is how a nav dot that can only be red reached first boot.
+# Two passes on purpose. The bare pass keeps the offline/COM2 stub paths type-
+# checked while they still exist; the second is the configuration every shipped
+# ISO is built in. Without it, `standalone()` branches only compile during
+# shipping — which is how a nav-dot bug that only shows under standalone once
+# reached first boot.
 test-host:
 	$(WITH_RUST) $(CARGO) test -p kernel --target $$($(RUSTC) -vV | awk '/^host:/{print $$2}') --lib
 	$(WITH_RUST) $(CARGO) test -p kernel --target $$($(RUSTC) -vV | awk '/^host:/{print $$2}') --lib --features standalone

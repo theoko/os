@@ -9,42 +9,50 @@ status: active
 Agent-centric hobby operating system in Rust (`no_std` kernel), targeting
 **x86_64 and ARM64**, booted with **Limine**. Headless x86 runs use **QEMU**;
 desktop runs use **UTM** for x86 emulation or **VirtualBox** for native ARM64
-virtualization on Apple Silicon.
+virtualization on Apple Silicon. The daily-driver path is a **Linux** live image
+under `linux/` (GNOME + teddyOS apps).
 
 ## Shape
 
 ```
-kernel/          freestanding Rust kernel (Limine + framebuffer UI + COM2 MCP client)
-host/bridge/     host MCP connector bridge (email, skills, search)
-search/          curated knowledge corpus ({t,u,c,b,pr} — tSearch-style)
-skills/defaults/ agent skill playbooks
+kernel/          freestanding Rust kernel (Limine + framebuffer UI, standalone)
+core/            shared types and capsule system
+linux/           live Debian image + teddyOS desktop apps
+search/          seed.json (curated) + corpus.json (generated, baked into ISO)
+skills/defaults/ local agent skill playbooks
 docs/            versioned design notes
-scripts/         QEMU / bridge smoke
+scripts/         QEMU / UTM / VirtualBox / publish helpers
 Makefile
 ```
 
-North star: **capability-based agents**. MCP connectors (email, search, …) run on the **host bridge**,
-not in the kernel. Guest holds caps and calls tools over COM2 until a guest network stack exists.
+North star: **capability-based kernel**, **fully standalone**.
+No host bridge, no external MCP connectors. Everything the freestanding OS does
+runs locally from the baked corpus and offline stubs.
 
 ## NON-NEGOTIABLES
 
-1. **QEMU first for CI.** `make test` = host unit tests + QEMU serial smoke + MCP bridge smoke.
-2. **No secrets in the tree.** Gmail OAuth lives in the `gog` keyring. Saved skills live in
-   `~/Library/Application Support/os/skills/` — never bake tokens into the ISO.
-3. **Capability model.** Connectors are tools behind caps — no ambient root. `email.send` stays disabled until explicit confirm/cap policy.
-4. **Inference and HTTP stay out of the kernel.** Bridge + future userspace only. Skills are markdown playbooks, not privileged code.
+1. **QEMU for smoke tests.** `make test` = kernel unit tests + QEMU serial smoke.
+2. **Standalone only.** All bridge queries return Offline. No COM2 host connector.
+3. **Capability model.** Agents operate under kernel caps. Email, search, files
+   stay denied until a cap is granted (and many still need a future userspace
+   network path to do anything useful).
+4. **No privileged inference.** Skills are markdown playbooks, not privileged code.
 5. **Tests gate commits.** Run `make test` before committing.
+6. **The corpus ships inside the ISO.** `search/corpus.json` at build time *is*
+   what the image knows. The default bake is personal; `make publish-os` refuses
+   to upload it. Publish from `./scripts/bake-corpus.py --seed-only`, then re-bake.
+7. **No secrets in the tree.** Never bake tokens into the ISO.
 
 ## Common commands
 
 ```sh
-make build           # ISO
-make run             # QEMU (MCP offline unless COM2 wired)
-make bridge-run      # host bridge on :7420 (EMAIL_BACKEND=mock|gog)
-make run-bridged     # QEMU COM2 → bridge
-make iso-arm64       # build the native ARM64 ISO
-make virtualbox-arm64 # build + configure + open VirtualBox ARM VM
-make test
+make build              # ISO (standalone)
+make run                # QEMU
+make iso-arm64          # native ARM64 ISO
+make virtualbox-arm64   # build + configure + open VirtualBox ARM VM
+make test               # host unit tests + QEMU smoke
+./scripts/bake-corpus.py
 ```
 
-Skills: defaults in `skills/defaults/`; save via bridge `CALL skills.save name=…` → Application Support.
+Skills: defaults in `skills/defaults/`. Live search answers from the in-kernel
+corpus only until a guest network stack exists.

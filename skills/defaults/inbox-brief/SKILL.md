@@ -1,16 +1,15 @@
 ---
 name: inbox-brief
 description: >-
-  Produce a short morning brief from email.search results for the home UI /
-  chat client. Use when the user asks what matters in mail right now.
+  Placeholder for a short morning mail brief. Offline in standalone builds.
 ---
 
-# Inbox brief
+# Inbox brief (offline)
 
-Format (keep it tight):
+No live mail in standalone images. When a connector exists, format:
 
 - **Urgent** — needs reply today
 - **FYI** — no action
 - **Noise** — skip
 
-Max 5 bullets. Cite subject + from only.
+Max 5 bullets. Cite subject + from only. Never invent messages.

@@ -12,7 +12,8 @@
 #   ./scripts/add-portal.sh public-demo --auth none
 #   ./scripts/add-portal.sh alice bob carol        # several at once
 #
-# Then: ./scripts/make-portal.sh alice --sync
+# Live portal sync was a host-bridge feature and is gone in standalone builds.
+# Registration still writes portals.json for bake/publish tooling.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -75,4 +76,13 @@ PY
 done
 
 echo
-"$ROOT/scripts/make-portal.sh" --list
+echo "registered portals:"
+python3 <<'PY'
+import json, pathlib
+doc = json.loads(pathlib.Path("portals.json").read_text())
+for p in doc.get("portals", []):
+    name = p.get("name", "?")
+    auth = p.get("auth", "?")
+    corpus = p.get("corpus", "")
+    print(f"  {name}  auth={auth}  {corpus}")
+PY

@@ -1,26 +1,27 @@
 ---
 name: knowledge-search
 description: >-
-  Search the curated OS knowledge corpus via search.query (tSearch-style
-  tf-idf × PageRank). Use when the agent needs docs, skills, or concepts —
-  not for live email (use email-triage).
+  Search the curated OS knowledge corpus baked into the ISO (tSearch-style
+  tf-idf × PageRank). Use when the agent needs docs, skills, or concepts.
 ---
 
 # Knowledge search
 
 Inspired by [tsearch-revival](https://github.com/theoko/tsearch-revival): lexical
-ranking over `{t,u,c,b,pr}` docs, exact-first ladder, no crawler in v1.
+ranking over `{t,u,c,b,pr}` docs, exact-first ladder. The freestanding kernel
+answers only from the corpus compiled into the image — no host bridge, no live
+network fetch.
 
 ## Rules
 
-1. Call `search.query` with a short keyword query (`q=`). Optional `k=` (1–20) and `cat=` (docs|skills|code|web|learning).
-2. Cite `title` + `url` from each ROW; do not invent snippets.
-3. Prefer corpus hits over guessing architecture/caps policy.
-4. For the live tSearch GraphRAG corpus, the host may set `OS_MCP_SEARCH_BACKEND=tsearch` + `TSEARCH_DATA` — still read-only.
+1. Prefer short keyword queries.
+2. Cite `title` + `url` from each hit; do not invent snippets.
+3. Prefer corpus hits over guessing architecture or caps policy.
+4. Email and live portals are offline until a guest network stack exists.
 
 ## Flow
 
-1. `CALL search.query q=capability ambient k=5`
-2. Skim ROW title/snip/url
-3. If thin, refine query or `cat=docs`
-4. Act using the cited source (skill get, plan, etc.)
+1. Search for a short phrase (e.g. capability ambient).
+2. Skim titles and sources.
+3. If thin, refine the query or narrow by category.
+4. Act using the cited source.

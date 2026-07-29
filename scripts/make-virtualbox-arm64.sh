@@ -6,9 +6,6 @@ FRONTEND="${VBOX_FRONTEND:-gui}"
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 ISO="$ROOT/os-arm64.iso"
 LOG="${VBOX_SERIAL_LOG:-/tmp/teddyos-arm64.log}"
-BRIDGE_ADDR="${OS_MCP_BRIDGE_ADDR:-127.0.0.1:7420}"
-BRIDGE_HOST="${BRIDGE_ADDR%%:*}"
-BRIDGE_PORT="${BRIDGE_ADDR##*:}"
 
 if ! command -v VBoxManage > /dev/null 2>&1; then
     echo "VirtualBox 7.2 or newer is required (VBoxManage was not found)." >&2
@@ -26,48 +23,6 @@ case "$(uname -m)" in
         exit 1
         ;;
 esac
-
-# ── Bridge ──────────────────────────────────────────────────────────────────
-# The kernel talks to the host over COM2 (UART2). Start the bridge now so
-# the port is open before the VM boots; otherwise the guest's first serial
-# writes go nowhere and the UI shows "bridge offline".
-
-bridge_up() {
-    python3 -c \
-      "import socket; s=socket.create_connection(('$BRIDGE_HOST', $BRIDGE_PORT), 0.5); s.close()" \
-      > /dev/null 2>&1
-}
-
-if ! bridge_up; then
-    BRIDGE_BIN="$ROOT/target/debug/os-mcp-bridge"
-    if [ ! -x "$BRIDGE_BIN" ]; then
-        echo "Building host bridge..."
-        (cd "$ROOT" && PATH="/opt/homebrew/opt/rustup/bin:$PATH" \
-            cargo build -p os-mcp-bridge 2>&1) || true
-    fi
-    if [ -x "$BRIDGE_BIN" ]; then
-        echo "Starting host bridge on $BRIDGE_ADDR ..."
-        BRIDGE_LOG="/tmp/teddyos-bridge.log"
-        OS_MCP_BRIDGE_ADDR="$BRIDGE_ADDR" \
-            nohup "$BRIDGE_BIN" >> "$BRIDGE_LOG" 2>&1 < /dev/null &
-        # Wait up to 5 s for the port to open.
-        i=0
-        while [ "$i" -lt 50 ]; do
-            bridge_up && break
-            i=$((i + 1))
-            sleep 0.1
-        done
-        if bridge_up; then
-            echo "Bridge ready. Log: $BRIDGE_LOG"
-        else
-            echo "Warning: bridge did not come up in time — COM2 will be offline." >&2
-        fi
-    else
-        echo "Warning: bridge binary not found — run 'make bridge' first." >&2
-    fi
-else
-    echo "Bridge already running on $BRIDGE_ADDR."
-fi
 
 if ! VBoxManage showvminfo "$VM_NAME" > /dev/null 2>&1; then
     # VirtualBox spells this legacy CLI option `--ostype` (no second dash),
@@ -134,8 +89,6 @@ while ! VBoxManage modifyvm "$VM_NAME" \
     --keyboard usb \
     --uart1 0x3f8 4 \
     --uart-mode1 file "$LOG" \
-    --uart2 0x2f8 3 \
-    --uart-mode2 tcpclient "$BRIDGE_HOST:$BRIDGE_PORT" \
     --audio-enabled off 2>"$modify_log"
 do
     tries=$((tries + 1))
@@ -161,4 +114,4 @@ VBoxManage storageattach "$VM_NAME" \
 VBoxManage startvm "$VM_NAME" --type "$FRONTEND"
 echo "VirtualBox ARM64 ready: $VM_NAME"
 echo "ISO: $ISO"
-echo "Bridge: $BRIDGE_ADDR  (log: /tmp/teddyos-bridge.log)"
+echo "Serial log: $LOG"

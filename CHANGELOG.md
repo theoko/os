@@ -6,6 +6,19 @@ version: 0.13.0
 
 ## 0.13.0 — 2026-07-28
 
+### Standalone cleanup — no more dead bridge surface
+
+The host bridge is gone; this pass removes what still pretended it was not.
+
+- Identity cards (`AGENTS.md`, `CLAUDE.md`) match standalone only: no COM2
+  connector, no `bridge-run`, no `host/bridge/`.
+- Deleted dead stubs: `refresh-index.sh`, `make-portal.sh`, `substrate-proof.sh`,
+  the refresh LaunchAgent, and the MCP connectors design doc.
+- UTM and VirtualBox launchers no longer wire or start a host bridge.
+- Skill playbooks and the health workflow describe offline reality; email and
+  live portals stay catalogued as offline until a guest network path exists.
+- Tracked `__pycache__` bytecode removed (already gitignored).
+
 ### amd64 boots, and the BIOS menu is teddyOS
 
 The first amd64 image. Verified by booting it, not by reading the build tree:

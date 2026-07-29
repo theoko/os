@@ -2,7 +2,7 @@
 project: os
 type: skills
 purpose: agent skills registry (defaults + saved)
-status: active
+status: obsolete — host bridge skills API removed; defaults remain under skills/defaults/
 ---
 
 # Skills (v01)

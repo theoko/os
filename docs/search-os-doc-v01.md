@@ -1,8 +1,8 @@
 ---
 project: os
 type: architecture
-purpose: knowledge search (tSearch-inspired) via host bridge
-status: active
+purpose: knowledge search (tSearch-inspired); host bridge removed
+status: obsolete — corpus is baked into the ISO; see CLAUDE.md / bake-corpus.py
 ---
 
 # Knowledge search (v01)

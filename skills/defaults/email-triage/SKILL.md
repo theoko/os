@@ -1,22 +1,18 @@
 ---
 name: email-triage
 description: >-
-  Triage inbox via the email MCP connector. Use when the agent should search,
-  summarize, or draft replies — never send without an explicit email.send cap.
+  Placeholder for inbox triage. Offline in standalone builds — needs a future
+  userspace network connector behind Cap::EmailSearch. Do not invent mail.
 ---
 
-# Email triage
+# Email triage (offline)
 
-## Rules
+Standalone images have no host bridge and no network stack. `email.search`
+and `email.send` always return offline.
 
-1. Search with `email.search` (cap required). Prefer narrow Gmail queries.
-2. Summarize; do not invent message contents.
-3. Draft replies only; `email.send` needs the Send mail cap **and** an
-   explicit Confirm send on Brief (`confirm=1`). Never auto-CALL send.
-4. Secrets and OAuth stay on the host bridge (`gog` keyring) — never ask to paste tokens into the guest.
+When a real connector exists again:
 
-## Flow
-
-1. `CALL email.search q=… max=5`
-2. Rank by urgency
-3. Propose next actions (archive / draft / wait)
+1. Search with a narrow query (cap required).
+2. Summarize; never invent message contents.
+3. Draft replies only; send needs Send-mail cap **and** explicit confirm.
+4. Secrets stay out of the guest and off the ISO.

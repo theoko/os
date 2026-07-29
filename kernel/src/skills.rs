@@ -83,7 +83,6 @@ const HEALTH_STEPS: &[&str] = &[
     "Check memory and CPU status",
     "Inspect bus devices and input",
     "Verify capability table grants",
-    "Probe host MCP bridge connection",
     "Summarize system health",
 ];
 
