@@ -6,6 +6,14 @@ version: 0.13.0
 
 ## 0.13.0 — 2026-07-28
 
+### Live ISO records the host commit
+
+`linux/iso/build-iso.sh` runs on a guest that receives the tree without
+`.git`, so `/etc/teddyos-software` used to say `commit=unknown` and every
+fresh install offered an update. `scripts/build-linux-iso.sh` (and
+`make linux-iso`) resolves the commit on the Mac, passes `TEDDYOS_COMMIT`,
+and pulls the ISO into `dist/`.
+
 ### Standalone cleanup — no more dead bridge surface
 
 The host bridge is gone; this pass removes what still pretended it was not.

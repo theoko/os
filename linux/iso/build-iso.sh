@@ -6,8 +6,16 @@
 # the guest built by scripts/teddyos-vm.sh is already the right build host, and
 # using it means the image is assembled by the same distro it targets.
 #
-#   ./build-iso.sh              # native arch
-#   ./build-iso.sh --arch amd64 # cross, via qemu-user binfmt
+# From the Mac, prefer the host wrapper so the commit is stamped correctly:
+#
+#   ./scripts/build-linux-iso.sh              # native arch of the guest
+#   ./scripts/build-linux-iso.sh --arch amd64 # cross, via qemu-user binfmt
+#   make linux-iso
+#
+# Direct use on the guest (when you already have the tree there):
+#
+#   TEDDYOS_COMMIT=abc1234 ./build-iso.sh
+#   ./build-iso.sh --arch amd64
 #
 # Cross-building amd64 from arm64 works but every maintainer script in the
 # chroot runs under qemu-user emulation, so expect it to take several times
@@ -24,6 +32,21 @@ DIST="${TEDDYOS_ISO_DIST:-trixie}"
 MIRROR="${TEDDYOS_ISO_MIRROR:-http://deb.debian.org/debian/}"
 OUT_DIR="${TEDDYOS_ISO_OUT:-$HOME/teddyos-iso}"
 VERSION="$(cat "$REPO/VERSION" 2>/dev/null || echo 0.0.0)"
+# Resolve the commit this image represents. Preference order:
+#   1. TEDDYOS_COMMIT from the environment (host wrapper sets this — the guest
+#      tree is usually scp'd without .git, so git below would fail)
+#   2. $REPO/.teddyos-commit written by the host before the copy
+#   3. git rev-parse when the tree actually is a clone
+#   4. "unknown" — which teddyos-update treats as different from every
+#      published commit, so a brand-new install would offer an update on boot
+COMMIT="${TEDDYOS_COMMIT:-}"
+if [[ -z "$COMMIT" && -f "$REPO/.teddyos-commit" ]]; then
+  COMMIT="$(tr -d '[:space:]' <"$REPO/.teddyos-commit")"
+fi
+if [[ -z "$COMMIT" ]]; then
+  COMMIT="$(cd "$REPO" && git rev-parse --short HEAD 2>/dev/null || true)"
+fi
+COMMIT="${COMMIT:-unknown}"
 # Every build so far produced a file with an identical name, so there was no
 # way — from the filename, the boot screen, or inside the running system — to
 # tell which build you were looking at. Three fixes got reported as "still
@@ -52,8 +75,13 @@ HOST_ARCH="$(dpkg --print-architecture)"
 BUILD="$OUT_DIR/build-$ARCH"
 IMAGE="$OUT_DIR/teddyos-${VERSION}-${ARCH}-${BUILD_ID}.iso"
 
-echo ">>> teddyOS $VERSION  ->  $ARCH  ($DIST)"
+echo ">>> teddyOS $VERSION  commit=$COMMIT  ->  $ARCH  ($DIST)"
 [[ "$ARCH" != "$HOST_ARCH" ]] && echo "    cross-building from $HOST_ARCH; this is the slow path"
+if [[ "$COMMIT" == "unknown" ]]; then
+  echo "    warning: commit is unknown — pass TEDDYOS_COMMIT or run via" >&2
+  echo "             scripts/build-linux-iso.sh so the image does not offer" >&2
+  echo "             a false update on first boot" >&2
+fi
 
 # --- build host ---------------------------------------------------------
 echo ">>> build dependencies"
@@ -597,24 +625,17 @@ done
 # /etc/teddyos-build` settles "am I testing the thing you just fixed?" without
 # needing to remember what the boot splash said.
 # What software this image shipped with, in the format teddyos-update reads.
-#
-# TEDDYOS_COMMIT is passed in because this script runs on the build guest, and
-# the guest receives the tree by scp rather than by cloning it — so git here
-# finds no repository and the field came out "unknown". A machine recording
-# "unknown" differs from every published commit, so a brand-new install
-# announced an update the moment it booted.
-# Without it the first check has nothing to compare against: a machine with no
-# recorded commit would either look permanently up to date or download on every
-# boot, depending on which way the comparison fell.
+# $COMMIT is resolved once at the top of this script (env / stamp file / git).
 install -Dm644 /dev/stdin config/includes.chroot/etc/teddyos-software <<SOFTWARE
 version=$VERSION
-commit=${TEDDYOS_COMMIT:-$(cd "$REPO" && git rev-parse --short HEAD 2>/dev/null || echo unknown)}
+commit=$COMMIT
 applied=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 SOFTWARE
 
 install -Dm644 /dev/stdin config/includes.chroot/etc/teddyos-build <<BUILDINFO
 TEDDYOS_VERSION=$VERSION
 TEDDYOS_BUILD=$BUILD_ID
+TEDDYOS_COMMIT=$COMMIT
 TEDDYOS_ARCH=$ARCH
 BUILDINFO
 

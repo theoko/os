@@ -59,7 +59,7 @@ endif
 RUSTUP_BIN := $(patsubst %/,%,$(dir $(CARGO)))
 WITH_RUST := PATH="$(RUSTUP_BIN):$$PATH"
 
-.PHONY: all build kernel arm64-kernel iso arm64-iso iso-arm64 standalone-iso standalone-arm64-iso virtualbox-arm64 run run-arm64 run-best utm utm-run usb usb-list drive drive-selftest linux-vm test test-all test-host smoke smoke-arm64 e2e publish-os check-published check-published-install check-published-uninstall clean distclean
+.PHONY: all build kernel arm64-kernel iso arm64-iso iso-arm64 standalone-iso standalone-arm64-iso virtualbox-arm64 run run-arm64 run-best utm utm-run usb usb-list drive drive-selftest linux-vm linux-iso test test-all test-host smoke smoke-arm64 e2e publish-os check-published check-published-install check-published-uninstall clean distclean
 
 all: build
 
@@ -200,6 +200,15 @@ utm-run: iso
 linux-vm:
 	chmod +x scripts/linux-vm.sh
 	./scripts/linux-vm.sh -serial stdio -display none
+
+# Live Debian ISO via the guest build host. Stamps the host git commit into
+# /etc/teddyos-software so a fresh install does not offer a false update.
+#
+#   make linux-iso                 native arch of the guest
+#   make linux-iso ARCH=amd64      cross-build on an arm64 guest
+linux-iso:
+	chmod +x scripts/build-linux-iso.sh
+	./scripts/build-linux-iso.sh $(if $(ARCH),--arch $(ARCH),)
 
 test: test-host smoke
 
