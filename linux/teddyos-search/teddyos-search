@@ -5,9 +5,8 @@
     teddyos-search --json nvda
     teddyos-search --caps
 
-Exit codes are the contract, and there are more than two for the same reason
-linux/agent-shell has more than two: a search that was blocked must never be
-mistaken for a search that found nothing.
+Exit codes are the contract, and there are more than two: a search that was
+blocked must never be mistaken for a search that found nothing.
 
     0  at least one result
     1  no results, everything the user granted was actually consulted

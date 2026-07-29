@@ -42,14 +42,6 @@ teddyos-search --json nvda
 Exit codes matter: blocked/denied must never look like “no matches.” See the
 header comment in `teddyos-search/teddyos-search`.
 
-## Leftover: `agent-shell`
-
-`agent-shell` and `test-agent-shell.sh` are a **historical** busybox client that
-spoke a line protocol to a **removed** host bridge (`:7420`). They are **not**
-installed into the live ISO. Dialing a bridge address will fail — there is no
-bridge on this tip. Removal is a later husk cut; do not treat them as the
-product entrypoint.
-
 ## Related docs
 
 - [`AGENTS.md`](../AGENTS.md) — identity / non-negotiables for this tip
