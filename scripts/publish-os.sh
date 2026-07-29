@@ -134,6 +134,13 @@ EOF
 # cannot say whether it is behind. Without this file `CALL update.check` on
 # every installed machine reports state=undetermined forever, because the URL
 # it reads answers with the /tsearch/ catch-all page instead of a manifest.
+# The software payload, built before the manifest because the manifest records
+# its checksum. This is the half that makes `git push` reach a running machine:
+# publish takes what is committed, packages the teddyOS software, and the guest
+# installs it without touching its boot media.
+step "software update payload"
+./scripts/make-update-payload.sh
+
 step "release manifest"
 ./scripts/make-manifest.sh
 
@@ -171,6 +178,15 @@ rsync -az "$ARM" "$HOST:$DIR/.$ARM.incoming"
   rsync -az --info=progress2 "$LIVE_X86_SRC" "$HOST:$DIR/.$LIVE_X86.incoming"
 [ -n "$LIVE_ARM_SRC" ] && [ -f "$LIVE_ARM_SRC" ] &&
   rsync -az --info=progress2 "$LIVE_ARM_SRC" "$HOST:$DIR/.$LIVE_ARM.incoming"
+PAYLOAD="dist/teddyos-update.tar.gz"
+if [ -f "$PAYLOAD" ]; then
+  shasum -a 256 "$PAYLOAD" | sed "s#^\\([0-9a-f]*\\)  .*#\\1  teddyos-update.tar.gz#" >> SHA256SUMS
+  rsync -az "$PAYLOAD" "$HOST:$DIR/.teddyos-update.tar.gz.incoming"
+  PUBLISH_FILES="$PUBLISH_FILES teddyos-update.tar.gz"
+  moves_extra=" && mv -f '.teddyos-update.tar.gz.incoming' 'teddyos-update.tar.gz'"
+else
+  moves_extra=""
+fi
 rsync -az SHA256SUMS BUILD-INFO.txt manifest.json "$HOST:$DIR/"
 
 # One ssh doing every rename, so the set goes live together. A visitor who
@@ -182,7 +198,7 @@ for dst in "$LIVE_X86" "$LIVE_ARM"; do
     *" $dst "*) moves="$moves && mv -f '.$dst.incoming' '$dst'" ;;
   esac
 done
-ssh "$HOST" "cd '$DIR' && $moves && chmod 644 $PUBLISH_FILES SHA256SUMS BUILD-INFO.txt manifest.json"
+ssh "$HOST" "cd '$DIR' && $moves$moves_extra && chmod 644 $PUBLISH_FILES SHA256SUMS BUILD-INFO.txt manifest.json"
 
 step "verifying on the server"
 ssh "$HOST" "cd '$DIR' && sha256sum -c SHA256SUMS" ||

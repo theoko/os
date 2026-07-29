@@ -35,3 +35,10 @@ BUILD-INFO.txt
 .check-published.log
 .check-published.state
 manifest.json
+
+# Compiled bytecode, anywhere. These were tracked once, so every py_compile
+# during a build dirtied the tree and invited itself into a commit. The scoped
+# /scripts/e2e/ entry above predates the Python under linux/ and no longer
+# covers where the code actually lives.
+__pycache__/
+*.pyc

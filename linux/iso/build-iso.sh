@@ -353,6 +353,7 @@ install -Dm755 "$REPO/linux/teddyos-setup/teddyos-setup"   config/includes.chroo
 install -Dm755 "$REPO/linux/teddyos-search/teddyos-search-app" config/includes.chroot/usr/bin/teddyos-search-app
 install -Dm755 "$REPO/linux/teddyos-setup/teddyos-welcome"       config/includes.chroot/usr/bin/teddyos-welcome
 install -Dm755 "$REPO/linux/teddyos-claude/teddyos-claude"      config/includes.chroot/usr/bin/teddyos-claude
+install -Dm755 "$REPO/linux/teddyos-update/teddyos-update"      config/includes.chroot/usr/bin/teddyos-update
 
 # The shell extension: hides quick-settings toggles teddyOS has no reason to
 # offer, and renames "Wired" to "Internet" in the panel and its menu.
@@ -595,6 +596,16 @@ done
 # Which build this is, readable from inside the running system. `cat
 # /etc/teddyos-build` settles "am I testing the thing you just fixed?" without
 # needing to remember what the boot splash said.
+# What software this image shipped with, in the format teddyos-update reads.
+# Without it the first check has nothing to compare against: a machine with no
+# recorded commit would either look permanently up to date or download on every
+# boot, depending on which way the comparison fell.
+install -Dm644 /dev/stdin config/includes.chroot/etc/teddyos-software <<SOFTWARE
+version=$VERSION
+commit=$(cd "$REPO" && git rev-parse --short HEAD 2>/dev/null || echo unknown)
+applied=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+SOFTWARE
+
 install -Dm644 /dev/stdin config/includes.chroot/etc/teddyos-build <<BUILDINFO
 TEDDYOS_VERSION=$VERSION
 TEDDYOS_BUILD=$BUILD_ID
@@ -616,6 +627,49 @@ Exec=teddyos-setup --if-needed
 OnlyShowIn=GNOME;
 X-GNOME-Autostart-Phase=Applications
 NoDisplay=true
+DESKTOP
+
+# --- software updates -------------------------------------------------------
+#
+# Everything teddyOS adds sits in the squashfs, so before this a fixed bug
+# reached an existing machine only by downloading 2.6 GB and installing the
+# computer again. What changes between releases is a few hundred kilobytes;
+# teddyos-update moves that much instead.
+#
+# The timer only CHECKS. It posts a notification and stops there, because a
+# machine that rewrites its own programs unattended is precisely what the setup
+# screen promises this is not — and the promise is worth more than the
+# convenience.
+install -Dm644 /dev/stdin config/includes.chroot/usr/lib/systemd/user/teddyos-update.service <<'UNIT'
+[Unit]
+Description=Check whether a teddyOS update is available
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/teddyos-update check --notify
+UNIT
+
+install -Dm644 /dev/stdin config/includes.chroot/usr/lib/systemd/user/teddyos-update.timer <<'UNIT'
+[Unit]
+Description=Check for teddyOS updates daily
+[Timer]
+# 10 minutes after login rather than at boot: the network is rarely up yet at
+# boot, and a check that fails on every cold start trains people to ignore it.
+OnStartupSec=10min
+OnUnitActiveSec=24h
+Persistent=true
+[Install]
+WantedBy=timers.target
+UNIT
+
+install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-update.desktop <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Software Update
+Comment=Check for and install teddyOS updates
+Exec=pkexec /usr/bin/teddyos-update apply
+Icon=software-update-available
+Terminal=true
+Categories=System;
 DESKTOP
 
 # --- when there is no graphics device, say so ------------------------------

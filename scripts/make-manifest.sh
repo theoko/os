@@ -38,13 +38,33 @@ BUILT="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 X86_SHA="$(shasum -a 256 "$X86" | cut -d' ' -f1)"
 ARM_SHA="$(shasum -a 256 "$ARM" | cut -d' ' -f1)"
 
+# The software payload, if one has been built. This is what lets an installed
+# machine update without downloading an ISO: teddyos-update reads
+# software_commit to decide whether it is behind, software_sha256 to verify
+# what it fetched, and software_url to find it.
+#
+# Compared by COMMIT rather than version. Two builds of 0.13.0 are routinely
+# different software — that is most of what a day's work produces — and a
+# version-only comparison would call them identical and never update anything.
+PAYLOAD="${PAYLOAD_FILE:-dist/teddyos-update.tar.gz}"
+SW_SHA=""; SW_COMMIT=""; SW_URL=""
+if [ -f "$PAYLOAD" ]; then
+  SW_SHA="$(shasum -a 256 "$PAYLOAD" | cut -d' ' -f1)"
+  SW_COMMIT="$(tar -xzOf "$PAYLOAD" ./PAYLOAD 2>/dev/null || tar -xzOf "$PAYLOAD" PAYLOAD 2>/dev/null || true)"
+  SW_COMMIT="$(printf '%s' "$SW_COMMIT" | sed -n 's/^commit=//p')"
+  SW_URL="${PUBLISH_URL:-https://teddysearch.com/tsearch/os}/teddyos-update.tar.gz"
+fi
+
 cat > "$OUT" <<JSON
 {
   "version": "$VERSION",
   "built": "$BUILT",
   "commit": "$COMMIT",
   "x86_sha256": "$X86_SHA",
-  "arm_sha256": "$ARM_SHA"
+  "arm_sha256": "$ARM_SHA",
+  "software_commit": "$SW_COMMIT",
+  "software_sha256": "$SW_SHA",
+  "software_url": "$SW_URL"
 }
 JSON
 
