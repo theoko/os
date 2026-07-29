@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Run a terminal AI tool in a real window.
+
+Claude, Gemini, and Codex are all interactive terminal programs. Spawning them
+with Gio.Subprocess from Search gives them no TTY — they print
+"stdin is not a terminal" and exit. The person sees a click that does nothing.
+
+This window is a thin VTE host: title, icon colour via the header, project
+folder as the working directory, one program, no shell prompt. Same idea as
+teddyos-claude, shared so every AI helper opens the same way.
+
+Usage:
+  teddyos-agent gemini
+  teddyos-agent gemini /path/to/project
+  teddyos-agent codex ~/Projects/tsearch-revival
+  teddyos-agent claude .
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+gi.require_version("Vte", "3.91")
+from gi.repository import Adw, Gdk, GLib, Gtk, Pango, Vte  # noqa: E402
+
+try:
+    sys.path.insert(0, "/usr/lib/teddyos")
+    from logutil import get_logger
+    log = get_logger("agent")
+except Exception:  # noqa: BLE001
+    import logging
+    log = logging.getLogger("teddyos.agent")
+
+APP_ID = "com.teddyos.Agent"
+
+# id → (binary name, window title, missing-copy)
+TOOLS: dict[str, tuple[str, str, str]] = {
+    "claude": (
+        "claude",
+        "Claude",
+        "Claude isn’t installed on this copy of teddyOS.",
+    ),
+    "gemini": (
+        "gemini",
+        "Gemini",
+        "Gemini isn’t installed on this copy of teddyOS.",
+    ),
+    "codex": (
+        "codex",
+        "Codex",
+        "Codex isn’t installed on this copy of teddyOS.",
+    ),
+    "aider": (
+        "aider",
+        "Aider",
+        "Aider isn’t installed on this copy of teddyOS.",
+    ),
+    "ollama": (
+        "ollama",
+        "Ollama",
+        "Ollama isn’t installed on this copy of teddyOS.",
+    ),
+}
+
+
+def _parse_argv(argv: list[str]) -> tuple[str, str, list[str]]:
+    """Return (tool_id, cwd, extra_args for the tool)."""
+    home = os.path.expanduser("~")
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
+        names = ", ".join(sorted(TOOLS))
+        print(f"usage: teddyos-agent <tool> [project-dir]\n  tools: {names}",
+              file=sys.stderr)
+        sys.exit(0 if len(argv) > 1 else 2)
+    tool = argv[1].lower().strip()
+    cwd = home
+    extra: list[str] = []
+    for arg in argv[2:]:
+        if arg.startswith("-"):
+            extra.append(arg)
+            continue
+        path = os.path.expanduser(arg)
+        if os.path.isdir(path) and cwd == home:
+            cwd = os.path.abspath(path)
+        else:
+            extra.append(arg)
+    return tool, cwd, extra
+
+
+class AgentWindow(Adw.ApplicationWindow):
+    def __init__(
+        self,
+        app: Adw.Application,
+        tool_id: str,
+        cwd: str,
+        extra: list[str],
+    ):
+        meta = TOOLS.get(tool_id)
+        title = meta[1] if meta else tool_id.title()
+        base = os.path.basename(cwd.rstrip("/")) or title
+        if cwd != os.path.expanduser("~"):
+            win_title = f"{title} — {base}"
+        else:
+            win_title = title
+        super().__init__(application=app, title=win_title)
+        self.set_default_size(900, 620)
+        self._cwd = cwd
+        self._tool_id = tool_id
+        self._extra = extra
+
+        header = Adw.HeaderBar()
+        header.set_title_widget(Adw.WindowTitle(
+            title=title,
+            subtitle=cwd if cwd != os.path.expanduser("~") else "",
+        ))
+
+        if not meta:
+            content = Adw.StatusPage(
+                icon_name="dialog-information-symbolic",
+                title="Unknown helper",
+                description=f"teddyOS doesn’t know how to open “{tool_id}”.",
+            )
+        else:
+            binary, _title, missing = meta
+            exe = shutil.which(binary)
+            content = (
+                self._terminal(exe, binary)
+                if exe
+                else Adw.StatusPage(
+                    icon_name="dialog-information-symbolic",
+                    title=f"{_title} isn’t available",
+                    description=missing + " Reinstalling teddyOS usually brings it back.",
+                )
+            )
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(content)
+        self.set_content(toolbar)
+
+    def _terminal(self, exe: str, binary: str) -> Gtk.Widget:
+        term = Vte.Terminal()
+        term.set_scrollback_lines(10000)
+        term.set_font(Pango.FontDescription("monospace 11"))
+        term.set_cursor_blink_mode(Vte.CursorBlinkMode.OFF)
+        term.set_margin_top(10)
+        term.set_margin_bottom(10)
+        term.set_margin_start(12)
+        term.set_margin_end(12)
+
+        fg, bg = Gdk.RGBA(), Gdk.RGBA()
+        fg.parse("#2c2c2a")
+        bg.parse("#fbfbfa")
+        term.set_colors(fg, bg, None)
+
+        term.connect("child-exited", lambda *_: self.close())
+
+        # Important: do NOT pass the project path as a CLI argument. Gemini and
+        # Codex treat a bare argument as a prompt, not a working directory.
+        # The folder is the process cwd — that is what "open this project" means.
+        cmd = [exe, *self._extra]
+        # Ollama's interactive entry is `ollama run` without a model — still
+        # better than a silent failure; default to a short help if no args.
+        if binary == "ollama" and not self._extra:
+            cmd = [exe, "run", "llama3.2"]
+
+        log.info("spawn tool=%s cwd=%s cmd=%s", self._tool_id, self._cwd, cmd)
+
+        env = [
+            f"TERM=xterm-256color",
+            f"HOME={os.path.expanduser('~')}",
+            f"PATH={os.environ.get('PATH', '/usr/local/bin:/usr/bin:/bin')}",
+            f"PWD={self._cwd}",
+            f"COLORTERM=truecolor",
+        ]
+        # Pass through auth tokens if the desktop session has them — GUI
+        # launches often drop a login shell's env otherwise.
+        for key in (
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "OPENAI_API_KEY",
+            "GOOGLE_GENAI_USE_VERTEXAI",
+            "GOOGLE_GENAI_USE_GCA",
+        ):
+            val = os.environ.get(key)
+            if val:
+                env.append(f"{key}={val}")
+
+        term.spawn_async(
+            Vte.PtyFlags.DEFAULT,
+            self._cwd,
+            cmd,
+            env,
+            GLib.SpawnFlags.DEFAULT,
+            None, None,
+            -1, None, None, None,
+        )
+
+        scroller = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+        scroller.set_child(term)
+        return scroller
+
+
+class AgentApp(Adw.Application):
+    def __init__(self, tool_id: str, cwd: str, extra: list[str]):
+        # Unique id per tool so Claude and Gemini can stay open together.
+        super().__init__(application_id=f"com.teddyos.Agent.{tool_id}")
+        self._tool_id = tool_id
+        self._cwd = cwd
+        self._extra = extra
+
+    def do_activate(self):
+        win = self.props.active_window
+        if win is None:
+            win = AgentWindow(
+                self, self._tool_id, self._cwd, self._extra,
+            )
+        win.present()
+
+
+if __name__ == "__main__":
+    tool_id, cwd, extra = _parse_argv(sys.argv)
+    GLib.set_prgname(f"com.teddyos.Agent.{tool_id}")
+    log.info("start tool=%s cwd=%s", tool_id, cwd)
+    app = AgentApp(tool_id, cwd, extra)
+    sys.exit(app.run([sys.argv[0]]))

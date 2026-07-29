@@ -55,6 +55,7 @@ done
 put linux/teddyos-setup/teddyos-setup    usr/bin/teddyos-setup 755
 put linux/teddyos-setup/teddyos-welcome  usr/bin/teddyos-welcome 755
 put linux/teddyos-claude/teddyos-claude  usr/bin/teddyos-claude 755
+put linux/teddyos-agent/teddyos-agent    usr/bin/teddyos-agent 755
 
 sed -i.bak 's|sys.path.insert(0, str(Path(__file__).resolve().parent))|sys.path.insert(0, "/usr/lib/teddyos")|' \
   "$STAGE/usr/bin/teddyos-search"

@@ -387,6 +387,7 @@ install -Dm755 "$REPO/linux/teddyos-setup/teddyos-setup"   config/includes.chroo
 install -Dm755 "$REPO/linux/teddyos-search/teddyos-search-app" config/includes.chroot/usr/bin/teddyos-search-app
 install -Dm755 "$REPO/linux/teddyos-setup/teddyos-welcome"       config/includes.chroot/usr/bin/teddyos-welcome
 install -Dm755 "$REPO/linux/teddyos-claude/teddyos-claude"      config/includes.chroot/usr/bin/teddyos-claude
+install -Dm755 "$REPO/linux/teddyos-agent/teddyos-agent"        config/includes.chroot/usr/bin/teddyos-agent
 install -Dm755 "$REPO/linux/teddyos-update/teddyos-update"      config/includes.chroot/usr/bin/teddyos-update
 
 # --- logs -------------------------------------------------------------------

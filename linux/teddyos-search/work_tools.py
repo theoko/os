@@ -67,9 +67,11 @@ class CreditStatus:
 # argv after the binary ({path} = project dir), optional .desktop basenames.
 _CATALOG: list[tuple] = [
     (
+        # binaries = commands that mean "this tool is installed"
+        # Terminal TUIs are launched via teddyos-agent (see _argv_for).
         "claude", "Claude", "Open this project in Claude",
         "teddyos-claude", True, True,
-        ("teddyos-claude", "claude"),
+        ("claude", "teddyos-claude"),
         ("{path}",),
         ("teddyos-claude.desktop",),
     ),
@@ -133,7 +135,7 @@ _CATALOG: list[tuple] = [
         "ollama", "Ollama", "Chat with a local model in this project",
         "utilities-terminal-symbolic", False, True,
         ("ollama",),
-        (),
+        ("{path}",),
         (),
     ),
     (
@@ -171,6 +173,10 @@ for _e in _CATALOG:
     for _desk in _e[8]:
         _DESKTOP_TO_ID[_desk.lower()] = _e[0]
 
+# Interactive CLI tools that need a TTY window. Without teddyos-agent they
+# print "stdin is not a terminal" and the Search click does nothing.
+_TTY_TOOLS = frozenset({"claude", "gemini", "codex", "aider", "ollama", "crush", "goose"})
+
 
 def available_work_tools() -> list[WorkTool]:
     """Installed tools, recently used AI first, then the rest of the catalog.
@@ -187,7 +193,7 @@ def available_work_tools() -> list[WorkTool]:
         exe = _resolve_binary(binaries, desks, desktop_execs)
         if not exe:
             continue
-        argv = (exe,) + tuple(args)
+        argv = _argv_for(tid, exe, args)
         found.append(WorkTool(
             id=tid,
             title=title,
@@ -253,6 +259,23 @@ def available_work_tools() -> list[WorkTool]:
 
     ordered = sorted(found, key=sort_key)
     return ordered + helpers
+
+
+def _argv_for(tool_id: str, exe: str, args: tuple[str, ...]) -> tuple[str, ...]:
+    """Build argv. Terminal AI tools must open through teddyos-agent (VTE).
+
+    Passing a project path as a CLI argument is wrong for Gemini/Codex — they
+    treat it as a prompt. The wrapper takes the folder as cwd instead.
+    """
+    agent = shutil.which("teddyos-agent")
+    if tool_id in _TTY_TOOLS and agent:
+        # teddyos-claude remains preferred for Claude (same UX, stable app id).
+        if tool_id == "claude":
+            dedicated = shutil.which("teddyos-claude")
+            if dedicated:
+                return (dedicated, "{path}")
+        return (agent, tool_id, "{path}")
+    return (exe,) + tuple(args)
 
 
 def _extra_bin_dirs() -> list[Path]:
