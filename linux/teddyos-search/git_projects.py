@@ -117,6 +117,10 @@ def clone_repo(repo: RemoteRepo, dest_parent: Path | None = None) -> tuple[Path 
     """Download into Projects/<name>. Returns (path, technical_message_for_logs).
 
     The UI turns the path into plain language; the message string is for logs.
+
+    Prefer `gh repo clone` when GitHub CLI is signed in — plain `git clone`
+    over HTTPS has no password prompt in our GUI and fails with
+    "could not read Username for 'https://github.com'".
     """
     parent = dest_parent or CLONE_ROOT
     try:
@@ -130,23 +134,76 @@ def clone_repo(repo: RemoteRepo, dest_parent: Path | None = None) -> tuple[Path 
             return dest, f"already at {dest}"
         return None, f"{dest} exists and is not a git checkout"
 
-    if not shutil.which("git"):
-        return None, "git missing"
+    auth = git_auth()
+    errors: list[str] = []
 
-    code, out = _run(
-        ["git", "clone", "--depth", "1", repo.clone_url, str(dest)],
-        timeout=300,
-    )
-    if code != 0:
-        # Clean partial clone.
-        if dest.exists():
-            try:
-                import shutil as sh
-                sh.rmtree(dest, ignore_errors=True)
-            except Exception:
-                pass
-        return None, out.strip() or f"git clone exit {code}"
-    return dest, f"cloned {repo.full_name} → {dest}"
+    # 1) gh repo clone — uses the signed-in account (token in keyring).
+    if auth.method == "gh" and shutil.which("gh") and repo.full_name:
+        # Ensure git can use gh credentials if anything falls through to git.
+        _ensure_gh_git_helper()
+        code, out = _run(
+            [
+                "gh", "repo", "clone", repo.full_name, str(dest),
+                "--", "--depth", "1",
+            ],
+            timeout=300,
+        )
+        if code == 0 and dest.is_dir():
+            return dest, f"cloned {repo.full_name} → {dest} (gh)"
+        errors.append(out.strip() or f"gh repo clone exit {code}")
+        _cleanup_partial(dest)
+
+    # 2) git clone with the URL we already resolved (SSH or HTTPS).
+    if shutil.which("git"):
+        url = repo.clone_url or _clone_url(repo.full_name, auth)
+        # If we have gh but URL is HTTPS without helper, rewrite via gh.
+        if auth.method == "gh" and url.startswith("https://"):
+            _ensure_gh_git_helper()
+        code, out = _run(
+            ["git", "clone", "--depth", "1", url, str(dest)],
+            timeout=300,
+        )
+        if code == 0 and dest.is_dir():
+            return dest, f"cloned {repo.full_name} → {dest} (git)"
+        errors.append(out.strip() or f"git clone exit {code}")
+        _cleanup_partial(dest)
+
+        # 3) Last try: SSH URL if we only attempted HTTPS (or the reverse).
+        alt = (
+            f"git@github.com:{repo.full_name}.git"
+            if url.startswith("https://")
+            else f"https://github.com/{repo.full_name}.git"
+        )
+        if alt != url and repo.full_name:
+            code, out = _run(
+                ["git", "clone", "--depth", "1", alt, str(dest)],
+                timeout=300,
+            )
+            if code == 0 and dest.is_dir():
+                return dest, f"cloned {repo.full_name} → {dest} (git-alt)"
+            errors.append(out.strip() or f"git clone alt exit {code}")
+            _cleanup_partial(dest)
+    else:
+        errors.append("git missing")
+
+    return None, " | ".join(e for e in errors if e) or "clone failed"
+
+
+def _cleanup_partial(dest: Path) -> None:
+    if dest.exists():
+        try:
+            import shutil as sh
+            sh.rmtree(dest, ignore_errors=True)
+        except Exception:
+            pass
+
+
+def _ensure_gh_git_helper() -> None:
+    """Point git at gh so HTTPS clones can use the keyring token."""
+    if not shutil.which("gh"):
+        return
+    # Idempotent; safe to run often.
+    _run(["gh", "auth", "setup-git"], timeout=15)
 
 
 # --- internals --------------------------------------------------------------
@@ -201,8 +258,13 @@ def _gh_api_login() -> str:
 
 
 def _clone_url(full_name: str, auth: GitAuth) -> str:
-    # Prefer SSH when keys work; otherwise HTTPS (gh credential helper).
-    if auth.method == "ssh" or _ssh_github_ok():
+    # When gh is signed in, HTTPS is fine — clone_repo uses `gh repo clone`
+    # (or setup-git). Prefer SSH only when that is the actual auth method.
+    if auth.method == "ssh":
+        return f"git@github.com:{full_name}.git"
+    if auth.method == "gh":
+        return f"https://github.com/{full_name}.git"
+    if _ssh_github_ok():
         return f"git@github.com:{full_name}.git"
     return f"https://github.com/{full_name}.git"
 

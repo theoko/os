@@ -854,6 +854,35 @@ class SearchWindow(Adw.ApplicationWindow):
         row.connect("activated", lambda *_a, r=repo: self._clone_and_open(r))
         return row
 
+    @staticmethod
+    def _clone_error_plain(name: str, technical: str) -> str:
+        """Turn git/gh noise into something a non-technical person can use."""
+        low = (technical or "").lower()
+        if "could not read username" in low or "authentication failed" in low:
+            return (
+                f"Couldn’t download “{name}” — GitHub needs you signed in first. "
+                "Tap Connect your helpers below, connect GitHub, then try again."
+            )
+        if "permission denied" in low or "403" in low or "not found" in low:
+            return (
+                f"Couldn’t download “{name}”. You may not have access to that "
+                "project, or the name may be wrong. Check the name and try again."
+            )
+        if "timed out" in low or "network" in low or "could not resolve" in low:
+            return (
+                f"Couldn’t download “{name}”. Check your internet connection "
+                "and try again."
+            )
+        if "exists and is not a git" in low:
+            return (
+                f"A folder named “{name}” is already on this computer, but it "
+                "isn’t a project we can open. Rename or move that folder, then try again."
+            )
+        return (
+            f"Couldn’t download “{name}”. Check your internet connection and "
+            "that you still have access to the project, then try again."
+        )
+
     def _clone_and_open(self, repo: git_projects.RemoteRepo) -> None:
         log.info("clone %s", repo.full_name)
         # Replace the list with a single status row while git runs.
@@ -894,11 +923,19 @@ class SearchWindow(Adw.ApplicationWindow):
         if path is None:
             log.warning("clone failed: %s", message)
             self.results.append(self._notice_row(
-                f"Couldn’t download “{repo.name}”. "
-                "Check your internet connection and that you still have access "
-                "to the project, then try again.",
+                self._clone_error_plain(repo.name, message),
                 "dialog-warning-symbolic",
             ))
+            # Offer Connect GitHub when the failure looks like missing auth.
+            low = (message or "").lower()
+            if any(
+                s in low
+                for s in (
+                    "username", "authentication", "permission denied",
+                    "could not read", "403", "401", "auth",
+                )
+            ):
+                self.results.append(self._accounts_row())
             self.stack.set_visible_child_name("results")
             return False
 

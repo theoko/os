@@ -531,6 +531,17 @@ class SignInWindow(Adw.ApplicationWindow):
         self._spinner.stop()
         self._spinner.set_visible(False)
         if code == 0 or self._opened_urls:
+            # So later `git clone` HTTPS works without a password prompt.
+            if self._account.id == "github" and shutil.which("gh"):
+                try:
+                    subprocess.run(
+                        ["gh", "auth", "setup-git"],
+                        capture_output=True,
+                        timeout=15,
+                        check=False,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
             self._title.set_text(f"{self._account.title} is ready")
             self._body.set_text(
                 "You’re all set. Tap I’m done, then go back to Search."
