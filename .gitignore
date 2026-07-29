@@ -1,7 +1,6 @@
 /target/
 /kernel/target/
 /kernel/kernel
-/limine/
 /edk2-ovmf/
 /kernel/.cargo/
 /iso_root/
