@@ -342,7 +342,8 @@ pub fn run_goal_with_plan(goal: &str, caps: Caps, intent: &IntentPlan) -> Brief 
         }
     }
 
-    // Fill remaining Doc slots from search.query when we still need hits.
+    // Fill remaining Doc slots via guest search (`mcp::fetch_search_peek` →
+    // `agent.act` on the wire) when we still need hits.
     // Skip COM2 in the pure offline path when SearchQuery is off.
     if brief.doc_n < 3 && !mailish {
         if caps.allows(Cap::SearchQuery) {
