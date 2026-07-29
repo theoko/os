@@ -390,7 +390,11 @@ install -Dm755 "$REPO/linux/teddyos-claude/teddyos-claude"      config/includes.
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-agent"        config/includes.chroot/usr/bin/teddyos-agent
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-ask-all"      config/includes.chroot/usr/bin/teddyos-ask-all
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-perplexity"   config/includes.chroot/usr/bin/teddyos-perplexity
+install -Dm755 "$REPO/linux/teddyos-agent/teddyos-accounts"     config/includes.chroot/usr/bin/teddyos-accounts
 install -Dm755 "$REPO/linux/teddyos-update/teddyos-update"      config/includes.chroot/usr/bin/teddyos-update
+# Account / sign-in helpers used by teddyos-accounts and Search.
+install -Dm644 "$REPO/linux/teddyos-search/accounts.py" \
+  config/includes.chroot/usr/lib/teddyos/accounts.py
 
 # --- logs -------------------------------------------------------------------
 # Persistent journal + per-app files + daily snapshots. Without this, a failed
@@ -533,6 +537,19 @@ Icon=teddyos-perplexity
 Terminal=false
 Categories=Network;WebBrowser;
 StartupWMClass=teddyos-perplexity
+DESKTOP
+
+# Connect your helpers — the non-technical path to vendor sign-in.
+install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-accounts.desktop <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Connect helpers
+Comment=Sign in to Claude, Grok, Gemini, and more
+Exec=teddyos-accounts
+Icon=system-users-symbolic
+Terminal=false
+Categories=Settings;Utility;
+StartupWMClass=com.teddyos.Accounts
 DESKTOP
 
 # Install teddyOS.

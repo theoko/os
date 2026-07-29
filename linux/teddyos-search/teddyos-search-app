@@ -571,6 +571,10 @@ class SearchWindow(Adw.ApplicationWindow):
                 key=lambda t: (0 if t.id in recent else 1, t.title.lower()),
             )
 
+            # Always offer Connect near the helpers — sign-in is the #1
+            # blocker for first-time use.
+            rows.append(self._accounts_row())
+
             if chat_tools:
                 rows.append(self._section_label("Or open just one"))
                 for tool in chat_tools:
@@ -741,9 +745,10 @@ class SearchWindow(Adw.ApplicationWindow):
         )
         if not ready:
             self._notify(
-                "No helper is ready yet. Tap one below to sign in.",
+                "No helper is ready yet — opening Connect so you can sign in.",
                 timeout=4,
             )
+            self._open_accounts()
             return
         ask = shutil.which("teddyos-ask-all")
         if not ask:
@@ -979,9 +984,49 @@ class SearchWindow(Adw.ApplicationWindow):
         row.set_activatable(True)
         row.connect(
             "activated",
-            lambda *_a, t=tool, p=project: self._launch_tool(t, p),
+            lambda *_a, t=tool, p=project: self._on_tool_activated(t, p),
         )
         self._tool_rows[tool.id] = row
+        return row
+
+    def _on_tool_activated(self, tool: WorkTool, project: Path) -> None:
+        """Open the helper, or Connect if it still needs a sign-in."""
+        status = self._credit_statuses.get(tool.id)
+        if (
+            tool.metered
+            and status is not None
+            and status.ok is False
+            and "not on this computer" not in (status.label or "").lower()
+        ):
+            # Needs sign-in — never dump them into a failing TUI.
+            self._notify(
+                f"{tool.title} needs a quick sign-in first…",
+                timeout=3,
+            )
+            if self._open_accounts(tool.id):
+                return
+        self._launch_tool(tool, project)
+
+    def _open_accounts(self, focus_id: str | None = None) -> bool:
+        """Open the plain-language Connect your helpers window."""
+        exe = shutil.which("teddyos-accounts")
+        if not exe:
+            return False
+        argv = [exe]
+        if focus_id:
+            argv.extend(["--connect", focus_id])
+        return self._spawn(argv, cwd=str(Path.home()))
+
+    def _accounts_row(self) -> Gtk.Widget:
+        row = Adw.ActionRow(title="Connect your helpers")
+        row.set_subtitle(
+            "Sign in to Claude, Grok, Gemini, and more — one tap, browser opens"
+        )
+        row.set_subtitle_lines(2)
+        row.add_prefix(Gtk.Image.new_from_icon_name("system-users-symbolic"))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect("activated", lambda *_: self._open_accounts())
         return row
 
     def _tool_icon(self, name: str) -> Gtk.Image:

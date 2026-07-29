@@ -1,0 +1,368 @@
+#!/usr/bin/env python3
+"""Connect your helpers — sign in without learning a terminal.
+
+Each AI helper (Claude, Grok, Gemini, …) needs its own account. Vendors use
+browser sign-in. This window is the only place a non-technical person should
+have to go: one list, status in plain words, Connect opens a guided sign-in
+(browser almost always). No API keys, no paste-into-terminal steps.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+gi.require_version("Vte", "3.91")
+from gi.repository import Adw, Gdk, GLib, Gtk, Pango, Vte  # noqa: E402
+
+sys.path.insert(0, "/usr/lib/teddyos")
+try:
+    import accounts as acc
+    from logutil import get_logger
+    log = get_logger("accounts")
+except Exception:  # noqa: BLE001
+    import logging
+    log = logging.getLogger("teddyos.accounts")
+    acc = None  # type: ignore
+
+APP_ID = "com.teddyos.Accounts"
+
+
+class SignInWindow(Adw.ApplicationWindow):
+    """One helper’s sign-in: plain instructions + a small live view."""
+
+    def __init__(
+        self,
+        app: Adw.Application,
+        account: "acc.Account",
+        argv: list[str],
+    ):
+        super().__init__(
+            application=app,
+            title=f"Sign in to {account.title}",
+        )
+        self.set_default_size(720, 520)
+        self._account = account
+
+        header = Adw.HeaderBar()
+        header.set_title_widget(Adw.WindowTitle(
+            title=f"Sign in to {account.title}",
+            subtitle="Usually a browser opens — finish there",
+        ))
+
+        hint = Gtk.Label(
+            label=account.connect_hint,
+            wrap=True,
+            xalign=0.0,
+        )
+        hint.add_css_class("dim-label")
+        hint.set_margin_top(12)
+        hint.set_margin_start(16)
+        hint.set_margin_end(16)
+        hint.set_margin_bottom(8)
+
+        term = Vte.Terminal()
+        term.set_scrollback_lines(5000)
+        term.set_font(Pango.FontDescription("monospace 11"))
+        term.set_margin_start(12)
+        term.set_margin_end(12)
+        term.set_margin_bottom(12)
+        fg, bg = Gdk.RGBA(), Gdk.RGBA()
+        fg.parse("#2c2c2a")
+        bg.parse("#fbfbfa")
+        term.set_colors(fg, bg, None)
+        term.connect("child-exited", self._on_done)
+
+        path_env = os.environ.get("PATH", "/usr/bin:/bin")
+        for extra in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
+            if extra not in path_env.split(":"):
+                path_env = extra + ":" + path_env
+        env = [
+            f"TERM=xterm-256color",
+            f"HOME={os.path.expanduser('~')}",
+            f"PATH={path_env}",
+            f"USER={os.environ.get('USER', '')}",
+            f"LANG={os.environ.get('LANG', 'C.UTF-8')}",
+            "COLORTERM=truecolor",
+        ]
+        for key in (
+            "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
+            "DBUS_SESSION_BUS_ADDRESS", "BROWSER",
+        ):
+            val = os.environ.get(key)
+            if val:
+                env.append(f"{key}={val}")
+
+        log.info("connect start id=%s argv=%s", account.id, argv)
+        term.spawn_async(
+            Vte.PtyFlags.DEFAULT,
+            os.path.expanduser("~"),
+            argv,
+            env,
+            GLib.SpawnFlags.DEFAULT,
+            None, None,
+            -1, None, None, None,
+        )
+
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        scroller.set_child(term)
+
+        done = Gtk.Button(label="I’m done signing in")
+        done.add_css_class("suggested-action")
+        done.set_halign(Gtk.Align.CENTER)
+        done.set_margin_bottom(14)
+        done.connect("clicked", lambda *_: self.close())
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.append(hint)
+        box.append(scroller)
+        box.append(done)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(box)
+        self.set_content(toolbar)
+
+    def _on_done(self, *_a) -> None:
+        log.info("connect child exited id=%s", self._account.id)
+
+
+class AccountsWindow(Adw.ApplicationWindow):
+    def __init__(self, app: Adw.Application, focus_id: str | None = None):
+        super().__init__(application=app, title="Connect your helpers")
+        self.set_default_size(560, 640)
+        self._rows: dict[str, Adw.ActionRow] = {}
+        self._status_labels: dict[str, str] = {}
+        self._focus_id = focus_id
+
+        header = Adw.HeaderBar()
+        header.set_title_widget(Adw.WindowTitle(
+            title="Connect your helpers",
+            subtitle="Sign in once · no technical steps",
+        ))
+        refresh = Gtk.Button(icon_name="view-refresh-symbolic")
+        refresh.set_tooltip_text("Check again")
+        refresh.connect("clicked", lambda *_: self._reload_statuses())
+        header.pack_end(refresh)
+
+        intro = Gtk.Label(
+            label=(
+                "Each helper needs its own account (Claude, Grok, Google, …). "
+                "Tap Connect — a browser usually opens. Sign in there, then "
+                "come back. You only do this once per helper."
+            ),
+            wrap=True,
+            xalign=0.0,
+        )
+        intro.add_css_class("dim-label")
+        intro.set_margin_top(8)
+        intro.set_margin_bottom(12)
+        intro.set_margin_start(4)
+        intro.set_margin_end(4)
+
+        self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.list.add_css_class("boxed-list")
+
+        if acc is None:
+            self.list.append(Adw.ActionRow(
+                title="Couldn’t load account list",
+                subtitle="Try reinstalling teddyOS",
+            ))
+        else:
+            for account in acc.all_accounts():
+                self.list.append(self._row(account))
+
+        clamp = Adw.Clamp(maximum_size=520)
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        inner.set_margin_top(8)
+        inner.set_margin_bottom(24)
+        inner.set_margin_start(18)
+        inner.set_margin_end(18)
+        inner.append(intro)
+        inner.append(self.list)
+        clamp.set_child(inner)
+
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        scroller.set_child(clamp)
+
+        self._toasts = Adw.ToastOverlay()
+        self._toasts.set_child(scroller)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(self._toasts)
+        self.set_content(toolbar)
+
+        self._reload_statuses()
+        if focus_id:
+            GLib.idle_add(self._flash_focus, focus_id)
+
+    def _row(self, account: "acc.Account") -> Gtk.Widget:
+        row = Adw.ActionRow(title=account.title)
+        row.set_subtitle(account.blurb)
+        row.set_subtitle_lines(2)
+        icon = Gtk.Image()
+        icon.set_pixel_size(28)
+        theme = Gtk.IconTheme.get_for_display(self.get_display())
+        if theme and theme.has_icon(account.icon):
+            icon.set_from_icon_name(account.icon)
+        else:
+            path = Path("/usr/share/icons/hicolor/scalable/apps") / f"{account.icon}.svg"
+            if path.is_file():
+                icon.set_from_file(str(path))
+            else:
+                icon.set_from_icon_name("system-users-symbolic")
+        row.add_prefix(icon)
+
+        btn = Gtk.Button(label="Connect")
+        btn.add_css_class("suggested-action")
+        btn.set_valign(Gtk.Align.CENTER)
+        btn.connect(
+            "clicked",
+            lambda *_a, a=account: self._connect(a),
+        )
+        row.add_suffix(btn)
+        self._rows[account.id] = row
+        # Stash button for enable/disable.
+        row._connect_btn = btn  # type: ignore[attr-defined]
+        return row
+
+    def _flash_focus(self, account_id: str) -> bool:
+        row = self._rows.get(account_id)
+        if row is not None:
+            row.grab_focus()
+        return False
+
+    def _reload_statuses(self) -> None:
+        if acc is None:
+            return
+
+        def work() -> None:
+            results = {}
+            for account in acc.all_accounts():
+                results[account.id] = (
+                    acc.is_installed(account),
+                    acc.status_for(account),
+                )
+            GLib.idle_add(self._apply_statuses, results)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_statuses(self, results: dict) -> bool:
+        for account_id, (installed, status) in results.items():
+            row = self._rows.get(account_id)
+            if row is None:
+                continue
+            account = acc.get_account(account_id)
+            blurb = account.blurb if account else ""
+            if not installed:
+                line = "Not on this computer"
+                btn_label = "Unavailable"
+                sensitive = False
+                row.add_css_class("dim-label")
+            else:
+                line = status.label
+                if status.ok is True:
+                    btn_label = "Connected"
+                    # Still allow re-connect if they want another account.
+                    sensitive = True
+                else:
+                    btn_label = "Connect"
+                    sensitive = True
+                row.remove_css_class("dim-label")
+            row.set_subtitle(f"{line}\n{blurb}")
+            btn = getattr(row, "_connect_btn", None)
+            if btn is not None:
+                btn.set_label(btn_label)
+                btn.set_sensitive(sensitive)
+                if status.ok is True:
+                    btn.remove_css_class("suggested-action")
+                else:
+                    btn.add_css_class("suggested-action")
+        return False
+
+    def _connect(self, account: "acc.Account") -> None:
+        argv = acc.resolve_connect_argv(account)
+        if not argv:
+            self._toast(
+                f"{account.title} isn’t available on this computer."
+            )
+            return
+        # Perplexity: no VTE needed — just open the browser app.
+        if account.id == "perplexity":
+            try:
+                subprocess.Popen(  # noqa: S603
+                    argv,
+                    start_new_session=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                self._toast("Perplexity opened — sign in there if you want.")
+            except OSError:
+                self._toast("Couldn’t open Perplexity.")
+            return
+
+        log.info("open sign-in id=%s argv=%s", account.id, argv)
+        win = SignInWindow(self.get_application(), account, argv)
+        win.present()
+        # Refresh when they close the sign-in window.
+        win.connect("close-request", self._after_sign_in)
+
+    def _after_sign_in(self, *_a) -> bool:
+        GLib.timeout_add(800, self._reload_after_delay)
+        return False  # allow close
+
+    def _reload_after_delay(self) -> bool:
+        self._reload_statuses()
+        self._toast("Checked your connections.")
+        return False
+
+    def _toast(self, message: str) -> None:
+        log.info("ui: %s", message)
+        try:
+            toast = Adw.Toast.new(message)
+            toast.set_timeout(4)
+            self._toasts.add_toast(toast)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+class AccountsApp(Adw.Application):
+    def __init__(self, focus_id: str | None = None):
+        super().__init__(application_id=APP_ID)
+        self._focus_id = focus_id
+
+    def do_activate(self):
+        win = self.props.active_window
+        if win is None:
+            win = AccountsWindow(self, focus_id=self._focus_id)
+        win.present()
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(argv if argv is not None else sys.argv)
+    focus = None
+    # teddyos-accounts --connect claude
+    if len(argv) >= 3 and argv[1] in ("--connect", "connect"):
+        focus = argv[2].lower().strip()
+        argv = [argv[0]]
+    elif len(argv) >= 2 and not argv[1].startswith("-"):
+        focus = argv[1].lower().strip()
+        argv = [argv[0]]
+    GLib.set_prgname(APP_ID)
+    log.info("start focus=%s", focus)
+    app = AccountsApp(focus_id=focus)
+    return app.run(argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

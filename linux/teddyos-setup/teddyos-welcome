@@ -87,7 +87,16 @@ class WelcomeWindow(Adw.ApplicationWindow):
             lambda: None,
         ))
 
-        # 3. The promise the setup screen made, and where to revisit it.
+        # 3. Accounts — the real blocker after first boot.
+        group.add(self._row(
+            "Connect Claude, Grok, and friends",
+            "Each helper needs a one-time sign-in in the browser. "
+            "No technical steps — tap Connect, finish in the browser, done.",
+            "system-users-symbolic",
+            lambda: launch(["teddyos-accounts"]),
+        ))
+
+        # 4. The promise the setup screen made, and where to revisit it.
         on = [caps.text(c, "label", True) for c in caps.CAPABILITIES
               if grants.get(c["id"])]
         off = [caps.text(c, "label", True) for c in caps.CAPABILITIES
@@ -103,7 +112,7 @@ class WelcomeWindow(Adw.ApplicationWindow):
             lambda: launch(["teddyos-setup"]),
         ))
 
-        # 4. The ordinary thing people came to a computer to do.
+        # 5. The ordinary thing people came to a computer to do.
         group.add(self._row(
             "Browse the web",
             "The globe opens the internet. Its address bar uses teddyOS search "
