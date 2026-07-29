@@ -646,7 +646,9 @@ fi
 # Installed into hicolor rather than into WhiteSur. hicolor is the fallback
 # every icon theme inherits, so these survive a theme change instead of
 # vanishing with it.
-for icon in teddyos-search teddyos-claude teddyos-install; do
+# Search / Claude / Gemini / Codex / Install share one visual language so the
+# work-on picker and the dock do not look like a grab-bag of theme glyphs.
+for icon in teddyos-search teddyos-claude teddyos-gemini teddyos-codex teddyos-install; do
   install -Dm644 "$REPO/linux/icons/$icon.svg" \
     "config/includes.chroot/usr/share/icons/hicolor/scalable/apps/$icon.svg"
 done

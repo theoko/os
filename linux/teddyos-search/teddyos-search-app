@@ -715,7 +715,7 @@ class SearchWindow(Adw.ApplicationWindow):
         row.set_subtitle(GLib.markup_escape_text(
             self._format_tool_subtitle(tool.id, base, recent)))
         row.set_subtitle_lines(2)
-        row.add_prefix(Gtk.Image.new_from_icon_name(tool.icon))
+        row.add_prefix(self._tool_icon(tool.icon))
         if recent:
             badge = Gtk.Label(label="Recently used")
             badge.add_css_class("caption")
@@ -732,6 +732,34 @@ class SearchWindow(Adw.ApplicationWindow):
         # is per tool, not per folder.
         self._tool_rows[tool.id] = row
         return row
+
+    def _tool_icon(self, name: str) -> Gtk.Image:
+        """Load a work-tool icon from the theme, with a file fallback.
+
+        The live image installs teddyos-*.svg into hicolor. A guest that was
+        upgraded without re-baking the icon cache still needs a picture — so
+        we also try the on-disk SVG path. Never leave a blank square for the
+        three AI tools that are the whole point of this list.
+        """
+        img = Gtk.Image()
+        img.set_pixel_size(32)
+        theme = Gtk.IconTheme.get_for_display(self.get_display())
+        if theme and theme.has_icon(name):
+            img.set_from_icon_name(name)
+            return img
+        for base in (
+            Path("/usr/share/icons/hicolor/scalable/apps"),
+            Path(__file__).resolve().parent.parent / "icons",
+        ):
+            svg = base / f"{name}.svg"
+            if svg.is_file():
+                try:
+                    img.set_from_file(str(svg))
+                    return img
+                except GLib.Error:
+                    pass
+        img.set_from_icon_name("application-x-executable")
+        return img
 
     def _format_tool_subtitle(
         self, tool_id: str, credit_label: str, recent: bool | None = None

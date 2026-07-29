@@ -89,14 +89,14 @@ _CATALOG: list[tuple] = [
     ),
     (
         "codex", "Codex", "Open this project with Codex",
-        "text-editor", True, True,
+        "teddyos-codex", True, True,
         ("codex",),
         ("{path}",),
         (),
     ),
     (
         "gemini", "Gemini", "Open this project with Gemini",
-        "text-editor", True, True,
+        "teddyos-gemini", True, True,
         ("gemini",),
         ("{path}",),
         (),

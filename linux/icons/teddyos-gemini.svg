@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Gemini launcher icon.
+
+       Same tile geometry as Search / Claude so the work-on picker stays one
+       set. Blue-violet rather than clay or pure blue — distinct next to Claude
+       without copying Google's four-colour mark. A four-point star reads as
+       "assistant / spark" at 48px without forging a trademark. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#7B8CFF"/>
+      <stop offset="100%" stop-color="#4A5AE8"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#tile)"/>
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#sheen)"/>
+
+  <!-- Four-point star: thick enough for small sizes. -->
+  <path fill="#ffffff"
+        d="M512 250 L590 434 L790 512 L590 590 L512 774 L434 590 L234 512 L434 434 Z"/>
+</svg>
