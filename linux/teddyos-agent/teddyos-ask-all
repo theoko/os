@@ -203,36 +203,35 @@ class ToolCard(Gtk.Box):
             nxt = child.get_next_sibling()
             self.actions.remove(child)
             child = nxt
+        # Never open a CLI/agent TUI — re-run headless ask for this one helper.
         label = (
-            f"Try {self.title} again"
+            f"Ask {self.title} again"
             if failed
-            else f"Continue with {self.title}"
+            else f"Ask {self.title} something else"
         )
         btn = Gtk.Button(label=label)
         if not failed:
             btn.add_css_class("suggested-action")
-        btn.connect("clicked", self._open_interactive)
+        btn.connect("clicked", self._ask_again)
         self.actions.append(btn)
         self.actions.set_visible(True)
 
-    def _open_interactive(self, *_a) -> None:
-        agent = shutil.which("teddyos-agent")
-        if not agent:
+    def _ask_again(self, *_a) -> None:
+        """Open a one-shot answers window again — still no terminal."""
+        ask = shutil.which("teddyos-ask-all")
+        if not ask:
             return
-        # Interactive session with the same starting prompt.
-        extra: list[str] = []
-        if self.tool_id in ("gemini", "antigravity"):
-            extra = ["-i", self.prompt]
-        elif self.tool_id in ("claude", "grok", "codex", "copilot", "aider"):
-            extra = [self.prompt]
-        argv = [agent, self.tool_id, self.project, *extra]
+        # Prefill with previous prompt; user can edit in Search next time.
+        # For now re-run same question is still useful after a failure.
         try:
             env = os.environ.copy()
-            for key in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
-                if key not in env.get("PATH", ""):
-                    env["PATH"] = key + ":" + env.get("PATH", "/usr/bin:/bin")
             subprocess.Popen(  # noqa: S603
-                argv,
+                [
+                    ask,
+                    "--project", self.project,
+                    "--prompt", self.prompt,
+                    "--tools", self.tool_id,
+                ],
                 cwd=self.project,
                 env=env,
                 start_new_session=True,
@@ -241,7 +240,7 @@ class ToolCard(Gtk.Box):
                 stderr=subprocess.DEVNULL,
             )
         except OSError as exc:
-            log.error("open interactive failed tool=%s: %s", self.tool_id, exc)
+            log.error("ask-again failed tool=%s: %s", self.tool_id, exc)
 
 
 class AskAllWindow(Adw.ApplicationWindow):

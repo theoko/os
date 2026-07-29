@@ -1,27 +1,27 @@
 #!/usr/bin/env python3
-"""Connect your helpers — sign in without learning a terminal.
+"""Connect your helpers — sign in without ever seeing a terminal.
 
-Each AI helper (Claude, Grok, Gemini, …) needs its own account. Vendors use
-browser sign-in. This window is the only place a non-technical person should
-have to go: one list, status in plain words, Connect opens a guided sign-in
-(browser almost always). No API keys, no paste-into-terminal steps.
+Vendors use browser OAuth. We start their login command in the background
+(hidden), open any URL they print, and show only plain-language status.
+No VTE, no monospaced dump, no “CLI”.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
 import threading
+import webbrowser
 from pathlib import Path
 
 import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-gi.require_version("Vte", "3.91")
-from gi.repository import Adw, Gdk, GLib, Gtk, Pango, Vte  # noqa: E402
+from gi.repository import Adw, GLib, Gtk  # noqa: E402
 
 sys.path.insert(0, "/usr/lib/teddyos")
 try:
@@ -35,9 +35,16 @@ except Exception:  # noqa: BLE001
 
 APP_ID = "com.teddyos.Accounts"
 
+_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.I)
+# Device / user codes: XXXX-XXXX or similar
+_CODE_RE = re.compile(
+    r"\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b|\benter code[:\s]+([A-Z0-9-]{6,})\b",
+    re.I,
+)
+
 
 class SignInWindow(Adw.ApplicationWindow):
-    """One helper’s sign-in: plain instructions + a small live view."""
+    """Friendly sign-in — spinner, hint, optional code, no terminal."""
 
     def __init__(
         self,
@@ -49,90 +56,211 @@ class SignInWindow(Adw.ApplicationWindow):
             application=app,
             title=f"Sign in to {account.title}",
         )
-        self.set_default_size(720, 520)
+        self.set_default_size(480, 360)
         self._account = account
+        self._proc: subprocess.Popen | None = None
+        self._opened_urls: set[str] = set()
 
         header = Adw.HeaderBar()
         header.set_title_widget(Adw.WindowTitle(
             title=f"Sign in to {account.title}",
-            subtitle="Usually a browser opens — finish there",
+            subtitle="A browser window should open",
         ))
 
-        hint = Gtk.Label(
-            label=account.connect_hint,
-            wrap=True,
-            xalign=0.0,
-        )
-        hint.add_css_class("dim-label")
-        hint.set_margin_top(12)
-        hint.set_margin_start(16)
-        hint.set_margin_end(16)
-        hint.set_margin_bottom(8)
-
-        term = Vte.Terminal()
-        term.set_scrollback_lines(5000)
-        term.set_font(Pango.FontDescription("monospace 11"))
-        term.set_margin_start(12)
-        term.set_margin_end(12)
-        term.set_margin_bottom(12)
-        fg, bg = Gdk.RGBA(), Gdk.RGBA()
-        fg.parse("#2c2c2a")
-        bg.parse("#fbfbfa")
-        term.set_colors(fg, bg, None)
-        term.connect("child-exited", self._on_done)
-
-        path_env = os.environ.get("PATH", "/usr/bin:/bin")
-        for extra in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
-            if extra not in path_env.split(":"):
-                path_env = extra + ":" + path_env
-        env = [
-            f"TERM=xterm-256color",
-            f"HOME={os.path.expanduser('~')}",
-            f"PATH={path_env}",
-            f"USER={os.environ.get('USER', '')}",
-            f"LANG={os.environ.get('LANG', 'C.UTF-8')}",
-            "COLORTERM=truecolor",
-        ]
-        for key in (
-            "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
-            "DBUS_SESSION_BUS_ADDRESS", "BROWSER",
-        ):
-            val = os.environ.get(key)
-            if val:
-                env.append(f"{key}={val}")
-
-        log.info("connect start id=%s argv=%s", account.id, argv)
-        term.spawn_async(
-            Vte.PtyFlags.DEFAULT,
-            os.path.expanduser("~"),
-            argv,
-            env,
-            GLib.SpawnFlags.DEFAULT,
-            None, None,
-            -1, None, None, None,
+        self._status = Adw.StatusPage(
+            icon_name="network-workgroup-symbolic",
+            title=f"Connecting {account.title}…",
+            description=account.connect_hint,
         )
 
-        scroller = Gtk.ScrolledWindow(vexpand=True)
-        scroller.set_child(term)
+        self._spinner = Gtk.Spinner()
+        self._spinner.start()
+        self._spinner.set_halign(Gtk.Align.CENTER)
+        self._spinner.set_margin_bottom(8)
+
+        self._code_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        self._code_box.set_halign(Gtk.Align.CENTER)
+        self._code_box.set_visible(False)
+        code_caption = Gtk.Label(label="If the browser asks for a code, use this:")
+        code_caption.add_css_class("dim-label")
+        self._code_label = Gtk.Label(label="")
+        self._code_label.add_css_class("title-1")
+        self._code_label.set_selectable(True)
+        self._code_box.append(code_caption)
+        self._code_box.append(self._code_label)
+
+        self._link_btn = Gtk.Button(label="Open sign-in page again")
+        self._link_btn.set_halign(Gtk.Align.CENTER)
+        self._link_btn.set_visible(False)
+        self._link_btn.connect("clicked", self._reopen_link)
+        self._last_url = ""
 
         done = Gtk.Button(label="I’m done signing in")
         done.add_css_class("suggested-action")
+        done.add_css_class("pill")
         done.set_halign(Gtk.Align.CENTER)
-        done.set_margin_bottom(14)
-        done.connect("clicked", lambda *_: self.close())
+        done.set_margin_top(16)
+        done.connect("clicked", self._finish)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        box.append(hint)
-        box.append(scroller)
-        box.append(done)
+        extras = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        extras.set_halign(Gtk.Align.CENTER)
+        extras.append(self._spinner)
+        extras.append(self._code_box)
+        extras.append(self._link_btn)
+        extras.append(done)
+        self._status.set_child(extras)
 
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(header)
-        toolbar.set_content(box)
+        toolbar.set_content(self._status)
         self.set_content(toolbar)
 
-    def _on_done(self, *_a) -> None:
-        log.info("connect child exited id=%s", self._account.id)
+        log.info("connect start id=%s argv=%s", account.id, argv)
+        threading.Thread(
+            target=self._run_login, args=(argv,), daemon=True,
+        ).start()
+
+    def _run_login(self, argv: list[str]) -> None:
+        env = os.environ.copy()
+        path = env.get("PATH", "/usr/bin:/bin")
+        for extra in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
+            if extra not in path.split(":"):
+                path = extra + ":" + path
+        env["PATH"] = path
+        env["TERM"] = "dumb"
+        env["NO_COLOR"] = "1"
+        # Prefer system browser for OAuth redirects.
+        if not env.get("BROWSER"):
+            for b in ("xdg-open", "chromium", "firefox-esr", "firefox"):
+                if shutil.which(b):
+                    env["BROWSER"] = b
+                    break
+        try:
+            self._proc = subprocess.Popen(  # noqa: S603
+                argv,
+                cwd=os.path.expanduser("~"),
+                env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+        except OSError as exc:
+            log.error("connect spawn failed: %s", exc)
+            GLib.idle_add(
+                self._fail,
+                f"Couldn’t start sign-in for {self._account.title}.",
+            )
+            return
+
+        assert self._proc.stdout is not None
+        buf = []
+        try:
+            for line in self._proc.stdout:
+                buf.append(line)
+                self._handle_line(line)
+        except Exception as exc:  # noqa: BLE001
+            log.error("connect read: %s", exc)
+        code = self._proc.wait()
+        log.info("connect exit id=%s code=%s", self._account.id, code)
+        GLib.idle_add(self._login_process_finished, code, "".join(buf)[-800:])
+
+    def _handle_line(self, line: str) -> None:
+        for m in _URL_RE.finditer(line):
+            url = m.group(0).rstrip(").,;]")
+            if url not in self._opened_urls and "localhost" not in url:
+                self._opened_urls.add(url)
+                GLib.idle_add(self._show_url, url)
+                try:
+                    webbrowser.open(url)
+                except Exception:  # noqa: BLE001
+                    # xdg-open fallback
+                    try:
+                        subprocess.Popen(  # noqa: S603
+                            ["xdg-open", url],
+                            start_new_session=True,
+                            stdin=subprocess.DEVNULL,
+                            stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL,
+                        )
+                    except OSError:
+                        pass
+        for m in _CODE_RE.finditer(line):
+            code = m.group(1) or m.group(2)
+            if code:
+                GLib.idle_add(self._show_code, code)
+
+    def _show_url(self, url: str) -> bool:
+        self._last_url = url
+        self._link_btn.set_visible(True)
+        self._status.set_title("Browser should be open")
+        self._status.set_description(
+            self._account.connect_hint
+            + "\n\nIf nothing opened, tap “Open sign-in page again”."
+        )
+        return False
+
+    def _show_code(self, code: str) -> bool:
+        self._code_box.set_visible(True)
+        self._code_label.set_text(code)
+        self._status.set_title("Enter this code in the browser")
+        return False
+
+    def _reopen_link(self, *_a) -> None:
+        if self._last_url:
+            try:
+                webbrowser.open(self._last_url)
+            except Exception:  # noqa: BLE001
+                subprocess.Popen(  # noqa: S603
+                    ["xdg-open", self._last_url],
+                    start_new_session=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+
+    def _login_process_finished(self, code: int, tail: str) -> bool:
+        self._spinner.stop()
+        self._spinner.set_visible(False)
+        if code == 0:
+            self._status.set_icon_name("emblem-ok-symbolic")
+            self._status.set_title(f"{self._account.title} is ready")
+            self._status.set_description(
+                "You’re signed in. Close this window and go back to Search."
+            )
+        else:
+            # Many OAuth CLIs exit non-zero while still succeeding via browser.
+            if self._opened_urls:
+                self._status.set_title("Finish in the browser")
+                self._status.set_description(
+                    "Complete sign-in in the browser window, then tap "
+                    "“I’m done signing in”."
+                )
+            else:
+                self._status.set_icon_name("dialog-information-symbolic")
+                self._status.set_title("Still need to sign in?")
+                self._status.set_description(
+                    self._account.connect_hint
+                    + " Tap Connect again if nothing happened."
+                )
+        return False
+
+    def _fail(self, message: str) -> bool:
+        self._spinner.stop()
+        self._spinner.set_visible(False)
+        self._status.set_icon_name("dialog-warning-symbolic")
+        self._status.set_title("Couldn’t start sign-in")
+        self._status.set_description(message)
+        return False
+
+    def _finish(self, *_a) -> None:
+        if self._proc and self._proc.poll() is None:
+            try:
+                self._proc.terminate()
+            except OSError:
+                pass
+        self.close()
 
 
 class AccountsWindow(Adw.ApplicationWindow):
@@ -140,13 +268,12 @@ class AccountsWindow(Adw.ApplicationWindow):
         super().__init__(application=app, title="Connect your helpers")
         self.set_default_size(560, 640)
         self._rows: dict[str, Adw.ActionRow] = {}
-        self._status_labels: dict[str, str] = {}
         self._focus_id = focus_id
 
         header = Adw.HeaderBar()
         header.set_title_widget(Adw.WindowTitle(
             title="Connect your helpers",
-            subtitle="Sign in once · no technical steps",
+            subtitle="Sign in once · browser only · no terminal",
         ))
         refresh = Gtk.Button(icon_name="view-refresh-symbolic")
         refresh.set_tooltip_text("Check again")
@@ -155,9 +282,9 @@ class AccountsWindow(Adw.ApplicationWindow):
 
         intro = Gtk.Label(
             label=(
-                "Each helper needs its own account (Claude, Grok, Google, …). "
-                "Tap Connect — a browser usually opens. Sign in there, then "
-                "come back. You only do this once per helper."
+                "Each helper needs its own account. Tap Connect — a browser "
+                "opens. Sign in there, then come back. You only do this once "
+                "per helper. You never need a terminal."
             ),
             wrap=True,
             xalign=0.0,
@@ -215,7 +342,10 @@ class AccountsWindow(Adw.ApplicationWindow):
         if theme and theme.has_icon(account.icon):
             icon.set_from_icon_name(account.icon)
         else:
-            path = Path("/usr/share/icons/hicolor/scalable/apps") / f"{account.icon}.svg"
+            path = (
+                Path("/usr/share/icons/hicolor/scalable/apps")
+                / f"{account.icon}.svg"
+            )
             if path.is_file():
                 icon.set_from_file(str(path))
             else:
@@ -225,13 +355,9 @@ class AccountsWindow(Adw.ApplicationWindow):
         btn = Gtk.Button(label="Connect")
         btn.add_css_class("suggested-action")
         btn.set_valign(Gtk.Align.CENTER)
-        btn.connect(
-            "clicked",
-            lambda *_a, a=account: self._connect(a),
-        )
+        btn.connect("clicked", lambda *_a, a=account: self._connect(a))
         row.add_suffix(btn)
         self._rows[account.id] = row
-        # Stash button for enable/disable.
         row._connect_btn = btn  # type: ignore[attr-defined]
         return row
 
@@ -270,13 +396,8 @@ class AccountsWindow(Adw.ApplicationWindow):
                 row.add_css_class("dim-label")
             else:
                 line = status.label
-                if status.ok is True:
-                    btn_label = "Connected"
-                    # Still allow re-connect if they want another account.
-                    sensitive = True
-                else:
-                    btn_label = "Connect"
-                    sensitive = True
+                btn_label = "Connected" if status.ok is True else "Connect"
+                sensitive = True
                 row.remove_css_class("dim-label")
             row.set_subtitle(f"{line}\n{blurb}")
             btn = getattr(row, "_connect_btn", None)
@@ -292,11 +413,8 @@ class AccountsWindow(Adw.ApplicationWindow):
     def _connect(self, account: "acc.Account") -> None:
         argv = acc.resolve_connect_argv(account)
         if not argv:
-            self._toast(
-                f"{account.title} isn’t available on this computer."
-            )
+            self._toast(f"{account.title} isn’t available on this computer.")
             return
-        # Perplexity: no VTE needed — just open the browser app.
         if account.id == "perplexity":
             try:
                 subprocess.Popen(  # noqa: S603
@@ -314,12 +432,11 @@ class AccountsWindow(Adw.ApplicationWindow):
         log.info("open sign-in id=%s argv=%s", account.id, argv)
         win = SignInWindow(self.get_application(), account, argv)
         win.present()
-        # Refresh when they close the sign-in window.
         win.connect("close-request", self._after_sign_in)
 
     def _after_sign_in(self, *_a) -> bool:
         GLib.timeout_add(800, self._reload_after_delay)
-        return False  # allow close
+        return False
 
     def _reload_after_delay(self) -> bool:
         self._reload_statuses()
@@ -351,7 +468,6 @@ class AccountsApp(Adw.Application):
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv if argv is not None else sys.argv)
     focus = None
-    # teddyos-accounts --connect claude
     if len(argv) >= 3 and argv[1] in ("--connect", "connect"):
         focus = argv[2].lower().strip()
         argv = [argv[0]]
@@ -360,8 +476,7 @@ def main(argv: list[str] | None = None) -> int:
         argv = [argv[0]]
     GLib.set_prgname(APP_ID)
     log.info("start focus=%s", focus)
-    app = AccountsApp(focus_id=focus)
-    return app.run(argv)
+    return AccountsApp(focus_id=focus).run(argv)
 
 
 if __name__ == "__main__":
