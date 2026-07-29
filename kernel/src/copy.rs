@@ -156,10 +156,31 @@ pub const fn extract_only() -> &'static str {
     }
 }
 
-// ---- Status and config (screens.rs, ui.rs) ---------------------------------
+// ---- Status and config (screens.rs, ui.rs, main.rs) ------------------------
+
+/// Short status-bar line when a connector action returns Offline.
+///
+/// Must stay ASCII and short enough for the status strip. Standalone never
+/// names a bridge the user cannot start.
+pub const fn status_offline() -> &'static str {
+    if standalone() {
+        "Unavailable on this device"
+    } else {
+        "Bridge offline"
+    }
+}
+
+/// Confirm line after a mock send (Brief report).
+pub const fn mail_queued_mock() -> &'static str {
+    if standalone() {
+        "Mock queued locally (no host mail)"
+    } else {
+        "Mock queued on the bridge"
+    }
+}
 
 /// The remedy line under an offline connector. `make utm-bridged` is advice
-/// only a VM guest can act on.
+/// only a VM guest can act on (hosted builds).
 pub const fn offline_remedy() -> &'static str {
     if standalone() {
         "Connectors are unavailable on this device."
@@ -275,6 +296,8 @@ mod tests {
         answered_from_guide,
         cannot_open_documents,
         extract_only,
+        status_offline,
+        mail_queued_mock,
         offline_remedy,
         builtin_docs_titles_only,
         skills_source,

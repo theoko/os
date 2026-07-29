@@ -2,10 +2,13 @@
 title: What actually costs us 22.5ms a frame
 version: v01
 date: 2026-07-26
-status: current — corrects the diagnosis in linux-os-doc-v02.md
+status: current — measurement record; see tip note
 ---
 
 # What actually costs us 22.5ms a frame
+
+> **Tip note.** Frame-timing evidence for the substrate discussion. It does not
+> imply a Live host MCP bridge on this tip. See `STATUS.md`.
 
 ## Why measure
 

@@ -1088,7 +1088,7 @@ unsafe extern "C" fn kmain() -> ! {
                                             write_status(&mut status_buf, "Mail queued (mock)");
                                             serial_port.write_str("email: sent mock\n");
                                             brief.clear_send();
-                                            brief.push_report("Sent", "Mock queued on the bridge");
+                                            brief.push_report("Sent", copy::mail_queued_mock());
                                         }
                                         mcp::SendMailStatus::Denied => {
                                             write_status(&mut status_buf, "Grant Send mail first");
@@ -1096,7 +1096,7 @@ unsafe extern "C" fn kmain() -> ! {
                                             brief.clear_send();
                                         }
                                         mcp::SendMailStatus::Offline => {
-                                            write_status(&mut status_buf, "Bridge offline");
+                                            write_status(&mut status_buf, copy::status_offline());
                                             serial_port.write_str("email: send offline\n");
                                         }
                                         mcp::SendMailStatus::Failed => {
@@ -1129,7 +1129,7 @@ unsafe extern "C" fn kmain() -> ! {
                                             serial_port.write_str("skills: save need skills.save\n");
                                         }
                                         mcp::SaveSkillStatus::Offline => {
-                                            write_status(&mut status_buf, "Bridge offline");
+                                            write_status(&mut status_buf, copy::status_offline());
                                             serial_port.write_str("skills: save offline\n");
                                         }
                                         mcp::SaveSkillStatus::Failed => {
@@ -1794,7 +1794,7 @@ fn try_transcribe_path(
             serial_port.write_str("audio: need audio.transcribe\n");
         }
         mcp::TranscribeStatus::Offline => {
-            write_status(status_buf, "Bridge offline");
+            write_status(status_buf, copy::status_offline());
             serial_port.write_str("audio: offline\n");
         }
         mcp::TranscribeStatus::Failed => {

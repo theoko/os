@@ -1975,6 +1975,8 @@ mod tests {
             "Tap Confirm send below",
             "email.send: Confirm send on an inbox Brief.",
             "Mock queued on the bridge",
+            copy::mail_queued_mock(),
+            copy::status_offline(),
             "Working on it",
             "Nothing to search",
             "Nothing found",

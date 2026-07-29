@@ -20,9 +20,20 @@ Shape (see `AGENTS.md` on this tip):
 - Work-on goals, AI tool picker, durable guest journals, GitHub clone for
   projects, plain-language UI pass
 
-Tip at latest review push: see `git log -1` on this branch (includes hosted
-COM2 unit-test PIO stub; linux/UTM/corpus honesty; search/skills/architecture
-rewrites; thesis/linux/install/daily-driver tip banners).
+Tip at latest review push: see `git log -1` on this branch.
+
+## SAFE densify floor (docs + standalone copy)
+
+Honesty cuts on this review tip are at a **SAFE floor** for:
+
+- Design docs (search/skills/architecture/thesis/linux/install/utm/…)
+- Baked corpus (no `os://host/bridge` seed rows)
+- User-visible standalone status/remedy copy (`kernel/src/copy.rs` + status
+  bar Offline lines) — never tell owners to `make bridge-run` / `utm-bridged`
+- Default skill playbooks (`agent-plan-act`, `capability-safe-tools`, …)
+
+**Do not invent** without a product brief: restoring Live COM2 connectors,
+merging this tip into MCP `main`, or new `email.send` confirm UX.
 
 ## What this branch is not
 

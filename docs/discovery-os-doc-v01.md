@@ -2,10 +2,13 @@
 title: Customer discovery kit — the two weeks before any more code
 version: v01
 date: 2026-07-27
-status: current — supersedes feature work until 15 interviews are logged
+status: process note — does not describe Live connectors; see tip note
 ---
 
 # Customer discovery kit
+
+> **Tip note.** Strategy / interview kit. It does not restore MCP
+> `host/bridge` behavior. Product truth for this tip: `STATUS.md`, `AGENTS.md`.
 
 On 2026-07-27 the owner took a strategy call with Mohamed Elayouty. The verdict, in the
 owner's own framing, was *idea-obsessed, not problem-obsessed*. The agreed direction is to

@@ -1,13 +1,9 @@
 //! Offline knowledge search over a baked corpus.
 //!
-//! `search.query` normally goes to the host bridge. When the bridge isn't
-//! there — which is the common case, since it has to be started by hand — the
-//! guest still answers from a static index built from `search/corpus.json` at
-//! compile time (see `build_corpus` in `build.rs`).
-//!
-//! This is the only connector that can legitimately live here: it needs no
-//! network, no credentials and no host state. Email stays on the bridge, where
-//! its OAuth tokens belong.
+//! On the standalone tip there is no host bridge: the guest answers from a
+//! static index built from `search/corpus.json` at compile time (see
+//! `build_corpus` in `build.rs`). MCP `main` may still route `search.query`
+//! through COM2 when a bridge is Online; this crate always ranks the bake.
 //!
 //! std port of `kernel/src/search.rs`. The kernel stored every weight as Q16 /
 //! Q10 fixed point because it never enables the FPU; here the same quantities
@@ -384,9 +380,9 @@ mod tests {
 
     #[test]
     fn carrying_every_term_beats_a_stronger_partial_match() {
-        // "Agent skills" is the only document with all three terms, and has
-        // the weaker raw score — the exact-AND ladder is the whole difference.
-        let hit = top("triage support os").expect("corpus phrase");
+        // "Agent skills" is the only document with all three terms; weaker
+        // partials (e.g. email-triage) must lose to the exact-AND ladder.
+        let hit = top("packages stubs skills").expect("corpus phrase");
         assert_eq!(hit, "Agent skills");
     }
 
