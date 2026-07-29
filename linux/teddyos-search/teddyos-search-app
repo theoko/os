@@ -461,22 +461,23 @@ class SearchWindow(Adw.ApplicationWindow):
             self._begin_credit_probes(tools)
             return rows
 
-        # No local folder — try the user's git remotes when they are signed in.
+        # No local folder — try the person's GitHub when they are signed in.
         auth = git_projects.git_auth()
         if not auth.ok:
             rows.append(self._notice_row(
-                f"No folder matching “{subject}” on this computer. "
-                "Sign in with GitHub CLI (`gh auth login`) or set up SSH keys "
-                "to clone it automatically, or copy the project into your home folder.",
+                f"There isn’t a folder called “{subject}” on this computer yet. "
+                "If it lives in your GitHub account, connect GitHub once, then "
+                "try again. Or copy the project folder into your home folder.",
                 "dialog-information-symbolic",
             ))
+            # One clear button beats "run this command in a terminal".
+            rows.append(self._github_connect_row())
             return rows
 
+        who = f" as {auth.login}" if auth.login else ""
         rows.append(self._notice_row(
-            f"No local folder for “{subject}”. Looking on GitHub "
-            f"({auth.method}"
-            + (f", {auth.login}" if auth.login else "")
-            + ")…",
+            f"There isn’t a folder called “{subject}” here. "
+            f"Checking your GitHub projects{who}…",
             "emblem-synchronizing-symbolic",
         ))
         self._begin_git_lookup(subject, generation=self._generation)
@@ -541,29 +542,78 @@ class SearchWindow(Adw.ApplicationWindow):
 
         if err:
             self.results.append(self._notice_row(
-                f"Could not search GitHub: {err}",
+                "Something went wrong while looking for that project online. "
+                "Check your internet connection and try again.",
                 "dialog-warning-symbolic",
             ))
+            log.warning("git lookup error for %r: %s", subject, err)
         if not repos:
-            auth = git_projects.git_auth()
-            hint = auth.detail or "authenticated"
             self.results.append(self._notice_row(
-                f"No folder and no GitHub repo matching “{subject}” ({hint}). "
-                "Try owner/name (e.g. theoko/tsearch-revival), or clone it yourself.",
+                f"Couldn’t find a project named “{subject}” on this computer "
+                "or in your GitHub account. Check the name, or put the folder "
+                "in your home folder and try again.",
                 "dialog-information-symbolic",
             ))
             self.stack.set_visible_child_name("results")
             return False
 
-        self.results.append(self._section_label("Clone from GitHub"))
+        self.results.append(self._section_label("On your GitHub — tap to download"))
         for repo in repos:
             self.results.append(self._clone_row(repo))
         self.stack.set_visible_child_name("results")
         return False
 
+    def _github_connect_row(self) -> Gtk.Widget:
+        """One-tap path to connect GitHub without memorizing a command."""
+        row = Adw.ActionRow(title="Connect GitHub")
+        row.set_subtitle("Opens a short sign-in so teddyOS can download your projects")
+        row.set_subtitle_lines(2)
+        row.add_prefix(Gtk.Image.new_from_icon_name("user-info-symbolic"))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect("activated", lambda *_: self._start_github_connect())
+        return row
+
+    def _start_github_connect(self) -> None:
+        """Launch GitHub sign-in in a window the person can follow.
+
+        They should not have to invent a command. Prefer Terminal so the
+        browser/code steps from GitHub are visible; fall back to a plain
+        notice if nothing can run.
+        """
+        log.info("start github connect")
+        if not shutil.which("gh"):
+            self.results.append(self._notice_row(
+                "This copy of teddyOS can’t connect to GitHub yet. "
+                "Ask whoever set up the computer to install GitHub tools, "
+                "or copy the project folder into your home folder.",
+                "dialog-information-symbolic",
+            ))
+            return
+        # Interactive sign-in needs a real terminal window.
+        candidates = []
+        if shutil.which("gnome-terminal"):
+            candidates.append(["gnome-terminal", "--", "gh", "auth", "login"])
+        if shutil.which("kgx"):
+            candidates.append(["kgx", "-e", "gh auth login"])
+        for argv in candidates:
+            try:
+                Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE)
+                return
+            except GLib.Error:
+                continue
+        self.results.append(self._notice_row(
+            "Open the Terminal app and ask for help connecting GitHub, "
+            "then try your search again.",
+            "dialog-information-symbolic",
+        ))
+
     def _clone_row(self, repo: git_projects.RemoteRepo) -> Gtk.Widget:
-        title = f"Clone {repo.full_name}"
-        sub = repo.description or repo.clone_url
+        # Human title: "tsearch-revival" is enough; owner/name is secondary.
+        title = f"Download “{repo.name}”"
+        sub = repo.description.strip() if repo.description else f"From {repo.full_name}"
+        if repo.description:
+            sub = f"{sub} · {repo.full_name}"
         row = Adw.ActionRow(title=GLib.markup_escape_text(title))
         row.set_subtitle(GLib.markup_escape_text(sub[:160]))
         row.set_subtitle_lines(2)
@@ -582,7 +632,7 @@ class SearchWindow(Adw.ApplicationWindow):
             self.results.remove(child)
             child = nxt
         self.results.append(self._notice_row(
-            f"Cloning {repo.full_name}…",
+            f"Downloading “{repo.name}” to this computer…",
             "emblem-synchronizing-symbolic",
         ))
         self.stack.set_visible_child_name("results")
@@ -613,19 +663,24 @@ class SearchWindow(Adw.ApplicationWindow):
         if path is None:
             log.warning("clone failed: %s", message)
             self.results.append(self._notice_row(
-                f"Could not clone {repo.full_name}: {message}",
+                f"Couldn’t download “{repo.name}”. "
+                "Check your internet connection and that you still have access "
+                "to the project, then try again.",
                 "dialog-warning-symbolic",
             ))
             self.stack.set_visible_child_name("results")
             return False
 
-        log.info("cloned %s → %s", repo.full_name, path)
+        log.info("cloned %s → %s (%s)", repo.full_name, path, message)
         tools = work_tools.available_work_tools()
         rows: list[Gtk.Widget] = []
         self._tool_rows = {}
         self._credit_labels = {}
+        where = str(path).replace(str(Path.home()), "~")
         self.results.append(self._notice_row(
-            message, "emblem-ok-symbolic",
+            f"“{repo.name}” is ready on this computer ({where}). "
+            "Choose how you want to open it.",
+            "emblem-ok-symbolic",
         ))
         self._append_project_tools(rows, [path], tools)
         for row in rows:

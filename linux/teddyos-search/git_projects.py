@@ -114,21 +114,24 @@ def find_remote_repos(subject: str, limit: int = 8) -> list[RemoteRepo]:
 
 
 def clone_repo(repo: RemoteRepo, dest_parent: Path | None = None) -> tuple[Path | None, str]:
-    """Clone into Projects/<name>. Returns (path, message)."""
+    """Download into Projects/<name>. Returns (path, technical_message_for_logs).
+
+    The UI turns the path into plain language; the message string is for logs.
+    """
     parent = dest_parent or CLONE_ROOT
     try:
         parent.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
-        return None, f"Could not create {parent}: {exc}"
+        return None, f"mkdir {parent}: {exc}"
 
     dest = parent / repo.name
     if dest.exists():
         if (dest / ".git").is_dir():
-            return dest, f"Already cloned at {dest}"
-        return None, f"{dest} exists and is not a git repo"
+            return dest, f"already at {dest}"
+        return None, f"{dest} exists and is not a git checkout"
 
     if not shutil.which("git"):
-        return None, "git is not installed"
+        return None, "git missing"
 
     code, out = _run(
         ["git", "clone", "--depth", "1", repo.clone_url, str(dest)],
@@ -142,8 +145,8 @@ def clone_repo(repo: RemoteRepo, dest_parent: Path | None = None) -> tuple[Path 
                 sh.rmtree(dest, ignore_errors=True)
             except Exception:
                 pass
-        return None, out.strip() or f"git clone failed (exit {code})"
-    return dest, f"Cloned {repo.full_name}"
+        return None, out.strip() or f"git clone exit {code}"
+    return dest, f"cloned {repo.full_name} → {dest}"
 
 
 # --- internals --------------------------------------------------------------
