@@ -84,11 +84,44 @@ _CATALOG: list[tuple] = [
         (),
     ),
     (
+        # GitHub Copilot CLI (`npm i -g @github/copilot` → `copilot`).
+        "copilot", "Copilot", "Ready · tap to open",
+        "teddyos-copilot", True, True,
+        ("copilot",),
+        ("{path}",),
+        (),
+    ),
+    (
+        # Google Antigravity CLI (`agy` — curl install from antigravity.google).
+        "antigravity", "Antigravity", "Ready · tap to open",
+        "teddyos-antigravity", True, True,
+        ("agy", "antigravity"),
+        ("{path}",),
+        (),
+    ),
+    (
         "cursor", "Cursor", "Open in the Cursor app",
-        "text-editor", True, True,
+        "teddyos-cursor", True, True,
         ("cursor", "cursor-agent"),
         ("{path}",),
-        ("cursor.desktop", "Cursor.desktop"),
+        (
+            "cursor.desktop",
+            "Cursor.desktop",
+            "cursor-url-handler.desktop",
+            "code-cursor.desktop",
+        ),
+    ),
+    (
+        # Perplexity: web app wrapper (always on image) or local desktop binary.
+        "perplexity", "Perplexity", "Ask on the web",
+        "teddyos-perplexity", True, True,
+        ("teddyos-perplexity", "perplexity", "pplx"),
+        (),
+        (
+            "teddyos-perplexity.desktop",
+            "perplexity.desktop",
+            "Perplexity.desktop",
+        ),
     ),
     (
         "windsurf", "Windsurf", "Open in the Windsurf app",
@@ -184,13 +217,15 @@ for _e in _CATALOG:
 # Interactive CLI tools that need a TTY window. Without teddyos-agent they
 # print "stdin is not a terminal" and the Search click does nothing.
 _TTY_TOOLS = frozenset({
-    "claude", "grok", "gemini", "codex", "aider", "ollama", "crush", "goose",
+    "claude", "grok", "gemini", "codex", "copilot", "antigravity",
+    "aider", "ollama", "crush", "goose",
 })
 
 # Tools that accept an initial prompt in an interactive session. GUI editors
-# (Cursor, VS Code) are not included — they open folders, not chat prompts.
+# (Cursor, VS Code) and web apps (Perplexity) are not included — they open
+# folders or a browser, not a project chat with argv.
 _PROMPT_TOOLS = frozenset({
-    "claude", "grok", "gemini", "codex", "aider",
+    "claude", "grok", "gemini", "codex", "copilot", "antigravity", "aider",
 })
 
 
@@ -203,11 +238,10 @@ def prompt_argv(tool_id: str, prompt: str) -> list[str]:
     text = (prompt or "").strip()
     if not text or tool_id not in _PROMPT_TOOLS:
         return []
-    # Gemini: -i runs the prompt then stays interactive. Bare args also work
-    # but -i is the documented path for "start with this, keep chatting".
-    if tool_id == "gemini":
+    # Gemini / Antigravity: -i runs the prompt then stays interactive.
+    if tool_id in ("gemini", "antigravity"):
         return ["-i", text]
-    # Claude, Grok, Codex, Aider: positional initial prompt.
+    # Claude, Grok, Codex, Copilot, Aider: positional initial prompt.
     return [text]
 
 
@@ -405,6 +439,7 @@ def _desktop_exec_map() -> dict[str, str]:
             if key not in _DESKTOP_TO_ID and not any(
                 k in key for k in (
                     "cursor", "code", "codium", "windsurf", "zed", "claude",
+                    "perplexity", "copilot", "antigravity", "agy",
                 )
             ):
                 continue
@@ -625,17 +660,43 @@ def _probe_cursor() -> CreditStatus:
 
 def _probe_generic_installed(name: str, binary: str) -> CreditStatus:
     if not shutil.which(binary):
-        return CreditStatus(ok=False, label="Not on this computer")
+        # Still look in the extra dirs GUI apps often miss.
+        found = False
+        for d in _extra_bin_dirs():
+            cand = d / binary
+            if cand.is_file() and os.access(cand, os.X_OK):
+                found = True
+                break
+        if not found:
+            return CreditStatus(ok=False, label="Not on this computer")
     return CreditStatus(
         ok=None,
         label="Ready · tap to open",
     )
 
 
+def _probe_any_binary(name: str, binaries: tuple[str, ...]) -> CreditStatus:
+    for b in binaries:
+        if shutil.which(b):
+            return CreditStatus(ok=None, label="Ready · tap to open")
+        for d in _extra_bin_dirs():
+            cand = d / b
+            if cand.is_file() and os.access(cand, os.X_OK):
+                return CreditStatus(ok=None, label="Ready · tap to open")
+    return CreditStatus(ok=False, label="Not on this computer")
+
+
 PROBES: dict[str, Callable[[], CreditStatus]] = {
     "claude": _probe_claude,
     "grok": lambda: _probe_generic_installed("Grok", "grok"),
+    "copilot": lambda: _probe_generic_installed("Copilot", "copilot"),
+    "antigravity": lambda: _probe_any_binary(
+        "Antigravity", ("agy", "antigravity"),
+    ),
     "cursor": _probe_cursor,
+    "perplexity": lambda: _probe_any_binary(
+        "Perplexity", ("teddyos-perplexity", "perplexity", "pplx"),
+    ),
     "windsurf": lambda: _probe_generic_installed("Windsurf", "windsurf"),
     "codex": lambda: _probe_generic_installed("Codex", "codex"),
     "gemini": lambda: _probe_generic_installed("Gemini", "gemini"),

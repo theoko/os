@@ -68,6 +68,20 @@ TOOLS: dict[str, tuple[str, str, str, str]] = {
         "Type what you want help with. If Codex asks you to sign in, a "
         "browser will open — finish there, then come back here.",
     ),
+    "copilot": (
+        "copilot",
+        "Copilot",
+        "Copilot isn’t installed on this copy of teddyOS.",
+        "Type what you want help with. If Copilot asks you to sign in, a "
+        "browser will open — finish there, then come back here.",
+    ),
+    "antigravity": (
+        "agy",
+        "Antigravity",
+        "Antigravity isn’t installed on this copy of teddyOS.",
+        "Type what you want help with. If Antigravity asks you to sign in, a "
+        "browser will open — finish there, then come back here.",
+    ),
     "aider": (
         "aider",
         "Aider",

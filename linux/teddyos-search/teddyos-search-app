@@ -1090,7 +1090,8 @@ class SearchWindow(Adw.ApplicationWindow):
 
     # Terminal AI tools that die without a TTY. Never bare-spawn these.
     _TTY_TOOLS = frozenset({
-        "claude", "grok", "gemini", "codex", "aider", "ollama", "crush", "goose",
+        "claude", "grok", "gemini", "codex", "copilot", "antigravity",
+        "aider", "ollama", "crush", "goose",
     })
 
     def _notify(self, message: str, *, timeout: int = 3) -> None:
@@ -1260,6 +1261,8 @@ class SearchWindow(Adw.ApplicationWindow):
             "codex": "codex",
             "grok": "grok",
             "claude": "claude",
+            "copilot": "copilot",
+            "antigravity": "agy",
             "aider": "aider",
             "ollama": "ollama",
             "crush": "crush",

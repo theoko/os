@@ -65,6 +65,12 @@ def _headless_argv(tool_id: str, prompt: str) -> list[str] | None:
         exe = shutil.which("grok") or _find("grok")
         # -p / --single: print response and exit
         return [exe, "-p", text] if exe else None
+    if tool_id == "copilot":
+        exe = shutil.which("copilot") or _find("copilot")
+        return [exe, "-p", text] if exe else None
+    if tool_id == "antigravity":
+        exe = shutil.which("agy") or _find("agy") or shutil.which("antigravity")
+        return [exe, "-p", text] if exe else None
     if tool_id == "aider":
         # Aider is interactive-first; skip one-shot for now.
         return None
@@ -84,6 +90,8 @@ _TITLES = {
     "grok": "Grok",
     "gemini": "Gemini",
     "codex": "Codex",
+    "copilot": "Copilot",
+    "antigravity": "Antigravity",
     "aider": "Aider",
 }
 
@@ -213,9 +221,9 @@ class ToolCard(Gtk.Box):
             return
         # Interactive session with the same starting prompt.
         extra: list[str] = []
-        if self.tool_id == "gemini":
+        if self.tool_id in ("gemini", "antigravity"):
             extra = ["-i", self.prompt]
-        elif self.tool_id in ("claude", "grok", "codex", "aider"):
+        elif self.tool_id in ("claude", "grok", "codex", "copilot", "aider"):
             extra = [self.prompt]
         argv = [agent, self.tool_id, self.project, *extra]
         try:

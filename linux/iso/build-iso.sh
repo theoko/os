@@ -389,6 +389,7 @@ install -Dm755 "$REPO/linux/teddyos-setup/teddyos-welcome"       config/includes
 install -Dm755 "$REPO/linux/teddyos-claude/teddyos-claude"      config/includes.chroot/usr/bin/teddyos-claude
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-agent"        config/includes.chroot/usr/bin/teddyos-agent
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-ask-all"      config/includes.chroot/usr/bin/teddyos-ask-all
+install -Dm755 "$REPO/linux/teddyos-agent/teddyos-perplexity"   config/includes.chroot/usr/bin/teddyos-perplexity
 install -Dm755 "$REPO/linux/teddyos-update/teddyos-update"      config/includes.chroot/usr/bin/teddyos-update
 
 # --- logs -------------------------------------------------------------------
@@ -520,6 +521,20 @@ Categories=Utility;Development;
 StartupWMClass=com.teddyos.Claude
 DESKTOP
 
+# Perplexity as a one-tap web app — non-technical people should not have to
+# find a URL or install an AppImage by hand.
+install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-perplexity.desktop <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Perplexity
+Comment=Ask anything on the web
+Exec=teddyos-perplexity
+Icon=teddyos-perplexity
+Terminal=false
+Categories=Network;WebBrowser;
+StartupWMClass=teddyos-perplexity
+DESKTOP
+
 # Install teddyOS.
 #
 # The live image had no way to keep it. The boot menu offers an installer, but
@@ -648,9 +663,13 @@ fi
 # Installed into hicolor rather than into WhiteSur. hicolor is the fallback
 # every icon theme inherits, so these survive a theme change instead of
 # vanishing with it.
-# Search / Claude / Grok / Gemini / Codex / Install share one visual language
-# so the work-on picker and the dock do not look like a grab-bag of theme glyphs.
-for icon in teddyos-search teddyos-claude teddyos-grok teddyos-gemini teddyos-codex teddyos-install; do
+# Search / helpers / Install share one visual language so the work-on picker
+# and the dock do not look like a grab-bag of theme glyphs.
+for icon in \
+  teddyos-search teddyos-claude teddyos-grok teddyos-gemini teddyos-codex \
+  teddyos-copilot teddyos-antigravity teddyos-perplexity teddyos-cursor \
+  teddyos-install
+do
   install -Dm644 "$REPO/linux/icons/$icon.svg" \
     "config/includes.chroot/usr/share/icons/hicolor/scalable/apps/$icon.svg"
 done
@@ -950,10 +969,9 @@ node --version
 # NOT >/dev/null 2>&1. Every masked command in this file has cost an hour: the
 # theme hook hid a TERM error, WhiteSur hid its own stderr, and this hid the
 # EBADENGINE that explained the whole thing.
-# AI tools for Search "work on …". Claude is the default; Grok, Codex, and
-# Gemini give people a choice without hunting package names. Installs that
-# fail must not kill the image — Claude is load-bearing, the others are
-# best-effort.
+# AI tools for Search "work on …". Claude is the default; others give people a
+# choice without hunting package names. Installs that fail must not kill the
+# image — Claude is load-bearing, the rest are best-effort.
 npm install -g --silent @anthropic-ai/claude-code 2>&1 | tail -20
 npm install -g --silent @xai-official/grok 2>&1 | tail -10 || \
   echo "note: grok npm install failed (non-fatal)"
@@ -961,6 +979,25 @@ npm install -g --silent @openai/codex 2>&1 | tail -10 || \
   echo "note: codex npm install failed (non-fatal)"
 npm install -g --silent @google/gemini-cli 2>&1 | tail -10 || \
   echo "note: gemini-cli npm install failed (non-fatal)"
+npm install -g --silent @github/copilot 2>&1 | tail -10 || \
+  echo "note: copilot npm install failed (non-fatal)"
+
+# Google Antigravity CLI (`agy`). Official installer; non-fatal in chroot.
+if curl -fsSL https://antigravity.google/cli/install.sh -o /tmp/agy-install.sh 2>/dev/null; then
+  bash /tmp/agy-install.sh 2>&1 | tail -15 || \
+    echo "note: antigravity install failed (non-fatal)"
+  rm -f /tmp/agy-install.sh
+  # Installer often drops into ~/.local; copy into image PATH for all users.
+  for cand in /root/.local/bin/agy /usr/local/bin/agy; do
+    if [ -x "$cand" ]; then
+      install -Dm755 "$cand" /usr/local/bin/agy
+      echo "agy: linked from $cand"
+      break
+    fi
+  done
+else
+  echo "note: antigravity install script unreachable (non-fatal)"
+fi
 
 # Presence is the authoritative check; execution is not. `claude` ships as a
 # native ELF binary now, and running it inside a chroot without /proc, /dev and
@@ -973,7 +1010,7 @@ PKG="$NODE_DIR/lib/node_modules/@anthropic-ai/claude-code"
 [ -x "$NODE_DIR/bin/claude" ] || { echo "ERROR: claude binary missing" >&2; exit 1; }
 ln -sf "$NODE_DIR/bin/claude" /usr/local/bin/claude
 # Symlink optional tools when npm put them next to node.
-for b in grok codex gemini; do
+for b in grok codex gemini copilot; do
   if [ -x "$NODE_DIR/bin/$b" ]; then
     ln -sf "$NODE_DIR/bin/$b" /usr/local/bin/$b
     echo "$b: linked"

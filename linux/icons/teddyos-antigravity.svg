@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Antigravity launcher: blue tile + upward chevron (lift). -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#5B9BFF"/>
+      <stop offset="100%" stop-color="#1A5FE0"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#tile)"/>
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#sheen)"/>
+  <path fill="none" stroke="#ffffff" stroke-width="72" stroke-linecap="round" stroke-linejoin="round"
+        d="M280 620 L512 340 L744 620"/>
+  <path fill="none" stroke="#ffffff" stroke-width="72" stroke-linecap="round"
+        d="M360 720 L512 520 L664 720"/>
+</svg>

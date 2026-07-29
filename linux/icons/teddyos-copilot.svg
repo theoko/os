@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Copilot launcher: charcoal tile + white pilot mark. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#4A4A4E"/>
+      <stop offset="100%" stop-color="#1C1C1F"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.24"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#tile)"/>
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#sheen)"/>
+  <!-- Simple "pair" dots + wing: reads as companion helper, not a logo copy. -->
+  <circle cx="400" cy="480" r="70" fill="#ffffff"/>
+  <circle cx="624" cy="480" r="70" fill="#ffffff"/>
+  <path fill="#ffffff" d="M300 620 Q512 780 724 620 L680 560 Q512 680 344 560 Z"/>
+</svg>
