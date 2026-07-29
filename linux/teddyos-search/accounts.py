@@ -261,30 +261,81 @@ def _status_grok() -> AccountStatus:
     return AccountStatus(ok=False, label="Needs sign-in")
 
 
+def _looks_signed_out(text: str) -> bool:
+    low = (text or "").lower()
+    return any(
+        s in low
+        for s in (
+            "not logged in",
+            "not logged-in",
+            "not authenticated",
+            "logged out",
+            "no account",
+            "please log in",
+            "please sign in",
+            "sign in required",
+            "unauthorized",
+        )
+    )
+
+
+def _looks_signed_in(text: str) -> bool:
+    """True only for affirmative login — never match inside 'not logged in'."""
+    low = (text or "").lower()
+    if _looks_signed_out(text):
+        return False
+    # Prefer clear positive phrases.
+    if re.search(r"\blogged in\b", low) and "not " not in low.split("logged in")[0][-8:]:
+        return True
+    if re.search(r"\bauthenticated\b", low) and "not " not in low.split("authenticated")[0][-8:]:
+        return True
+    if "login status: logged in" in low or "status: logged in" in low:
+        return True
+    return False
+
+
 def _status_codex() -> AccountStatus:
     exe = _which_any(("codex",))
     if not exe:
         return AccountStatus(ok=False, label="Not on this computer")
     code, text = _run([exe, "login", "status"], timeout=6)
-    low = text.lower()
-    if "logged in" in low or "logged-in" in low or "authenticated" in low:
-        return AccountStatus(ok=True, label="Connected")
-    if "not logged" in low or "not authenticated" in low or code != 0:
-        # codex login status often exits non-zero when logged out.
-        if "logged in" in low:
-            return AccountStatus(ok=True, label="Connected")
+    # "Not logged in" used to match the substring "logged in" — false Connected.
+    if _looks_signed_out(text) or (code != 0 and not _looks_signed_in(text)):
         return AccountStatus(ok=False, label="Needs sign-in")
-    return AccountStatus(ok=None, label="Tap Connect if it asks you to sign in")
+    if _looks_signed_in(text) and code == 0:
+        return AccountStatus(ok=True, label="Connected")
+    # Auth file present with tokens is a weak positive; status text wins above.
+    auth = Path.home() / ".codex" / "auth.json"
+    if auth.is_file():
+        try:
+            data = json.loads(auth.read_text())
+            if data.get("OPENAI_API_KEY") or data.get("tokens") or data.get("access_token"):
+                # Still only trust if status did not say signed out.
+                if not _looks_signed_out(text):
+                    return AccountStatus(ok=True, label="Connected")
+        except (OSError, json.JSONDecodeError, TypeError):
+            pass
+    return AccountStatus(ok=False, label="Needs sign-in")
 
 
 def _status_copilot() -> AccountStatus:
     exe = _which_any(("copilot",))
     if not exe:
         return AccountStatus(ok=False, label="Not on this computer")
-    # Token files under ~/.copilot when device flow completed.
+    # Prefer an explicit status command when available.
+    code, text = _run([exe, "auth", "status"], timeout=6)
+    if text and ("unknown command" not in text.lower() and "usage:" not in text.lower()[:80]):
+        if _looks_signed_out(text):
+            return AccountStatus(ok=False, label="Needs sign-in")
+        if _looks_signed_in(text) and code == 0:
+            return AccountStatus(ok=True, label="Connected")
     home = Path.home()
     copilot_home = Path(os.environ.get("COPILOT_HOME", home / ".copilot"))
-    if any(copilot_home.glob("*")):
+    # Config dir alone is not proof of login (CLI creates it on first run).
+    tokenish = list(copilot_home.glob("**/apps.json")) + list(
+        copilot_home.glob("**/*token*")
+    )
+    if tokenish:
         return AccountStatus(ok=None, label="Tap Connect if it asks you to sign in")
     return AccountStatus(ok=False, label="Needs sign-in")
 
@@ -294,8 +345,7 @@ def _status_github() -> AccountStatus:
     if not exe:
         return AccountStatus(ok=False, label="Not on this computer")
     code, text = _run([exe, "auth", "status"], timeout=6)
-    if code == 0 and "Logged in" in text:
-        # "Logged in to github.com as foo"
+    if code == 0 and _looks_signed_in(text):
         who = ""
         for line in text.splitlines():
             if "Logged in to" in line and " as " in line:
@@ -307,7 +357,56 @@ def _status_github() -> AccountStatus:
 
 
 def _status_perplexity() -> AccountStatus:
-    return AccountStatus(ok=True, label="Opens in the browser · sign in there if you want")
+    """Connected only if the Chromium profile has a real Perplexity session.
+
+    Opening the app once creates a profile directory — that is not sign-in.
+    """
+    cookies = (
+        Path.home() / ".config" / "teddyos-perplexity" / "Default" / "Cookies"
+    )
+    if not cookies.is_file():
+        return AccountStatus(ok=False, label="Needs sign-in")
+    # Chrome locks the DB; copy then query.
+    import shutil
+    import sqlite3
+    import tempfile
+
+    try:
+        with tempfile.TemporaryDirectory() as tmp:
+            copy = Path(tmp) / "Cookies"
+            shutil.copy2(cookies, copy)
+            # WAL sidecars if present
+            for side in ("Cookies-journal", "Cookies-wal", "Cookies-shm"):
+                src = cookies.parent / side
+                if src.is_file():
+                    try:
+                        shutil.copy2(src, Path(tmp) / side)
+                    except OSError:
+                        pass
+            con = sqlite3.connect(str(copy))
+            try:
+                cur = con.execute(
+                    "SELECT name, host_key FROM cookies "
+                    "WHERE host_key LIKE '%perplexity%' LIMIT 50"
+                )
+                rows = cur.fetchall()
+            finally:
+                con.close()
+    except (OSError, sqlite3.Error):
+        # Can't read cookies — don't claim connected.
+        return AccountStatus(ok=False, label="Needs sign-in")
+
+    if not rows:
+        return AccountStatus(ok=False, label="Needs sign-in")
+    # Session-ish cookie names used by many auth stacks.
+    names = {str(n).lower() for n, _h in rows}
+    sessionish = any(
+        any(k in n for k in ("session", "auth", "token", "sid", "jwt", "login"))
+        for n in names
+    )
+    if sessionish or len(rows) >= 3:
+        return AccountStatus(ok=True, label="Connected")
+    return AccountStatus(ok=False, label="Needs sign-in")
 
 
 def _status_soft() -> AccountStatus:

@@ -684,7 +684,11 @@ class AccountsWindow(Adw.ApplicationWindow):
                 row.add_css_class("dim-label")
             else:
                 line = status.label
-                btn_label = "Connected" if status.ok is True else "Connect"
+                # Only "Connected" when we know for sure. Unknown → still Connect.
+                if status.ok is True:
+                    btn_label = "Connected"
+                else:
+                    btn_label = "Connect"
                 sensitive = True
                 row.remove_css_class("dim-label")
             row.set_subtitle(f"{line}\n{blurb}")
