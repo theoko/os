@@ -30,7 +30,9 @@ not in the kernel. Guest holds caps and calls tools over COM2 until a guest netw
 1. **QEMU first for CI.** `make test` = host unit tests + QEMU serial smoke + MCP bridge smoke.
 2. **No secrets in the tree.** Gmail OAuth lives in the `gog` keyring. Saved skills live in
    `~/Library/Application Support/os/skills/` — never bake tokens into the ISO.
-3. **Capability model.** Connectors are tools behind caps — no ambient root. `email.send` stays disabled until explicit confirm/cap policy.
+3. **Capability model.** Connectors are tools behind caps — no ambient root.
+   `email.send` needs the Send mail Cap **and** Brief Confirm (`confirm=1`);
+   never auto-CALL send.
 4. **Inference and HTTP stay out of the kernel.** Bridge + future userspace only. Skills are markdown playbooks, not privileged code.
 5. **Tests gate commits.** Run `make test` before committing.
 
