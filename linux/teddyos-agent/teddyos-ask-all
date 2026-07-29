@@ -1,0 +1,449 @@
+#!/usr/bin/env python3
+"""Ask every ready AI one question — in a single window.
+
+"Send to all" used to open Claude, Grok, Gemini, and Codex as four separate
+app windows. That is a bad experience for anyone who is not already living
+in a terminal: windows stack, focus fights, and nobody knows which one to
+read first.
+
+This window runs each helper in the background (one-shot / print mode),
+shows progress, and lays answers out as cards. If someone wants to keep
+chatting with one answer, one button opens that helper alone.
+
+Usage:
+  teddyos-ask-all --project /path/to/proj --prompt "explain the risk code" \\
+      --tools claude,grok,gemini,codex
+"""
+
+from __future__ import annotations
+
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, GLib, Gtk, Pango  # noqa: E402
+
+try:
+    sys.path.insert(0, "/usr/lib/teddyos")
+    from logutil import get_logger
+    log = get_logger("ask-all")
+except Exception:  # noqa: BLE001
+    import logging
+    log = logging.getLogger("teddyos.ask-all")
+
+APP_ID = "com.teddyos.AskAll"
+
+# How long we wait for one helper before giving up (seconds).
+_TIMEOUT = 180
+# Soft cap so a runaway log dump cannot freeze the UI.
+_MAX_CHARS = 24_000
+
+# id → (title, build_argv(prompt) -> list[str])
+def _headless_argv(tool_id: str, prompt: str) -> list[str] | None:
+    """One-shot CLI that prints an answer and exits. cwd is the project."""
+    text = (prompt or "").strip()
+    if not text:
+        return None
+    if tool_id == "claude":
+        exe = shutil.which("claude")
+        return [exe, "-p", text] if exe else None
+    if tool_id == "gemini":
+        exe = shutil.which("gemini") or _find("gemini")
+        return [exe, "-p", text] if exe else None
+    if tool_id == "codex":
+        exe = shutil.which("codex") or _find("codex")
+        return [exe, "exec", text] if exe else None
+    if tool_id == "grok":
+        exe = shutil.which("grok") or _find("grok")
+        # -p / --single: print response and exit
+        return [exe, "-p", text] if exe else None
+    if tool_id == "aider":
+        # Aider is interactive-first; skip one-shot for now.
+        return None
+    return None
+
+
+def _find(name: str) -> str | None:
+    for prefix in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
+        p = Path(prefix) / name
+        if p.is_file() and os.access(p, os.X_OK):
+            return str(p)
+    return None
+
+
+_TITLES = {
+    "claude": "Claude",
+    "grok": "Grok",
+    "gemini": "Gemini",
+    "codex": "Codex",
+    "aider": "Aider",
+}
+
+
+def _parse() -> argparse.Namespace:
+    p = argparse.ArgumentParser(description="Ask several AIs in one window")
+    p.add_argument("--project", required=True, help="Project directory")
+    p.add_argument("--prompt", required=True, help="Question / task")
+    p.add_argument(
+        "--tools",
+        required=True,
+        help="Comma-separated tool ids (claude,grok,gemini,codex)",
+    )
+    return p.parse_args()
+
+
+class ToolCard(Gtk.Box):
+    """One AI's status + answer inside the shared window."""
+
+    def __init__(self, tool_id: str, project: str, prompt: str):
+        super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.tool_id = tool_id
+        self.project = project
+        self.prompt = prompt
+        self.title = _TITLES.get(tool_id, tool_id.title())
+        self.add_css_class("card")
+        self.set_margin_top(4)
+        self.set_margin_bottom(8)
+        self.set_margin_start(2)
+        self.set_margin_end(2)
+
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        head.set_margin_top(12)
+        head.set_margin_start(14)
+        head.set_margin_end(14)
+
+        name = Gtk.Label(label=self.title, xalign=0.0, hexpand=True)
+        name.add_css_class("heading")
+        head.append(name)
+
+        self.spinner = Gtk.Spinner()
+        self.spinner.start()
+        head.append(self.spinner)
+
+        self.status = Gtk.Label(label="Working…", xalign=1.0)
+        self.status.add_css_class("dim-label")
+        self.status.add_css_class("caption")
+        head.append(self.status)
+        self.append(head)
+
+        self.body = Gtk.Label(
+            label="",
+            wrap=True,
+            xalign=0.0,
+            selectable=True,
+        )
+        self.body.set_margin_start(14)
+        self.body.set_margin_end(14)
+        self.body.set_margin_bottom(8)
+        self.body.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        self.append(self.body)
+
+        self.actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
+        self.actions.set_margin_start(14)
+        self.actions.set_margin_end(14)
+        self.actions.set_margin_bottom(12)
+        self.actions.set_visible(False)
+        self.append(self.actions)
+
+    def set_working(self) -> None:
+        self.spinner.set_visible(True)
+        self.spinner.start()
+        self.status.set_text("Working…")
+
+    def set_answer(self, text: str) -> None:
+        self.spinner.stop()
+        self.spinner.set_visible(False)
+        self.status.set_text("Done")
+        cleaned = (text or "").strip() or "(No text came back.)"
+        if len(cleaned) > _MAX_CHARS:
+            cleaned = cleaned[:_MAX_CHARS] + "\n\n… (answer cut short here)"
+        self.body.set_text(cleaned)
+        self._add_continue()
+
+    def set_error(self, message: str) -> None:
+        self.spinner.stop()
+        self.spinner.set_visible(False)
+        self.status.set_text("Couldn’t finish")
+        self.body.set_text(message)
+        self._add_continue(failed=True)
+
+    def _add_continue(self, failed: bool = False) -> None:
+        # Clear previous buttons.
+        child = self.actions.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            self.actions.remove(child)
+            child = nxt
+        label = (
+            f"Open {self.title} to try again"
+            if failed
+            else f"Keep chatting with {self.title}"
+        )
+        btn = Gtk.Button(label=label)
+        if not failed:
+            btn.add_css_class("suggested-action")
+        btn.connect("clicked", self._open_interactive)
+        self.actions.append(btn)
+        self.actions.set_visible(True)
+
+    def _open_interactive(self, *_a) -> None:
+        agent = shutil.which("teddyos-agent")
+        if not agent:
+            return
+        # Interactive session with the same starting prompt.
+        extra: list[str] = []
+        if self.tool_id == "gemini":
+            extra = ["-i", self.prompt]
+        elif self.tool_id in ("claude", "grok", "codex", "aider"):
+            extra = [self.prompt]
+        argv = [agent, self.tool_id, self.project, *extra]
+        try:
+            env = os.environ.copy()
+            for key in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
+                if key not in env.get("PATH", ""):
+                    env["PATH"] = key + ":" + env.get("PATH", "/usr/bin:/bin")
+            subprocess.Popen(  # noqa: S603
+                argv,
+                cwd=self.project,
+                env=env,
+                start_new_session=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            log.error("open interactive failed tool=%s: %s", self.tool_id, exc)
+
+
+class AskAllWindow(Adw.ApplicationWindow):
+    def __init__(
+        self,
+        app: Adw.Application,
+        project: str,
+        prompt: str,
+        tool_ids: list[str],
+    ):
+        project_name = os.path.basename(project.rstrip("/")) or "project"
+        super().__init__(
+            application=app,
+            title=f"Answers — {project_name}",
+        )
+        self.set_default_size(760, 720)
+        self._project = project
+        self._prompt = prompt
+        self._cards: dict[str, ToolCard] = {}
+
+        header = Adw.HeaderBar()
+        header.set_title_widget(Adw.WindowTitle(
+            title="Answers from your AIs",
+            subtitle=f"Working on {project_name}",
+        ))
+
+        prompt_label = Gtk.Label(
+            label=prompt,
+            wrap=True,
+            xalign=0.0,
+            selectable=True,
+        )
+        prompt_label.add_css_class("title-4")
+        prompt_label.set_margin_top(8)
+        prompt_label.set_margin_bottom(4)
+        prompt_label.set_margin_start(4)
+        prompt_label.set_margin_end(4)
+
+        blurb = Gtk.Label(
+            label=(
+                "Each helper is working on the same request in the background. "
+                "Answers appear below as they finish — you do not need to juggle "
+                "multiple windows."
+            ),
+            wrap=True,
+            xalign=0.0,
+        )
+        blurb.add_css_class("dim-label")
+        blurb.add_css_class("caption")
+        blurb.set_margin_bottom(12)
+        blurb.set_margin_start(4)
+        blurb.set_margin_end(4)
+
+        cards_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        runnable: list[str] = []
+        for tid in tool_ids:
+            card = ToolCard(tid, project, prompt)
+            self._cards[tid] = card
+            cards_box.append(card)
+            if _headless_argv(tid, prompt):
+                runnable.append(tid)
+            else:
+                card.set_error(
+                    f"{card.title} isn’t set up for a quick answer on this "
+                    "computer. Use “Keep chatting” below the list of tools "
+                    "in Search, or open it on its own."
+                )
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        outer.set_margin_top(8)
+        outer.set_margin_bottom(16)
+        outer.set_margin_start(18)
+        outer.set_margin_end(18)
+        outer.append(prompt_label)
+        outer.append(blurb)
+        outer.append(cards_box)
+
+        scroller = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+        scroller.set_child(Adw.Clamp(maximum_size=720, child=outer))
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(scroller)
+        self.set_content(toolbar)
+
+        for tid in runnable:
+            threading.Thread(
+                target=self._run_one,
+                args=(tid,),
+                daemon=True,
+            ).start()
+
+    def _run_one(self, tool_id: str) -> None:
+        argv = _headless_argv(tool_id, self._prompt)
+        title = _TITLES.get(tool_id, tool_id)
+        if not argv:
+            GLib.idle_add(
+                self._cards[tool_id].set_error,
+                f"{title} isn’t available for a quick answer.",
+            )
+            return
+        log.info("headless start tool=%s argv0=%s", tool_id, argv[0])
+        env = os.environ.copy()
+        path = env.get("PATH", "/usr/bin:/bin")
+        for extra in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
+            if extra not in path.split(":"):
+                path = extra + ":" + path
+        env["PATH"] = path
+        env["TERM"] = env.get("TERM") or "xterm-256color"
+        # Prefer non-interactive; some tools honor these.
+        env["CI"] = "1"
+        env["NO_COLOR"] = "1"
+        try:
+            proc = subprocess.run(  # noqa: S603
+                argv,
+                cwd=self._project,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=_TIMEOUT,
+            )
+            out = (proc.stdout or "").strip()
+            err = (proc.stderr or "").strip()
+            # Prefer stdout; some tools print the answer on stderr when broken.
+            text = out or err
+            if proc.returncode != 0 and not out:
+                msg = self._friendly_error(title, err or out or f"exit {proc.returncode}")
+                log.warning(
+                    "headless fail tool=%s code=%s err=%s",
+                    tool_id, proc.returncode, (err or "")[:200],
+                )
+                GLib.idle_add(self._cards[tool_id].set_error, msg)
+                return
+            if not text:
+                GLib.idle_add(
+                    self._cards[tool_id].set_error,
+                    f"{title} finished without an answer. Try “Keep chatting” "
+                    "to open it and ask again.",
+                )
+                return
+            GLib.idle_add(self._cards[tool_id].set_answer, text)
+        except subprocess.TimeoutExpired:
+            GLib.idle_add(
+                self._cards[tool_id].set_error,
+                f"{title} is taking too long. Try opening it on its own, or "
+                "ask a shorter question.",
+            )
+        except OSError as exc:
+            log.error("headless oserror tool=%s: %s", tool_id, exc)
+            GLib.idle_add(
+                self._cards[tool_id].set_error,
+                f"Couldn’t start {title} on this computer.",
+            )
+
+    @staticmethod
+    def _friendly_error(title: str, raw: str) -> str:
+        low = (raw or "").lower()
+        if any(
+            s in low
+            for s in (
+                "auth", "login", "sign in", "not logged", "api key",
+                "unauthorized", "401", "403", "please run",
+            )
+        ):
+            return (
+                f"{title} needs you to sign in first. Open {title} from Search, "
+                "finish sign-in in the browser, then try again."
+            )
+        if any(
+            s in low
+            for s in ("credit", "quota", "rate limit", "usage limit", "too low")
+        ):
+            return (
+                f"{title} is out of plan capacity right now. Top up or wait "
+                "for the plan to reset, then try again."
+            )
+        # Keep the technical dump short and last.
+        snippet = (raw or "").strip().replace("\n", " ")
+        if len(snippet) > 280:
+            snippet = snippet[:280] + "…"
+        if snippet:
+            return (
+                f"{title} couldn’t answer this time. "
+                f"Details: {snippet}"
+            )
+        return f"{title} couldn’t answer this time. Try again in a moment."
+
+
+class AskAllApp(Adw.Application):
+    def __init__(self, project: str, prompt: str, tool_ids: list[str]):
+        super().__init__(application_id=APP_ID)
+        self._project = project
+        self._prompt = prompt
+        self._tool_ids = tool_ids
+
+    def do_activate(self):
+        win = self.props.active_window
+        if win is None:
+            win = AskAllWindow(
+                self, self._project, self._prompt, self._tool_ids,
+            )
+        win.present()
+
+
+def main() -> int:
+    args = _parse()
+    project = os.path.abspath(os.path.expanduser(args.project))
+    if not os.path.isdir(project):
+        print(f"not a directory: {project}", file=sys.stderr)
+        return 2
+    prompt = (args.prompt or "").strip()
+    if not prompt:
+        print("prompt is empty", file=sys.stderr)
+        return 2
+    tools = [t.strip().lower() for t in args.tools.split(",") if t.strip()]
+    if not tools:
+        print("no tools", file=sys.stderr)
+        return 2
+    GLib.set_prgname(APP_ID)
+    log.info("start project=%s tools=%s prompt_len=%d", project, tools, len(prompt))
+    app = AskAllApp(project, prompt, tools)
+    return app.run([sys.argv[0]])
+
+
+if __name__ == "__main__":
+    sys.exit(main())

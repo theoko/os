@@ -594,7 +594,7 @@ class SearchWindow(Adw.ApplicationWindow):
 
         self._broadcast_entry = Gtk.Entry()
         self._broadcast_entry.set_placeholder_text(
-            "What do you want them all to do?"
+            "What do you want to know? Answers appear in one window."
         )
         pending = (getattr(self, "_pending_task", None) or "").strip()
         if pending:
@@ -650,8 +650,8 @@ class SearchWindow(Adw.ApplicationWindow):
                 )
             else:
                 self._broadcast_hint.set_text(
-                    f"Will open at the same time: {names}. "
-                    "Each one gets your message and can keep chatting."
+                    f"Will ask {names} in the background. "
+                    "You get one window with every answer — not a pile of apps."
                 )
         if self._broadcast_btn is not None:
             self._broadcast_btn.set_sensitive(bool(ready) and not probing)
@@ -660,14 +660,15 @@ class SearchWindow(Adw.ApplicationWindow):
             elif ready:
                 n = len(ready)
                 self._broadcast_btn.set_label(
-                    "Send to all ready AIs"
+                    "Get answers from all ready AIs"
                     if n > 1
-                    else f"Send to {ready[0].title}"
+                    else f"Ask {ready[0].title}"
                 )
             else:
                 self._broadcast_btn.set_label("No AI ready yet")
 
     def _on_broadcast_clicked(self) -> None:
+        """One window, many answers — never a pile of Terminals."""
         project = self._broadcast_project
         if project is None:
             return
@@ -687,29 +688,35 @@ class SearchWindow(Adw.ApplicationWindow):
                 timeout=4,
             )
             return
+        ask = shutil.which("teddyos-ask-all")
+        if not ask:
+            # Older image without the answers window — fall back to one tool.
+            self._notify(
+                "This copy can’t compare AIs yet. Opening the first ready one.",
+                timeout=4,
+            )
+            self._launch_tool(ready[0], project, prompt=prompt)
+            return
+        tools_csv = ",".join(t.id for t in ready)
         names = ", ".join(t.title for t in ready)
         log.info(
-            "broadcast project=%s tools=%s prompt_len=%d",
+            "ask-all project=%s tools=%s prompt_len=%d",
             project, [t.id for t in ready], len(prompt),
         )
-        self._notify(f"Opening {names}…", timeout=4)
-        # Stagger slightly so window managers place them instead of stacking
-        # one invisible under another.
-        for i, tool in enumerate(ready):
-            GLib.timeout_add(
-                120 * i,
-                self._launch_broadcast_one,
-                tool,
-                project,
-                prompt,
-            )
-        GLib.timeout_add(250 + 120 * len(ready), self._yield_to_launched_app)
-
-    def _launch_broadcast_one(
-        self, tool: WorkTool, project: Path, prompt: str,
-    ) -> bool:
-        self._launch_tool(tool, project, prompt=prompt)
-        return False
+        self._notify(f"Asking {names} in one window…", timeout=4)
+        ok = self._spawn(
+            [
+                ask,
+                "--project", str(project),
+                "--prompt", prompt,
+                "--tools", tools_csv,
+            ],
+            cwd=str(project),
+        )
+        if ok:
+            GLib.timeout_add(250, self._yield_to_launched_app)
+        else:
+            self._notify("Couldn’t open the answers window. Try again.", timeout=4)
 
     def _begin_git_lookup(self, subject: str, generation: int) -> None:
         def work() -> None:
