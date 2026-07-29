@@ -970,13 +970,6 @@ fn skill_name_ok(name: &str) -> bool {
             .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
 }
 
-/// First useful body line from `CALL skills.get name=…` (for a clicked row).
-///
-/// Returns `false` when the bridge is down or the skill is missing.
-pub fn fetch_skill_blurb(name: &str, out: &mut [u8]) -> bool {
-    fetch_skill_body(name, out) > 0
-}
-
 /// Playbook body from `CALL skills.get`, frontmatter stripped, into `out`.
 ///
 /// Concatenates body lines with newlines so [`crate::agent::enrich_playbook`]
@@ -1139,7 +1132,11 @@ pub fn fetch_intent_plan(caps: crate::caps::Caps, goal: &str) -> IntentPlan {
     plan
 }
 
-/// Run `search.query` when granted. `q` must be ASCII without spaces (use `-`).
+/// Run `agent.act` when [`crate::caps::Cap::SearchQuery`] is granted.
+///
+/// Guest Search types a sentence ("i wanna work on my paper"); the bridge
+/// classifies and falls back to the same scoped keyword index when the goal
+/// is really just keywords. Direct `search.query` remains a bridge/nc tool.
 pub fn fetch_search_peek(caps: crate::caps::Caps, q: &str) -> SearchPeek {
     let com2 = Serial::com2();
     com2.init();

@@ -1014,7 +1014,7 @@ mod heapless_lower {
 fn run_knowledge(brief: &mut Brief, caps: Caps, q: &str) {
     brief.set_heading("Knowledge search");
     brief.push_plan("Check search.query grant");
-    brief.push_plan("CALL search.query on the corpus");
+    brief.push_plan("CALL agent.act on the corpus");
     brief.push_plan("Cite title only; do not invent");
 
     if !caps.allows(Cap::SearchQuery) {

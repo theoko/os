@@ -74,11 +74,12 @@ known tool spellings, lists them as `Tool` lines, and marks `Need` for grants
 still off.
 
 From **0.9.20** the guest then **CALLs granted peek tools** named in the body
-(`email.search`, `search.query`, `teddy.health`, `market.health`). Cap denial
-never opens COM2. Path/URL/write tools (`audio.transcribe`, `doc.read`,
-`skills.save`, `workspace.index`, `tsearch.sync`) stay Info-only — markdown is
-still not a script, and `email.send` stays disabled. One-line `skills.save`
-starters ship with suggested tool names so the plan is non-empty.
+(`email.search`, `agent.act` / `search.query`, `teddy.health`, `market.health`).
+Cap denial never opens COM2. Path/URL/write tools (`audio.transcribe`,
+`doc.read`, `skills.save`, `workspace.index`, `tsearch.sync`) stay Info-only —
+markdown is still not a script. Playbooks never auto-CALL `email.send`
+(Confirm-only on Brief). One-line `skills.save` starters ship with suggested
+tool names so the plan is non-empty.
 
 From **0.9.21** `calendar.list` is also a granted peek (same `email=1` /
 `Cap::EmailSearch` as mail). The bridge refuses without the wire bit — no

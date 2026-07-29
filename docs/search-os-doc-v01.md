@@ -21,20 +21,24 @@ status: active
 ## Shape
 
 ```
-guest  -- CALL search.query -->  host/bridge
+guest  -- CALL agent.act goal=… -->  host/bridge
                                       |
+                         classifies sentence; keyword fallback
                          search/corpus.json  (curated {t,u,c,b,pr})
                          optional TSEARCH_DATA → tsearch_mcp.t_search
 ```
 
-Corpus docs use the same card fields as tSearch: title `t`, url `u`, category `c`,
-body `b`, optional PageRank-ish boost `pr`.
+Guest Search peeks via `agent.act` (sentence goals). Direct `search.query`
+remains available on the bridge for nc / keyword playbooks. Corpus docs use
+the same card fields as tSearch: title `t`, url `u`, category `c`, body `b`,
+optional PageRank-ish boost `pr`.
 
 ## Protocol
 
 | Call | Result |
 |------|--------|
-| `CALL search.query q=… k=5 cat=docs` | `OK search.query n=N backend=…` + `ROW title=…\|cat=…\|score=…\|snip=…\|url=…` + `END` |
+| `CALL agent.act goal=… max=N [email=1] [files=1] [audio=1] [portal=1]` | Guest Search peek: sentence + rows (falls back to scoped index) |
+| `CALL search.query q=… k=5 cat=docs` | Keyword search: `OK search.query n=N backend=…` + `ROW title=…\|…` + `END` |
 | `… email=1` / `files=1` / `audio=1` / `portal=1` | Opt-in personal sources (mail graph, workspace, transcripts, teddy corpus) |
 
 Guest Search empty-state names the next missing grant in order: workspace →

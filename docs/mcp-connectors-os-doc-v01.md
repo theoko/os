@@ -46,7 +46,8 @@ Guest → host:
 | `CALL workspace.forget` | Delete the workspace index |
 | `CALL doc.read url=… [files=1] [audio=1] [email=1] [portal=1]` | Open a search hit (`file://`, `audio://`, `email://`, `os://`, teddy) |
 | `CALL email.send to=<addr> subj=<s> body=<b> email=1 confirm=1` | Mock send (needs both bits; no gog) |
-| `CALL search.query q=<keywords> k=<n> cat=<opt>` | Knowledge search (curated corpus) |
+| `CALL search.query q=<keywords> k=<n> cat=<opt>` | Keyword knowledge search (nc / playbooks) |
+| `CALL agent.act goal=<ask> max=<n> [email=1] [files=1] …` | Guest Search peek (sentence classify + scoped fallback) |
 
 `doc.read` uses the same wire bits as `search.query`: a caller that could not
 have found a hit must not open it by guessing the URL. Teddy / portal corpus
@@ -73,7 +74,7 @@ wire flags so a forged CALL cannot bypass consent:
 |-----|----------|-------|
 | `email.search` | `email=1` | `email.search`, `calendar.list`; revoke → `email.forget` |
 | `email.send` | `email=1` + `confirm=1` | `email.send` mock queue; guest Cap + Brief Confirm CTA |
-| `search.query` | guest refuse | `search.query` (`email=1`/`files=1`/… opt-in) |
+| `search.query` | guest refuse | Guest Search / knowledge peeks via `agent.act`; direct `search.query` (`email=1`/`files=1`/… opt-in) |
 | `workspace.index` | `files=1` | workspace index / `workspace.recent` / file docs; `workspace.forget` |
 | `audio.transcribe` | `audio=1` | `audio.transcribe path=…`; Search path picker; `audio.forget` |
 | `skills.save` | `skills=1` | `skills.save`; revoke → `skills.forget` |
