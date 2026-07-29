@@ -54,7 +54,7 @@ Code: [`kernel/src/level.rs`](../kernel/src/level.rs), setup Experience step.
 Typing a natural ask on Home and pressing Enter runs the guest plan/act loop
 (`agent::run_goal`). The host `intent.resolve` tool supplies the smart plan
 (act + expanded query + ranked `file://` hits when Your files is on). The
-guest arms **Doc** rows and may still CALL `search.query`. Example:
+guest arms **Doc** rows and may still CALL `agent.act` for knowledge hits. Example:
 `i wanna work on my paper` → open act → paper/thesis/draft query → workspace
 rank → Reader. No model in the kernel — missing caps stay Need.
 

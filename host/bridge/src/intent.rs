@@ -75,7 +75,7 @@ pub fn resolve(goal: &str, with_files: bool, with_email: bool) -> Plan {
         }
     }
     if hits.is_empty() && matches!(act, Act::Open | Act::Search) {
-        plans.push("No local file match yet - fall through to search.query".into());
+        plans.push("No local file match yet - fall through to agent.act".into());
     }
     if act == Act::Mail && !with_email {
         plans.push("Email is off - grant it on Capabilities to act".into());
@@ -278,6 +278,17 @@ mod tests {
         assert!(p.query.contains("paper"), "{}", p.query);
         assert!(p.query.contains("thesis") || p.query.contains("draft"), "{}", p.query);
         assert!(!p.plans.is_empty());
+        // Guest fills knowledge hits via agent.act — never CALL search.query.
+        assert!(
+            p.plans.iter().any(|s| s.contains("agent.act")),
+            "fall-through plan must name agent.act: {:?}",
+            p.plans
+        );
+        assert!(
+            p.plans.iter().all(|s| !s.contains("search.query")),
+            "fall-through must not name search.query: {:?}",
+            p.plans
+        );
     }
 
     #[test]

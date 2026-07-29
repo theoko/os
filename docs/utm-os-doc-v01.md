@@ -75,7 +75,7 @@ recreates once. Subsequent runs only refresh the ISO + config in place.
 `make utm-bridged` starts the host bridge on `127.0.0.1:7420` and adds a second
 UTM **Serial** device in `TcpClient` mode (COM2) pointing at that address —
 first-class UTM config, not a raw `-serial` flag. Finish setup, click
-**Connectors** for a live `search.query` hit in the footer.
+**Connectors** for a live `agent.act` hit in the footer.
 
 Serial should show `mouse: usb-tablet ready` then `mouse: ps2 ready`, then
 `ui: setup welcome`. With the bridge up you should also see `mcp: email connected`

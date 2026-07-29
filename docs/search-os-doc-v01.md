@@ -61,13 +61,13 @@ Recordings on, typing an absolute media path and pressing Enter runs
 
 | Path | Tools | What it is |
 |------|-------|------------|
-| **Teddy API** | `tsearch.sync`, `search.query … portal=1` | Cached `corpus.json` ranked locally |
+| **Teddy API** | `tsearch.sync`, guest `agent.act … portal=1` (or nc `search.query … portal=1`) | Cached `corpus.json` ranked locally |
 | **Teddy portals** | `teddy.health`, `teddy.fear_greed`, `teddy.gex` | Live HTTPS JSON on teddysearch.com |
 | **Market portals** | `market.health`, `market.fear_greed` | Live HTTPS JSON on superintelmarkets.com |
 
 Teddy API, teddy portals, and market portals all require `portal=1` / guest
-`Cap::PortalSync`. Corpus hits also need `search.query`. See skills
-`teddy-portals` and `market-portals`.
+`Cap::PortalSync`. Guest corpus peeks also need the Knowledge (`search.query`)
+grant. See skills `teddy-portals` and `market-portals`.
 
 Override corpus path with `OS_SEARCH_CORPUS`.
 
