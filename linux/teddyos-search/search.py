@@ -560,16 +560,16 @@ def humanise(exc: object) -> str:
     text = str(exc).lower()
     if "name resolution" in text or "nodename nor servname" in text \
             or "temporary failure" in text or "name or service not known" in text:
-        return "This computer isn't online, so the web wasn't searched."
+        return "This computer isn’t online, so the web wasn’t searched."
     if "timed out" in text or "timeout" in text:
-        return "teddysearch took too long to answer. It may be busy."
+        return "The web search took too long. Try again in a moment."
     if "connection refused" in text or "network is unreachable" in text \
             or "no route to host" in text:
-        return "Couldn't reach teddysearch. The connection may have dropped."
+        return "Couldn’t reach the internet. Check your connection and try again."
     if "certificate" in text or "ssl" in text:
-        return "Couldn't verify teddysearch's security certificate, so nothing was fetched."
+        return "Couldn’t make a secure connection to the web search, so nothing was fetched."
     if "http error 4" in text or "http error 5" in text:
-        return "teddysearch answered with an error. Try again in a moment."
+        return "The web search had a problem. Try again in a moment."
     return "Something went wrong reaching the web, so those results are missing."
 
 
@@ -994,10 +994,11 @@ def search(query: str, limit: int = 10) -> Outcome:
     if paths and grants.get("workspace.index") and workspace_hits == 0:
         roots = caps.workspace_paths()
         where = ", ".join(str(r) for r in roots) if roots else "no folders yet"
+        folders = where if where != "no folders yet" else "no folders chosen yet"
         outcome.notes.append(
-            f"No files under {paths[0]} in your indexed folders ({where}). "
-            "Copy the project into one of those folders, or add its folder in "
-            "Setup → Your files.")
+            f"No files matching “{paths[0]}” in the folders you allowed "
+            f"({folders}). Put the project in one of those folders, or open "
+            "Permissions and add the folder under Your files.")
 
     outcome.results.sort(key=lambda r: r.score, reverse=True)
     # Full-match prune across sources, not only inside each one — otherwise a

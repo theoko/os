@@ -197,7 +197,7 @@ def available_work_tools() -> list[WorkTool]:
         helpers.append(WorkTool(
             id="terminal",
             title="Terminal",
-            subtitle="Open a terminal in this project",
+            subtitle="Open a command window in this project",
             icon="utilities-terminal-symbolic",
             argv=("gnome-terminal", "--working-directory={path}"),
             metered=False,
@@ -207,7 +207,7 @@ def available_work_tools() -> list[WorkTool]:
         helpers.append(WorkTool(
             id="terminal",
             title="Terminal",
-            subtitle="Open a terminal in this project",
+            subtitle="Open a command window in this project",
             icon="utilities-terminal-symbolic",
             argv=("kgx", "--working-directory={path}"),
             metered=False,
@@ -316,10 +316,10 @@ def probe_credits(tool: WorkTool) -> CreditStatus:
     if not tool.is_ai:
         return CreditStatus(ok=True, label="")
     if not tool.metered:
-        return CreditStatus(ok=True, label="No credits needed")
+        return CreditStatus(ok=True, label="Ready to use")
     return CreditStatus(
         ok=None,
-        label="Installed · open the app to see remaining credits",
+        label="Installed — open the app to check your plan",
     )
 
 
@@ -384,51 +384,54 @@ def _probe_claude() -> CreditStatus:
     if not logged_in and code == 0 and "loggedIn" in auth_text:
         return CreditStatus(
             ok=False,
-            label="Not signed in — open Claude to log in",
+            label="Not signed in — open Claude to sign in",
         )
 
     _code, usage = _run(["claude", "usage"], timeout=10)
     text = usage.strip()
     if not text:
         if logged_in:
-            return CreditStatus(ok=None, label="Signed in · credits unknown")
-        return CreditStatus(ok=False, label="Not signed in — open Claude to log in")
+            return CreditStatus(ok=None, label="Signed in — usage unknown")
+        return CreditStatus(ok=False, label="Not signed in — open Claude to sign in")
 
     first = text.splitlines()[0].strip()
     if "not logged in" in text.lower():
         return CreditStatus(
             ok=False,
-            label="Not signed in — open Claude to log in",
+            label="Not signed in — open Claude to sign in",
         )
     if _LOW.search(text):
-        return CreditStatus(ok=False, label=first or "No credits left")
+        # Prefer a calm human line over the raw vendor message when we can.
+        if "too low" in first.lower() or "out of" in first.lower():
+            return CreditStatus(ok=False, label="No usage left right now")
+        return CreditStatus(ok=False, label=first or "No usage left right now")
 
     if _OKISH.search(text) or _code == 0:
         label = first if len(first) <= 72 else first[:69] + "…"
         if not label or label.lower().startswith("usage:"):
-            label = "Credits available"
-        elif "credit" not in label.lower():
-            label = f"Credits · {label}"
+            label = "Ready to use"
+        elif "credit" in label.lower() and "too low" not in label.lower():
+            label = "Ready to use"
         return CreditStatus(ok=True, label=label)
 
-    return CreditStatus(ok=None, label="Could not check Claude credits")
+    return CreditStatus(ok=None, label="Couldn’t check Claude’s plan")
 
 
 def _probe_cursor() -> CreditStatus:
     if not shutil.which("cursor") and not shutil.which("cursor-agent"):
-        return CreditStatus(ok=False, label="Cursor is not installed")
+        return CreditStatus(ok=False, label="Cursor isn’t installed")
     return CreditStatus(
         ok=None,
-        label="Installed · open Cursor to see remaining credits",
+        label="Installed — open Cursor to check your plan",
     )
 
 
 def _probe_generic_installed(name: str, binary: str) -> CreditStatus:
     if not shutil.which(binary):
-        return CreditStatus(ok=False, label=f"{name} is not installed")
+        return CreditStatus(ok=False, label=f"{name} isn’t installed")
     return CreditStatus(
         ok=None,
-        label=f"Installed · open {name} to see remaining credits",
+        label=f"Installed — open {name} to check your plan",
     )
 
 

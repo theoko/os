@@ -117,14 +117,14 @@ CAPABILITIES = [
         "label": "Help improve teddyOS",
         "label_adv": "Diagnostics sharing",
         "detail": "Allow system logs to be collected so we can fix problems",
-        "detail_adv": "Permit diagnostics.share log collection",
+        "detail_adv": "diagnostics.share — local log snapshots",
         "enforced": True,
         "badge": "the system enforces this",
         "badge_adv": "enforced",
-        "why": "Off by default. When on, teddyOS may keep and snapshot system "
-               "logs (journal, boot, app trails) so problems can be studied. "
-               "It does not send what you type in Search, and it does not "
-               "upload anything until you (or a tool you run) share a snapshot.",
+        "why": "Off unless you turn it on. When on, teddyOS may save system "
+               "logs on this computer so problems can be studied. What you type "
+               "in Search is never sent, and nothing is uploaded unless you "
+               "choose to share a report later.",
         "why_adv": "When denied, teddyos-log-collect and the daily timer "
                    "no-op. When granted, snapshots land under "
                    "/var/log/teddyos/snapshots. No ambient network upload — "
@@ -150,12 +150,12 @@ LEVELS = [
     {
         "id": "guided",
         "label": "Guided",
-        "detail": "Plain language. More explanation along the way.",
+        "detail": "Simple words and more explanation — recommended.",
     },
     {
         "id": "advanced",
         "label": "Advanced",
-        "detail": "Shorter copy. Capabilities show their tool names.",
+        "detail": "Shorter wording. Technical names where helpful.",
     },
 ]
 DEFAULT_LEVEL = "guided"
@@ -179,7 +179,7 @@ SKILLS = [
      "detail_adv": "Search across everything you granted", "default": True},
     {"id": "capability-safe-tools", "label": "Staying inside the lines",
      "label_adv": "Safe tools",
-     "detail": "Never reaches for anything you did not allow",
+     "detail": "Never uses anything you did not allow",
      "detail_adv": "Tool use that stays inside your grants", "default": True},
     {"id": "system-health-check", "label": "Checking the computer",
      "label_adv": "System health",

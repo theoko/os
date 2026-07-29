@@ -97,8 +97,8 @@ class WelcomeWindow(Adw.ApplicationWindow):
         # 3. The ordinary thing people came to a computer to do.
         group.add(self._row(
             "Browse the web",
-            "The globe opens the internet. Its address bar searches "
-            "teddysearch rather than a company that follows you around.",
+            "The globe opens the internet. Its address bar uses teddyOS search "
+            "rather than a company that follows you around.",
             "web-browser-symbolic",
             lambda: launch(["chromium"]),
         ))

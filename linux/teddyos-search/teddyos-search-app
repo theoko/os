@@ -88,8 +88,8 @@ SEARCH_CLI = "teddyos-search"
 WEB_SEARCH = "https://teddysearch.com/tsearch/?q="
 
 SOURCE_LABEL = {
-    "teddysearch": "teddysearch",
-    "portal": "the web",
+    "teddysearch": "on the web",
+    "portal": "on the web",
     "your files": "your files",
     "built-in": "built-in help",
 }
@@ -240,7 +240,7 @@ class SearchWindow(Adw.ApplicationWindow):
         top.set_margin_start(16)
         top.set_margin_end(16)
 
-        self.banner = Adw.Banner(button_label="Open settings")
+        self.banner = Adw.Banner(button_label="Change permissions")
         self.banner.connect("button-clicked", self._open_setup)
 
         self.results = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
@@ -312,7 +312,8 @@ class SearchWindow(Adw.ApplicationWindow):
             # An offer, not a warning. These are choices the user made, and the
             # only reason to mention them is that "no results" and "no results
             # because I was not allowed to look" are indistinguishable.
-            self.banner.set_title(f"Not searching: {', '.join(off).lower()}")
+            self.banner.set_title(
+                f"Turned off: {', '.join(off).lower()} — open settings to change")
             self.banner.set_revealed(True)
         else:
             self.banner.set_revealed(False)
@@ -493,7 +494,7 @@ class SearchWindow(Adw.ApplicationWindow):
         for project in projects[:5]:
             label = project.name
             parent = str(project.parent).replace(str(Path.home()), "~")
-            rows.append(self._section_label(f"Work on {label}  ·  {parent}/{label}"))
+            rows.append(self._section_label(f"Work on “{label}”"))
             recent_tools = [t for t in tools if t.is_ai and t.id in recent]
             other_tools = [t for t in tools if t not in recent_tools]
             if recent_tools:
@@ -693,12 +694,12 @@ class SearchWindow(Adw.ApplicationWindow):
         self, tool: WorkTool, project: Path, *, recent: bool = False
     ) -> Gtk.Widget:
         row = Adw.ActionRow(title=GLib.markup_escape_text(tool.title))
-        # Metered AI: probe fills in credits. Free AI (VS Code, Ollama): say so.
-        # Files / Terminal are not credit products — keep the action subtitle.
+        # Metered AI: probe fills in plan status. Free AI (VS Code, Ollama): ready.
+        # Files / Terminal are not plans — keep the action subtitle.
         if tool.metered:
-            base = "Checking credits…"
+            base = "Checking your plan…"
         elif tool.is_ai:
-            base = "No credits needed"
+            base = "Ready to use"
         else:
             base = tool.subtitle
         self._credit_labels[tool.id] = base
@@ -851,8 +852,9 @@ class SearchWindow(Adw.ApplicationWindow):
         row = Adw.ActionRow(
             title=f"Search the web for “{GLib.markup_escape_text(shown)}”")
         row.set_title_lines(1)
-        row.set_subtitle("Opens teddysearch — for anything not on this "
-                         "computer, like your school or work sites")
+        row.set_subtitle(
+            "Opens a browser search for things that are not on this computer "
+            "(school sites, work tools, and the open web)")
         row.set_subtitle_lines(2)
         row.add_prefix(Gtk.Image.new_from_icon_name("web-browser-symbolic"))
         row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))

@@ -365,8 +365,8 @@ class SetupWindow(Adw.ApplicationWindow):
     def _experience(self) -> Gtk.Widget:
         box = self._page_box(
             "How much should it explain?",
-            "This changes how much the machine says. It does not change what "
-            "it is allowed to do — the default grants are the same either way.",
+            "This only changes how much teddyOS explains. It does not change "
+            "what it is allowed to do.",
         )
 
         group = Adw.PreferencesGroup()
@@ -408,7 +408,9 @@ class SetupWindow(Adw.ApplicationWindow):
 
         if not sandbox.available():
             box.append(Adw.Banner(
-                title="No systemd sandbox here — these are preferences, not barriers.",
+                title="On this machine, these settings are promises — teddyOS "
+                      "will try to follow them, but the computer cannot lock "
+                      "them as tightly as usual.",
                 revealed=True,
             ))
 
@@ -441,8 +443,8 @@ class SetupWindow(Adw.ApplicationWindow):
             cap["_row"], cap["_why"], cap["_badge"] = row, why, badge
 
             if cap["id"] == "workspace.index":
-                self.folder_row = Adw.ActionRow(title="Folders to index",
-                                                subtitle="None chosen")
+                self.folder_row = Adw.ActionRow(title="Folders it may search",
+                                                subtitle="None chosen yet")
                 choose = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
                 choose.connect("clicked", self._choose_folder)
                 self.folder_row.add_suffix(choose)
@@ -544,8 +546,10 @@ class SetupWindow(Adw.ApplicationWindow):
             )
         else:
             self._skills_heading.set_markup(
-                "<span size='xx-large' weight='bold'>Which playbooks?</span>")
-            self._skills_subtitle.set_text("Enabled playbooks.")
+                "<span size='xx-large' weight='bold'>What should it help you with?</span>")
+            self._skills_subtitle.set_text(
+                "Turn on the kinds of help you want. You can change this later."
+            )
 
     # --- 5. done ------------------------------------------------------------
 
@@ -675,7 +679,7 @@ class SetupWindow(Adw.ApplicationWindow):
         return scroller
 
     def _choose_folder(self, _button) -> None:
-        Gtk.FileDialog(title="Choose a folder to index").select_folder(
+        Gtk.FileDialog(title="Choose a folder teddyOS may search").select_folder(
             self, None, self._folder_chosen)
 
     def _folder_chosen(self, dialog, result) -> None:
@@ -703,11 +707,10 @@ class SetupWindow(Adw.ApplicationWindow):
         lines = [("On: " + ", ".join(on)) if on else "Everything is off."]
         if off:
             lines.append("Off: " + ", ".join(off))
-        lines.append(f"{len(chosen_skills)} playbook(s) enabled.")
-        # Was "Change any of this with teddyos-search --caps". The whole point
-        # of this screen is that the person never needs a command; naming one
-        # on the last line undoes that. Permissions is an app in the grid.
-        lines.append("\nYou can change any of this later — it's called Permissions.")
+        lines.append(f"{len(chosen_skills)} kind(s) of help turned on.")
+        # Never name a command here — the whole point of this screen is that
+        # the person never needs one. Permissions is an app in the grid.
+        lines.append("\nYou can change any of this later — look for Permissions.")
         self.done_page.set_description("\n".join(lines))
         self._go("done")
 
