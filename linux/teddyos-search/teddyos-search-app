@@ -707,26 +707,28 @@ class SearchWindow(Adw.ApplicationWindow):
                 )
             elif not ready:
                 self._broadcast_hint.set_text(
-                    "Nobody is ready yet. Tap one helper below to sign in, "
-                    "then come back here."
+                    "No helper is signed in yet. Tap Get ready — we’ll walk "
+                    "you through connecting them, then you can ask."
                 )
             elif len(ready) == 1:
                 self._broadcast_hint.set_text(
-                    f"{names} will answer in a simple window."
+                    f"{names} is ready and will answer in a simple window."
                 )
             else:
                 self._broadcast_hint.set_text(
-                    f"{names} will each answer — you’ll see them all "
-                    "in one place."
+                    f"Ready: {names}. Each will answer in one window. "
+                    "Helpers that still need sign-in are skipped."
                 )
         if self._broadcast_btn is not None:
-            self._broadcast_btn.set_sensitive(bool(ready) and not probing)
             if probing:
+                self._broadcast_btn.set_sensitive(False)
                 self._broadcast_btn.set_label("Getting ready…")
             elif ready:
+                self._broadcast_btn.set_sensitive(True)
                 self._broadcast_btn.set_label("Get help")
             else:
-                self._broadcast_btn.set_label("No helper ready yet")
+                self._broadcast_btn.set_sensitive(True)
+                self._broadcast_btn.set_label("Get ready first")
 
     def _on_broadcast_clicked(self) -> None:
         """One window, many answers — never a pile of Terminals."""
@@ -745,15 +747,29 @@ class SearchWindow(Adw.ApplicationWindow):
         )
         if not ready:
             self._notify(
-                "No helper is ready yet — opening Connect so you can sign in.",
-                timeout=4,
+                "Let’s get your helpers ready first…",
+                timeout=3,
             )
-            self._open_accounts()
+            # Guided multi-setup — not a dead empty ask.
+            self._open_accounts(setup_all=True)
             return
         log.info(
             "ask-all project=%s tools=%s prompt_len=%d",
             project, [t.id for t in ready], len(prompt),
         )
+        skipped = [
+            t.title for t in self._broadcast_tools
+            if work_tools.is_chat_helper(t.id)
+            and t.id not in {r.id for r in ready}
+            and self._credit_statuses.get(t.id)
+            and self._credit_statuses[t.id].ok is False
+        ]
+        if skipped:
+            self._notify(
+                f"Asking {', '.join(t.title for t in ready)}. "
+                f"Skipped (need sign-in): {', '.join(skipped[:4])}.",
+                timeout=5,
+            )
         self._open_ask_all(project, prompt, [t.id for t in ready])
 
     def _begin_git_lookup(self, subject: str, generation: int) -> None:
@@ -1007,13 +1023,20 @@ class SearchWindow(Adw.ApplicationWindow):
                 return
         self._launch_tool(tool, project)
 
-    def _open_accounts(self, focus_id: str | None = None) -> bool:
+    def _open_accounts(
+        self,
+        focus_id: str | None = None,
+        *,
+        setup_all: bool = False,
+    ) -> bool:
         """Open the plain-language Connect your helpers window."""
         exe = shutil.which("teddyos-accounts")
         if not exe:
             return False
         argv = [exe]
-        if focus_id:
+        if setup_all:
+            argv.append("--setup-all")
+        elif focus_id:
             argv.extend(["--connect", focus_id])
         return self._spawn(argv, cwd=str(Path.home()))
 

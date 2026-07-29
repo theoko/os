@@ -611,17 +611,32 @@ class AccountsWindow(Adw.ApplicationWindow):
         intro = Gtk.Label(
             label=(
                 "Each helper needs its own account. Tap Connect — we’ll walk "
-                "you through a short setup. A sign-in page may open; finish "
-                "there, then come back."
+                "you through a short setup. Or use Set up everything below to "
+                "walk through them one by one."
             ),
             wrap=True,
             xalign=0.0,
         )
         intro.add_css_class("dim-label")
         intro.set_margin_top(8)
-        intro.set_margin_bottom(12)
+        intro.set_margin_bottom(8)
         intro.set_margin_start(4)
         intro.set_margin_end(4)
+
+        self._setup_all_btn = Gtk.Button(label="Set up everything that needs it")
+        self._setup_all_btn.add_css_class("suggested-action")
+        self._setup_all_btn.add_css_class("pill")
+        self._setup_all_btn.set_halign(Gtk.Align.FILL)
+        self._setup_all_btn.set_margin_bottom(12)
+        self._setup_all_btn.connect("clicked", lambda *_: self._setup_all_needed())
+        self._setup_hint = Gtk.Label(
+            label="Checking who’s ready…",
+            wrap=True,
+            xalign=0.0,
+        )
+        self._setup_hint.add_css_class("caption")
+        self._setup_hint.add_css_class("dim-label")
+        self._setup_hint.set_margin_bottom(10)
 
         self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
         self.list.add_css_class("boxed-list")
@@ -642,8 +657,13 @@ class AccountsWindow(Adw.ApplicationWindow):
         inner.set_margin_start(18)
         inner.set_margin_end(18)
         inner.append(intro)
+        inner.append(self._setup_all_btn)
+        inner.append(self._setup_hint)
         inner.append(self.list)
         clamp.set_child(inner)
+
+        self._setup_queue: list = []
+        self._status_cache: dict = {}
 
         scroller = Gtk.ScrolledWindow(vexpand=True)
         scroller.set_child(clamp)
@@ -777,6 +797,9 @@ class AccountsWindow(Adw.ApplicationWindow):
         threading.Thread(target=work, daemon=True).start()
 
     def _apply_statuses(self, results: dict) -> bool:
+        self._status_cache = results
+        need = []
+        ready = []
         for account_id, (installed, status) in results.items():
             row = self._rows.get(account_id)
             if row is None:
@@ -793,8 +816,11 @@ class AccountsWindow(Adw.ApplicationWindow):
                 # Only "Connected" when we know for sure. Unknown → still Connect.
                 if status.ok is True:
                     btn_label = "Connected"
+                    ready.append(account.title if account else account_id)
                 else:
                     btn_label = "Connect"
+                    if account and account.id != "perplexity":
+                        need.append(account)
                 sensitive = True
                 row.remove_css_class("dim-label")
             row.set_subtitle(f"{line}\n{blurb}")
@@ -806,7 +832,56 @@ class AccountsWindow(Adw.ApplicationWindow):
                     btn.remove_css_class("suggested-action")
                 else:
                     btn.add_css_class("suggested-action")
+        if hasattr(self, "_setup_hint") and self._setup_hint is not None:
+            if need:
+                names = ", ".join(a.title for a in need[:5])
+                self._setup_hint.set_text(
+                    f"Still need setup: {names}. "
+                    "Tap the button above to walk through them, or Connect one."
+                )
+                self._setup_all_btn.set_sensitive(True)
+                self._setup_all_btn.set_label(
+                    f"Set up {len(need)} helper{'s' if len(need) != 1 else ''}"
+                )
+            else:
+                self._setup_hint.set_text(
+                    "All available helpers look ready. You can head back to Search."
+                    if ready else
+                    "No helpers found on this computer yet."
+                )
+                self._setup_all_btn.set_sensitive(bool(need))
+                self._setup_all_btn.set_label("You’re all set")
         return False
+
+    def _setup_all_needed(self) -> None:
+        """Walk through every helper that still needs sign-in, one at a time."""
+        need = []
+        for account_id, (installed, status) in (self._status_cache or {}).items():
+            if not installed or status.ok is True:
+                continue
+            account = acc.get_account(account_id) if acc else None
+            if account is None or account.id == "perplexity":
+                continue
+            need.append(account)
+        if not need:
+            self._toast("Everything looks ready already.")
+            return
+        self._setup_queue = list(need)
+        self._toast(f"Setting up {need[0].title}…")
+        self._connect(need[0])
+
+    def _advance_setup_queue(self) -> None:
+        if not self._setup_queue:
+            return
+        # Drop the one we just finished.
+        self._setup_queue = self._setup_queue[1:]
+        if not self._setup_queue:
+            self._reload_statuses()
+            self._toast("Setup pass finished. Check the list, then go back to Search.")
+            return
+        nxt = self._setup_queue[0]
+        self._toast(f"Next: {nxt.title}")
+        GLib.timeout_add(400, lambda: (self._connect(nxt), False)[1])
 
     def _connect(self, account: "acc.Account | None") -> None:
         if account is None:
@@ -841,6 +916,9 @@ class AccountsWindow(Adw.ApplicationWindow):
     def _reload_after_delay(self) -> bool:
         self._reload_statuses()
         self._toast("Checked your connections.")
+        # Continue guided multi-setup if the person used “Set up everything”.
+        if self._setup_queue:
+            GLib.timeout_add(600, lambda: (self._advance_setup_queue(), False)[1])
         return False
 
     def _toast(self, message: str) -> None:
@@ -857,26 +935,36 @@ class AccountsApp(Adw.Application):
     def __init__(self, focus_id: str | None = None):
         super().__init__(application_id=APP_ID)
         self._focus_id = focus_id
+        self._setup_all_on_start = False
 
     def do_activate(self):
         win = self.props.active_window
         if win is None:
             win = AccountsWindow(self, focus_id=self._focus_id)
+            if self._setup_all_on_start:
+                # After statuses load, start the queue.
+                GLib.timeout_add(1200, lambda: (win._setup_all_needed(), False)[1])
         win.present()
 
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(argv if argv is not None else sys.argv)
     focus = None
-    if len(argv) >= 3 and argv[1] in ("--connect", "connect"):
+    setup_all = False
+    if len(argv) >= 2 and argv[1] in ("--setup-all", "setup-all"):
+        setup_all = True
+        argv = [argv[0]]
+    elif len(argv) >= 3 and argv[1] in ("--connect", "connect"):
         focus = argv[2].lower().strip()
         argv = [argv[0]]
     elif len(argv) >= 2 and not argv[1].startswith("-"):
         focus = argv[1].lower().strip()
         argv = [argv[0]]
     GLib.set_prgname(APP_ID)
-    log.info("start focus=%s", focus)
-    return AccountsApp(focus_id=focus).run(argv)
+    log.info("start focus=%s setup_all=%s", focus, setup_all)
+    app = AccountsApp(focus_id=focus)
+    app._setup_all_on_start = setup_all  # type: ignore[attr-defined]
+    return app.run(argv)
 
 
 if __name__ == "__main__":

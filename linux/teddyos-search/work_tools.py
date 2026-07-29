@@ -251,16 +251,15 @@ def ready_for_broadcast(
 ) -> bool:
     """True when this tool should receive a shared "ask all" prompt.
 
-    Non-technical rule of thumb: installed chat AI that is not known empty.
-    Metered tools with ok=False (out of credits / not signed in) are skipped.
-    Unknown (ok=None) still counts — better to open and ask for sign-in than
-    to hide a tool the person already paid for.
+    Only helpers we know are signed in / ready. Including "unknown" used to
+    fire Grok/Codex while logged out and show useless permission errors.
     """
     if tool.id not in _PROMPT_TOOLS or not tool.is_ai:
         return False
-    if status is not None and status.ok is False:
+    if status is None:
         return False
-    return True
+    # Free local tools (ok True) or metered with confirmed capacity.
+    return status.ok is True
 
 
 def tools_ready_for_broadcast(
@@ -658,6 +657,53 @@ def _probe_cursor() -> CreditStatus:
     )
 
 
+def _probe_grok() -> CreditStatus:
+    """Grok needs an xAI login — installed binary is not enough."""
+    if not shutil.which("grok"):
+        found = False
+        for d in _extra_bin_dirs():
+            if (d / "grok").is_file():
+                found = True
+                break
+        if not found:
+            return CreditStatus(ok=False, label="Not on this computer")
+    code, text = _run(["grok", "-p", "ping"], timeout=12)
+    low = (text or "").lower()
+    if "not signed in" in low:
+        return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
+    if code == 0:
+        return CreditStatus(ok=True, label="Ready · tap to open")
+    if any(s in low for s in ("auth", "login", "sign in", "authenticate")):
+        return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
+    return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
+
+
+def _probe_codex() -> CreditStatus:
+    if not shutil.which("codex"):
+        return CreditStatus(ok=False, label="Not on this computer")
+    code, text = _run(["codex", "login", "status"], timeout=8)
+    low = (text or "").lower()
+    if "not logged in" in low or (code != 0 and "logged in" not in low):
+        return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
+    if code == 0 and "logged in" in low and "not logged" not in low:
+        return CreditStatus(ok=True, label="Ready · tap to open")
+    return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
+
+
+def _probe_copilot() -> CreditStatus:
+    if not shutil.which("copilot"):
+        return CreditStatus(ok=False, label="Not on this computer")
+    # Lightweight: config with credentials; full -p is slow for every keystroke probe.
+    home = Path.home() / ".copilot"
+    if not home.is_dir():
+        return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
+    # Presence of apps/config after login — not perfect, better than always-ready.
+    markers = list(home.glob("**/*"))
+    if len(markers) < 2:
+        return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
+    return CreditStatus(ok=True, label="Ready · tap to open")
+
+
 def _probe_generic_installed(name: str, binary: str) -> CreditStatus:
     if not shutil.which(binary):
         # Still look in the extra dirs GUI apps often miss.
@@ -669,27 +715,34 @@ def _probe_generic_installed(name: str, binary: str) -> CreditStatus:
                 break
         if not found:
             return CreditStatus(ok=False, label="Not on this computer")
+    # Installed but we cannot prove login — do not mark ready for Get help.
     return CreditStatus(
         ok=None,
-        label="Ready · tap to open",
+        label="May need sign-in · use Connect if it fails",
     )
 
 
 def _probe_any_binary(name: str, binaries: tuple[str, ...]) -> CreditStatus:
     for b in binaries:
         if shutil.which(b):
-            return CreditStatus(ok=None, label="Ready · tap to open")
+            return CreditStatus(
+                ok=None,
+                label="May need sign-in · use Connect if it fails",
+            )
         for d in _extra_bin_dirs():
             cand = d / b
             if cand.is_file() and os.access(cand, os.X_OK):
-                return CreditStatus(ok=None, label="Ready · tap to open")
+                return CreditStatus(
+                    ok=None,
+                    label="May need sign-in · use Connect if it fails",
+                )
     return CreditStatus(ok=False, label="Not on this computer")
 
 
 PROBES: dict[str, Callable[[], CreditStatus]] = {
     "claude": _probe_claude,
-    "grok": lambda: _probe_generic_installed("Grok", "grok"),
-    "copilot": lambda: _probe_generic_installed("Copilot", "copilot"),
+    "grok": _probe_grok,
+    "copilot": _probe_copilot,
     "antigravity": lambda: _probe_any_binary(
         "Antigravity", ("agy", "antigravity"),
     ),
@@ -698,7 +751,7 @@ PROBES: dict[str, Callable[[], CreditStatus]] = {
         "Perplexity", ("teddyos-perplexity", "perplexity", "pplx"),
     ),
     "windsurf": lambda: _probe_generic_installed("Windsurf", "windsurf"),
-    "codex": lambda: _probe_generic_installed("Codex", "codex"),
+    "codex": _probe_codex,
     "gemini": lambda: _probe_generic_installed("Gemini", "gemini"),
     "aider": lambda: _probe_generic_installed("Aider", "aider"),
     "amp": lambda: _probe_generic_installed("Amp", "amp"),

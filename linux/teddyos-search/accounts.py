@@ -260,13 +260,22 @@ def _status_claude() -> AccountStatus:
 
 
 def _status_grok() -> AccountStatus:
-    # No stable public status JSON; treat config / keyring presence lightly.
-    home = Path.home()
-    if (home / ".grok").is_dir() or (home / ".config" / "grok").is_dir():
-        # Directory existing does not guarantee login — still better than lying.
-        code, text = _run(["grok", "login", "--help"], timeout=3)
-        # Prefer explicit check if we ever get one; for now "may be connected".
-        return AccountStatus(ok=None, label="Tap Connect if it asks you to sign in")
+    """Grok only works after `grok login`. Config dir alone is not enough."""
+    exe = _which_any(("grok",))
+    if not exe:
+        return AccountStatus(ok=False, label="Not on this computer")
+    # Headless ping — prints "Not signed in" without a browser when logged out.
+    code, text = _run([exe, "-p", "ping"], timeout=12)
+    low = (text or "").lower()
+    if "not signed in" in low or "authenticate" in low and "login" in low:
+        return AccountStatus(ok=False, label="Needs sign-in")
+    if code == 0 and text.strip() and "error" not in low[:80]:
+        return AccountStatus(ok=True, label="Connected")
+    # Signed-in but flaky network / model: still not "Needs sign-in".
+    if code == 0:
+        return AccountStatus(ok=True, label="Connected")
+    if _looks_signed_out(text):
+        return AccountStatus(ok=False, label="Needs sign-in")
     return AccountStatus(ok=False, label="Needs sign-in")
 
 

@@ -239,12 +239,30 @@ class ToolCard(Gtk.Box):
         self.actions.set_visible(True)
 
     def _ask_again(self, *_a) -> None:
-        """Open a one-shot answers window again — still no terminal."""
+        """Retry answer, or open Connect if this helper needs sign-in."""
+        # If last error looked like auth, prefer Connect over a doomed retry.
+        body = ""
+        try:
+            body = (self.body.get_text() or "").lower()
+        except Exception:  # noqa: BLE001
+            pass
+        if any(s in body for s in ("sign-in", "sign in", "connect", "not signed")):
+            accounts = shutil.which("teddyos-accounts")
+            if accounts:
+                try:
+                    subprocess.Popen(  # noqa: S603
+                        [accounts, "--connect", self.tool_id],
+                        start_new_session=True,
+                        stdin=subprocess.DEVNULL,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    return
+                except OSError as exc:
+                    log.error("open accounts failed: %s", exc)
         ask = shutil.which("teddyos-ask-all")
         if not ask:
             return
-        # Prefill with previous prompt; user can edit in Search next time.
-        # For now re-run same question is still useful after a failure.
         try:
             env = os.environ.copy()
             subprocess.Popen(  # noqa: S603
