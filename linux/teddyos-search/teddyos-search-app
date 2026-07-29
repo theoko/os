@@ -41,6 +41,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 import caps  # noqa: E402
+import git_projects  # noqa: E402
 import search as engine  # noqa: E402
 import work_tools  # noqa: E402
 from work_tools import CreditStatus, WorkTool  # noqa: E402
@@ -455,24 +456,43 @@ class SearchWindow(Adw.ApplicationWindow):
         self._tool_rows = {}
         self._credit_labels = {}
 
-        if not projects:
+        if projects:
+            self._append_project_tools(rows, projects, tools)
+            self._begin_credit_probes(tools)
+            return rows
+
+        # No local folder — try the user's git remotes when they are signed in.
+        auth = git_projects.git_auth()
+        if not auth.ok:
             rows.append(self._notice_row(
                 f"No folder matching “{subject}” on this computer. "
-                "Copy the project into your home folder, or search without "
-                "“work on” to look it up.",
+                "Sign in with GitHub CLI (`gh auth login`) or set up SSH keys "
+                "to clone it automatically, or copy the project into your home folder.",
                 "dialog-information-symbolic",
             ))
             return rows
 
+        rows.append(self._notice_row(
+            f"No local folder for “{subject}”. Looking on GitHub "
+            f"({auth.method}"
+            + (f", {auth.login}" if auth.login else "")
+            + ")…",
+            "emblem-synchronizing-symbolic",
+        ))
+        self._begin_git_lookup(subject, generation=self._generation)
+        return rows
+
+    def _append_project_tools(
+        self,
+        rows: list[Gtk.Widget],
+        projects: list[Path],
+        tools: list[WorkTool],
+    ) -> None:
         recent = set(work_tools.recent_ids())
-        # One project is the usual case. Several matches: one tool group per
-        # folder so the person can pick which tree.
         for project in projects[:5]:
             label = project.name
             parent = str(project.parent).replace(str(Path.home()), "~")
             rows.append(self._section_label(f"Work on {label}  ·  {parent}/{label}"))
-            # Split the list so "Recently used" is a real section, not a tag
-            # the eye has to hunt for in a long catalog.
             recent_tools = [t for t in tools if t.is_ai and t.id in recent]
             other_tools = [t for t in tools if t not in recent_tools]
             if recent_tools:
@@ -486,11 +506,133 @@ class SearchWindow(Adw.ApplicationWindow):
                     rows.append(self._tool_row(
                         tool, project, recent=tool.id in recent))
 
-        # Credits are checked after the list is shown. Claude's `auth`/`usage`
-        # probes can take a second or two, and blocking the UI thread for that
-        # makes the whole window feel frozen after every keystroke of a goal.
+    def _begin_git_lookup(self, subject: str, generation: int) -> None:
+        def work() -> None:
+            try:
+                repos = git_projects.find_remote_repos(subject)
+                log.info("git lookup subject=%r hits=%d", subject, len(repos))
+            except Exception as exc:  # noqa: BLE001
+                log.exception("git lookup failed")
+                repos = []
+                err = str(exc)
+            else:
+                err = ""
+            GLib.idle_add(
+                self._show_git_repos, generation, subject, repos, err,
+            )
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_git_repos(
+        self,
+        generation: int,
+        subject: str,
+        repos: list,
+        err: str,
+    ) -> bool:
+        if generation != self._generation:
+            return False
+        # Drop the "looking…" notice; rebuild the work-goal block in place.
+        child = self.results.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            self.results.remove(child)
+            child = nxt
+
+        if err:
+            self.results.append(self._notice_row(
+                f"Could not search GitHub: {err}",
+                "dialog-warning-symbolic",
+            ))
+        if not repos:
+            auth = git_projects.git_auth()
+            hint = auth.detail or "authenticated"
+            self.results.append(self._notice_row(
+                f"No folder and no GitHub repo matching “{subject}” ({hint}). "
+                "Try owner/name (e.g. theoko/tsearch-revival), or clone it yourself.",
+                "dialog-information-symbolic",
+            ))
+            self.stack.set_visible_child_name("results")
+            return False
+
+        self.results.append(self._section_label("Clone from GitHub"))
+        for repo in repos:
+            self.results.append(self._clone_row(repo))
+        self.stack.set_visible_child_name("results")
+        return False
+
+    def _clone_row(self, repo: git_projects.RemoteRepo) -> Gtk.Widget:
+        title = f"Clone {repo.full_name}"
+        sub = repo.description or repo.clone_url
+        row = Adw.ActionRow(title=GLib.markup_escape_text(title))
+        row.set_subtitle(GLib.markup_escape_text(sub[:160]))
+        row.set_subtitle_lines(2)
+        row.add_prefix(Gtk.Image.new_from_icon_name("folder-download-symbolic"))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect("activated", lambda *_a, r=repo: self._clone_and_open(r))
+        return row
+
+    def _clone_and_open(self, repo: git_projects.RemoteRepo) -> None:
+        log.info("clone %s", repo.full_name)
+        # Replace the list with a single status row while git runs.
+        child = self.results.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            self.results.remove(child)
+            child = nxt
+        self.results.append(self._notice_row(
+            f"Cloning {repo.full_name}…",
+            "emblem-synchronizing-symbolic",
+        ))
+        self.stack.set_visible_child_name("results")
+        generation = self._generation
+
+        def work() -> None:
+            path, message = git_projects.clone_repo(repo)
+            GLib.idle_add(
+                self._after_clone, generation, repo, path, message,
+            )
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _after_clone(
+        self,
+        generation: int,
+        repo: git_projects.RemoteRepo,
+        path: Path | None,
+        message: str,
+    ) -> bool:
+        if generation != self._generation:
+            return False
+        child = self.results.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            self.results.remove(child)
+            child = nxt
+        if path is None:
+            log.warning("clone failed: %s", message)
+            self.results.append(self._notice_row(
+                f"Could not clone {repo.full_name}: {message}",
+                "dialog-warning-symbolic",
+            ))
+            self.stack.set_visible_child_name("results")
+            return False
+
+        log.info("cloned %s → %s", repo.full_name, path)
+        tools = work_tools.available_work_tools()
+        rows: list[Gtk.Widget] = []
+        self._tool_rows = {}
+        self._credit_labels = {}
+        self.results.append(self._notice_row(
+            message, "emblem-ok-symbolic",
+        ))
+        self._append_project_tools(rows, [path], tools)
+        for row in rows:
+            self.results.append(row)
         self._begin_credit_probes(tools)
-        return rows
+        self.stack.set_visible_child_name("results")
+        return False
 
     def _tool_row(
         self, tool: WorkTool, project: Path, *, recent: bool = False

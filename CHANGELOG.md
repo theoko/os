@@ -6,6 +6,12 @@ version: 0.13.0
 
 ## 0.13.0 — 2026-07-28
 
+### “Work on …” can clone from GitHub
+
+When there is no local folder for a goal (e.g. `i wanna work on tsearch`),
+Search checks GitHub if `gh` is signed in or SSH keys work, lists matching
+repos, and clones the one you pick into `~/Projects/` before offering AI tools.
+
 ### Logs land in one place
 
 Guest keeps a durable trail under `/var/log/teddyos/`: persistent journald
