@@ -1178,12 +1178,13 @@ def _cases():
             ("Go Back", 296, 700),
         ], False),
         # The same explanation printed twice in two places - shipped.
+        # Fixture uses standalone copy (KERNEL_FEATURES=standalone is the tip).
         ("one explanation, printed twice", check_no_repeated_sentence, [
-            row("Bridge offline - local keywords only.", 220),
-            row("Bridge offline - local keywords only.", 700),
+            row("Local keywords only.", 220),
+            row("Local keywords only.", 700),
         ], True),
         ("explanations that differ", check_no_repeated_sentence, [
-            row("Bridge offline - local keywords only.", 220),
+            row("Local keywords only.", 220),
             row("No openable hits - refine the ask.", 700),
         ], False),
         # Dropped keystrokes: "i wanna work on my paper" arrived as

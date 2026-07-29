@@ -1727,7 +1727,15 @@ fn poll_key(
 /// up — the first line a new owner reads, naming a repair they cannot make.
 fn bridge_note(mail: &mcp::MailPeek) -> &'static str {
     match mail.status {
-        mcp::BridgeStatus::Online => "Answers come from the local index and the host bridge.",
+        mcp::BridgeStatus::Online => {
+            if mcp::standalone() {
+                // Standalone never attaches a host; Online would be a bug, but
+                // the copy still must not invent a bridge for the owner.
+                "Answers come from the index built into this device."
+            } else {
+                "Answers come from the local index and the host bridge."
+            }
+        }
         mcp::BridgeStatus::Offline => copy::search_source_note(),
     }
 }

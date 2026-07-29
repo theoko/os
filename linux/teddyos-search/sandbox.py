@@ -3,7 +3,9 @@
 This is the module that lets the setup screen say "denied means it cannot reach
 the network" without lying. Without it, a denied capability is a branch the
 process chooses not to take — which is exactly the arrangement
-`docs/thesis-os-doc-v01.md` §2.3 calls bookkeeping rather than a barrier:
+`docs/thesis-os-doc-v01.md` §2.3 called bookkeeping rather than a barrier on the
+old freestanding + COM2 host-bridge tip (historical wording; this Linux app tip
+has no Live COM2 bridge):
 
     "It is checked by mcp.rs before it opens COM2 — by the same binary that
      holds it, at a call site that could simply not call it."

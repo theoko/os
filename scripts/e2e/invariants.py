@@ -910,9 +910,9 @@ def free_text(s: Shot) -> list[Word]:
 
 # Grammar, not content. Two sentences saying the same thing in two wordings
 # share their nouns; what they do not share is the scaffolding around them, so
-# comparing raw word sets rated "the bridge is offline so only the built-in
-# documents are searchable" and "Bridge offline, so only built-in documents can
-# be searched" as 50% different when they say one thing.
+# comparing raw word sets rated "this device is offline so only the built-in
+# documents are searchable" and "Offline, so only built-in documents can be
+# searched" as 50% different when they say one thing.
 _STOP = {
     "a", "an", "the", "is", "are", "was", "were", "be", "been", "so", "to", "of",
     "in", "on", "for", "and", "or", "it", "its", "this", "that", "you", "your",
@@ -932,8 +932,8 @@ def _sentences(s: Shot) -> list[Word]:
 def check_no_repeated_explanation(obs: Observation, ck: Checks) -> None:
     """Bug class 6: the same explanation in two wordings on one screen.
 
-    Shipped as "the bridge is offline" and "Bridge offline — only built-in docs
-    are searchable" stacked on the same empty result screen.
+    Shipped as two near-paraphrases of the empty-result offline notice stacked
+    on the same screen (standalone: "this device is offline" variants).
     """
     offenders = []
     for s in obs.shots:
@@ -964,7 +964,7 @@ _OFFLINE = re.compile(r"\b(offline|not connected|no bridge|disconnected)\b")
 
 
 def check_prose_names_the_real_source(obs: Observation, ck: Checks) -> None:
-    """Bug class 5: "bridge is offline" above rows the bridge just served."""
+    """Bug class 5: prose claims Offline above rows a Live connector just served."""
     if not obs.result_shots:
         ck.that(
             "prose about the source agrees with where the rows came from",
@@ -1242,9 +1242,9 @@ def _break_repeated_explanation(obs):
     s = _clone_shot(victim)
     floor = max([r.bottom for r in s.rows()] or [s.nav_rule_y()]) + 8
     s.words = s.words + [
-        Word("The bridge is offline so only the built-in documents are searchable",
+        Word("This device is offline so only the built-in documents are searchable",
              1.0, Rect(20, floor, 400, 16)),
-        Word("Bridge offline, so only built-in documents can be searched",
+        Word("Offline, so only built-in documents can be searched",
              1.0, Rect(20, floor + 24, 400, 16)),
     ]
     obs.shots = [s if o is victim else o for o in obs.shots]
@@ -1254,7 +1254,7 @@ def _break_source_prose(obs):
     if not obs.result_shots:
         return
     s = _clone_shot(obs.result_shots[-1])
-    s.words = s.words + [Word("The bridge is offline.", 1.0, Rect(20, 260, 200, 16))]
+    s.words = s.words + [Word("This device is offline.", 1.0, Rect(20, 260, 200, 16))]
     obs.result_shots = obs.result_shots[:-1] + [s]
     obs.bridge += "\n← CALL intent.resolve q=find the nvda paper\n→ OK intent.resolve n=3\n"
 
