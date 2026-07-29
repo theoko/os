@@ -37,8 +37,9 @@ you choose at first boot.
   ran a search and wrote the hits to COM1 — invisible unless you were watching
   a serial console — and there was no keyboard driver to type a query with.
 - Home is a launcher: a field that takes keystrokes immediately, three tiles
-  (Search static; Caps/Skills live counts), inbox count in the footer when
-  granted. The old hero's primary button only restarted the setup wizard.
+  (Search static; Caps/Skills live counts), inbox count in the footer when a
+  granted peek returns `ROW n=`. The old hero's primary button only restarted
+  the setup wizard.
 - Skills and Capabilities screens; capability switches are live, so grants can
   be changed after setup without reinstalling.
 
