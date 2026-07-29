@@ -45,7 +45,7 @@ pub fn is_early_serial_byte(b: u8) -> bool {
     matches!(b, b'\n' | b'\r' | b'\t' | 0x20..=0x7e)
 }
 
-#[cfg(target_arch = "x86_64")]
+#[cfg(all(target_arch = "x86_64", target_os = "none"))]
 mod port {
     use core::arch::asm;
 
@@ -63,6 +63,19 @@ mod port {
             asm!("in al, dx", out("al") val, in("dx") port, options(nostack, preserves_flags));
         }
         val
+    }
+}
+
+/// Hosted unit tests run as a Linux/macOS process: `in`/`out` to COM ports
+/// SIGSEGV. Freestanding guests (`target_os = "none"`) keep real PIO above.
+#[cfg(all(target_arch = "x86_64", not(target_os = "none")))]
+mod port {
+    #[inline]
+    pub unsafe fn outb(_port: u16, _val: u8) {}
+
+    #[inline]
+    pub unsafe fn inb(_port: u16) -> u8 {
+        0
     }
 }
 

@@ -2046,9 +2046,9 @@ mod tests {
 
 /// The portal config wire: framing safety first.
 ///
-/// COM2 is inert in host tests (`Serial::com2()` has no base on this target),
-/// so every call here degrades to the offline answer instead of hanging — which
-/// is exactly the behaviour the screen depends on.
+/// On hosted unit-test targets COM2 PIO is stubbed (real `in`/`out` SIGSEGV in
+/// userspace), so every call here degrades to the offline answer instead of
+/// hanging — which is exactly the behaviour the screen depends on.
 #[cfg(test)]
 mod config_tests {
     use super::*;
