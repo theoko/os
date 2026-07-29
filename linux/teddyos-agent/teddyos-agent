@@ -231,8 +231,21 @@ class AgentWindow(Adw.ApplicationWindow):
             real = os.path.realpath(exe)
         except OSError:
             real = exe
+        # Some installs leave a shell wrapper; follow one more hop.
+        if not real.endswith((".js", ".cjs", ".mjs")):
+            try:
+                with open(exe, "rb") as fh:
+                    head = fh.read(120)
+                if b"node" in head and b".js" in head:
+                    real = os.path.realpath(exe)
+            except OSError:
+                pass
         if real.endswith((".js", ".cjs", ".mjs")):
-            node = shutil.which("node") or "/usr/bin/node"
+            node = (
+                shutil.which("node")
+                or ("/usr/local/bin/node" if os.path.isfile("/usr/local/bin/node") else None)
+                or "/usr/bin/node"
+            )
             return [node, real, *self._extra]
         return [exe, *self._extra]
 
@@ -276,7 +289,11 @@ class AgentApp(Adw.Application):
             win = AgentWindow(
                 self, self._tool_id, self._cwd, self._extra,
             )
+        win.set_visible(True)
         win.present()
+        # Raise after present — on some Wayland sessions a first present()
+        # alone leaves the window behind the Search dialog.
+        GLib.idle_add(lambda: (win.present(), False)[1])
 
 
 if __name__ == "__main__":

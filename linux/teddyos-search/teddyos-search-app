@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 import shutil
 import subprocess
 import sys
@@ -275,7 +276,12 @@ class SearchWindow(Adw.ApplicationWindow):
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         outer.append(top)
         outer.append(body)
-        self.set_content(outer)
+        # Toast overlay so "Opening Gemini…" is visible when a click works —
+        # without it, a slow window or a Terminal that opens behind Search
+        # looks exactly like a dead button.
+        self._toasts = Adw.ToastOverlay()
+        self._toasts.set_child(outer)
+        self.set_content(self._toasts)
 
         css = Gtk.CssProvider()
         css.load_from_data(b"""
@@ -287,6 +293,7 @@ class SearchWindow(Adw.ApplicationWindow):
 
         self._refresh_banner()
         self.entry.grab_focus()
+        log.info("search-app ready (launch=terminal-first for TTY tools)")
 
     def _on_key(self, _c, keyval, _code, _state) -> bool:
         if keyval == Gdk.KEY_Escape:
@@ -814,16 +821,97 @@ class SearchWindow(Adw.ApplicationWindow):
                 row.remove_css_class("dim-label")
         return False
 
+    # Terminal AI tools that die without a TTY. Never bare-spawn these.
+    _TTY_TOOLS = frozenset({
+        "claude", "gemini", "codex", "aider", "ollama", "crush", "goose",
+    })
+
+    def _notify(self, message: str, *, timeout: int = 3) -> None:
+        """Short on-screen confirmation that a click did something."""
+        try:
+            toast = Adw.Toast.new(message)
+            toast.set_timeout(timeout)
+            self._toasts.add_toast(toast)
+        except Exception:  # noqa: BLE001
+            pass
+
     def _launch_tool(self, tool: WorkTool, project: Path) -> None:
         # Record before spawn so a crashy tool still counts as a choice.
         work_tools.record_use(tool.id)
         path = str(project)
-        argv = self._launch_argv(tool, path)
-        log.info("launch tool=%s project=%s argv=%s", tool.id, path, argv)
+        self._notify(f"Opening {tool.title}…")
+
+        # Order matters for non-technical users: a window they can see first.
+        # 1) Claude has a dedicated app window.
+        # 2) Other TTY tools open in Terminal (always visible on this desktop).
+        # 3) teddyos-agent is a nicer private window if Terminal is missing.
+        # 4) Non-TTY tools (Files, VS Code, …) use their normal argv.
+        # Never spawn bare `gemini /path` — no TTY, dies instantly, looks dead.
+        ok = False
+        if tool.id == "claude" and shutil.which("teddyos-claude"):
+            ok = self._spawn(["teddyos-claude", path], cwd=path)
+        if not ok and tool.id in self._TTY_TOOLS:
+            ok = self._launch_via_terminal(tool, path)
+        if not ok and tool.id in self._TTY_TOOLS:
+            agent = shutil.which("teddyos-agent")
+            if agent:
+                ok = self._spawn([agent, tool.id, path], cwd=path)
+        if not ok:
+            argv = self._launch_argv(tool, path)
+            ok = self._spawn(argv, cwd=path)
+        if ok:
+            # Get out of the way. Search is often full-window in front; the
+            # new Terminal/Claude window opened behind it and looked like a
+            # dead click.
+            GLib.timeout_add(250, self._yield_to_launched_app)
+            return
+        log.error("all launch paths failed tool=%s project=%s", tool.id, path)
+        self._notify(
+            f"Couldn’t open {tool.title}. Try Terminal from the dock.",
+            timeout=5,
+        )
+        try:
+            Gtk.UriLauncher.new(
+                Gio.File.new_for_path(path).get_uri()
+            ).launch(self, None, None, None)
+        except GLib.Error:
+            pass
+
+    def _yield_to_launched_app(self) -> bool:
+        """Minimize Search so the tool window is not hidden behind it."""
+        try:
+            self.minimize()
+        except Exception:  # noqa: BLE001
+            try:
+                self.set_visible(False)
+                GLib.timeout_add_seconds(30, self._restore_after_hide)
+            except Exception:  # noqa: BLE001
+                pass
+        return False
+
+    def _restore_after_hide(self) -> bool:
+        try:
+            self.set_visible(True)
+            self.present()
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+    def _spawn(self, argv: list[str], *, cwd: str) -> bool:
+        """Start a GUI/terminal child with the desktop session’s environment."""
+        if not argv or not argv[0]:
+            return False
+        # Resolve bare names so a thin PATH cannot hide /usr/local/bin tools.
+        if "/" not in argv[0]:
+            found = shutil.which(argv[0])
+            if not found:
+                log.error("spawn: not on PATH: %s", argv[0])
+                return False
+            argv = [found, *argv[1:]]
+        log.info("launch argv=%s cwd=%s", argv, cwd)
         try:
             launcher = Gio.SubprocessLauncher.new(Gio.SubprocessFlags.NONE)
-            launcher.set_cwd(path)
-            # GUI apps often inherit a thin PATH; npm tools live in /usr/local/bin.
+            launcher.set_cwd(cwd)
             path_env = os.environ.get("PATH", "/usr/bin:/bin")
             for extra in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
                 if extra not in path_env.split(":"):
@@ -832,39 +920,41 @@ class SearchWindow(Adw.ApplicationWindow):
             for key in (
                 "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
                 "DBUS_SESSION_BUS_ADDRESS", "HOME", "USER", "LANG",
+                "XAUTHORITY", "GDK_BACKEND",
             ):
                 val = os.environ.get(key)
                 if val:
                     launcher.setenv(key, val, True)
             launcher.spawnv(argv)
+            return True
         except GLib.Error as exc:
-            log.error("launch failed tool=%s: %s", tool.id, exc.message)
-            # Last resorts: Terminal window, then open the folder.
-            if self._launch_via_terminal(tool, path):
-                return
+            log.error("spawn failed argv=%s: %s", argv, exc.message)
+            # Gio sometimes fails where a plain detached Popen still works.
             try:
-                Gtk.UriLauncher.new(
-                    Gio.File.new_for_path(path).get_uri()
-                ).launch(self, None, None, None)
-            except GLib.Error:
-                pass
+                env = os.environ.copy()
+                env["PATH"] = (
+                    "/usr/local/bin:"
+                    + str(Path.home() / ".local" / "bin")
+                    + ":"
+                    + env.get("PATH", "/usr/bin:/bin")
+                )
+                subprocess.Popen(  # noqa: S603
+                    argv,
+                    cwd=cwd,
+                    env=env,
+                    start_new_session=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                log.info("spawn via Popen argv=%s", argv)
+                return True
+            except OSError as exc2:
+                log.error("Popen failed argv=%s: %s", argv, exc2)
+                return False
 
     def _launch_argv(self, tool: WorkTool, path: str) -> list[str]:
-        """Build argv at click time — never trust a stale module import alone.
-
-        Gemini/Codex need teddyos-agent (a real window + TTY). An older Search
-        process that still thought argv was bare `gemini /path` is exactly why
-        clicks appeared to do nothing.
-        """
-        tty = {"claude", "gemini", "codex", "aider", "ollama", "crush", "goose"}
-        if tool.id in tty:
-            if tool.id == "claude":
-                dedicated = shutil.which("teddyos-claude")
-                if dedicated:
-                    return [dedicated, path]
-            agent = shutil.which("teddyos-agent")
-            if agent:
-                return [agent, tool.id, path]
+        """Build argv for non-TTY tools (Files, editors, …)."""
         raw = [a.replace("{path}", path) for a in tool.argv]
         argv: list[str] = []
         for part in raw:
@@ -875,31 +965,58 @@ class SearchWindow(Adw.ApplicationWindow):
         return argv
 
     def _launch_via_terminal(self, tool: WorkTool, path: str) -> bool:
-        """Open gnome-terminal running the tool when the agent window fails."""
+        """Open a real Terminal window running the tool in the project folder.
+
+        Gemini and Codex need a TTY. gnome-terminal always draws a window on
+        this desktop; a custom VTE host has failed silently more than once
+        (window on a wrong session, or behind Search with no feedback).
+        """
         binary = {
             "gemini": "gemini",
             "codex": "codex",
             "claude": "claude",
             "aider": "aider",
             "ollama": "ollama",
+            "crush": "crush",
+            "goose": "goose",
         }.get(tool.id)
-        if not binary or not shutil.which(binary):
+        if not binary:
             return False
+        resolved = shutil.which(binary)
+        if not resolved:
+            # npm tools live here even when GUI PATH is thin.
+            for prefix in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
+                candidate = Path(prefix) / binary
+                if candidate.is_file() and os.access(candidate, os.X_OK):
+                    resolved = str(candidate)
+                    break
+        if not resolved:
+            log.error("terminal launch: binary missing tool=%s", tool.id)
+            return False
+
+        title = f"{tool.title} — {Path(path).name}"
         term = shutil.which("gnome-terminal") or shutil.which("kgx")
         if not term:
+            log.error("terminal launch: no gnome-terminal/kgx")
             return False
-        if term.endswith("gnome-terminal"):
-            argv = [term, f"--working-directory={path}", "--", binary]
+        if "gnome-terminal" in term:
+            # -- is required so gemini/codex flags are not eaten by the terminal.
+            argv = [
+                term,
+                f"--title={title}",
+                f"--working-directory={path}",
+                "--",
+                resolved,
+            ]
         else:
-            argv = [term, "-e", binary]
-        try:
-            launcher = Gio.SubprocessLauncher.new(Gio.SubprocessFlags.NONE)
-            launcher.set_cwd(path)
-            launcher.spawnv(argv)
-            log.info("fallback terminal launch tool=%s", tool.id)
-            return True
-        except GLib.Error:
-            return False
+            # kgx: run via a short shell so cwd sticks.
+            argv = [
+                term,
+                f"--title={title}",
+                "-e",
+                f"bash -lc {shlex.quote(f'cd {path} && exec {resolved}')}",
+            ]
+        return self._spawn(argv, cwd=path)
 
     def _append_notices(self, outcome) -> None:
         """Show what the search knows about its own limits.
