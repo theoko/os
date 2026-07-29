@@ -31,6 +31,8 @@ Honesty cuts on this review tip are at a **SAFE floor** for:
 - User-visible standalone status/remedy copy (`kernel/src/copy.rs` + status
   bar Offline lines) — never tell owners to `make bridge-run` / `utm-bridged`
 - Default skill playbooks (`agent-plan-act`, `capability-safe-tools`, …)
+- E2E selfcheck fixtures use standalone copy (`Local keywords only.`), not
+  hosted “Bridge offline …” strings
 
 **Do not invent** without a product brief: restoring Live COM2 connectors,
 merging this tip into MCP `main`, or new `email.send` confirm UX.
