@@ -1127,7 +1127,7 @@ fn run_plan_act(brief: &mut Brief, caps: Caps) {
 fn run_teddy(brief: &mut Brief, caps: Caps) {
     brief.set_heading("Teddy API + portals");
     brief.push_plan("Check portal.sync grant");
-    brief.push_plan("CALL search.query with portal=1 (corpus API)");
+    brief.push_plan("CALL agent.act with portal=1 (corpus API)");
     brief.push_plan("CALL teddy.health / fear_greed / gex");
     brief.push_plan("Report live fields alongside corpus hits");
 
@@ -1137,7 +1137,7 @@ fn run_teddy(brief: &mut Brief, caps: Caps) {
         return;
     }
 
-    // Corpus side of teddy — needs search.query as well as portal.sync.
+    // Corpus side of teddy — needs SearchQuery (guest agent.act) as well as portal.sync.
     if caps.allows(Cap::SearchQuery) {
         let peek = mcp::fetch_search_peek(caps, "teddy-search");
         brief.status = peek.status;
