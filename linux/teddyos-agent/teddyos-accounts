@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
-"""Connect your helpers — sign in without ever seeing a terminal.
+"""Connect your helpers — calm setup, browser sign-in, never a terminal.
 
-Vendors use browser OAuth. We start their login command in the background
-(hidden), open any URL they print, and show only plain-language status.
-No VTE, no monospaced dump, no “CLI”.
+Flow for one helper:
+  1. Soft “Let’s set you up” animation (skip anytime)
+  2. Plain status while OAuth runs in the background
+  3. Chromium sign-in window if the vendor needs the browser
+  4. “I’m done” → back to the list
+
+No VTE, no CLI, no random Firefox.
 """
 
 from __future__ import annotations
@@ -35,15 +39,21 @@ except Exception:  # noqa: BLE001
 APP_ID = "com.teddyos.Accounts"
 
 _URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.I)
-# Device / user codes: XXXX-XXXX or similar
 _CODE_RE = re.compile(
     r"\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b|\benter code[:\s]+([A-Z0-9-]{6,})\b",
     re.I,
 )
 
 
+def animations_enabled() -> bool:
+    settings = Gtk.Settings.get_default()
+    if settings is None:
+        return True
+    return bool(settings.get_property("gtk-enable-animations"))
+
+
 def _open_signin_url(url: str) -> None:
-    """Always Chromium app window — never a random Firefox tab."""
+    """Chromium app window — never a random Firefox tab."""
     opener = shutil.which("teddyos-open-signin")
     if opener:
         argv = [opener, url]
@@ -77,7 +87,9 @@ def _open_signin_url(url: str) -> None:
 
 
 class SignInWindow(Adw.ApplicationWindow):
-    """Friendly sign-in — spinner, hint, optional code, no terminal."""
+    """Let’s set you up → then quiet status while the browser does the work."""
+
+    BEAT_IN, BEAT_HOLD, BEAT_OUT, BEAT_REST = 480, 1100, 380, 160
 
     def __init__(
         self,
@@ -87,70 +99,247 @@ class SignInWindow(Adw.ApplicationWindow):
     ):
         super().__init__(
             application=app,
-            title=f"Sign in to {account.title}",
+            title=f"Set up {account.title}",
         )
-        self.set_default_size(480, 360)
+        self.set_default_size(520, 480)
         self._account = account
+        self._argv = argv
         self._proc: subprocess.Popen | None = None
         self._opened_urls: set[str] = set()
+        self._last_url = ""
+        self._intro_over = False
+        self._login_started = False
+        self._anims: list[Adw.TimedAnimation] = []
 
-        header = Adw.HeaderBar()
-        header.set_title_widget(Adw.WindowTitle(
-            title=f"Sign in to {account.title}",
-            subtitle="A browser window should open",
-        ))
-
-        self._status = Adw.StatusPage(
-            icon_name="network-workgroup-symbolic",
-            title=f"Connecting {account.title}…",
-            description=account.connect_hint,
+        # Soft look
+        css = Gtk.CssProvider()
+        css.load_from_data(b"""
+            .teddyos-setup-title { font-size: 28px; font-weight: 600; }
+            .teddyos-setup-line { font-size: 22px; font-weight: 500; }
+            .teddyos-setup-code { font-size: 32px; font-weight: 700; letter-spacing: 2px; }
+            window { background: #fbfbfa; }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
         )
 
-        self._spinner = Gtk.Spinner()
-        self._spinner.start()
-        self._spinner.set_halign(Gtk.Align.CENTER)
-        self._spinner.set_margin_bottom(8)
+        self._header = Adw.HeaderBar(show_title=False)
+        self._header.set_opacity(0.0)
 
-        self._code_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        # --- main status page (revealed after intro) ---
+        self._title = Gtk.Label(
+            label=f"Setting up {account.title}",
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+        )
+        self._title.add_css_class("teddyos-setup-title")
+
+        self._body = Gtk.Label(
+            label="Just a moment…",
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+        )
+        self._body.add_css_class("dim-label")
+        self._body.set_max_width_chars(40)
+
+        self._spinner = Gtk.Spinner()
+        self._spinner.set_size_request(36, 36)
+        self._spinner.set_halign(Gtk.Align.CENTER)
+
+        self._code_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self._code_box.set_halign(Gtk.Align.CENTER)
         self._code_box.set_visible(False)
-        code_caption = Gtk.Label(label="If the browser asks for a code, use this:")
-        code_caption.add_css_class("dim-label")
+        code_cap = Gtk.Label(label="If the page asks for a code, type this:")
+        code_cap.add_css_class("dim-label")
         self._code_label = Gtk.Label(label="")
-        self._code_label.add_css_class("title-1")
+        self._code_label.add_css_class("teddyos-setup-code")
         self._code_label.set_selectable(True)
-        self._code_box.append(code_caption)
+        self._code_box.append(code_cap)
         self._code_box.append(self._code_label)
 
-        self._link_btn = Gtk.Button(label="Open sign-in page again")
+        self._link_btn = Gtk.Button(label="Open sign-in again")
+        self._link_btn.add_css_class("flat")
         self._link_btn.set_halign(Gtk.Align.CENTER)
         self._link_btn.set_visible(False)
         self._link_btn.connect("clicked", self._reopen_link)
-        self._last_url = ""
 
-        done = Gtk.Button(label="I’m done signing in")
-        done.add_css_class("suggested-action")
-        done.add_css_class("pill")
-        done.set_halign(Gtk.Align.CENTER)
-        done.set_margin_top(16)
-        done.connect("clicked", self._finish)
+        self._done = Gtk.Button(label="I’m done")
+        self._done.add_css_class("suggested-action")
+        self._done.add_css_class("pill")
+        self._done.set_halign(Gtk.Align.CENTER)
+        self._done.set_sensitive(False)
+        self._done.connect("clicked", self._finish)
 
-        extras = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
-        extras.set_halign(Gtk.Align.CENTER)
-        extras.append(self._spinner)
-        extras.append(self._code_box)
-        extras.append(self._link_btn)
-        extras.append(done)
-        self._status.set_child(extras)
+        page_col = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=18,
+            valign=Gtk.Align.CENTER,
+            halign=Gtk.Align.CENTER,
+            margin_start=40,
+            margin_end=40,
+        )
+        page_col.append(self._title)
+        page_col.append(self._body)
+        page_col.append(self._spinner)
+        page_col.append(self._code_box)
+        page_col.append(self._link_btn)
+        page_col.append(self._done)
+        page_col.set_opacity(0.0)
+        self._page = page_col
+
+        # --- intro layer ---
+        self._intro_icon = Gtk.Image()
+        self._intro_icon.set_pixel_size(56)
+        icon_path = (
+            Path("/usr/share/icons/hicolor/scalable/apps")
+            / f"{account.icon}.svg"
+        )
+        if icon_path.is_file():
+            self._intro_icon.set_from_file(str(icon_path))
+        elif Gtk.IconTheme.get_for_display(self.get_display()).has_icon(account.icon):
+            self._intro_icon.set_from_icon_name(account.icon)
+        else:
+            self._intro_icon.set_from_icon_name("emblem-ok-symbolic")
+        self._intro_icon.set_opacity(0.0)
+
+        self._intro_line = Gtk.Label(
+            wrap=True, justify=Gtk.Justification.CENTER,
+        )
+        self._intro_line.add_css_class("teddyos-setup-line")
+        self._intro_line.set_max_width_chars(32)
+        self._intro_line.set_opacity(0.0)
+
+        intro_col = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=28,
+            valign=Gtk.Align.CENTER,
+            halign=Gtk.Align.CENTER,
+            margin_start=40,
+            margin_end=40,
+        )
+        intro_col.append(self._intro_icon)
+        intro_col.append(self._intro_line)
+        self._intro_col = intro_col
+
+        skip = Gtk.Button(label="Skip")
+        skip.add_css_class("flat")
+        skip.set_halign(Gtk.Align.END)
+        skip.set_valign(Gtk.Align.END)
+        skip.set_margin_end(16)
+        skip.set_margin_bottom(16)
+        skip.set_opacity(0.0)
+        skip.connect("clicked", lambda *_: self._intro_finish())
+        self._skip = skip
+
+        stack = Gtk.Overlay()
+        stack.set_child(self._page)
+        stack.add_overlay(intro_col)
+        stack.add_overlay(skip)
 
         toolbar = Adw.ToolbarView()
-        toolbar.add_top_bar(header)
-        toolbar.set_content(self._status)
+        toolbar.add_top_bar(self._header)
+        toolbar.set_content(stack)
         self.set_content(toolbar)
 
         log.info("connect start id=%s argv=%s", account.id, argv)
+
+        if animations_enabled():
+            self._start_intro()
+        else:
+            self._intro_finish()
+
+    # --- intro --------------------------------------------------------------
+
+    def _beats(self) -> list[str]:
+        name = self._account.title
+        return [
+            "Let’s set you up.",
+            f"We’ll connect {name} in a moment.",
+            "A short sign-in may open — finish there, then come back.",
+        ]
+
+    def _start_intro(self) -> None:
+        self._fade(self._intro_icon, 1.0, 700, Adw.Easing.EASE_OUT_CUBIC)
+        self._later(800, lambda: self._fade(self._skip, 0.55, 400))
+        self._later(500, lambda: self._beat(0))
+
+    def _beat(self, i: int) -> None:
+        if self._intro_over:
+            return
+        beats = self._beats()
+        if i >= len(beats):
+            self._intro_finish()
+            return
+        self._intro_line.set_text(beats[i])
+        self._fade(self._intro_line, 1.0, self.BEAT_IN, Adw.Easing.EASE_OUT_CUBIC)
+        out_at = self.BEAT_IN + self.BEAT_HOLD
+        if i == len(beats) - 1:
+            self._later(out_at, lambda: self._beat(i + 1))
+        else:
+            self._later(
+                out_at,
+                lambda: self._fade(
+                    self._intro_line, 0.0, self.BEAT_OUT, Adw.Easing.EASE_IN_CUBIC,
+                ),
+            )
+            self._later(
+                out_at + self.BEAT_OUT + self.BEAT_REST,
+                lambda: self._beat(i + 1),
+            )
+
+    def _intro_finish(self) -> None:
+        if self._intro_over:
+            return
+        self._intro_over = True
+        self._fade(self._intro_col, 0.0, 360, Adw.Easing.EASE_IN_CUBIC)
+        self._fade(self._skip, 0.0, 240, Adw.Easing.EASE_IN_CUBIC)
+        self._later(280, lambda: self._fade(self._page, 1.0, 480, Adw.Easing.EASE_OUT_CUBIC))
+        self._later(280, lambda: self._fade(self._header, 1.0, 400, Adw.Easing.EASE_OUT_CUBIC))
+        self._later(700, self._begin_login_ui)
+        self._later(720, lambda: (
+            self._intro_col.set_visible(False),
+            self._skip.set_visible(False),
+        ))
+
+    def _begin_login_ui(self) -> bool:
+        self._spinner.start()
+        self._body.set_text(
+            f"Getting {self._account.title} ready…\n"
+            "A sign-in page may open next."
+        )
+        self._done.set_sensitive(True)
+        self._start_login_process()
+        return False
+
+    def _fade(
+        self,
+        widget: Gtk.Widget,
+        to: float,
+        ms: int,
+        easing: Adw.Easing = Adw.Easing.EASE_IN_OUT_CUBIC,
+    ) -> None:
+        target = Adw.PropertyAnimationTarget.new(widget, "opacity")
+        anim = Adw.TimedAnimation.new(
+            widget, widget.get_opacity(), to, ms, target,
+        )
+        anim.set_easing(easing)
+        self._anims.append(anim)
+        anim.play()
+
+    def _later(self, ms: int, fn) -> None:
+        def once() -> bool:
+            fn()
+            return False
+        GLib.timeout_add(ms, once)
+
+    # --- login process (background, no terminal) ----------------------------
+
+    def _start_login_process(self) -> None:
+        if self._login_started:
+            return
+        self._login_started = True
         threading.Thread(
-            target=self._run_login, args=(argv,), daemon=True,
+            target=self._run_login, args=(self._argv,), daemon=True,
         ).start()
 
     def _run_login(self, argv: list[str]) -> None:
@@ -162,23 +351,16 @@ class SignInWindow(Adw.ApplicationWindow):
         env["PATH"] = path
         env["TERM"] = "dumb"
         env["NO_COLOR"] = "1"
-        # Force Chromium for every helper that shells out to $BROWSER / xdg-open.
-        # Firefox is installed for general browsing but OAuth in a random FF
-        # window confuses people on a Chromium-first desktop.
         signin = shutil.which("teddyos-open-signin")
-        if signin:
-            env["BROWSER"] = signin
-        else:
-            env["BROWSER"] = (
-                shutil.which("chromium")
-                or shutil.which("chromium-browser")
-                or "xdg-open"
-            )
-        # Some tools (Electron/Google) respect these too.
+        env["BROWSER"] = signin or (
+            shutil.which("chromium")
+            or shutil.which("chromium-browser")
+            or "xdg-open"
+        )
         env["CHROME_PATH"] = (
             shutil.which("chromium")
             or shutil.which("chromium-browser")
-            or env.get("CHROME_PATH", "")
+            or ""
         )
         try:
             self._proc = subprocess.Popen(  # noqa: S603
@@ -194,88 +376,93 @@ class SignInWindow(Adw.ApplicationWindow):
         except OSError as exc:
             log.error("connect spawn failed: %s", exc)
             GLib.idle_add(
-                self._fail,
-                f"Couldn’t start sign-in for {self._account.title}.",
+                self._set_status,
+                "Couldn’t start",
+                f"Something went wrong starting {self._account.title}. Try again.",
+                False,
             )
             return
 
         assert self._proc.stdout is not None
-        buf = []
         try:
             for line in self._proc.stdout:
-                buf.append(line)
                 self._handle_line(line)
         except Exception as exc:  # noqa: BLE001
             log.error("connect read: %s", exc)
         code = self._proc.wait()
         log.info("connect exit id=%s code=%s", self._account.id, code)
-        GLib.idle_add(self._login_process_finished, code, "".join(buf)[-800:])
+        GLib.idle_add(self._login_process_finished, code)
 
     def _handle_line(self, line: str) -> None:
         for m in _URL_RE.finditer(line):
             url = m.group(0).rstrip(").,;]")
             if url not in self._opened_urls and "localhost" not in url:
                 self._opened_urls.add(url)
-                GLib.idle_add(self._show_url, url)
+                GLib.idle_add(self._on_url, url)
                 _open_signin_url(url)
         for m in _CODE_RE.finditer(line):
             code = m.group(1) or m.group(2)
             if code:
-                GLib.idle_add(self._show_code, code)
+                GLib.idle_add(self._on_code, code)
 
-    def _show_url(self, url: str) -> bool:
+    def _on_url(self, url: str) -> bool:
         self._last_url = url
         self._link_btn.set_visible(True)
-        self._status.set_title("Browser should be open")
-        self._status.set_description(
-            self._account.connect_hint
-            + "\n\nIf nothing opened, tap “Open sign-in page again”."
+        self._set_status(
+            "Sign in is open",
+            f"Finish signing in to {self._account.title} in the window that "
+            "just opened, then tap I’m done.",
+            spinning=True,
         )
         return False
 
-    def _show_code(self, code: str) -> bool:
+    def _on_code(self, code: str) -> bool:
         self._code_box.set_visible(True)
         self._code_label.set_text(code)
-        self._status.set_title("Enter this code in the browser")
+        self._set_status(
+            "Almost there",
+            "If the sign-in page asks for a code, use the one below.",
+            spinning=True,
+        )
+        return False
+
+    def _set_status(self, title: str, body: str, spinning: bool = True) -> bool:
+        self._title.set_text(title)
+        self._body.set_text(body)
+        if spinning:
+            self._spinner.start()
+            self._spinner.set_visible(True)
+        else:
+            self._spinner.stop()
+            self._spinner.set_visible(False)
+        return False
+
+    def _login_process_finished(self, code: int) -> bool:
+        self._spinner.stop()
+        self._spinner.set_visible(False)
+        if code == 0 or self._opened_urls:
+            self._title.set_text(f"{self._account.title} is ready")
+            self._body.set_text(
+                "You’re all set. Tap I’m done, then go back to Search."
+            )
+        else:
+            self._title.set_text("Still need a moment?")
+            self._body.set_text(
+                f"If nothing opened, tap “Open sign-in again”. "
+                f"Or close this and try Connect on {self._account.title} once more."
+            )
+            self._link_btn.set_visible(True)
+        self._done.set_sensitive(True)
+        self._done.add_css_class("suggested-action")
         return False
 
     def _reopen_link(self, *_a) -> None:
         if self._last_url:
             _open_signin_url(self._last_url)
-
-    def _login_process_finished(self, code: int, tail: str) -> bool:
-        self._spinner.stop()
-        self._spinner.set_visible(False)
-        if code == 0:
-            self._status.set_icon_name("emblem-ok-symbolic")
-            self._status.set_title(f"{self._account.title} is ready")
-            self._status.set_description(
-                "You’re signed in. Close this window and go back to Search."
-            )
         else:
-            # Many OAuth CLIs exit non-zero while still succeeding via browser.
-            if self._opened_urls:
-                self._status.set_title("Finish in the browser")
-                self._status.set_description(
-                    "Complete sign-in in the browser window, then tap "
-                    "“I’m done signing in”."
-                )
-            else:
-                self._status.set_icon_name("dialog-information-symbolic")
-                self._status.set_title("Still need to sign in?")
-                self._status.set_description(
-                    self._account.connect_hint
-                    + " Tap Connect again if nothing happened."
-                )
-        return False
-
-    def _fail(self, message: str) -> bool:
-        self._spinner.stop()
-        self._spinner.set_visible(False)
-        self._status.set_icon_name("dialog-warning-symbolic")
-        self._status.set_title("Couldn’t start sign-in")
-        self._status.set_description(message)
-        return False
+            # Restart login if we never got a URL.
+            self._login_started = False
+            self._start_login_process()
 
     def _finish(self, *_a) -> None:
         if self._proc and self._proc.poll() is None:
@@ -292,22 +479,34 @@ class AccountsWindow(Adw.ApplicationWindow):
         self.set_default_size(560, 640)
         self._rows: dict[str, Adw.ActionRow] = {}
         self._focus_id = focus_id
+        self._anims: list[Adw.TimedAnimation] = []
+        self._welcome_done = False
+
+        css = Gtk.CssProvider()
+        css.load_from_data(b"""
+            .teddyos-setup-line { font-size: 22px; font-weight: 500; }
+            window { background: #fbfbfa; }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
 
         header = Adw.HeaderBar()
         header.set_title_widget(Adw.WindowTitle(
             title="Connect your helpers",
-            subtitle="Sign in once · browser only · no terminal",
+            subtitle="One-time sign-in · no technical steps",
         ))
         refresh = Gtk.Button(icon_name="view-refresh-symbolic")
         refresh.set_tooltip_text("Check again")
         refresh.connect("clicked", lambda *_: self._reload_statuses())
         header.pack_end(refresh)
+        self._header = header
 
         intro = Gtk.Label(
             label=(
-                "Each helper needs its own account. Tap Connect — a browser "
-                "opens. Sign in there, then come back. You only do this once "
-                "per helper. You never need a terminal."
+                "Each helper needs its own account. Tap Connect — we’ll walk "
+                "you through a short setup. A sign-in page may open; finish "
+                "there, then come back."
             ),
             wrap=True,
             xalign=0.0,
@@ -346,14 +545,86 @@ class AccountsWindow(Adw.ApplicationWindow):
         self._toasts = Adw.ToastOverlay()
         self._toasts.set_child(scroller)
 
+        self._main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(header)
         toolbar.set_content(self._toasts)
-        self.set_content(toolbar)
+        self._main.append(toolbar)
+
+        # Optional welcome wash when opening the list (not a deep-link connect).
+        if focus_id is None and animations_enabled():
+            self._main.set_opacity(0.0)
+            overlay = Gtk.Overlay()
+            overlay.set_child(self._main)
+            welcome = self._welcome_layer()
+            overlay.add_overlay(welcome)
+            self.set_content(overlay)
+            self._run_welcome(welcome)
+        else:
+            self.set_content(self._main)
+            self._welcome_done = True
 
         self._reload_statuses()
-        if focus_id:
-            GLib.idle_add(self._flash_focus, focus_id)
+        if focus_id and acc and acc.get_account(focus_id):
+            # Deep-link: go straight into that helper’s setup after a tick.
+            GLib.timeout_add(200, lambda: (self._connect(acc.get_account(focus_id)), False)[1])
+
+    def _welcome_layer(self) -> Gtk.Widget:
+        line = Gtk.Label(
+            label="Let’s set you up.",
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+        )
+        line.add_css_class("teddyos-setup-line")
+        line.set_opacity(0.0)
+        self._welcome_line = line
+
+        icon = Gtk.Image.new_from_icon_name("system-users-symbolic")
+        icon.set_pixel_size(48)
+        icon.add_css_class("dim-label")
+        icon.set_opacity(0.0)
+        self._welcome_icon = icon
+
+        col = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=24,
+            valign=Gtk.Align.CENTER,
+            halign=Gtk.Align.CENTER,
+        )
+        col.append(icon)
+        col.append(line)
+        self._welcome_col = col
+        return col
+
+    def _run_welcome(self, layer: Gtk.Widget) -> None:
+        def fade(w, to, ms, easing=Adw.Easing.EASE_OUT_CUBIC):
+            t = Adw.PropertyAnimationTarget.new(w, "opacity")
+            a = Adw.TimedAnimation.new(w, w.get_opacity(), to, ms, t)
+            a.set_easing(easing)
+            self._anims.append(a)
+            a.play()
+
+        def later(ms, fn):
+            GLib.timeout_add(ms, lambda: (fn(), False)[1])
+
+        fade(self._welcome_icon, 1.0, 600)
+        later(500, lambda: (
+            self._welcome_line.set_text("Let’s set you up."),
+            fade(self._welcome_line, 1.0, 450),
+        ))
+        later(500 + 450 + 1000, lambda: fade(self._welcome_line, 0.0, 350, Adw.Easing.EASE_IN_CUBIC))
+        later(500 + 450 + 1000 + 400, lambda: (
+            self._welcome_line.set_text("Connect the helpers you want to use."),
+            fade(self._welcome_line, 1.0, 450),
+        ))
+        later(500 + 450 + 1000 + 400 + 450 + 1100, lambda: (
+            fade(self._welcome_col, 0.0, 380, Adw.Easing.EASE_IN_CUBIC),
+            fade(self._main, 1.0, 500),
+        ))
+        later(500 + 450 + 1000 + 400 + 450 + 1100 + 500, lambda: (
+            self._welcome_col.set_visible(False),
+            setattr(self, "_welcome_done", True),
+        ))
 
     def _row(self, account: "acc.Account") -> Gtk.Widget:
         row = Adw.ActionRow(title=account.title)
@@ -383,12 +654,6 @@ class AccountsWindow(Adw.ApplicationWindow):
         self._rows[account.id] = row
         row._connect_btn = btn  # type: ignore[attr-defined]
         return row
-
-    def _flash_focus(self, account_id: str) -> bool:
-        row = self._rows.get(account_id)
-        if row is not None:
-            row.grab_focus()
-        return False
 
     def _reload_statuses(self) -> None:
         if acc is None:
@@ -433,7 +698,9 @@ class AccountsWindow(Adw.ApplicationWindow):
                     btn.add_css_class("suggested-action")
         return False
 
-    def _connect(self, account: "acc.Account") -> None:
+    def _connect(self, account: "acc.Account | None") -> None:
+        if account is None:
+            return
         argv = acc.resolve_connect_argv(account)
         if not argv:
             self._toast(f"{account.title} isn’t available on this computer.")
