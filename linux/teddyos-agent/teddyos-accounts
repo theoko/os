@@ -266,7 +266,7 @@ class SignInWindow(Adw.ApplicationWindow):
         return [
             "Let’s set you up.",
             f"We’ll connect {name} in a moment.",
-            "A short sign-in may open — finish there, then come back.",
+            "A page may open — just approve. We’ll handle any codes.",
         ]
 
     def _start_intro(self) -> None:
