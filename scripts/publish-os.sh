@@ -29,6 +29,28 @@ SKIP_BOOT_TEST="${SKIP_BOOT_TEST:-0}"
 X86="${IMAGE_NAME:-os}.iso"
 ARM="${ARM64_IMAGE_NAME:-os-arm64}.iso"
 
+# The live Debian images, which are a different product from the two above and
+# were previously unpublishable: they are built inside the guest by
+# linux/iso/build-iso.sh, land in dist/ under a build-stamped name, and nothing
+# here knew they existed. So the thing a stranger is meant to download could
+# not reach the server at all.
+#
+# Uploaded under a STABLE name rather than the stamped one. That was the
+# decision this needed and it settles two others with it: the download link on
+# os.html never changes, and because each upload replaces the last there is no
+# retention policy to invent and no directory that grows without bound. The
+# build id is not lost — it is inside the image at /etc/teddyos-build and on
+# its boot splash, which is where someone debugging a stranger's report will
+# actually look.
+LIVE_DIR="${LIVE_DIR:-dist}"
+newest_live() {  # $1 = arch
+  ls -1t "$LIVE_DIR"/teddyos-*-"$1"-*.iso 2>/dev/null | head -1
+}
+LIVE_X86_SRC="${LIVE_X86_SRC:-$(newest_live amd64)}"
+LIVE_ARM_SRC="${LIVE_ARM_SRC:-$(newest_live arm64)}"
+LIVE_X86="teddyos-amd64.iso"
+LIVE_ARM="teddyos-arm64.iso"
+
 die() { echo "error: $*" >&2; exit 1; }
 step() { printf '\n=== %s\n' "$*"; }
 
@@ -78,7 +100,22 @@ else
 fi
 
 step "checksums"
-shasum -a 256 "$X86" "$ARM" | sed 's#  .*/#  #' > SHA256SUMS
+# The live images are checksummed under the name they will carry on the
+# server, not the stamped name on disk, so `shasum -c SHA256SUMS` works for
+# someone who downloaded them.
+PUBLISH_FILES="$X86 $ARM"
+: > SHA256SUMS
+shasum -a 256 "$X86" "$ARM" | sed 's#  .*/#  #' >> SHA256SUMS
+for pair in "$LIVE_X86_SRC:$LIVE_X86" "$LIVE_ARM_SRC:$LIVE_ARM"; do
+  src="${pair%%:*}"; dst="${pair##*:}"
+  if [ -n "$src" ] && [ -f "$src" ]; then
+    shasum -a 256 "$src" | sed "s#^\\([0-9a-f]*\\)  .*#\\1  $dst#" >> SHA256SUMS
+    PUBLISH_FILES="$PUBLISH_FILES $dst"
+    echo "  live image: $src -> $dst"
+  else
+    echo "  no live $dst found in $LIVE_DIR — publishing without it" >&2
+  fi
+done
 cat SHA256SUMS
 cat > BUILD-INFO.txt <<EOF
 teddy OS images
@@ -111,10 +148,41 @@ fi
 #    mid-transfer gets a truncated ISO that fails to boot for no visible reason.
 step "uploading to $HOST:$DIR"
 ssh "$HOST" "mkdir -p '$DIR'"
+
+# Room check before the transfer, not after. The live images are ~2.6 GB each
+# and this host also serves teddysearch; filling its disk mid-rsync would take
+# the site down to publish an OS, and the failure would look like a network
+# problem rather than a full volume.
+need_kb=0
+for f in "$X86" "$ARM" "$LIVE_X86_SRC" "$LIVE_ARM_SRC"; do
+  [ -n "$f" ] && [ -f "$f" ] && need_kb=$((need_kb + $(du -k "$f" | cut -f1)))
+done
+free_kb="$(ssh "$HOST" "df -Pk '$DIR' | tail -1 | awk '{print \$4}'")"
+echo "  need $((need_kb / 1024)) MB, free $((free_kb / 1024)) MB"
+[ "$free_kb" -gt "$((need_kb + 1048576))" ] ||
+  die "not enough room on $HOST: need $((need_kb / 1024)) MB plus 1 GB headroom, have $((free_kb / 1024)) MB"
+
 rsync -az "$X86" "$HOST:$DIR/.$X86.incoming"
 rsync -az "$ARM" "$HOST:$DIR/.$ARM.incoming"
+# --partial --inplace deliberately NOT used: a resumed partial would be moved
+# into place as if whole. 2.6 GB over a home connection is exactly where an
+# interrupted transfer is likely.
+[ -n "$LIVE_X86_SRC" ] && [ -f "$LIVE_X86_SRC" ] &&
+  rsync -az --info=progress2 "$LIVE_X86_SRC" "$HOST:$DIR/.$LIVE_X86.incoming"
+[ -n "$LIVE_ARM_SRC" ] && [ -f "$LIVE_ARM_SRC" ] &&
+  rsync -az --info=progress2 "$LIVE_ARM_SRC" "$HOST:$DIR/.$LIVE_ARM.incoming"
 rsync -az SHA256SUMS BUILD-INFO.txt manifest.json "$HOST:$DIR/"
-ssh "$HOST" "cd '$DIR' && mv -f '.$X86.incoming' '$X86' && mv -f '.$ARM.incoming' '$ARM' && chmod 644 '$X86' '$ARM' SHA256SUMS BUILD-INFO.txt manifest.json"
+
+# One ssh doing every rename, so the set goes live together. A visitor who
+# fetches SHA256SUMS between two separate moves gets checksums for an image
+# that is still half-uploaded.
+moves="mv -f '.$X86.incoming' '$X86' && mv -f '.$ARM.incoming' '$ARM'"
+for dst in "$LIVE_X86" "$LIVE_ARM"; do
+  case " $PUBLISH_FILES " in
+    *" $dst "*) moves="$moves && mv -f '.$dst.incoming' '$dst'" ;;
+  esac
+done
+ssh "$HOST" "cd '$DIR' && $moves && chmod 644 $PUBLISH_FILES SHA256SUMS BUILD-INFO.txt manifest.json"
 
 step "verifying on the server"
 ssh "$HOST" "cd '$DIR' && sha256sum -c SHA256SUMS" ||
@@ -124,7 +192,7 @@ ssh "$HOST" "cd '$DIR' && sha256sum -c SHA256SUMS" ||
 #    fetch it" are different claims — nginx, permissions and caching all sit
 #    between them.
 step "verifying over HTTPS from $URL"
-for f in "$X86" "$ARM" SHA256SUMS; do
+for f in $PUBLISH_FILES SHA256SUMS; do
   code="$(curl -s -o /dev/null -w '%{http_code}' "$URL/$f")"
   [ "$code" = "200" ] || die "$URL/$f returned HTTP $code"
   printf '  %-16s %s\n' "$f" "HTTP $code"
