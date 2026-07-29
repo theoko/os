@@ -1,9 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Perplexity launcher: teal tile + question-mark spark. -->
+  <!-- Perplexity launcher icon.
+
+       Same tile geometry and ~74px stroke family as Search / Claude / Gemini.
+       Teal so it sits apart from Claude’s clay and Gemini’s violet. Glyph is a
+       thick six-arm asterisk (answer / “what’s this?”) — not a fragile question
+       mark that collapses at 48px, and not a redraw of Perplexity’s trademark. -->
   <defs>
     <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#2ED3C6"/>
-      <stop offset="100%" stop-color="#0B8F86"/>
+      <stop offset="0%" stop-color="#3DCFC4"/>
+      <stop offset="100%" stop-color="#0D8A82"/>
     </linearGradient>
     <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28"/>
@@ -11,9 +16,14 @@
       <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
     </linearGradient>
   </defs>
+
   <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#tile)"/>
   <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#sheen)"/>
-  <path fill="none" stroke="#ffffff" stroke-width="70" stroke-linecap="round"
-        d="M360 380 Q360 280 512 280 Q664 280 664 400 Q664 500 512 540 L512 620"/>
-  <circle cx="512" cy="720" r="42" fill="#ffffff"/>
+
+  <!-- Six-arm asterisk, centred, heavy enough for the dock and the picker. -->
+  <g stroke="#ffffff" stroke-width="74" stroke-linecap="round">
+    <path d="M512 280 V744"/>
+    <path d="M308 396 L716 628"/>
+    <path d="M716 396 L308 628"/>
+  </g>
 </svg>
