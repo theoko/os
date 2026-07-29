@@ -188,9 +188,17 @@ class AgentWindow(Adw.ApplicationWindow):
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
         # Plain-language strip — the single thing a non-technical person
-        # needs when this window appears.
+        # needs when this window appears. When a starting prompt was injected
+        # (Ask all ready AIs), say so in plain English.
+        hint_text = self._hint
+        if self._extra:
+            hint_text = (
+                f"{self._title} already has your request and is working on it. "
+                "You can keep chatting here when it finishes a step. "
+                "If it asks you to sign in, a browser will open."
+            )
         hint = Gtk.Label(
-            label=self._hint,
+            label=hint_text,
             wrap=True,
             xalign=0.0,
             justify=Gtk.Justification.LEFT,

@@ -187,6 +187,56 @@ _TTY_TOOLS = frozenset({
     "claude", "grok", "gemini", "codex", "aider", "ollama", "crush", "goose",
 })
 
+# Tools that accept an initial prompt in an interactive session. GUI editors
+# (Cursor, VS Code) are not included — they open folders, not chat prompts.
+_PROMPT_TOOLS = frozenset({
+    "claude", "grok", "gemini", "codex", "aider",
+})
+
+
+def prompt_argv(tool_id: str, prompt: str) -> list[str]:
+    """CLI args that inject `prompt` into an interactive session.
+
+    Prefer flags that keep the session open (chat continues) over headless
+    one-shot modes. Empty prompt → no args.
+    """
+    text = (prompt or "").strip()
+    if not text or tool_id not in _PROMPT_TOOLS:
+        return []
+    # Gemini: -i runs the prompt then stays interactive. Bare args also work
+    # but -i is the documented path for "start with this, keep chatting".
+    if tool_id == "gemini":
+        return ["-i", text]
+    # Claude, Grok, Codex, Aider: positional initial prompt.
+    return [text]
+
+
+def ready_for_broadcast(
+    tool: WorkTool,
+    status: CreditStatus | None,
+) -> bool:
+    """True when this tool should receive a shared "ask all" prompt.
+
+    Non-technical rule of thumb: installed chat AI that is not known empty.
+    Metered tools with ok=False (out of credits / not signed in) are skipped.
+    Unknown (ok=None) still counts — better to open and ask for sign-in than
+    to hide a tool the person already paid for.
+    """
+    if tool.id not in _PROMPT_TOOLS or not tool.is_ai:
+        return False
+    if status is not None and status.ok is False:
+        return False
+    return True
+
+
+def tools_ready_for_broadcast(
+    tools: list[WorkTool],
+    statuses: dict[str, CreditStatus] | None = None,
+) -> list[WorkTool]:
+    """Filter to chat AIs that can take a simultaneous prompt."""
+    statuses = statuses or {}
+    return [t for t in tools if ready_for_broadcast(t, statuses.get(t.id))]
+
 
 def available_work_tools() -> list[WorkTool]:
     """Installed tools, recently used AI first, then the rest of the catalog.

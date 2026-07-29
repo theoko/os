@@ -210,6 +210,13 @@ class SearchWindow(Adw.ApplicationWindow):
         # tool_id -> base credit subtitle (without the "Recently used" tag), so
         # a late credit probe does not wipe the recency badge.
         self._credit_labels: dict[str, str] = {}
+        # Latest credit probe results — used by "Ask all ready AIs".
+        self._credit_statuses: dict[str, work_tools.CreditStatus] = {}
+        self._broadcast_tools: list[WorkTool] = []
+        self._broadcast_project: Path | None = None
+        self._broadcast_entry: Gtk.Entry | None = None
+        self._broadcast_btn: Gtk.Button | None = None
+        self._broadcast_hint: Gtk.Label | None = None
 
         self.entry = Gtk.SearchEntry(
             placeholder_text="Ask anything",
@@ -463,6 +470,9 @@ class SearchWindow(Adw.ApplicationWindow):
         rows: list[Gtk.Widget] = []
         self._tool_rows = {}
         self._credit_labels = {}
+        self._credit_statuses = {}
+        # Optional task after the project name: "work on trading fix the risk".
+        self._pending_task = self._task_from_query(query, subject)
 
         if projects:
             self._append_project_tools(rows, projects, tools)
@@ -491,6 +501,29 @@ class SearchWindow(Adw.ApplicationWindow):
         self._begin_git_lookup(subject, generation=self._generation)
         return rows
 
+    def _task_from_query(self, query: str, subject: str) -> str:
+        """Leftover words after the project name — optional starting prompt.
+
+        "i wanna work on trading fix the risk model" → "fix the risk model"
+        when subject resolved to trading. Best-effort; empty is fine.
+        """
+        text = (query or "").strip()
+        if not text or not subject:
+            return getattr(self, "_pending_task", "") or ""
+        lower = text.lower()
+        sub = subject.lower().strip()
+        idx = lower.find(sub)
+        if idx < 0:
+            # try last path segment
+            tail = sub.split("/")[-1].split("-")[-1]
+            idx = lower.rfind(tail) if len(tail) >= 3 else -1
+            if idx >= 0:
+                rest = text[idx + len(tail):].strip(" \t:-–—|,.")
+                return rest
+            return ""
+        rest = text[idx + len(sub):].strip(" \t:-–—|,.")
+        return rest
+
     def _append_project_tools(
         self,
         rows: list[Gtk.Widget],
@@ -500,8 +533,10 @@ class SearchWindow(Adw.ApplicationWindow):
         recent = set(work_tools.recent_ids())
         for project in projects[:5]:
             label = project.name
-            parent = str(project.parent).replace(str(Path.home()), "~")
             rows.append(self._section_label(f"Work on “{label}”"))
+            # First project owns the "ask all" block — multi-match is rare.
+            if project is projects[0] or project == projects[0]:
+                rows.append(self._broadcast_block(project, tools))
             recent_tools = [t for t in tools if t.is_ai and t.id in recent]
             other_tools = [t for t in tools if t not in recent_tools]
             # Split AI helpers from Files/Terminal so a machine with only
@@ -523,6 +558,158 @@ class SearchWindow(Adw.ApplicationWindow):
                 rows.append(self._section_label("Also open with"))
                 for tool in open_with:
                     rows.append(self._tool_row(tool, project, recent=False))
+
+    def _broadcast_block(
+        self, project: Path, tools: list[WorkTool],
+    ) -> Gtk.Widget:
+        """One prompt → every chat AI that still has a plan (or is free).
+
+        The point is not "multiplex agents" jargon — it is "ask them all the
+        same thing at once" for someone who does not want to pick a vendor.
+        """
+        self._broadcast_project = project
+        self._broadcast_tools = [t for t in tools if t.is_ai]
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.set_margin_top(4)
+        box.set_margin_bottom(10)
+        box.set_margin_start(4)
+        box.set_margin_end(4)
+
+        title = Gtk.Label(
+            label="Ask every ready AI",
+            xalign=0.0,
+        )
+        title.add_css_class("heading")
+        box.append(title)
+
+        self._broadcast_hint = Gtk.Label(
+            label="Checking which AIs are ready…",
+            wrap=True,
+            xalign=0.0,
+        )
+        self._broadcast_hint.add_css_class("dim-label")
+        self._broadcast_hint.add_css_class("caption")
+        box.append(self._broadcast_hint)
+
+        self._broadcast_entry = Gtk.Entry()
+        self._broadcast_entry.set_placeholder_text(
+            "What do you want them all to do?"
+        )
+        pending = (getattr(self, "_pending_task", None) or "").strip()
+        if pending:
+            self._broadcast_entry.set_text(pending)
+        self._broadcast_entry.connect(
+            "activate", lambda *_: self._on_broadcast_clicked(),
+        )
+        box.append(self._broadcast_entry)
+
+        self._broadcast_btn = Gtk.Button(label="Send to all ready AIs")
+        self._broadcast_btn.add_css_class("suggested-action")
+        self._broadcast_btn.set_halign(Gtk.Align.START)
+        self._broadcast_btn.connect(
+            "clicked", lambda *_: self._on_broadcast_clicked(),
+        )
+        box.append(self._broadcast_btn)
+
+        # Initial enable state before probes finish.
+        self._refresh_broadcast_ui()
+
+        # ListBox rows need a ListBoxRow wrapper for non-ActionRow widgets.
+        row = Gtk.ListBoxRow()
+        row.set_activatable(False)
+        row.set_selectable(False)
+        row.set_child(box)
+        return row
+
+    def _refresh_broadcast_ui(self) -> None:
+        # Wait for the first credit probe so we do not blast tools that are
+        # already known empty. Empty statuses = still checking.
+        probing = bool(self._broadcast_tools) and not self._credit_statuses
+        ready = (
+            []
+            if probing
+            else work_tools.tools_ready_for_broadcast(
+                self._broadcast_tools, self._credit_statuses,
+            )
+        )
+        names = ", ".join(t.title for t in ready) if ready else ""
+        if self._broadcast_hint is not None:
+            if not self._broadcast_tools:
+                self._broadcast_hint.set_text(
+                    "No AI helpers are installed on this computer yet."
+                )
+            elif probing:
+                self._broadcast_hint.set_text(
+                    "Checking which AIs still have a plan…"
+                )
+            elif not ready:
+                self._broadcast_hint.set_text(
+                    "None are ready right now — open one below to sign in "
+                    "or top up, then try again."
+                )
+            else:
+                self._broadcast_hint.set_text(
+                    f"Will open at the same time: {names}. "
+                    "Each one gets your message and can keep chatting."
+                )
+        if self._broadcast_btn is not None:
+            self._broadcast_btn.set_sensitive(bool(ready) and not probing)
+            if probing:
+                self._broadcast_btn.set_label("Checking plans…")
+            elif ready:
+                n = len(ready)
+                self._broadcast_btn.set_label(
+                    "Send to all ready AIs"
+                    if n > 1
+                    else f"Send to {ready[0].title}"
+                )
+            else:
+                self._broadcast_btn.set_label("No AI ready yet")
+
+    def _on_broadcast_clicked(self) -> None:
+        project = self._broadcast_project
+        if project is None:
+            return
+        entry = self._broadcast_entry
+        prompt = (entry.get_text() if entry else "").strip()
+        if not prompt:
+            self._notify("Type what you want them to do first.", timeout=3)
+            if entry:
+                entry.grab_focus()
+            return
+        ready = work_tools.tools_ready_for_broadcast(
+            self._broadcast_tools, self._credit_statuses,
+        )
+        if not ready:
+            self._notify(
+                "No AI is ready yet. Open one below to sign in.",
+                timeout=4,
+            )
+            return
+        names = ", ".join(t.title for t in ready)
+        log.info(
+            "broadcast project=%s tools=%s prompt_len=%d",
+            project, [t.id for t in ready], len(prompt),
+        )
+        self._notify(f"Opening {names}…", timeout=4)
+        # Stagger slightly so window managers place them instead of stacking
+        # one invisible under another.
+        for i, tool in enumerate(ready):
+            GLib.timeout_add(
+                120 * i,
+                self._launch_broadcast_one,
+                tool,
+                project,
+                prompt,
+            )
+        GLib.timeout_add(250 + 120 * len(ready), self._yield_to_launched_app)
+
+    def _launch_broadcast_one(
+        self, tool: WorkTool, project: Path, prompt: str,
+    ) -> bool:
+        self._launch_tool(tool, project, prompt=prompt)
+        return False
 
     def _begin_git_lookup(self, subject: str, generation: int) -> None:
         def work() -> None:
@@ -693,6 +880,7 @@ class SearchWindow(Adw.ApplicationWindow):
         rows: list[Gtk.Widget] = []
         self._tool_rows = {}
         self._credit_labels = {}
+        self._credit_statuses = {}
         where = str(path).replace(str(Path.home()), "~")
         self.results.append(self._notice_row(
             f"“{repo.name}” is ready on this computer ({where}). "
@@ -806,6 +994,7 @@ class SearchWindow(Adw.ApplicationWindow):
     ) -> bool:
         if generation != self._credit_generation:
             return False  # a newer goal already replaced the list
+        self._credit_statuses = dict(statuses)
         for tool_id, status in statuses.items():
             row = self._tool_rows.get(tool_id)
             if row is None:
@@ -819,6 +1008,7 @@ class SearchWindow(Adw.ApplicationWindow):
                 row.add_css_class("dim-label")
             else:
                 row.remove_css_class("dim-label")
+        self._refresh_broadcast_ui()
         return False
 
     # Terminal AI tools that die without a TTY. Never bare-spawn these.
@@ -835,39 +1025,58 @@ class SearchWindow(Adw.ApplicationWindow):
         except Exception:  # noqa: BLE001
             pass
 
-    def _launch_tool(self, tool: WorkTool, project: Path) -> None:
+    def _launch_tool(
+        self,
+        tool: WorkTool,
+        project: Path,
+        prompt: str | None = None,
+    ) -> None:
         # Record before spawn so a crashy tool still counts as a choice.
         work_tools.record_use(tool.id)
         path = str(project)
-        self._notify(f"Opening {tool.title}…")
+        prompt = (prompt or "").strip() or None
+        # Broadcast already toasts a combined message; single-clicks still say.
+        if prompt is None:
+            self._notify(f"Opening {tool.title}…")
 
         # Non-technical first: never drop people into a raw Terminal.
-        # 1) Claude → dedicated app window.
-        # 2) Other TTY AI → teddyos-agent (app chrome + plain-language hint).
+        # 1) Claude without a prompt → dedicated app window.
+        # 2) TTY AI (and Claude *with* a prompt) → teddyos-agent, which can
+        #    inject the starting message as CLI args.
         # 3) gnome-terminal only as a last resort if the agent binary is gone.
         # 4) Non-TTY tools (Files, VS Code, …) use their normal argv.
         # Never bare-spawn gemini/codex/grok — no TTY, dies, looks dead.
+        prompt_args = work_tools.prompt_argv(tool.id, prompt or "")
         ok = False
-        if tool.id == "claude" and shutil.which("teddyos-claude"):
+        if (
+            tool.id == "claude"
+            and not prompt_args
+            and shutil.which("teddyos-claude")
+        ):
             ok = self._spawn(["teddyos-claude", path], cwd=path)
         if not ok and tool.id in self._TTY_TOOLS:
             agent = shutil.which("teddyos-agent")
             if agent:
-                ok = self._spawn([agent, tool.id, path], cwd=path)
+                argv = [agent, tool.id, path, *prompt_args]
+                ok = self._spawn(argv, cwd=path)
         if not ok and tool.id in self._TTY_TOOLS:
-            ok = self._launch_via_terminal(tool, path)
+            ok = self._launch_via_terminal(tool, path, prompt_args=prompt_args)
         if not ok:
             argv = self._launch_argv(tool, path)
+            if prompt_args:
+                argv = argv + prompt_args
             ok = self._spawn(argv, cwd=path)
         if ok:
-            # Get out of the way so the helper isn’t hidden behind Search.
-            GLib.timeout_add(250, self._yield_to_launched_app)
+            # Single open: get out of the way. Broadcast schedules this once.
+            if prompt is None:
+                GLib.timeout_add(250, self._yield_to_launched_app)
             return
         log.error("all launch paths failed tool=%s project=%s", tool.id, path)
-        self._notify(
-            f"Couldn’t open {tool.title}. Try again in a moment.",
-            timeout=5,
-        )
+        if prompt is None:
+            self._notify(
+                f"Couldn’t open {tool.title}. Try again in a moment.",
+                timeout=5,
+            )
         try:
             Gtk.UriLauncher.new(
                 Gio.File.new_for_path(path).get_uri()
@@ -962,13 +1171,13 @@ class SearchWindow(Adw.ApplicationWindow):
                 argv.append(part)
         return argv
 
-    def _launch_via_terminal(self, tool: WorkTool, path: str) -> bool:
-        """Open a real Terminal window running the tool in the project folder.
-
-        Gemini and Codex need a TTY. gnome-terminal always draws a window on
-        this desktop; a custom VTE host has failed silently more than once
-        (window on a wrong session, or behind Search with no feedback).
-        """
+    def _launch_via_terminal(
+        self,
+        tool: WorkTool,
+        path: str,
+        prompt_args: list[str] | None = None,
+    ) -> bool:
+        """Last-resort Terminal host if teddyos-agent is missing."""
         binary = {
             "gemini": "gemini",
             "codex": "codex",
@@ -983,7 +1192,6 @@ class SearchWindow(Adw.ApplicationWindow):
             return False
         resolved = shutil.which(binary)
         if not resolved:
-            # npm tools live here even when GUI PATH is thin.
             for prefix in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
                 candidate = Path(prefix) / binary
                 if candidate.is_file() and os.access(candidate, os.X_OK):
@@ -998,22 +1206,23 @@ class SearchWindow(Adw.ApplicationWindow):
         if not term:
             log.error("terminal launch: no gnome-terminal/kgx")
             return False
+        extra = list(prompt_args or [])
         if "gnome-terminal" in term:
-            # -- is required so gemini/codex flags are not eaten by the terminal.
             argv = [
                 term,
                 f"--title={title}",
                 f"--working-directory={path}",
                 "--",
                 resolved,
+                *extra,
             ]
         else:
-            # kgx: run via a short shell so cwd sticks.
+            cmd = " ".join(shlex.quote(p) for p in [resolved, *extra])
             argv = [
                 term,
                 f"--title={title}",
                 "-e",
-                f"bash -lc {shlex.quote(f'cd {path} && exec {resolved}')}",
+                f"bash -lc {shlex.quote(f'cd {path} && exec {cmd}')}",
             ]
         return self._spawn(argv, cwd=path)
 
