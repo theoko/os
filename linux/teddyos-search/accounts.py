@@ -396,20 +396,35 @@ def _status_perplexity() -> AccountStatus:
 
     if not names:
         return AccountStatus(ok=False, label="Needs sign-in")
-    # Real account sessions — not analytics/cf cookies alone.
-    auth_markers = (
-        "session", "auth", "token", "jwt", "login", "user",
-        "next-auth", "sb-", "stytch", "clerk", "supabase",
-        "__session", "cf_clearance",  # alone not enough; need combo
-    )
+
+    # Anonymous / CDN noise from merely opening the site (not a login).
+    def _anonymous(n: str) -> bool:
+        if n in {
+            "__frs", "__cf_bm", "__cflb", "cf_clearance", "cf_appsession",
+            "g_state", "singular_device_id",
+            "pplx.edge-sid", "pplx.edge-vid", "pplx.visitor-id",
+            "pplx.session-id", "pplx.metadata",
+        }:
+            return True
+        if n.startswith(("_dd", "__cf", "cf_", "pplx.edge", "pplx.visitor")):
+            return True
+        # Generic "session-id" style analytics, not account auth.
+        if n in {"pplx.session-id", "sessionid", "session_id"}:
+            return True
+        return False
+
+    extras = {n for n in names if not _anonymous(n)}
+    # Account-ish names only among non-anonymous cookies.
     strong = {
-        n for n in names
-        if any(k in n for k in (
-            "session", "auth", "token", "jwt", "login", "user",
-            "next-auth", "stytch", "clerk", "supabase",
-        ))
+        n for n in extras
+        if any(
+            k in n
+            for k in (
+                "auth", "token", "jwt", "login", "user", "account",
+                "next-auth", "stytch", "clerk", "supabase", "oauth",
+            )
+        )
     }
-    # Exclude pure bot/cdn noise unless paired with a strong marker.
     if strong:
         return AccountStatus(ok=True, label="Connected")
     return AccountStatus(ok=False, label="Needs sign-in")
