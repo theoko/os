@@ -108,7 +108,7 @@ which stand.*
 title: Moving to a Linux substrate
 version: v01
 date: 2026-07-25
-status: proposal — not started
+status: historical excerpt — see tip note above; host/bridge assumptions obsolete
 ---
 
 # Moving to a Linux substrate
