@@ -18,6 +18,10 @@ terminal with one job, no shell prompt, no tabs and no profile menus — the
 distinction that matters is that nobody has to know what a terminal is to use
 it. Close the window and it is gone; there is no shell left behind to confuse
 anyone.
+
+Usage:
+  teddyos-claude                  # starts in the home folder
+  teddyos-claude /path/to/project # starts Claude in that project
 """
 
 from __future__ import annotations
@@ -37,13 +41,38 @@ APP_ID = "com.teddyos.Claude"
 CLAUDE = "claude"
 
 
+def _cwd_from_argv(argv: list[str]) -> str:
+    """Optional project directory from the command line.
+
+    Search hands us a folder when someone says "work on …". Without this,
+    Claude always started in ~ and the person had to cd by hand — the whole
+    point of picking the project in Search was lost.
+    """
+    home = os.path.expanduser("~")
+    for arg in argv[1:]:
+        if arg.startswith("-"):
+            continue
+        path = os.path.expanduser(arg)
+        if os.path.isdir(path):
+            return os.path.abspath(path)
+    return home
+
+
 class ClaudeWindow(Adw.ApplicationWindow):
-    def __init__(self, app: Adw.Application):
-        super().__init__(application=app, title="Claude")
+    def __init__(self, app: Adw.Application, cwd: str | None = None):
+        self._cwd = cwd or os.path.expanduser("~")
+        title = "Claude"
+        base = os.path.basename(self._cwd.rstrip("/")) or "Claude"
+        if self._cwd != os.path.expanduser("~"):
+            title = f"Claude — {base}"
+        super().__init__(application=app, title=title)
         self.set_default_size(900, 620)
 
         header = Adw.HeaderBar()
-        header.set_title_widget(Adw.WindowTitle(title="Claude"))
+        header.set_title_widget(Adw.WindowTitle(
+            title="Claude",
+            subtitle=self._cwd if self._cwd != os.path.expanduser("~") else "",
+        ))
 
         exe = shutil.which(CLAUDE)
         content = self._terminal(exe) if exe else self._missing()
@@ -87,13 +116,14 @@ class ClaudeWindow(Adw.ApplicationWindow):
 
         term.spawn_async(
             Vte.PtyFlags.DEFAULT,
-            os.path.expanduser("~"),
+            self._cwd,
             [exe],
             # TERM matters: Claude Code draws boxes and colour, and inherits
             # whatever the desktop session had — which is often nothing at all
             # when launched from an icon rather than a shell.
             [f"TERM=xterm-256color", f"HOME={os.path.expanduser('~')}",
-             f"PATH={os.environ.get('PATH', '/usr/local/bin:/usr/bin:/bin')}"],
+             f"PATH={os.environ.get('PATH', '/usr/local/bin:/usr/bin:/bin')}",
+             f"PWD={self._cwd}"],
             GLib.SpawnFlags.DEFAULT,
             None, None,
             -1, None, None, None)
@@ -104,11 +134,15 @@ class ClaudeWindow(Adw.ApplicationWindow):
 
 
 class ClaudeApp(Adw.Application):
-    def __init__(self):
+    def __init__(self, cwd: str):
         super().__init__(application_id=APP_ID)
+        self._cwd = cwd
 
     def do_activate(self):
-        (self.props.active_window or ClaudeWindow(self)).present()
+        win = self.props.active_window
+        if win is None:
+            win = ClaudeWindow(self, cwd=self._cwd)
+        win.present()
 
 
 if __name__ == "__main__":
@@ -124,4 +158,4 @@ if __name__ == "__main__":
     # because a machine with no GPU is one running the X11 session. Setting prgname
     # to the application id makes both worlds agree.
     GLib.set_prgname(APP_ID)
-    sys.exit(ClaudeApp().run(sys.argv))
+    sys.exit(ClaudeApp(_cwd_from_argv(sys.argv)).run([sys.argv[0]]))

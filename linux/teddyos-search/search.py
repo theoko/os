@@ -195,6 +195,95 @@ def focus_query(text: str) -> str:
     return focused or stripped
 
 
+def is_work_goal(text: str) -> bool:
+    """True when the query is a goal ("work on X"), not a keyword search.
+
+    The Search window uses this to offer AI tools instead of (only) document
+    hits — "i wanna work on iakovos-trading" should open a picker, not a
+    Wikipedia list.
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    return bool(_INTENT_PREFIX.match(stripped))
+
+
+def resolve_project_dirs(name: str, roots: list[Path] | None = None) -> list[Path]:
+    """Find local project folders matching a goal subject.
+
+    Looks under home and the granted workspace roots. Prefers an exact
+    directory name match (case-insensitive), then a unique prefix match,
+    then any depth-2 folder whose name contains the slug.
+    """
+    slug = (name or "").strip().strip("/").replace("\\", "/")
+    if not slug:
+        return []
+    # "iakovos/trading" → look for iakovos-trading and iakovos/trading
+    variants = {slug, slug.replace("/", "-"), slug.replace("-", "/")}
+    variants |= {v.lower() for v in list(variants)}
+
+    search_roots: list[Path] = []
+    home = Path.home()
+    search_roots.append(home)
+    for r in roots if roots is not None else caps.workspace_paths():
+        p = Path(r)
+        if p not in search_roots:
+            search_roots.append(p)
+
+    exact: list[Path] = []
+    fuzzy: list[Path] = []
+    seen: set[Path] = set()
+
+    def _add(bucket: list[Path], path: Path) -> None:
+        try:
+            resolved = path.resolve()
+        except OSError:
+            resolved = path
+        if not resolved.is_dir() or resolved in seen:
+            return
+        # Never offer home itself as "the project".
+        if resolved == home.resolve():
+            return
+        seen.add(resolved)
+        bucket.append(resolved)
+
+    for root in search_roots:
+        if not root.is_dir():
+            continue
+        # Direct children first — the common case (~/iakovos-trading).
+        try:
+            children = list(root.iterdir())
+        except OSError:
+            continue
+        for child in children:
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            n = child.name
+            nl = n.lower()
+            if nl in variants or n in variants:
+                _add(exact, child)
+            elif any(v in nl for v in variants if len(v) >= 3):
+                _add(fuzzy, child)
+        # One level deeper: ~/Desktop/iakovos-trading, ~/projects/foo
+        for child in children:
+            if not child.is_dir() or child.name.startswith("."):
+                continue
+            try:
+                grand = list(child.iterdir())
+            except OSError:
+                continue
+            for g in grand:
+                if not g.is_dir() or g.name.startswith("."):
+                    continue
+                nl = g.name.lower()
+                if nl in variants or g.name in variants:
+                    _add(exact, g)
+                elif any(v in nl for v in variants if len(v) >= 3):
+                    _add(fuzzy, g)
+
+    return exact or fuzzy
+
+
 def query_terms(text: str) -> list[str]:
     """Tokens worth ranking on. Falls back to the raw tokens when a query is
     nothing but stopwords, because returning nothing for "how do i" is worse

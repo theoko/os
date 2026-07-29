@@ -24,10 +24,12 @@ Three things this does that the CLI cannot:
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import subprocess
 import sys
 import threading
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, "/usr/lib/teddyos")
@@ -82,6 +84,75 @@ SOURCE_LABEL = {
     "your files": "your files",
     "built-in": "built-in help",
 }
+
+
+@dataclass(frozen=True)
+class WorkTool:
+    """One way to open a project from a 'work on …' goal."""
+    id: str
+    title: str
+    subtitle: str
+    icon: str
+    # argv; "{path}" is replaced with the project directory.
+    argv: tuple[str, ...]
+
+
+def _available_work_tools() -> list[WorkTool]:
+    """AI / editor tools installed on this machine, Claude first.
+
+    Only tools that actually exist are offered. An empty row for Cursor on a
+    machine that never shipped Cursor is worse than a short list.
+    """
+    tools: list[WorkTool] = []
+    if shutil.which("teddyos-claude") or shutil.which("claude"):
+        # Prefer the windowed launcher so the person never sees a raw terminal.
+        exe = shutil.which("teddyos-claude") or "claude"
+        tools.append(WorkTool(
+            id="claude",
+            title="Claude",
+            subtitle="Open this project in Claude Code",
+            icon="teddyos-claude",
+            argv=(exe, "{path}"),
+        ))
+    if shutil.which("cursor"):
+        tools.append(WorkTool(
+            id="cursor",
+            title="Cursor",
+            subtitle="Open this project in Cursor",
+            icon="text-editor",
+            argv=("cursor", "{path}"),
+        ))
+    if shutil.which("code"):
+        tools.append(WorkTool(
+            id="code",
+            title="VS Code",
+            subtitle="Open this project in VS Code",
+            icon="text-editor",
+            argv=("code", "{path}"),
+        ))
+    # Always offer Files so "work on X" can still open the folder when no AI
+    # tool is installed.
+    file_mgr = (
+        shutil.which("nautilus")
+        or shutil.which("xdg-open")
+        or "xdg-open"
+    )
+    tools.append(WorkTool(
+        id="files",
+        title="Files",
+        subtitle="Open the project folder",
+        icon="folder",
+        argv=(file_mgr, "{path}"),
+    ))
+    if shutil.which("gnome-terminal"):
+        tools.append(WorkTool(
+            id="terminal",
+            title="Terminal",
+            subtitle="Open a terminal in this project",
+            icon="utilities-terminal-symbolic",
+            argv=("gnome-terminal", f"--working-directory={{path}}"),
+        ))
+    return tools
 
 
 _worker: subprocess.Popen | None = None
@@ -373,7 +444,14 @@ class SearchWindow(Adw.ApplicationWindow):
             self.results.remove(child)
             child = self.results.get_first_child()
 
-        if not outcome.results:
+        # "i wanna work on iakovos-trading" is a goal, not a document lookup.
+        # Offer AI tools (and Files) first; document hits stay below as backup.
+        work = self._work_goal_block(query)
+        if work:
+            for row in work:
+                self.results.append(row)
+
+        if not outcome.results and not work:
             # Not an empty screen. "Nothing found" with no next step is where
             # someone gives up; the same screen with one obvious action is not.
             #
@@ -386,13 +464,93 @@ class SearchWindow(Adw.ApplicationWindow):
             self._refresh_banner()
             return False
 
-        for res in outcome.results:
-            self.results.append(self._row(res))
+        if outcome.results:
+            if work:
+                # A quiet divider so "open with Claude" is not mistaken for a
+                # search hit about Claude.
+                self.results.append(self._section_label("Also found"))
+            for res in outcome.results:
+                self.results.append(self._row(res))
         self._append_notices(outcome)
-        self.results.append(self._web_row(query))
+        if not work:
+            self.results.append(self._web_row(query))
         self.stack.set_visible_child_name("results")
         self._refresh_banner()
         return False
+
+    def _section_label(self, text: str) -> Gtk.Widget:
+        row = Adw.ActionRow(title=GLib.markup_escape_text(text))
+        row.add_css_class("dim-label")
+        row.set_activatable(False)
+        return row
+
+    def _work_goal_block(self, query: str) -> list[Gtk.Widget]:
+        """Rows that open a project with an AI tool, or explain why not.
+
+        Returns an empty list when the query is ordinary search — the rest of
+        _show then behaves as before.
+        """
+        if not engine.is_work_goal(query):
+            return []
+        subject = engine.focus_query(query)
+        if not subject:
+            return []
+
+        projects = engine.resolve_project_dirs(subject)
+        tools = _available_work_tools()
+        rows: list[Gtk.Widget] = []
+
+        if not projects:
+            rows.append(self._notice_row(
+                f"No folder matching “{subject}” on this computer. "
+                "Copy the project into your home folder, or search without "
+                "“work on” to look it up.",
+                "dialog-information-symbolic",
+            ))
+            return rows
+
+        # One project is the usual case. Several matches: one tool group per
+        # folder so the person can pick which tree.
+        for project in projects[:5]:
+            label = project.name
+            parent = str(project.parent).replace(str(Path.home()), "~")
+            rows.append(self._section_label(f"Work on {label}  ·  {parent}/{label}"))
+            for tool in tools:
+                rows.append(self._tool_row(tool, project))
+        return rows
+
+    def _tool_row(self, tool: WorkTool, project: Path) -> Gtk.Widget:
+        row = Adw.ActionRow(title=GLib.markup_escape_text(tool.title))
+        row.set_subtitle(GLib.markup_escape_text(tool.subtitle))
+        row.set_subtitle_lines(2)
+        # Prefer the branded icon when the theme has it; fall back quietly.
+        icon = tool.icon
+        row.add_prefix(Gtk.Image.new_from_icon_name(icon))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect(
+            "activated",
+            lambda *_a, t=tool, p=project: self._launch_tool(t, p),
+        )
+        return row
+
+    def _launch_tool(self, tool: WorkTool, project: Path) -> None:
+        path = str(project)
+        argv = [a.replace("{path}", path) for a in tool.argv]
+        try:
+            launcher = Gio.SubprocessLauncher.new(Gio.SubprocessFlags.NONE)
+            # Working directory matters when the tool is a bare `claude` that
+            # does not take a path argument — it still starts inside the project.
+            launcher.set_cwd(path)
+            launcher.spawnv(argv)
+        except GLib.Error:
+            # Last resort: open the folder so the click is never a no-op.
+            try:
+                Gtk.UriLauncher.new(
+                    Gio.File.new_for_path(path).get_uri()
+                ).launch(self, None, None, None)
+            except GLib.Error:
+                pass
 
     def _append_notices(self, outcome) -> None:
         """Show what the search knows about its own limits.

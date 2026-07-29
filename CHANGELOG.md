@@ -6,6 +6,13 @@ version: 0.13.0
 
 ## 0.13.0 — 2026-07-28
 
+### “Work on …” opens an AI tool picker
+
+Typing a goal into Search (for example `i wanna work on iakovos-trading`) no
+longer only ranks web hits. The window finds the project folder on the machine
+and offers Claude (and Files / Terminal when present). `teddyos-claude` accepts
+the project path so Claude starts in that directory.
+
 ### Live ISO records the host commit
 
 `linux/iso/build-iso.sh` runs on a guest that receives the tree without
