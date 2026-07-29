@@ -1,11 +1,12 @@
 //! Guest-side capability grants.
 //!
-//! Connectors on the host bridge are tools behind caps — the setup assistant
-//! chooses the grant set, and MCP calls must check here before talking COM2.
-//! No ambient root: a missing grant is a hard deny, not a soft skip-with-try.
+//! Cap-gated guest CALLs (Inbox/Knowledge) and scope flags (`files=1` /
+//! `audio=1`) check here before talking COM2. No ambient root for those
+//! paths: a missing grant is a hard deny, not a soft skip-with-try.
 //!
-//! `skills.save` stays host-socket-only (nc / bridge LINE…END); there is no
-//! guest Cap for it — toggling one never gated a CALL.
+//! Not every COM2 tool is Cap-gated: `skills.list` is free; `doc.read` only
+//! forwards scopes (no Knowledge re-check). `skills.save` stays host-socket-only
+//! (nc / bridge LINE…END) — no guest Cap. `email.send` is a host policy stub.
 
 /// Named capabilities: UI rows + COM2 scope / forget wiring.
 ///

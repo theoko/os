@@ -30,9 +30,10 @@ not in the kernel. Guest holds caps and calls tools over COM2 until a guest netw
 1. **QEMU first for CI.** `make test` = host unit tests + QEMU serial smoke + MCP bridge smoke.
 2. **No secrets in the tree.** Gmail OAuth lives in the `gog` keyring. Saved skills live in
    `~/Library/Application Support/os/skills/` — never bake tokens into the ISO.
-3. **Capability model.** Connectors are tools behind caps — no ambient root.
-   `email.send` always returns `ERR … disabled_until_cap_confirm` (policy stub;
-   no guest Cap / confirm path yet — never CALL it).
+3. **Capability model.** Cap-gated guest CALLs and `files=1` / `audio=1` scopes
+   need grants — no ambient root. Ungated tools (`skills.list`) and policy
+   stubs (`email.send` → always `ERR … disabled_until_cap_confirm`; no Cap /
+   confirm path — never CALL it) are not missing grants to mint.
 4. **Inference and HTTP stay out of the kernel.** Bridge + future userspace only. Skills are markdown playbooks, not privileged code.
 5. **Tests gate commits.** Run `make test` before committing.
 

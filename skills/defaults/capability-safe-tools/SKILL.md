@@ -2,8 +2,9 @@
 name: capability-safe-tools
 blurb: Least-privilege caps
 description: >-
-  Always invoke tools through explicit capabilities. Use whenever planning
-  actions that touch email, files, search, or the host bridge.
+  Cap discipline for Cap-gated guest CALLs (Inbox/Knowledge, files=1 /
+  audio=1). Use when planning actions that touch email, files, search, or the
+  host bridge — not for ungated tools or policy stubs.
 ---
 
 # Capability-safe tools
