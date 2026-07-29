@@ -28,19 +28,32 @@ North star: **capability-based kernel**, **fully standalone**.
 No host bridge, no external MCP connectors. Everything the freestanding OS does
 runs locally.
 
+**Audience: non-technical people first.** If a message needs a command, a flag,
+or a wire name to understand, it is wrong for the default UI. Advanced mode and
+logs may be precise; Guided mode and every empty state must be human.
+
 ## NON-NEGOTIABLES
 
-1. **QEMU for smoke tests.** `make test` = kernel unit tests + QEMU serial smoke.
-2. **Standalone only.** All host-connector queries return Offline. No COM2 bridge.
-3. **Capability model.** Agents operate under kernel caps. Email, search, files
-   stay denied until a cap is granted.
-4. **No privileged inference.** All computation runs in userspace (future). Skills are markdown.
-5. **Tests gate commits.** Run `make test` before committing.
-6. **The corpus ships inside the ISO.** Search is compiled in, so `search/corpus.json`
+1. **Non-technical first.** Plain language on every user-facing surface. No
+   `gh` / SSH / package jargon on screen. One clear action beats a howto.
+2. **QEMU for smoke tests.** `make test` = kernel unit tests + QEMU serial smoke.
+3. **Standalone only.** All host-connector queries return Offline. No COM2 bridge.
+4. **Capability model.** Agents operate under kernel caps. Email, search, files,
+   diagnostics stay denied until a cap is granted.
+5. **No privileged inference.** All computation runs in userspace (future). Skills are markdown.
+6. **Tests gate commits.** Run `make test` before committing.
+7. **The corpus ships inside the ISO.** Search is compiled in, so `search/corpus.json`
    at build time *is* what the image knows — titles plus 320 characters each. The
    default bake is personal (the workspace index), and `make publish-os` refuses
    to upload it. Publish from `./scripts/bake-corpus.py --seed-only`, then re-bake.
-7. **No secrets in the tree.** Never bake tokens into the ISO.
+8. **No secrets in the tree.** Never bake tokens into the ISO.
+
+## Copy checklist (before shipping UI)
+
+- Would a parent / non-developer friend understand this in one read?
+- Is the next step a button, not a command to memorize?
+- Are failures explained as consequences, not errno / exit codes?
+- Does Advanced (if any) hold the technical names — not the default path?
 
 ## Common commands
 

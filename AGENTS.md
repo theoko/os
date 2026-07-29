@@ -29,19 +29,27 @@ North star: **capability-based kernel**, **fully standalone**.
 No host bridge, no external MCP connectors. Everything the freestanding OS does
 runs locally from the baked corpus and offline stubs.
 
+**Audience: non-technical people first.** TeddyOS is not a distro for people who
+already live in terminals. Every screen, error, and empty state must make sense
+to someone who has never heard of git, SSH, packages, or flags. Engineers may
+still get precise detail in logs and Advanced mode — never as the only path.
+
 ## NON-NEGOTIABLES
 
-1. **QEMU for smoke tests.** `make test` = kernel unit tests + QEMU serial smoke.
-2. **Standalone only.** All bridge queries return Offline. No COM2 host connector.
-3. **Capability model.** Agents operate under kernel caps. Email, search, files
-   stay denied until a cap is granted (and many still need a future userspace
-   network path to do anything useful).
-4. **No privileged inference.** Skills are markdown playbooks, not privileged code.
-5. **Tests gate commits.** Run `make test` before committing.
-6. **The corpus ships inside the ISO.** `search/corpus.json` at build time *is*
+1. **Non-technical first.** User-visible copy is plain language. No `gh`, SSH,
+   wire names, or commands unless Advanced mode or a log file. Prefer one clear
+   button over "run this in a terminal". Jargon in logs is fine; jargon on screen
+   is a bug.
+2. **QEMU for smoke tests.** `make test` = kernel unit tests + QEMU serial smoke.
+3. **Standalone only.** All bridge queries return Offline. No COM2 host connector.
+4. **Capability model.** Agents operate under kernel caps. Email, search, files,
+   diagnostics stay denied until a cap is granted.
+5. **No privileged inference.** Skills are markdown playbooks, not privileged code.
+6. **Tests gate commits.** Run `make test` before committing.
+7. **The corpus ships inside the ISO.** `search/corpus.json` at build time *is*
    what the image knows. The default bake is personal; `make publish-os` refuses
    to upload it. Publish from `./scripts/bake-corpus.py --seed-only`, then re-bake.
-7. **No secrets in the tree.** Never bake tokens into the ISO.
+8. **No secrets in the tree.** Never bake tokens into the ISO.
 
 ## Common commands
 
