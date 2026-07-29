@@ -9,8 +9,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
+import sqlite3
 import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -359,23 +362,19 @@ def _status_github() -> AccountStatus:
 def _status_perplexity() -> AccountStatus:
     """Connected only if the Chromium profile has a real Perplexity session.
 
-    Opening the app once creates a profile directory — that is not sign-in.
+    Opening the app once creates a profile and tracking cookies — that is
+    not sign-in. Require an auth-ish cookie name, not mere presence of cookies.
     """
     cookies = (
         Path.home() / ".config" / "teddyos-perplexity" / "Default" / "Cookies"
     )
     if not cookies.is_file():
         return AccountStatus(ok=False, label="Needs sign-in")
-    # Chrome locks the DB; copy then query.
-    import shutil
-    import sqlite3
-    import tempfile
 
     try:
         with tempfile.TemporaryDirectory() as tmp:
             copy = Path(tmp) / "Cookies"
             shutil.copy2(cookies, copy)
-            # WAL sidecars if present
             for side in ("Cookies-journal", "Cookies-wal", "Cookies-shm"):
                 src = cookies.parent / side
                 if src.is_file():
@@ -386,25 +385,32 @@ def _status_perplexity() -> AccountStatus:
             con = sqlite3.connect(str(copy))
             try:
                 cur = con.execute(
-                    "SELECT name, host_key FROM cookies "
-                    "WHERE host_key LIKE '%perplexity%' LIMIT 50"
+                    "SELECT name FROM cookies "
+                    "WHERE host_key LIKE '%perplexity%' LIMIT 80"
                 )
-                rows = cur.fetchall()
+                names = {str(n[0]).lower() for n in cur.fetchall()}
             finally:
                 con.close()
     except (OSError, sqlite3.Error):
-        # Can't read cookies — don't claim connected.
         return AccountStatus(ok=False, label="Needs sign-in")
 
-    if not rows:
+    if not names:
         return AccountStatus(ok=False, label="Needs sign-in")
-    # Session-ish cookie names used by many auth stacks.
-    names = {str(n).lower() for n, _h in rows}
-    sessionish = any(
-        any(k in n for k in ("session", "auth", "token", "sid", "jwt", "login"))
-        for n in names
+    # Real account sessions — not analytics/cf cookies alone.
+    auth_markers = (
+        "session", "auth", "token", "jwt", "login", "user",
+        "next-auth", "sb-", "stytch", "clerk", "supabase",
+        "__session", "cf_clearance",  # alone not enough; need combo
     )
-    if sessionish or len(rows) >= 3:
+    strong = {
+        n for n in names
+        if any(k in n for k in (
+            "session", "auth", "token", "jwt", "login", "user",
+            "next-auth", "stytch", "clerk", "supabase",
+        ))
+    }
+    # Exclude pure bot/cdn noise unless paired with a strong marker.
+    if strong:
         return AccountStatus(ok=True, label="Connected")
     return AccountStatus(ok=False, label="Needs sign-in")
 
