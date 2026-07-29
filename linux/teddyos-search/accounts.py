@@ -95,8 +95,8 @@ _ACCOUNTS: list[Account] = [
         binaries=("copilot",),
         connect_argv=("copilot", "login"),
         connect_hint=(
-            "You’ll get a code and a browser link for GitHub Copilot. "
-            "Open the link, enter the code, then come back here."
+            "We’ll open GitHub Copilot for you. If a code appears, "
+            "we copy it and fill the page in — just approve in the browser."
         ),
     ),
     Account(
@@ -130,11 +130,17 @@ _ACCOUNTS: list[Account] = [
         blurb="Download your projects onto this computer",
         icon="user-info-symbolic",
         binaries=("gh",),
-        # Web flow — no device codes to copy by hand when possible.
-        connect_argv=("gh", "auth", "login", "-p", "https", "-w"),
+        # Web-oriented flags. If GitHub still issues a one-time code, Connect
+        # opens the page with the code already filled in (no typing).
+        connect_argv=(
+            "gh", "auth", "login",
+            "--hostname", "github.com",
+            "--git-protocol", "https",
+            "--web",
+        ),
         connect_hint=(
-            "A browser window will open for GitHub. "
-            "Sign in and approve teddyOS, then come back here."
+            "We’ll open GitHub for you. Sign in and click Approve — "
+            "you shouldn’t need to type any codes."
         ),
     ),
 ]

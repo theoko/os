@@ -24,7 +24,7 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, GLib, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
 sys.path.insert(0, "/usr/lib/teddyos")
 try:
@@ -40,9 +40,18 @@ APP_ID = "com.teddyos.Accounts"
 
 _URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.I)
 _CODE_RE = re.compile(
-    r"\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b|\benter code[:\s]+([A-Z0-9-]{6,})\b",
+    r"\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b"
+    r"|\bone-time code[:\s]+([A-Z0-9-]{6,})\b"
+    r"|\benter code[:\s]+([A-Z0-9-]{6,})\b"
+    r"|\buser code[:\s]+([A-Z0-9-]{6,})\b",
     re.I,
 )
+
+# Vendor device pages where we can pre-fill the code in the URL.
+_DEVICE_URL_FOR_ACCOUNT = {
+    "github": "https://github.com/login/device",
+    "copilot": "https://github.com/login/device",
+}
 
 
 def animations_enabled() -> bool:
@@ -107,9 +116,11 @@ class SignInWindow(Adw.ApplicationWindow):
         self._proc: subprocess.Popen | None = None
         self._opened_urls: set[str] = set()
         self._last_url = ""
+        self._last_code = ""
         self._intro_over = False
         self._login_started = False
         self._anims: list[Adw.TimedAnimation] = []
+        self._device_opened = False
 
         # Soft look
         css = Gtk.CssProvider()
@@ -149,7 +160,7 @@ class SignInWindow(Adw.ApplicationWindow):
         self._code_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self._code_box.set_halign(Gtk.Align.CENTER)
         self._code_box.set_visible(False)
-        code_cap = Gtk.Label(label="If the page asks for a code, type this:")
+        code_cap = Gtk.Label(label="Your code (already copied — you usually don’t need it):")
         code_cap.add_css_class("dim-label")
         self._code_label = Gtk.Label(label="")
         self._code_label.add_css_class("teddyos-setup-code")
@@ -157,7 +168,7 @@ class SignInWindow(Adw.ApplicationWindow):
         self._code_box.append(code_cap)
         self._code_box.append(self._code_label)
 
-        self._link_btn = Gtk.Button(label="Open sign-in again")
+        self._link_btn = Gtk.Button(label="Open sign-in page again")
         self._link_btn.add_css_class("flat")
         self._link_btn.set_halign(Gtk.Align.CENTER)
         self._link_btn.set_visible(False)
@@ -362,17 +373,28 @@ class SignInWindow(Adw.ApplicationWindow):
             or shutil.which("chromium-browser")
             or ""
         )
+        # gh also honours GH_BROWSER for the web step.
+        env["GH_BROWSER"] = env["BROWSER"]
         try:
+            # Pseudo-TTY so tools that refuse "non-interactive" still run the
+            # browser flow instead of hanging on a prompt nobody can see.
             self._proc = subprocess.Popen(  # noqa: S603
                 argv,
                 cwd=os.path.expanduser("~"),
                 env=env,
-                stdin=subprocess.DEVNULL,
+                stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
                 text=True,
                 bufsize=1,
             )
+            # Nudge past "Press Enter to open …" style gates.
+            try:
+                if self._proc.stdin:
+                    self._proc.stdin.write("\n")
+                    self._proc.stdin.flush()
+            except OSError:
+                pass
         except OSError as exc:
             log.error("connect spawn failed: %s", exc)
             GLib.idle_add(
@@ -394,36 +416,104 @@ class SignInWindow(Adw.ApplicationWindow):
         GLib.idle_add(self._login_process_finished, code)
 
     def _handle_line(self, line: str) -> None:
-        for m in _URL_RE.finditer(line):
-            url = m.group(0).rstrip(").,;]")
-            if url not in self._opened_urls and "localhost" not in url:
+        code = None
+        for m in _CODE_RE.finditer(line):
+            code = next((g for g in m.groups() if g), None)
+            if code:
+                break
+        urls = [
+            m.group(0).rstrip(").,;]")
+            for m in _URL_RE.finditer(line)
+            if "localhost" not in m.group(0)
+        ]
+        if code:
+            GLib.idle_add(self._on_code, code, urls[0] if urls else "")
+        for url in urls:
+            if url not in self._opened_urls:
+                # Prefer opening once with code baked in (handled in _on_code).
+                if code and self._account.id in _DEVICE_URL_FOR_ACCOUNT:
+                    self._opened_urls.add(url)
+                    continue
                 self._opened_urls.add(url)
                 GLib.idle_add(self._on_url, url)
                 _open_signin_url(url)
-        for m in _CODE_RE.finditer(line):
-            code = m.group(1) or m.group(2)
-            if code:
-                GLib.idle_add(self._on_code, code)
+
+    def _copy_text(self, text: str) -> None:
+        try:
+            clip = self.get_clipboard()
+            clip.set(text)
+        except Exception:  # noqa: BLE001
+            try:
+                subprocess.run(
+                    ["wl-copy"],
+                    input=text,
+                    text=True,
+                    check=False,
+                    timeout=2,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+    def _device_url(self, code: str, base: str = "") -> str:
+        """URL that should not require typing the code by hand."""
+        known = _DEVICE_URL_FOR_ACCOUNT.get(self._account.id, "")
+        base = (base or known or "").rstrip("/")
+        if not base:
+            return ""
+        # GitHub accepts user_code on the device page.
+        if "github.com/login/device" in base and "user_code=" not in base:
+            return f"https://github.com/login/device?user_code={code}"
+        if "user_code=" in base:
+            return base
+        sep = "&" if "?" in base else "?"
+        return f"{base}{sep}user_code={code}"
 
     def _on_url(self, url: str) -> bool:
         self._last_url = url
         self._link_btn.set_visible(True)
+        if self._last_code and not self._device_opened:
+            # Upgrade to pre-filled device URL when code arrived first.
+            filled = self._device_url(self._last_code, url)
+            if filled:
+                self._last_url = filled
+                _open_signin_url(filled)
+                self._device_opened = True
         self._set_status(
             "Sign in is open",
-            f"Finish signing in to {self._account.title} in the window that "
-            "just opened, then tap I’m done.",
+            f"Finish in the window we opened for {self._account.title}, "
+            "then tap I’m done. You shouldn’t need to type anything.",
             spinning=True,
         )
         return False
 
-    def _on_code(self, code: str) -> bool:
+    def _on_code(self, code: str, url_hint: str = "") -> bool:
+        self._last_code = code
         self._code_box.set_visible(True)
         self._code_label.set_text(code)
-        self._set_status(
-            "Almost there",
-            "If the sign-in page asks for a code, use the one below.",
-            spinning=True,
-        )
+        self._copy_text(code)
+
+        filled = self._device_url(code, url_hint or self._last_url)
+        if filled and not self._device_opened:
+            self._last_url = filled
+            self._opened_urls.add(filled)
+            _open_signin_url(filled)
+            self._device_opened = True
+            self._link_btn.set_visible(True)
+            self._set_status(
+                "Almost done — just approve",
+                f"We opened {self._account.title} sign-in and filled in your "
+                "code. In the browser, sign in if needed and click Approve. "
+                "Then come back and tap I’m done.",
+                spinning=True,
+            )
+        else:
+            self._link_btn.set_visible(True)
+            self._set_status(
+                "Code ready",
+                "We copied the code for you. Tap “Open sign-in page again” "
+                "if the browser didn’t open, then Approve.",
+                spinning=True,
+            )
         return False
 
     def _set_status(self, title: str, body: str, spinning: bool = True) -> bool:
@@ -457,12 +547,17 @@ class SignInWindow(Adw.ApplicationWindow):
         return False
 
     def _reopen_link(self, *_a) -> None:
+        if self._last_code:
+            filled = self._device_url(self._last_code, self._last_url)
+            if filled:
+                self._copy_text(self._last_code)
+                _open_signin_url(filled)
+                return
         if self._last_url:
             _open_signin_url(self._last_url)
-        else:
-            # Restart login if we never got a URL.
-            self._login_started = False
-            self._start_login_process()
+            return
+        self._login_started = False
+        self._start_login_process()
 
     def _finish(self, *_a) -> None:
         if self._proc and self._proc.poll() is None:
