@@ -463,6 +463,11 @@ class AskAllApp(Adw.Application):
             win = AskAllWindow(
                 self, self._project, self._prompt, self._tool_ids,
             )
+            # Dock / alt-tab: friendly answers icon, not a generic gear.
+            try:
+                win.set_icon_name("teddyos-answers")
+            except Exception:  # noqa: BLE001
+                pass
         win.present()
 
 
@@ -481,6 +486,11 @@ def main() -> int:
         print("no tools", file=sys.stderr)
         return 2
     GLib.set_prgname(APP_ID)
+    # Also advertise a human name so the shell doesn't only show the app id.
+    try:
+        GLib.set_application_name("Answers")
+    except Exception:  # noqa: BLE001
+        pass
     log.info("start project=%s tools=%s prompt_len=%d", project, tools, len(prompt))
     app = AskAllApp(project, prompt, tools)
     return app.run([sys.argv[0]])

@@ -553,6 +553,21 @@ Categories=Settings;Utility;
 StartupWMClass=com.teddyos.Accounts
 DESKTOP
 
+# Answers window (Get help / ask every ready AI). Without this, the shell
+# shows the raw app id "com.teddyos.AskAll" and a generic gear icon.
+install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-answers.desktop <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Answers
+Comment=Help from your AI helpers in one place
+Exec=teddyos-ask-all
+Icon=teddyos-answers
+Terminal=false
+NoDisplay=true
+Categories=Utility;
+StartupWMClass=com.teddyos.AskAll
+DESKTOP
+
 # Install teddyOS.
 #
 # The live image had no way to keep it. The boot menu offers an installer, but
@@ -681,12 +696,12 @@ fi
 # Installed into hicolor rather than into WhiteSur. hicolor is the fallback
 # every icon theme inherits, so these survive a theme change instead of
 # vanishing with it.
-# Search / helpers / Install share one visual language so the work-on picker
-# and the dock do not look like a grab-bag of theme glyphs.
+# Search / helpers / Answers / Install share one visual language so the
+# work-on picker and the dock do not look like a grab-bag of theme glyphs.
 for icon in \
   teddyos-search teddyos-claude teddyos-grok teddyos-gemini teddyos-codex \
   teddyos-copilot teddyos-antigravity teddyos-perplexity teddyos-cursor \
-  teddyos-install
+  teddyos-answers teddyos-install
 do
   install -Dm644 "$REPO/linux/icons/$icon.svg" \
     "config/includes.chroot/usr/share/icons/hicolor/scalable/apps/$icon.svg"

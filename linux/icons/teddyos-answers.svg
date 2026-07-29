@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <!-- Answers (teddyos-ask-all / com.teddyos.AskAll).
+
+       Same tile family as Search / helpers. Soft purple so it is not confused
+       with Search blue or Claude clay. Two speech bubbles = “several helpers
+       answering”, thick enough at 48px. Not a terminal glyph. -->
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#B08CFF"/>
+      <stop offset="100%" stop-color="#6B4AE0"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="55%" stop-color="#ffffff" stop-opacity="0.04"/>
+      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+  </defs>
+
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#tile)"/>
+  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#sheen)"/>
+
+  <!-- Back bubble (slightly smaller, offset) -->
+  <path fill="#ffffff" fill-opacity="0.45"
+        d="M300 300 h380 a90 90 0 0 1 90 90 v160 a90 90 0 0 1 -90 90 h-40 l-70 90
+           -10 -90 h-260 a90 90 0 0 1 -90 -90 v-160 a90 90 0 0 1 90 -90 z"/>
+
+  <!-- Front bubble -->
+  <path fill="#ffffff"
+        d="M250 260 h420 a100 100 0 0 1 100 100 v200 a100 100 0 0 1 -100 100 h-50
+           l-90 110 -12 -110 h-268 a100 100 0 0 1 -100 -100 v-200 a100 100 0 0 1 100 -100 z"/>
+
+  <!-- Three answer dots inside the front bubble -->
+  <circle cx="400" cy="420" r="36" fill="#6B4AE0"/>
+  <circle cx="512" cy="420" r="36" fill="#6B4AE0"/>
+  <circle cx="624" cy="420" r="36" fill="#6B4AE0"/>
+</svg>
