@@ -10,8 +10,10 @@ status: active
 ## Principle
 
 Connectors (**email**, calendar, drive, …) are **not** linked into the kernel.
-They are MCP-shaped tools behind **capabilities**. Until the guest has a network
-stack, the guest talks to a **host bridge** on the Mac over COM2 (QEMU TCP serial).
+They are MCP-shaped tools on the host bridge. Personal-data and write CALLs
+need Caps / wire bits; some catalog tools are ungated (`skills.list` /
+`skills.get`). Until the guest has a network stack, the guest talks to a
+**host bridge** on the Mac over COM2 (QEMU TCP serial).
 
 ```
 UI / agent  --(cap: email.search)-->  guest MCP client (COM2)
@@ -76,8 +78,10 @@ wire flags so a forged CALL cannot bypass consent:
 | `audio.transcribe` | `audio=1` | `audio.transcribe path=…`; Search path picker; `audio.forget` |
 | `skills.save` | `skills=1` | `skills.save`; revoke → `skills.forget` |
 | `portal.sync` | `portal=1` | `tsearch.sync`, `teddy.*`, `market.*`; `portal.forget` |
+| *(ungated)* | — | `skills.list`, `skills.get`, `portal.status`, `intent.resolve`; curated `os://` `doc.read` |
 
-Ambient root is forbidden: a missing grant is a hard deny.
+Personal-data / write missing grants are a hard deny (guest refuse and/or
+bridge wire-bit check). Catalog peeks are not Cap-gated.
 
 ## Host backends
 

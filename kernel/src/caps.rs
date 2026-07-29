@@ -1,8 +1,11 @@
 //! Guest-side capability grants.
 //!
-//! Connectors on the host bridge are tools behind caps — the setup assistant
-//! chooses the grant set, and MCP calls must check here before talking COM2.
-//! No ambient root: a missing grant is a hard deny, not a soft skip-with-try.
+//! Cap-gated guest CALLs and wire bits check here before talking COM2 for
+//! personal data / writes. No ambient root on those paths: a missing grant is
+//! a hard deny, not a soft skip-with-try.
+//!
+//! Catalog peeks (`skills.list` / `skills.get`) are ungated. Curated `os://`
+//! `doc.read` needs no personal-data bit.
 
 /// Named capabilities that mirror bridge tools / setup rows.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]

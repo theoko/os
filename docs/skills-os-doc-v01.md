@@ -29,9 +29,10 @@ Frontmatter: `name`, `description` (same convention as Cursor skills).
 | `CALL skills.save name=… skills=1` then `LINE`…`END` | full body write |
 | `CALL skills.forget` | Delete the user skills tree (defaults untouched) |
 
-`skills.save` requires `skills=1` (guest `Cap::SkillsSave`). Without it the
-bridge returns `ERR skills.save needs_skills_cap` and still drains any
-`LINE`…`END` body so the protocol stays in sync.
+`skills.list` / `skills.get` need no wire bit (catalog peeks). `skills.save`
+requires `skills=1` (guest `Cap::SkillsSave`). Without it the bridge returns
+`ERR skills.save needs_skills_cap` and still drains any `LINE`…`END` body so
+the protocol stays in sync.
 
 Revoking Save skills on the guest calls `skills.forget` and refreshes the
 Skills list — same consent loop as email / workspace / audio / portal.

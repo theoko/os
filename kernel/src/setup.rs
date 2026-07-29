@@ -302,7 +302,7 @@ impl Setup {
 
     fn draw_caps(&mut self, fb: &Surface, w: i32, h: i32) {
         let sub = if self.level.is_guided() {
-            "Every tool sits behind a grant. Turn on only what you need."
+            "Personal data and writes need a grant. Turn on only what you need."
         } else {
             "Consent switches. Defaults stay privacy-first."
         };
@@ -745,7 +745,7 @@ mod tests {
             "Offline - make bridge-run",
             "Connected on COM2",
             "Capabilities",
-            "Every tool sits behind a grant. Turn on only what you need.",
+            "Personal data and writes need a grant. Turn on only what you need.",
             "Consent switches. Defaults stay privacy-first.",
             "Default Skills",
             "Markdown playbooks the agent can load. Editable later.",

@@ -13,7 +13,7 @@
       "t": "MCP connectors",
       "u": "os://docs/mcp-connectors-os-doc-v01.md",
       "c": "docs",
-      "b": "Host bridge over COM2. Tools email.search email.send calendar.list skills.list search.query. Secrets stay in gog keyring. Exact protocol PING LIST CALL.",
+      "b": "Host bridge over COM2. Personal-data tools need Caps/wire bits; skills.list and skills.get are ungated catalog peeks. LIST returns the live tool roster. Secrets stay in gog keyring. Protocol PING LIST CALL.",
       "pr": 0.9
     },
     {
@@ -62,7 +62,7 @@
       "t": "capability-safe-tools skill",
       "u": "os://skills/defaults/capability-safe-tools/SKILL.md",
       "c": "skills",
-      "b": "Invoke tools through explicit capabilities. Least privilege. Stop on disabled_until_cap_confirm.",
+      "b": "Cap-gated personal data and writes need an explicit grant. Catalog peeks skills.list and skills.get are ungated. Confirm send for email.send.",
       "pr": 0.8
     },
     {
