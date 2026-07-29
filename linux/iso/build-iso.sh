@@ -373,9 +373,10 @@ calamares-settings-debian
 PKGS
 
 # The search engine, its capability model, and the first-boot screen.
-install -Dm644 "$REPO/linux/teddyos-search/caps.py"    config/includes.chroot/usr/lib/teddyos/caps.py
-install -Dm644 "$REPO/linux/teddyos-search/search.py"  config/includes.chroot/usr/lib/teddyos/search.py
-install -Dm644 "$REPO/linux/teddyos-search/sandbox.py" config/includes.chroot/usr/lib/teddyos/sandbox.py
+install -Dm644 "$REPO/linux/teddyos-search/caps.py"       config/includes.chroot/usr/lib/teddyos/caps.py
+install -Dm644 "$REPO/linux/teddyos-search/search.py"     config/includes.chroot/usr/lib/teddyos/search.py
+install -Dm644 "$REPO/linux/teddyos-search/sandbox.py"    config/includes.chroot/usr/lib/teddyos/sandbox.py
+install -Dm644 "$REPO/linux/teddyos-search/work_tools.py" config/includes.chroot/usr/lib/teddyos/work_tools.py
 install -Dm755 "$REPO/linux/teddyos-search/teddyos-search" config/includes.chroot/usr/bin/teddyos-search
 install -Dm755 "$REPO/linux/teddyos-setup/teddyos-setup"   config/includes.chroot/usr/bin/teddyos-setup
 install -Dm755 "$REPO/linux/teddyos-search/teddyos-search-app" config/includes.chroot/usr/bin/teddyos-search-app

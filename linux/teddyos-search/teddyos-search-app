@@ -29,7 +29,6 @@ import shutil
 import subprocess
 import sys
 import threading
-from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, "/usr/lib/teddyos")
@@ -43,6 +42,8 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 import caps  # noqa: E402
 import search as engine  # noqa: E402
+import work_tools  # noqa: E402
+from work_tools import CreditStatus, WorkTool  # noqa: E402
 
 APP_ID = "com.teddyos.Search"
 
@@ -84,75 +85,6 @@ SOURCE_LABEL = {
     "your files": "your files",
     "built-in": "built-in help",
 }
-
-
-@dataclass(frozen=True)
-class WorkTool:
-    """One way to open a project from a 'work on …' goal."""
-    id: str
-    title: str
-    subtitle: str
-    icon: str
-    # argv; "{path}" is replaced with the project directory.
-    argv: tuple[str, ...]
-
-
-def _available_work_tools() -> list[WorkTool]:
-    """AI / editor tools installed on this machine, Claude first.
-
-    Only tools that actually exist are offered. An empty row for Cursor on a
-    machine that never shipped Cursor is worse than a short list.
-    """
-    tools: list[WorkTool] = []
-    if shutil.which("teddyos-claude") or shutil.which("claude"):
-        # Prefer the windowed launcher so the person never sees a raw terminal.
-        exe = shutil.which("teddyos-claude") or "claude"
-        tools.append(WorkTool(
-            id="claude",
-            title="Claude",
-            subtitle="Open this project in Claude Code",
-            icon="teddyos-claude",
-            argv=(exe, "{path}"),
-        ))
-    if shutil.which("cursor"):
-        tools.append(WorkTool(
-            id="cursor",
-            title="Cursor",
-            subtitle="Open this project in Cursor",
-            icon="text-editor",
-            argv=("cursor", "{path}"),
-        ))
-    if shutil.which("code"):
-        tools.append(WorkTool(
-            id="code",
-            title="VS Code",
-            subtitle="Open this project in VS Code",
-            icon="text-editor",
-            argv=("code", "{path}"),
-        ))
-    # Always offer Files so "work on X" can still open the folder when no AI
-    # tool is installed.
-    file_mgr = (
-        shutil.which("nautilus")
-        or shutil.which("xdg-open")
-        or "xdg-open"
-    )
-    tools.append(WorkTool(
-        id="files",
-        title="Files",
-        subtitle="Open the project folder",
-        icon="folder",
-        argv=(file_mgr, "{path}"),
-    ))
-    if shutil.which("gnome-terminal"):
-        tools.append(WorkTool(
-            id="terminal",
-            title="Terminal",
-            subtitle="Open a terminal in this project",
-            icon="utilities-terminal-symbolic",
-            argv=("gnome-terminal", f"--working-directory={{path}}"),
-        ))
-    return tools
 
 
 _worker: subprocess.Popen | None = None
@@ -262,6 +194,10 @@ class SearchWindow(Adw.ApplicationWindow):
         self._generation = 0
         self._pending: str | None = None
         self._busy_timer: int | None = None
+        # tool_id -> ActionRow, so a credit probe can update the subtitle after
+        # the list is already on screen without rebuilding the whole stack.
+        self._tool_rows: dict[str, Adw.ActionRow] = {}
+        self._credit_generation = 0
 
         self.entry = Gtk.SearchEntry(
             placeholder_text="Ask anything",
@@ -497,8 +433,9 @@ class SearchWindow(Adw.ApplicationWindow):
             return []
 
         projects = engine.resolve_project_dirs(subject)
-        tools = _available_work_tools()
+        tools = work_tools.available_work_tools()
         rows: list[Gtk.Widget] = []
+        self._tool_rows = {}
 
         if not projects:
             rows.append(self._notice_row(
@@ -517,22 +454,67 @@ class SearchWindow(Adw.ApplicationWindow):
             rows.append(self._section_label(f"Work on {label}  ·  {parent}/{label}"))
             for tool in tools:
                 rows.append(self._tool_row(tool, project))
+
+        # Credits are checked after the list is shown. Claude's `auth`/`usage`
+        # probes can take a second or two, and blocking the UI thread for that
+        # makes the whole window feel frozen after every keystroke of a goal.
+        self._begin_credit_probes(tools)
         return rows
 
     def _tool_row(self, tool: WorkTool, project: Path) -> Gtk.Widget:
         row = Adw.ActionRow(title=GLib.markup_escape_text(tool.title))
-        row.set_subtitle(GLib.markup_escape_text(tool.subtitle))
+        # Placeholder until the credit probe returns. Metered tools show that
+        # we are checking; free tools can state the answer immediately.
+        if tool.metered:
+            row.set_subtitle("Checking credits…")
+        else:
+            row.set_subtitle(GLib.markup_escape_text(
+                f"{tool.subtitle} · No credits needed"))
         row.set_subtitle_lines(2)
-        # Prefer the branded icon when the theme has it; fall back quietly.
-        icon = tool.icon
-        row.add_prefix(Gtk.Image.new_from_icon_name(icon))
+        row.add_prefix(Gtk.Image.new_from_icon_name(tool.icon))
         row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
         row.set_activatable(True)
         row.connect(
             "activated",
             lambda *_a, t=tool, p=project: self._launch_tool(t, p),
         )
+        # Last project wins for multi-match UIs; that is fine — credit status
+        # is per tool, not per folder.
+        self._tool_rows[tool.id] = row
         return row
+
+    def _begin_credit_probes(self, tools: list[WorkTool]) -> None:
+        metered = [t for t in tools if t.metered]
+        if not metered:
+            return
+        self._credit_generation += 1
+        generation = self._credit_generation
+
+        def work() -> None:
+            statuses = {t.id: work_tools.probe_credits(t) for t in metered}
+            GLib.idle_add(self._apply_credit_statuses, generation, statuses)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_credit_statuses(
+        self,
+        generation: int,
+        statuses: dict[str, CreditStatus],
+    ) -> bool:
+        if generation != self._credit_generation:
+            return False  # a newer goal already replaced the list
+        for tool_id, status in statuses.items():
+            row = self._tool_rows.get(tool_id)
+            if row is None:
+                continue
+            row.set_subtitle(GLib.markup_escape_text(status.label))
+            # Dim and still clickable when empty: the person may want to open
+            # Claude to top up or re-login. A hard-disabled row looks broken.
+            if status.ok is False:
+                row.add_css_class("dim-label")
+            else:
+                row.remove_css_class("dim-label")
+        return False
 
     def _launch_tool(self, tool: WorkTool, project: Path) -> None:
         path = str(project)

@@ -64,7 +64,7 @@ sed -i.bak '\|resolve().parent.parent|d' "$STAGE/usr/bin/teddyos-welcome"
 rm -f "$STAGE"/usr/bin/*.bak
 
 # The libraries they import.
-for m in caps search sandbox; do
+for m in caps search sandbox work_tools; do
   put "linux/teddyos-search/$m.py" "usr/lib/teddyos/$m.py"
 done
 

@@ -13,6 +13,12 @@ longer only ranks web hits. The window finds the project folder on the machine
 and offers Claude (and Files / Terminal when present). `teddyos-claude` accepts
 the project path so Claude starts in that directory.
 
+Each tool row then checks remaining capacity: Claude via `claude auth status`
+and `claude usage` (so “Credit balance is too low” or “Not signed in” shows
+before you click). Files and Terminal report that they need no credits; Cursor
+admits when only “installed” is knowable.
+
+
 ### Live ISO records the host commit
 
 `linux/iso/build-iso.sh` runs on a guest that receives the tree without
