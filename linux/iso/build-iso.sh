@@ -540,15 +540,16 @@ Categories=Network;WebBrowser;
 StartupWMClass=teddyos-perplexity
 DESKTOP
 
-# Connect your helpers — the non-technical path to vendor sign-in.
+# Getting you ready — sign-in walkthrough (opened from Search when needed).
 install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-accounts.desktop <<'DESKTOP'
 [Desktop Entry]
 Type=Application
-Name=Connect helpers
-Comment=Sign in to Claude, Grok, Gemini, and more
+Name=Getting you ready
+Comment=One-time sign-in so teddyOS can help
 Exec=teddyos-accounts
 Icon=system-users-symbolic
 Terminal=false
+NoDisplay=true
 Categories=Settings;Utility;
 StartupWMClass=com.teddyos.Accounts
 DESKTOP

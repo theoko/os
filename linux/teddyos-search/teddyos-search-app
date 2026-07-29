@@ -571,26 +571,17 @@ class SearchWindow(Adw.ApplicationWindow):
                 key=lambda t: (0 if t.id in recent else 1, t.title.lower()),
             )
 
-            # Always offer Connect near the helpers — sign-in is the #1
-            # blocker for first-time use.
-            rows.append(self._accounts_row())
-
-            if chat_tools:
-                rows.append(self._section_label("Or open just one"))
-                for tool in chat_tools:
-                    rows.append(self._tool_row(
-                        tool, project, recent=tool.id in recent,
-                    ))
-            if other_ai:
-                rows.append(self._section_label("Apps"))
-                for tool in other_ai:
-                    rows.append(self._tool_row(
-                        tool, project, recent=tool.id in recent,
-                    ))
-            if open_with:
-                rows.append(self._section_label("Also"))
-                for tool in open_with:
-                    rows.append(self._tool_row(tool, project, recent=False))
+            # Extra options — filled after credit probe so first-timers only
+            # see the big "Continue" card until someone is signed in.
+            self._advanced_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            self._advanced_tools = (chat_tools, other_ai, open_with, project, recent)
+            adv_host = Gtk.ListBoxRow()
+            adv_host.set_activatable(False)
+            adv_host.set_selectable(False)
+            adv_host.set_child(self._advanced_box)
+            rows.append(adv_host)
+            # Placeholder until probe finishes; _refresh_broadcast_ui rebuilds.
+            self._rebuild_advanced_options(ready=False, probing=True)
 
     def _plain_notice(self, text: str) -> Gtk.Widget:
         lab = Gtk.Label(label=text, wrap=True, xalign=0.0)
@@ -608,13 +599,14 @@ class SearchWindow(Adw.ApplicationWindow):
     def _broadcast_block(
         self, project: Path, tools: list[WorkTool],
     ) -> Gtk.Widget:
-        """Primary action: type a need → one answers window.
+        """The only path a new user should notice.
 
-        Designed so someone who has never used an AI tool can still succeed:
-        one field, one big button, no vendor choice required.
+        First time: one story — “Let’s get you ready” → Continue.
+        After sign-in: type a need → Get help. Never “open helpers.”
         """
         self._broadcast_project = project
         self._broadcast_tools = [t for t in tools if t.is_ai]
+        name = project.name
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         box.set_margin_top(8)
@@ -623,25 +615,26 @@ class SearchWindow(Adw.ApplicationWindow):
         box.set_margin_end(4)
         box.add_css_class("card")
 
-        step = Gtk.Label(label="Start here", xalign=0.0)
-        step.add_css_class("caption")
-        step.add_css_class("accent")
-        step.set_margin_top(12)
-        step.set_margin_start(14)
-        step.set_margin_end(14)
-        box.append(step)
+        self._broadcast_step = Gtk.Label(label="Start here", xalign=0.0)
+        self._broadcast_step.add_css_class("caption")
+        self._broadcast_step.add_css_class("accent")
+        self._broadcast_step.set_margin_top(12)
+        self._broadcast_step.set_margin_start(14)
+        self._broadcast_step.set_margin_end(14)
+        box.append(self._broadcast_step)
 
-        title = Gtk.Label(
-            label="What do you need help with?",
+        self._broadcast_title = Gtk.Label(
+            label=f"Let’s get you ready to work on “{name}”",
             xalign=0.0,
+            wrap=True,
         )
-        title.add_css_class("title-3")
-        title.set_margin_start(14)
-        title.set_margin_end(14)
-        box.append(title)
+        self._broadcast_title.add_css_class("title-3")
+        self._broadcast_title.set_margin_start(14)
+        self._broadcast_title.set_margin_end(14)
+        box.append(self._broadcast_title)
 
         self._broadcast_hint = Gtk.Label(
-            label="One moment — checking who’s available…",
+            label="One moment…",
             wrap=True,
             xalign=0.0,
         )
@@ -664,7 +657,7 @@ class SearchWindow(Adw.ApplicationWindow):
         )
         box.append(self._broadcast_entry)
 
-        self._broadcast_btn = Gtk.Button(label="Get help")
+        self._broadcast_btn = Gtk.Button(label="Continue")
         self._broadcast_btn.add_css_class("suggested-action")
         self._broadcast_btn.add_css_class("pill")
         self._broadcast_btn.set_halign(Gtk.Align.FILL)
@@ -684,6 +677,60 @@ class SearchWindow(Adw.ApplicationWindow):
         row.set_child(box)
         return row
 
+    def _rebuild_advanced_options(self, *, ready: bool, probing: bool) -> None:
+        """First-timers only see the big Continue card — no jargon list."""
+        box = getattr(self, "_advanced_box", None)
+        tools_pack = getattr(self, "_advanced_tools", None)
+        if box is None or tools_pack is None:
+            return
+        # Clear
+        child = box.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            box.remove(child)
+            child = nxt
+
+        if probing or not ready:
+            # Keep the screen calm. Advanced picks appear only after setup.
+            note = Gtk.Label(
+                label=(
+                    "You can open the project folder anytime from Files "
+                    "in the bar at the bottom."
+                ),
+                wrap=True,
+                xalign=0.0,
+            )
+            note.add_css_class("dim-label")
+            note.add_css_class("caption")
+            note.set_margin_top(8)
+            note.set_margin_start(4)
+            note.set_margin_end(4)
+            box.append(note)
+            return
+
+        chat_tools, other_ai, open_with, project, recent = tools_pack
+
+        def _section(title: str, tools: list) -> None:
+            if not tools:
+                return
+            lab = Gtk.Label(label=title, xalign=0.0)
+            lab.add_css_class("heading")
+            lab.set_margin_top(12)
+            lab.set_margin_bottom(4)
+            box.append(lab)
+            lb = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+            lb.add_css_class("boxed-list")
+            for tool in tools:
+                lb.append(self._tool_row(
+                    tool, project, recent=tool.id in recent and tool.is_ai,
+                ))
+            box.append(lb)
+
+        # Subtle extras only after someone is signed in — not the first path.
+        _section("Or pick one by name", chat_tools)
+        _section("Apps", other_ai)
+        _section("Also", open_with)
+
     def _refresh_broadcast_ui(self) -> None:
         # Wait for the first credit probe so we do not blast tools that are
         # already known empty. Empty statuses = still checking.
@@ -696,80 +743,96 @@ class SearchWindow(Adw.ApplicationWindow):
             )
         )
         names = ", ".join(t.title for t in ready) if ready else ""
+        project = self._broadcast_project
+        pname = project.name if project else "this project"
+
+        if self._broadcast_title is not None:
+            if probing:
+                self._broadcast_title.set_text(f"Working on “{pname}”")
+            elif not ready:
+                self._broadcast_title.set_text(
+                    f"Let’s get you ready to work on “{pname}”"
+                )
+            else:
+                self._broadcast_title.set_text("What do you need help with?")
+
+        if self._broadcast_step is not None:
+            self._broadcast_step.set_text(
+                "Almost ready" if not ready and not probing else "Start here"
+            )
+
         if self._broadcast_hint is not None:
             if not self._broadcast_tools:
                 self._broadcast_hint.set_text(
-                    "No helpers are installed on this computer yet."
+                    "This computer doesn’t have any AI set up yet. "
+                    "Reinstall teddyOS, or ask whoever set up the machine."
                 )
             elif probing:
-                self._broadcast_hint.set_text(
-                    "One moment — checking who’s available…"
-                )
+                self._broadcast_hint.set_text("One moment…")
             elif not ready:
                 self._broadcast_hint.set_text(
-                    "No helper is signed in yet. Tap Get ready — we’ll walk "
-                    "you through connecting them, then you can ask."
+                    "Next we’ll open a short sign-in in your browser. "
+                    "You only do this once. Then you can ask anything about "
+                    f"“{pname}”."
                 )
             elif len(ready) == 1:
                 self._broadcast_hint.set_text(
-                    f"{names} is ready and will answer in a simple window."
+                    "Type what you need. You’ll get an answer in a simple window."
                 )
             else:
                 self._broadcast_hint.set_text(
-                    f"Ready: {names}. Each will answer in one window. "
-                    "Helpers that still need sign-in are skipped."
+                    "Type what you need. You’ll get answers in one window."
                 )
+
+        if self._broadcast_entry is not None:
+            # Don’t force a question before the person is signed in.
+            self._broadcast_entry.set_visible(bool(ready) or probing)
+            if ready:
+                self._broadcast_entry.set_placeholder_text(
+                    "e.g. Explain this project in simple words"
+                )
+
         if self._broadcast_btn is not None:
             if probing:
                 self._broadcast_btn.set_sensitive(False)
-                self._broadcast_btn.set_label("Getting ready…")
-            elif ready:
+                self._broadcast_btn.set_label("One moment…")
+            elif not ready:
                 self._broadcast_btn.set_sensitive(True)
-                self._broadcast_btn.set_label("Get help")
+                self._broadcast_btn.set_label("Continue")
             else:
                 self._broadcast_btn.set_sensitive(True)
-                self._broadcast_btn.set_label("Get ready first")
+                self._broadcast_btn.set_label("Get help")
+
+        self._rebuild_advanced_options(ready=bool(ready), probing=probing)
 
     def _on_broadcast_clicked(self) -> None:
-        """One window, many answers — never a pile of Terminals."""
+        """Continue = setup if needed, else ask. One story for new users."""
         project = self._broadcast_project
         if project is None:
             return
+        ready = work_tools.tools_ready_for_broadcast(
+            self._broadcast_tools, self._credit_statuses,
+        )
         entry = self._broadcast_entry
         prompt = (entry.get_text() if entry else "").strip()
+
+        if not ready:
+            # Natural next step — no mention of “helpers” or settings apps.
+            if prompt:
+                self._pending_task = prompt
+            self._notify("Opening a short sign-in…", timeout=3)
+            self._open_accounts(setup_all=True)
+            return
+
         if not prompt:
             self._notify("Type what you need help with first.", timeout=3)
             if entry:
                 entry.grab_focus()
             return
-        ready = work_tools.tools_ready_for_broadcast(
-            self._broadcast_tools, self._credit_statuses,
-        )
-        if not ready:
-            self._notify(
-                "Let’s get your helpers ready first…",
-                timeout=3,
-            )
-            # Guided multi-setup — not a dead empty ask.
-            self._open_accounts(setup_all=True)
-            return
         log.info(
             "ask-all project=%s tools=%s prompt_len=%d",
             project, [t.id for t in ready], len(prompt),
         )
-        skipped = [
-            t.title for t in self._broadcast_tools
-            if work_tools.is_chat_helper(t.id)
-            and t.id not in {r.id for r in ready}
-            and self._credit_statuses.get(t.id)
-            and self._credit_statuses[t.id].ok is False
-        ]
-        if skipped:
-            self._notify(
-                f"Asking {', '.join(t.title for t in ready)}. "
-                f"Skipped (need sign-in): {', '.join(skipped[:4])}.",
-                timeout=5,
-            )
         self._open_ask_all(project, prompt, [t.id for t in ready])
 
     def _begin_git_lookup(self, subject: str, generation: int) -> None:
@@ -1041,15 +1104,16 @@ class SearchWindow(Adw.ApplicationWindow):
         return self._spawn(argv, cwd=str(Path.home()))
 
     def _accounts_row(self) -> Gtk.Widget:
-        row = Adw.ActionRow(title="Connect your helpers")
+        # Kept for clone-auth recovery; wording is plain, not “helpers app”.
+        row = Adw.ActionRow(title="Sign in to GitHub or an AI")
         row.set_subtitle(
-            "Sign in to Claude, Grok, Gemini, and more — one tap, browser opens"
+            "Needed once so teddyOS can download projects and answer questions"
         )
         row.set_subtitle_lines(2)
         row.add_prefix(Gtk.Image.new_from_icon_name("system-users-symbolic"))
         row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
         row.set_activatable(True)
-        row.connect("activated", lambda *_: self._open_accounts())
+        row.connect("activated", lambda *_: self._open_accounts(setup_all=True))
         return row
 
     def _tool_icon(self, name: str) -> Gtk.Image:

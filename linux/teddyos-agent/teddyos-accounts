@@ -599,8 +599,8 @@ class AccountsWindow(Adw.ApplicationWindow):
 
         header = Adw.HeaderBar()
         header.set_title_widget(Adw.WindowTitle(
-            title="Connect your helpers",
-            subtitle="One-time sign-in · no technical steps",
+            title="Getting you ready",
+            subtitle="Short sign-ins · you only do this once",
         ))
         refresh = Gtk.Button(icon_name="view-refresh-symbolic")
         refresh.set_tooltip_text("Check again")
@@ -610,9 +610,9 @@ class AccountsWindow(Adw.ApplicationWindow):
 
         intro = Gtk.Label(
             label=(
-                "Each helper needs its own account. Tap Connect — we’ll walk "
-                "you through a short setup. Or use Set up everything below to "
-                "walk through them one by one."
+                "To answer questions and download your projects, teddyOS needs "
+                "you signed in a few places (like Claude or GitHub). "
+                "Tap Continue — we’ll open each sign-in for you, one at a time."
             ),
             wrap=True,
             xalign=0.0,
@@ -623,14 +623,14 @@ class AccountsWindow(Adw.ApplicationWindow):
         intro.set_margin_start(4)
         intro.set_margin_end(4)
 
-        self._setup_all_btn = Gtk.Button(label="Set up everything that needs it")
+        self._setup_all_btn = Gtk.Button(label="Continue")
         self._setup_all_btn.add_css_class("suggested-action")
         self._setup_all_btn.add_css_class("pill")
         self._setup_all_btn.set_halign(Gtk.Align.FILL)
         self._setup_all_btn.set_margin_bottom(12)
         self._setup_all_btn.connect("clicked", lambda *_: self._setup_all_needed())
         self._setup_hint = Gtk.Label(
-            label="Checking who’s ready…",
+            label="One moment…",
             wrap=True,
             xalign=0.0,
         )
@@ -834,53 +834,65 @@ class AccountsWindow(Adw.ApplicationWindow):
                     btn.add_css_class("suggested-action")
         if hasattr(self, "_setup_hint") and self._setup_hint is not None:
             if need:
-                names = ", ".join(a.title for a in need[:5])
+                # Prefer friendly names, not “N helpers.”
+                names = ", ".join(a.title for a in need[:4])
+                more = f" and {len(need) - 4} more" if len(need) > 4 else ""
                 self._setup_hint.set_text(
-                    f"Still need setup: {names}. "
-                    "Tap the button above to walk through them, or Connect one."
+                    f"We’ll set up: {names}{more}. "
+                    "Each opens a short browser sign-in."
                 )
                 self._setup_all_btn.set_sensitive(True)
-                self._setup_all_btn.set_label(
-                    f"Set up {len(need)} helper{'s' if len(need) != 1 else ''}"
-                )
+                self._setup_all_btn.set_label("Continue")
             else:
                 self._setup_hint.set_text(
-                    "All available helpers look ready. You can head back to Search."
+                    "You’re all set. Close this window and go back to Search "
+                    "to ask for help."
                     if ready else
-                    "No helpers found on this computer yet."
+                    "Nothing to set up was found on this computer."
                 )
-                self._setup_all_btn.set_sensitive(bool(need))
+                self._setup_all_btn.set_sensitive(False)
                 self._setup_all_btn.set_label("You’re all set")
         return False
 
     def _setup_all_needed(self) -> None:
-        """Walk through every helper that still needs sign-in, one at a time."""
+        """Walk through every account that still needs sign-in, one at a time."""
         need = []
+        # Order: AI people care about first, then GitHub for downloads.
+        preferred = (
+            "claude", "grok", "copilot", "gemini", "codex", "antigravity",
+            "github",
+        )
+        by_id = {}
         for account_id, (installed, status) in (self._status_cache or {}).items():
             if not installed or status.ok is True:
                 continue
             account = acc.get_account(account_id) if acc else None
             if account is None or account.id == "perplexity":
                 continue
-            need.append(account)
+            by_id[account.id] = account
+        for pid in preferred:
+            if pid in by_id:
+                need.append(by_id.pop(pid))
+        need.extend(by_id.values())
         if not need:
-            self._toast("Everything looks ready already.")
+            self._toast("You’re already set up. Close this and go back to Search.")
             return
         self._setup_queue = list(need)
-        self._toast(f"Setting up {need[0].title}…")
+        self._toast(f"Next up: {need[0].title}")
         self._connect(need[0])
 
     def _advance_setup_queue(self) -> None:
         if not self._setup_queue:
             return
-        # Drop the one we just finished.
         self._setup_queue = self._setup_queue[1:]
         if not self._setup_queue:
             self._reload_statuses()
-            self._toast("Setup pass finished. Check the list, then go back to Search.")
+            self._toast(
+                "You’re set up. Close this window, then type what you need help with."
+            )
             return
         nxt = self._setup_queue[0]
-        self._toast(f"Next: {nxt.title}")
+        self._toast(f"Next up: {nxt.title}")
         GLib.timeout_add(400, lambda: (self._connect(nxt), False)[1])
 
     def _connect(self, account: "acc.Account | None") -> None:
