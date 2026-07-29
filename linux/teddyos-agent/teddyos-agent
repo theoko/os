@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import shutil
 import sys
+from pathlib import Path
 
 import gi
 
@@ -158,25 +159,38 @@ class AgentWindow(Adw.ApplicationWindow):
         bg.parse("#fbfbfa")
         term.set_colors(fg, bg, None)
 
-        term.connect("child-exited", lambda *_: self.close())
+        # Do NOT auto-close on exit. Gemini/Codex often exit immediately with
+        # "please sign in" — closing the window made the click look like a no-op.
+        term.connect("child-exited", self._on_child_exited)
 
         # Important: do NOT pass the project path as a CLI argument. Gemini and
         # Codex treat a bare argument as a prompt, not a working directory.
         # The folder is the process cwd — that is what "open this project" means.
-        cmd = [exe, *self._extra]
-        # Ollama's interactive entry is `ollama run` without a model — still
-        # better than a silent failure; default to a short help if no args.
+        # Use `node` + script for .js shims: some desktops spawn shebangs badly.
+        cmd = self._cmd_for(exe, binary)
         if binary == "ollama" and not self._extra:
             cmd = [exe, "run", "llama3.2"]
 
         log.info("spawn tool=%s cwd=%s cmd=%s", self._tool_id, self._cwd, cmd)
 
+        path_env = os.environ.get(
+            "PATH",
+            "/usr/local/bin:/usr/bin:/bin",
+        )
+        # GUI apps often get a thin PATH without /usr/local/bin — where npm
+        # puts gemini/codex/node.
+        for extra in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
+            if extra not in path_env.split(":"):
+                path_env = extra + ":" + path_env
+
         env = [
             f"TERM=xterm-256color",
             f"HOME={os.path.expanduser('~')}",
-            f"PATH={os.environ.get('PATH', '/usr/local/bin:/usr/bin:/bin')}",
+            f"PATH={path_env}",
             f"PWD={self._cwd}",
             f"COLORTERM=truecolor",
+            f"USER={os.environ.get('USER', '')}",
+            f"LANG={os.environ.get('LANG', 'C.UTF-8')}",
         ]
         # Pass through auth tokens if the desktop session has them — GUI
         # launches often drop a login shell's env otherwise.
@@ -187,6 +201,10 @@ class AgentWindow(Adw.ApplicationWindow):
             "OPENAI_API_KEY",
             "GOOGLE_GENAI_USE_VERTEXAI",
             "GOOGLE_GENAI_USE_GCA",
+            "DBUS_SESSION_BUS_ADDRESS",
+            "XDG_RUNTIME_DIR",
+            "DISPLAY",
+            "WAYLAND_DISPLAY",
         ):
             val = os.environ.get(key)
             if val:
@@ -199,12 +217,49 @@ class AgentWindow(Adw.ApplicationWindow):
             env,
             GLib.SpawnFlags.DEFAULT,
             None, None,
-            -1, None, None, None,
+            -1, None, self._on_spawn_finished, None,
         )
 
+        self._term = term
         scroller = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
         scroller.set_child(term)
         return scroller
+
+    def _cmd_for(self, exe: str, binary: str) -> list[str]:
+        """Prefer `node script.js` for npm shims so spawn never depends on #!."""
+        try:
+            real = os.path.realpath(exe)
+        except OSError:
+            real = exe
+        if real.endswith((".js", ".cjs", ".mjs")):
+            node = shutil.which("node") or "/usr/bin/node"
+            return [node, real, *self._extra]
+        return [exe, *self._extra]
+
+    def _on_spawn_finished(self, _terminal, pid: int, error=None, *_rest) -> None:
+        if error is not None:
+            msg = error.message if hasattr(error, "message") else str(error)
+            log.error("spawn failed tool=%s: %s", self._tool_id, msg)
+            # Surface the failure in the window instead of a blank flash.
+            page = Adw.StatusPage(
+                icon_name="dialog-warning-symbolic",
+                title="Couldn’t start",
+                description=(
+                    "Something went wrong opening this helper. "
+                    "Try again, or open Terminal and ask for help."
+                ),
+            )
+            # Replace content if still alive.
+            try:
+                child = self.get_content()
+                if isinstance(child, Adw.ToolbarView):
+                    child.set_content(page)
+            except Exception:
+                pass
+
+    def _on_child_exited(self, _terminal, _status: int) -> None:
+        # Keep the window open so sign-in / error text stays readable.
+        log.info("child exited tool=%s status=%s", self._tool_id, _status)
 
 
 class AgentApp(Adw.Application):

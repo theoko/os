@@ -818,29 +818,88 @@ class SearchWindow(Adw.ApplicationWindow):
         # Record before spawn so a crashy tool still counts as a choice.
         work_tools.record_use(tool.id)
         path = str(project)
-        raw = [a.replace("{path}", path) for a in tool.argv]
-        # Desktop/flatpak entries may store "flatpak run app.id" as one token.
-        argv: list[str] = []
-        for part in raw:
-            if " " in part and not Path(part).exists():
-                argv.extend(part.split())
-            else:
-                argv.append(part)
+        argv = self._launch_argv(tool, path)
         log.info("launch tool=%s project=%s argv=%s", tool.id, path, argv)
         try:
             launcher = Gio.SubprocessLauncher.new(Gio.SubprocessFlags.NONE)
-            # Working directory matters when the tool is a bare CLI that does
-            # not take a path argument — it still starts inside the project.
             launcher.set_cwd(path)
+            # GUI apps often inherit a thin PATH; npm tools live in /usr/local/bin.
+            path_env = os.environ.get("PATH", "/usr/bin:/bin")
+            for extra in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
+                if extra not in path_env.split(":"):
+                    path_env = f"{extra}:{path_env}"
+            launcher.setenv("PATH", path_env, True)
+            for key in (
+                "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
+                "DBUS_SESSION_BUS_ADDRESS", "HOME", "USER", "LANG",
+            ):
+                val = os.environ.get(key)
+                if val:
+                    launcher.setenv(key, val, True)
             launcher.spawnv(argv)
-        except GLib.Error:
-            # Last resort: open the folder so the click is never a no-op.
+        except GLib.Error as exc:
+            log.error("launch failed tool=%s: %s", tool.id, exc.message)
+            # Last resorts: Terminal window, then open the folder.
+            if self._launch_via_terminal(tool, path):
+                return
             try:
                 Gtk.UriLauncher.new(
                     Gio.File.new_for_path(path).get_uri()
                 ).launch(self, None, None, None)
             except GLib.Error:
                 pass
+
+    def _launch_argv(self, tool: WorkTool, path: str) -> list[str]:
+        """Build argv at click time — never trust a stale module import alone.
+
+        Gemini/Codex need teddyos-agent (a real window + TTY). An older Search
+        process that still thought argv was bare `gemini /path` is exactly why
+        clicks appeared to do nothing.
+        """
+        tty = {"claude", "gemini", "codex", "aider", "ollama", "crush", "goose"}
+        if tool.id in tty:
+            if tool.id == "claude":
+                dedicated = shutil.which("teddyos-claude")
+                if dedicated:
+                    return [dedicated, path]
+            agent = shutil.which("teddyos-agent")
+            if agent:
+                return [agent, tool.id, path]
+        raw = [a.replace("{path}", path) for a in tool.argv]
+        argv: list[str] = []
+        for part in raw:
+            if " " in part and not Path(part).exists():
+                argv.extend(part.split())
+            else:
+                argv.append(part)
+        return argv
+
+    def _launch_via_terminal(self, tool: WorkTool, path: str) -> bool:
+        """Open gnome-terminal running the tool when the agent window fails."""
+        binary = {
+            "gemini": "gemini",
+            "codex": "codex",
+            "claude": "claude",
+            "aider": "aider",
+            "ollama": "ollama",
+        }.get(tool.id)
+        if not binary or not shutil.which(binary):
+            return False
+        term = shutil.which("gnome-terminal") or shutil.which("kgx")
+        if not term:
+            return False
+        if term.endswith("gnome-terminal"):
+            argv = [term, f"--working-directory={path}", "--", binary]
+        else:
+            argv = [term, "-e", binary]
+        try:
+            launcher = Gio.SubprocessLauncher.new(Gio.SubprocessFlags.NONE)
+            launcher.set_cwd(path)
+            launcher.spawnv(argv)
+            log.info("fallback terminal launch tool=%s", tool.id)
+            return True
+        except GLib.Error:
+            return False
 
     def _append_notices(self, outcome) -> None:
         """Show what the search knows about its own limits.
