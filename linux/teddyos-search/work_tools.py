@@ -76,6 +76,14 @@ _CATALOG: list[tuple] = [
         ("teddyos-claude.desktop",),
     ),
     (
+        # Official xAI Grok Build CLI (`npm i -g @xai-official/grok` → `grok`).
+        "grok", "Grok", "Open this project with Grok",
+        "teddyos-grok", True, True,
+        ("grok",),
+        ("{path}",),
+        (),
+    ),
+    (
         "cursor", "Cursor", "Open this project in Cursor",
         "text-editor", True, True,
         ("cursor", "cursor-agent"),
@@ -175,7 +183,9 @@ for _e in _CATALOG:
 
 # Interactive CLI tools that need a TTY window. Without teddyos-agent they
 # print "stdin is not a terminal" and the Search click does nothing.
-_TTY_TOOLS = frozenset({"claude", "gemini", "codex", "aider", "ollama", "crush", "goose"})
+_TTY_TOOLS = frozenset({
+    "claude", "grok", "gemini", "codex", "aider", "ollama", "crush", "goose",
+})
 
 
 def available_work_tools() -> list[WorkTool]:
@@ -577,6 +587,7 @@ def _probe_generic_installed(name: str, binary: str) -> CreditStatus:
 
 PROBES: dict[str, Callable[[], CreditStatus]] = {
     "claude": _probe_claude,
+    "grok": lambda: _probe_generic_installed("Grok", "grok"),
     "cursor": _probe_cursor,
     "windsurf": lambda: _probe_generic_installed("Windsurf", "windsurf"),
     "codex": lambda: _probe_generic_installed("Codex", "codex"),

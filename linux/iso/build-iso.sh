@@ -647,9 +647,9 @@ fi
 # Installed into hicolor rather than into WhiteSur. hicolor is the fallback
 # every icon theme inherits, so these survive a theme change instead of
 # vanishing with it.
-# Search / Claude / Gemini / Codex / Install share one visual language so the
-# work-on picker and the dock do not look like a grab-bag of theme glyphs.
-for icon in teddyos-search teddyos-claude teddyos-gemini teddyos-codex teddyos-install; do
+# Search / Claude / Grok / Gemini / Codex / Install share one visual language
+# so the work-on picker and the dock do not look like a grab-bag of theme glyphs.
+for icon in teddyos-search teddyos-claude teddyos-grok teddyos-gemini teddyos-codex teddyos-install; do
   install -Dm644 "$REPO/linux/icons/$icon.svg" \
     "config/includes.chroot/usr/share/icons/hicolor/scalable/apps/$icon.svg"
 done
@@ -949,10 +949,13 @@ node --version
 # NOT >/dev/null 2>&1. Every masked command in this file has cost an hour: the
 # theme hook hid a TERM error, WhiteSur hid its own stderr, and this hid the
 # EBADENGINE that explained the whole thing.
-# AI tools for Search "work on …". Claude is the default; Codex and Gemini
-# give people a choice without hunting package names. Installs that fail must
-# not kill the image — Claude is load-bearing, the others are best-effort.
+# AI tools for Search "work on …". Claude is the default; Grok, Codex, and
+# Gemini give people a choice without hunting package names. Installs that
+# fail must not kill the image — Claude is load-bearing, the others are
+# best-effort.
 npm install -g --silent @anthropic-ai/claude-code 2>&1 | tail -20
+npm install -g --silent @xai-official/grok 2>&1 | tail -10 || \
+  echo "note: grok npm install failed (non-fatal)"
 npm install -g --silent @openai/codex 2>&1 | tail -10 || \
   echo "note: codex npm install failed (non-fatal)"
 npm install -g --silent @google/gemini-cli 2>&1 | tail -10 || \
@@ -969,7 +972,7 @@ PKG="$NODE_DIR/lib/node_modules/@anthropic-ai/claude-code"
 [ -x "$NODE_DIR/bin/claude" ] || { echo "ERROR: claude binary missing" >&2; exit 1; }
 ln -sf "$NODE_DIR/bin/claude" /usr/local/bin/claude
 # Symlink optional tools when npm put them next to node.
-for b in codex gemini; do
+for b in grok codex gemini; do
   if [ -x "$NODE_DIR/bin/$b" ]; then
     ln -sf "$NODE_DIR/bin/$b" /usr/local/bin/$b
     echo "$b: linked"

@@ -47,6 +47,11 @@ TOOLS: dict[str, tuple[str, str, str]] = {
         "Claude",
         "Claude isn’t installed on this copy of teddyOS.",
     ),
+    "grok": (
+        "grok",
+        "Grok",
+        "Grok isn’t installed on this copy of teddyOS.",
+    ),
     "gemini": (
         "gemini",
         "Gemini",
