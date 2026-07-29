@@ -67,6 +67,8 @@ rm -f "$STAGE"/usr/bin/*.bak
 for m in caps search sandbox work_tools; do
   put "linux/teddyos-search/$m.py" "usr/lib/teddyos/$m.py"
 done
+put linux/logging/logutil.py usr/lib/teddyos/logutil.py
+put linux/logging/teddyos-log-collect usr/bin/teddyos-log-collect 755
 
 # The shell extension and the icons.
 put linux/shell-extension/teddyos@teddysearch.com/extension.js \

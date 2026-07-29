@@ -37,6 +37,14 @@ gi.require_version("Adw", "1")
 gi.require_version("Vte", "3.91")
 from gi.repository import Adw, Gdk, GLib, Gtk, Pango, Vte  # noqa: E402
 
+try:
+    sys.path.insert(0, "/usr/lib/teddyos")
+    from logutil import get_logger
+    log = get_logger("claude")
+except Exception:  # noqa: BLE001
+    import logging
+    log = logging.getLogger("teddyos.claude")
+
 APP_ID = "com.teddyos.Claude"
 CLAUDE = "claude"
 
@@ -158,4 +166,6 @@ if __name__ == "__main__":
     # because a machine with no GPU is one running the X11 session. Setting prgname
     # to the application id makes both worlds agree.
     GLib.set_prgname(APP_ID)
-    sys.exit(ClaudeApp(_cwd_from_argv(sys.argv)).run([sys.argv[0]]))
+    cwd = _cwd_from_argv(sys.argv)
+    log.info("start cwd=%s", cwd)
+    sys.exit(ClaudeApp(cwd).run([sys.argv[0]]))

@@ -22,6 +22,8 @@ utm-diag*.out
 # below already covered the images themselves, but the directory kept filling
 # with proof PNGs that are evidence, not source.
 /dist/
+# Host-side log pulls from ./scripts/collect-os-logs.sh
+/logs/
 .refresh.log
 .refresh-bridge.log
 /scripts/e2e/.screentext

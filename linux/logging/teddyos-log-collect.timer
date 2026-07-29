@@ -1,0 +1,14 @@
+[Unit]
+Description=Daily teddyOS log snapshot
+Documentation=file:///var/log/teddyos/README
+
+[Timer]
+# Once a day, and once shortly after boot so a machine that only lives a few
+# hours still leaves a trail. Persistent=true catches up after downtime.
+OnBootSec=3min
+OnUnitActiveSec=1d
+Persistent=true
+Unit=teddyos-log-collect.service
+
+[Install]
+WantedBy=timers.target

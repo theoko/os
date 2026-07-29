@@ -6,6 +6,14 @@ version: 0.13.0
 
 ## 0.13.0 — 2026-07-28
 
+### Logs land in one place
+
+Guest keeps a durable trail under `/var/log/teddyos/`: persistent journald
+(14 days / 512 MB), rotating per-app files, and daily (plus post-boot) snapshots
+via `teddyos-log-collect`. Apps tag the journal as `teddyos-*`. From the Mac,
+`./scripts/collect-os-logs.sh` pulls the guest tree plus host serial crumbs into
+`logs/os/`.
+
 ### “Work on …” opens an AI tool picker
 
 Typing a goal into Search (for example `i wanna work on iakovos-trading`) no

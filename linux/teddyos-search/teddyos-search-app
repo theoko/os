@@ -45,6 +45,13 @@ import search as engine  # noqa: E402
 import work_tools  # noqa: E402
 from work_tools import CreditStatus, WorkTool  # noqa: E402
 
+try:
+    from logutil import get_logger
+    log = get_logger("search-app")
+except Exception:  # noqa: BLE001
+    import logging
+    log = logging.getLogger("teddyos.search-app")
+
 APP_ID = "com.teddyos.Search"
 
 # Queries run in `teddyos-search`, not in this process.
@@ -334,11 +341,18 @@ class SearchWindow(Adw.ApplicationWindow):
         self._generation += 1
         generation = self._generation
         self._begin_busy(generation)
+        log.info("query=%r", query)
 
         def work() -> None:
             try:
                 outcome = _confined_search(query)
+                log.info(
+                    "results=%d denied=%s errors=%d work_goal=%s",
+                    len(outcome.results), outcome.denied, len(outcome.errors),
+                    engine.is_work_goal(query),
+                )
             except Exception as exc:  # noqa: BLE001 - never kill the UI thread
+                log.exception("search failed for %r", query)
                 outcome = engine.Outcome(errors=[str(exc)])
             GLib.idle_add(self._show, generation, query, outcome)
 
@@ -565,6 +579,7 @@ class SearchWindow(Adw.ApplicationWindow):
         work_tools.record_use(tool.id)
         path = str(project)
         argv = [a.replace("{path}", path) for a in tool.argv]
+        log.info("launch tool=%s project=%s argv=%s", tool.id, path, argv)
         try:
             launcher = Gio.SubprocessLauncher.new(Gio.SubprocessFlags.NONE)
             # Working directory matters when the tool is a bare `claude` that

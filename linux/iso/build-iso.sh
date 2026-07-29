@@ -384,6 +384,30 @@ install -Dm755 "$REPO/linux/teddyos-setup/teddyos-welcome"       config/includes
 install -Dm755 "$REPO/linux/teddyos-claude/teddyos-claude"      config/includes.chroot/usr/bin/teddyos-claude
 install -Dm755 "$REPO/linux/teddyos-update/teddyos-update"      config/includes.chroot/usr/bin/teddyos-update
 
+# --- logs -------------------------------------------------------------------
+# Persistent journal + per-app files + daily snapshots. Without this, a failed
+# first boot evaporates on reboot and Search freezes leave no trail.
+install -Dm644 "$REPO/linux/logging/logutil.py" \
+  config/includes.chroot/usr/lib/teddyos/logutil.py
+install -Dm755 "$REPO/linux/logging/teddyos-log-collect" \
+  config/includes.chroot/usr/bin/teddyos-log-collect
+install -Dm644 "$REPO/linux/logging/journald-teddyos.conf" \
+  config/includes.chroot/etc/systemd/journald.conf.d/teddyos.conf
+install -Dm644 "$REPO/linux/logging/logrotate-teddyos" \
+  config/includes.chroot/etc/logrotate.d/teddyos
+install -Dm644 "$REPO/linux/logging/tmpfiles-teddyos.conf" \
+  config/includes.chroot/usr/lib/tmpfiles.d/teddyos.conf
+install -Dm644 "$REPO/linux/logging/teddyos-log-collect.service" \
+  config/includes.chroot/etc/systemd/system/teddyos-log-collect.service
+install -Dm644 "$REPO/linux/logging/teddyos-log-collect.timer" \
+  config/includes.chroot/etc/systemd/system/teddyos-log-collect.timer
+install -Dm644 "$REPO/linux/logging/README" \
+  config/includes.chroot/var/log/teddyos/README
+# Sticky app dir so user sessions can write without root.
+mkdir -p config/includes.chroot/var/log/teddyos/app \
+         config/includes.chroot/var/log/teddyos/snapshots
+chmod 1777 config/includes.chroot/var/log/teddyos/app
+
 # The shell extension: hides quick-settings toggles teddyOS has no reason to
 # offer, and renames "Wired" to "Internet" in the panel and its menu.
 mkdir -p config/includes.chroot/usr/share/gnome-shell/extensions
@@ -991,9 +1015,13 @@ cat > config/hooks/live/0500-teddyos-assert.hook.chroot <<'HOOK'
 # size and wrong for anything a package only Recommends.
 set -e
 missing=""
-for tool in user-setup teddyos-search teddyos-search-app teddyos-setup chromium gnome-shell gdm3; do
+for tool in user-setup teddyos-search teddyos-search-app teddyos-setup teddyos-log-collect chromium gnome-shell gdm3; do
   command -v "$tool" >/dev/null 2>&1 || missing="$missing $tool"
 done
+[ -f /etc/systemd/journald.conf.d/teddyos.conf ] \
+  || missing="$missing journald-teddyos.conf"
+[ -f /usr/lib/teddyos/logutil.py ] \
+  || missing="$missing logutil.py"
 # live-config creates the user at boot; without its scripts the login prompt
 # has nothing to offer.
 [ -f /lib/live/config/0030-user-setup ] || missing="$missing live-config/0030-user-setup"
@@ -1019,6 +1047,24 @@ if [ -n "$missing" ]; then
   exit 1
 fi
 echo "assert: live-session prerequisites present"
+HOOK
+
+cat > config/hooks/live/0550-teddyos-logs.hook.chroot <<'HOOK'
+#!/bin/sh
+# Turn on persistent journal capture and the daily snapshot timer.
+set -e
+# tmpfiles creates /var/log/teddyos/{app,snapshots} with the sticky app dir.
+systemd-tmpfiles --create /usr/lib/tmpfiles.d/teddyos.conf 2>/dev/null || true
+systemctl enable teddyos-log-collect.timer 2>/dev/null \
+  || systemctl --root=/ enable teddyos-log-collect.timer 2>/dev/null \
+  || true
+# In a live-build chroot systemctl enable sometimes only works via the
+# wants/ symlink. Force the link so a chroot without a running systemd still
+# ships the timer enabled.
+mkdir -p /etc/systemd/system/timers.target.wants
+ln -sfn /etc/systemd/system/teddyos-log-collect.timer \
+  /etc/systemd/system/timers.target.wants/teddyos-log-collect.timer
+echo "logs: journald persistent + teddyos-log-collect.timer enabled"
 HOOK
 
 # Only ours. The glob `config/hooks/live/*.hook.chroot` also matches the hooks

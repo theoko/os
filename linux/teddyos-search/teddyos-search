@@ -29,6 +29,13 @@ import caps  # noqa: E402
 import sandbox  # noqa: E402
 import search as engine  # noqa: E402
 
+try:
+    from logutil import get_logger  # noqa: E402
+    log = get_logger("search")
+except Exception:  # noqa: BLE001 — logging must never block search
+    import logging
+    log = logging.getLogger("teddyos.search")
+
 BOLD = "\033[1m"
 DIM = "\033[2m"
 RESET = "\033[0m"
@@ -179,7 +186,12 @@ def main() -> int:
     if args.refresh and caps.load().get("portal.sync"):
         engine.fetch_portal_index(force=True)
 
+    log.info("query=%r limit=%s", query, args.limit)
     outcome = engine.search(query, limit=args.limit)
+    log.info(
+        "results=%d denied=%s errors=%d notes=%d",
+        len(outcome.results), outcome.denied, len(outcome.errors), len(outcome.notes),
+    )
 
     if args.json:
         json.dump(payload(query, outcome), sys.stdout, indent=2)

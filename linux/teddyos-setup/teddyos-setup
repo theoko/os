@@ -39,6 +39,14 @@ import sys
 import threading
 from pathlib import Path
 
+try:
+    sys.path.insert(0, "/usr/lib/teddyos")
+    from logutil import get_logger
+    log = get_logger("setup")
+except Exception:  # noqa: BLE001
+    import logging
+    log = logging.getLogger("teddyos.setup")
+
 sys.path.insert(0, "/usr/lib/teddyos")
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "teddyos-search"))
 
@@ -729,6 +737,7 @@ class SetupApp(Adw.Application):
         return 0
 
     def do_activate(self):
+        log.info("setup open first_boot=%s", self._first_boot)
         (self.props.active_window
          or SetupWindow(self, first_boot=self._first_boot)).present()
 

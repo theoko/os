@@ -41,6 +41,14 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
+try:
+    sys.path.insert(0, "/usr/lib/teddyos")
+    from logutil import get_logger
+    log = get_logger("update")
+except Exception:  # noqa: BLE001
+    import logging
+    log = logging.getLogger("teddyos.update")
+
 MANIFEST_URL = os.environ.get(
     "TEDDYOS_UPDATE_MANIFEST", "https://teddysearch.com/tsearch/os/manifest.json")
 # Every write goes through ROOT. It is "/" on a real machine; the point of it
@@ -280,6 +288,7 @@ def main() -> int:
     if not getattr(args, "fn", None):
         ap.print_help()
         return 2
+    log.info("cmd=%s", args.cmd)
     return args.fn(args)
 
 

@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+# Snapshot everything useful about this teddyOS machine into one directory.
+#
+# Why this exists: when Search freezes, the network dies, or first boot fails,
+# the answer is almost always already in a log — and almost never where anyone
+# looks. journald holds the truth for about one boot if Storage=volatile, app
+# stdout is gone when the window closes, and dmesg is a ring buffer. This
+# script freezes a copy under /var/log/teddyos/snapshots/ so "what happened
+# yesterday" is still answerable after a reboot.
+#
+#   teddyos-log-collect              # write a fresh snapshot
+#   teddyos-log-collect --out DIR    # write somewhere else
+#   teddyos-log-collect --list       # show existing snapshots
+set -euo pipefail
+
+OUT_ROOT="${TEDDYOS_LOG_ROOT:-/var/log/teddyos}"
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+OUT=""
+LIST=0
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --out) OUT="$2"; shift 2 ;;
+    --list) LIST=1; shift ;;
+    --help|-h)
+      sed -n '2,16p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) echo "error: unknown argument $1" >&2; exit 2 ;;
+  esac
+done
+
+if [[ "$LIST" == 1 ]]; then
+  ls -1dt "$OUT_ROOT"/snapshots/*/ 2>/dev/null || echo "(no snapshots yet)"
+  exit 0
+fi
+
+OUT="${OUT:-$OUT_ROOT/snapshots/$STAMP}"
+mkdir -p "$OUT" "$OUT_ROOT/app" 2>/dev/null || {
+  # Non-root: fall back to the caller's state dir.
+  OUT_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/teddyos/log"
+  OUT="${OUT:-$OUT_ROOT/snapshots/$STAMP}"
+  mkdir -p "$OUT" "$OUT_ROOT/app"
+}
+
+note() { printf '%s\n' "$*" >>"$OUT/COLLECT.txt"; }
+run() {
+  local name="$1"; shift
+  # Never let one missing tool abort the whole collection.
+  { "$@" 2>&1 || true; } >"$OUT/$name" || true
+}
+
+note "teddyOS log snapshot"
+note "collected_at=$STAMP"
+note "host=$(hostname 2>/dev/null || echo unknown)"
+note "kernel=$(uname -r 2>/dev/null || echo unknown)"
+note "user=$(id -un 2>/dev/null || echo unknown)"
+if [[ -r /etc/teddyos-software ]]; then
+  note "software=$(tr '\n' ' ' </etc/teddyos-software)"
+fi
+if [[ -r /etc/teddyos-build ]]; then
+  note "build=$(tr '\n' ' ' </etc/teddyos-build)"
+fi
+note ""
+
+# --- system -----------------------------------------------------------------
+run uname.txt           uname -a
+run os-release.txt      cat /etc/os-release
+run uptime.txt          uptime
+run free.txt            free -h
+run df.txt              df -h
+run mounts.txt          findmnt -A
+run ip.txt              ip -br a
+run route.txt           ip route
+run resolv.txt          cat /etc/resolv.conf
+run dmesg.txt           dmesg --color=never
+run bootctl.txt         bootctl status
+run lspci.txt           lspci -nn
+run lsusb.txt           lsusb
+run lsblk.txt           lsblk -f
+
+# --- journal (the main event) -----------------------------------------------
+# Current boot first — that is almost always what you want after a crash.
+run journal-boot.txt    journalctl -b --no-pager -o short-iso
+# TeddyOS-tagged lines across recent boots.
+run journal-teddyos.txt journalctl -t 'teddyos-*' --no-pager -o short-iso -n 5000
+# Last 24h of everything, capped so a chatty box does not fill the disk.
+run journal-24h.txt     journalctl --since '24 hours ago' --no-pager -o short-iso -n 20000
+# Prior boot if present (the one people reboot away from).
+run journal-boot-1.txt  journalctl -b -1 --no-pager -o short-iso -n 10000
+
+# --- boot / install / packages ---------------------------------------------
+run boot.log            cat /var/log/boot.log
+run cloud-init.log      cat /var/log/cloud-init.log
+run cloud-init-out.log  cat /var/log/cloud-init-output.log
+run dpkg.log            tail -n 500 /var/log/dpkg.log
+run apt-history.log     tail -n 200 /var/log/apt/history.log
+run packages-teddyos.txt dpkg -l 'teddyos*' 'claude*' 2>/dev/null
+
+# --- teddyOS app files ------------------------------------------------------
+if [[ -d /var/log/teddyos/app ]]; then
+  mkdir -p "$OUT/app"
+  cp -a /var/log/teddyos/app/. "$OUT/app/" 2>/dev/null || true
+fi
+if [[ -d "${XDG_STATE_HOME:-$HOME/.local/state}/teddyos/log" ]]; then
+  mkdir -p "$OUT/app-user"
+  cp -a "${XDG_STATE_HOME:-$HOME/.local/state}/teddyos/log/." "$OUT/app-user/" 2>/dev/null || true
+fi
+
+# Capability + software stamps (no secrets expected).
+run capabilities.json   cat /etc/teddyos/capabilities.json
+run capabilities-user.json cat "${XDG_CONFIG_HOME:-$HOME/.config}/teddyos/capabilities.json"
+run teddyos-software.txt cat /etc/teddyos-software
+run teddyos-build.txt    cat /etc/teddyos-build
+run work-tools.json      cat "${XDG_CONFIG_HOME:-$HOME/.config}/teddyos/work-tools.json"
+
+# systemd units we care about
+run systemd-failed.txt  systemctl --failed --no-pager
+run systemd-teddyos.txt systemctl list-units --all --no-pager 'teddyos*'
+
+# Drop a pointer at the newest snapshot for "just give me the latest".
+ln -sfn "$(basename "$OUT")" "$OUT_ROOT/snapshots/latest" 2>/dev/null || true
+
+# Prune old snapshots — keep 14 days or the 20 newest, whichever is more
+# generous. A machine that snapshots daily should not need a human janitor.
+if [[ -d "$OUT_ROOT/snapshots" ]]; then
+  # shellcheck disable=SC2012
+  ls -1dt "$OUT_ROOT/snapshots"/*/ 2>/dev/null | tail -n +21 | while read -r old; do
+    case "$old" in
+      */latest/) continue ;;
+    esac
+    rm -rf "$old" 2>/dev/null || true
+  done
+fi
+
+echo "snapshot: $OUT"
+# Size is the thing that tells you the collector is working.
+du -sh "$OUT" 2>/dev/null || true
