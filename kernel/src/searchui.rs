@@ -893,17 +893,26 @@ mod say_matches_rows_tests {
     fn a_reachable_bridge_is_never_reported_as_offline() {
         // The fallback sentence blamed the bridge unconditionally, so a bridge
         // that answered correctly and found nothing was reported as down.
+        // Host unit tests must not open COM2 (see agent plan_act_*_without_com2).
+        // Drive the same rewrite run_via applies when online && local rows exist.
         let mut v = SearchView::new();
-        let mut caps = crate::caps::Caps::none();
-        caps.set(crate::caps::Cap::SearchQuery, true);
-        v.run_via("capability", caps);
-        if v.source.bridge_online {
-            assert!(
-                !v.say().contains("offline"),
-                "bridge was reachable: {}",
-                v.say()
-            );
-        }
+        v.run("capability");
+        assert!(v.count > 0, "the built-in corpus should answer this");
+        assert!(
+            v.say().contains("offline"),
+            "run() always blames offline: {}",
+            v.say()
+        );
+        set_say(
+            &mut v.say,
+            "Answered from the built-in guide - nothing in your sources matched.",
+        );
+        v.source.bridge_online = true;
+        assert!(
+            !v.say().contains("offline"),
+            "online empty fallback must not blame the bridge: {}",
+            v.say()
+        );
     }
 
     #[test]
