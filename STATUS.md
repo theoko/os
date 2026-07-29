@@ -20,7 +20,8 @@ Shape (see `AGENTS.md` on this tip):
 - Work-on goals, AI tool picker, durable guest journals, GitHub clone for
   projects, plain-language UI pass
 
-Tip at review open: `bb716aa` (`fix(ui): plain-language pass for non-technical users`).
+Tip at latest review push: see `git log -1` on this branch (includes hosted
+COM2 unit-test PIO stub + linux/UTM docs honesty).
 
 ## What this branch is not
 
