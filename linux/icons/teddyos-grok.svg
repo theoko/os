@@ -1,25 +1,19 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Grok launcher icon.
-
-       Same tile geometry as Search / Claude / Gemini / Codex. Near-black
-       tile (xAI palette) with a white six-point mark — readable at 48px
-       without copying a trademark. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Grok — WhiteSur-style plate (matches Files / Search quality). -->
   <defs>
-    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+    <linearGradient id="g" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%" stop-color="#3A3A3C"/>
       <stop offset="100%" stop-color="#141416"/>
     </linearGradient>
-    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.22"/>
-      <stop offset="55%" stop-color="#ffffff" stop-opacity="0.04"/>
-      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
-    </linearGradient>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="1.6" flood-opacity="0.22"/>
+    </filter>
   </defs>
-
-  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#tile)"/>
-  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#sheen)"/>
-
-  <!-- Six-point spark: thick enough for small sizes. -->
+  <rect x="5" y="7" width="54" height="54" rx="13.5" fill="#000" opacity="0.10"/>
+  <rect x="5" y="5" width="54" height="54" rx="13.5" fill="#ffffff" filter="url(#sh)"/>
+  <rect x="5" y="5" width="54" height="54" rx="13.5" fill="none" stroke="#000" stroke-opacity="0.06" stroke-width="0.5"/>
+  <!-- Soft black disc + white spark -->
+  <circle cx="32" cy="32" r="16" fill="url(#g)"/>
   <path fill="#ffffff"
-        d="M512 230 L560 420 L760 420 L598 538 L658 728 L512 610 L366 728 L426 538 L264 420 L464 420 Z"/>
+        d="M32 18 L34.6 28.2 L45 28.2 L36.6 34.4 L39.6 44.6 L32 38.2 L24.4 44.6 L27.4 34.4 L19 28.2 L29.4 28.2 Z"/>
 </svg>

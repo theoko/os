@@ -390,12 +390,16 @@ install -Dm755 "$REPO/linux/teddyos-claude/teddyos-claude"      config/includes.
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-agent"        config/includes.chroot/usr/bin/teddyos-agent
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-ask-all"      config/includes.chroot/usr/bin/teddyos-ask-all
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-perplexity"   config/includes.chroot/usr/bin/teddyos-perplexity
+install -Dm755 "$REPO/linux/teddyos-agent/teddyos-devin"       config/includes.chroot/usr/bin/teddyos-devin
+install -Dm755 "$REPO/linux/teddyos-agent/teddyos-replit"      config/includes.chroot/usr/bin/teddyos-replit
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-accounts"     config/includes.chroot/usr/bin/teddyos-accounts
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-open-signin"  config/includes.chroot/usr/bin/teddyos-open-signin
 install -Dm755 "$REPO/linux/teddyos-update/teddyos-update"      config/includes.chroot/usr/bin/teddyos-update
 # Account / sign-in helpers used by teddyos-accounts and Search.
 install -Dm644 "$REPO/linux/teddyos-search/accounts.py" \
   config/includes.chroot/usr/lib/teddyos/accounts.py
+install -Dm644 "$REPO/linux/teddyos-search/pending_ask.py" \
+  config/includes.chroot/usr/lib/teddyos/pending_ask.py
 
 # --- logs -------------------------------------------------------------------
 # Persistent journal + per-app files + daily snapshots. Without this, a failed
@@ -432,9 +436,9 @@ install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-
 [Desktop Entry]
 Type=Application
 Name=Get Started
-Comment=What you can do with teddyOS
+Comment=A short tour of teddyOS
 Exec=teddyos-welcome
-Icon=help-about
+Icon=teddyos-search
 Terminal=false
 Categories=System;
 StartupWMClass=com.teddyos.Welcome
@@ -501,27 +505,26 @@ Type=Application
 Name=WhatsApp
 Comment=Messages
 Exec=chromium --app=https://web.whatsapp.com/ --class=teddyos-whatsapp --user-data-dir=/home/teddy/.config/teddyos-whatsapp
-Icon=whatsapp
+Icon=teddyos-whatsapp
 Terminal=false
 Categories=Network;InstantMessaging;
 StartupWMClass=teddyos-whatsapp
 DESKTOP
 
-# Claude, as an application.
+# Claude desktop entry — installed but hidden from the dock/app grid.
 #
-# It was installed as a CLI and symlinked to /usr/local/bin/claude, with no
-# icon and no entry anywhere — so the most-used program on the machine this was
-# built on was reachable only by opening a terminal and typing a name you had
-# to already know. On a desktop whose stated audience will not know what a
-# terminal is, that is the app that most needed a window.
+# Non-technical people must not land in a black terminal-shaped window from the
+# dock. The path is Search → work on … → Get help (Answers). Engineers can still
+# run teddyos-claude from a shell if they want the full interactive UI.
 install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-claude.desktop <<'DESKTOP'
 [Desktop Entry]
 Type=Application
 Name=Claude
-Comment=Ask Claude to do things on this computer
-Exec=teddyos-claude
+Comment=Ask Claude (via Search)
+Exec=teddyos-search-app
 Icon=teddyos-claude
 Terminal=false
+NoDisplay=true
 Categories=Utility;Development;
 StartupWMClass=com.teddyos.Claude
 DESKTOP
@@ -540,6 +543,32 @@ Categories=Network;WebBrowser;
 StartupWMClass=teddyos-perplexity
 DESKTOP
 
+# Devin (Cognition) — web app wrapper.
+install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-devin.desktop <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Devin
+Comment=AI software engineer from Cognition
+Exec=teddyos-devin
+Icon=teddyos-devin
+Terminal=false
+Categories=Network;Development;
+StartupWMClass=teddyos-devin
+DESKTOP
+
+# Replit — web app / Agent.
+install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-replit.desktop <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Replit
+Comment=Build apps from plain words
+Exec=teddyos-replit
+Icon=teddyos-replit
+Terminal=false
+Categories=Network;Development;
+StartupWMClass=teddyos-replit
+DESKTOP
+
 # Getting you ready — sign-in walkthrough (opened from Search when needed).
 install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-accounts.desktop <<'DESKTOP'
 [Desktop Entry]
@@ -547,7 +576,7 @@ Type=Application
 Name=Getting you ready
 Comment=One-time sign-in so teddyOS can help
 Exec=teddyos-accounts
-Icon=system-users-symbolic
+Icon=teddyos-accounts
 Terminal=false
 NoDisplay=true
 Categories=Settings;Utility;
@@ -560,7 +589,7 @@ install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-
 [Desktop Entry]
 Type=Application
 Name=Answers
-Comment=Help from your AI helpers in one place
+Comment=Answers to what you asked, in one place
 Exec=teddyos-ask-all
 Icon=teddyos-answers
 Terminal=false
@@ -686,27 +715,42 @@ else
   echo "    WARNING: rsvg-convert missing; installer keeps the Debian logo" >&2
 fi
 
-# The two icons this OS draws for itself.
+# App icons this OS draws for itself.
 #
 # They were `Icon=system-search` and `Icon=web-browser`, which the icon theme
 # resolves to a thin symbolic magnifier and — the reason this matters — to
-# SAFARI's compass. The dock has been showing Apple's browser mark on top of
-# Chromium: misleading about what the button does, and someone else's trademark
-# on an application that is not theirs.
+# SAFARI's compass. The dock was showing Apple's browser mark on Chromium.
 #
-# Installed into hicolor rather than into WhiteSur. hicolor is the fallback
-# every icon theme inherits, so these survive a theme change instead of
-# vanishing with it.
-# Search / helpers / Answers / Install share one visual language so the
-# work-on picker and the dock do not look like a grab-bag of theme glyphs.
+# Installed into hicolor (not WhiteSur) so they survive theme changes.
+# Scalable SVG + raster PNGs: dash-to-dock and some themes resolve PNGs more
+# reliably than SVG-only names, so we bake 48/64/128/256 when rsvg-convert is
+# available on the build host.
+# One visual language for Search / Web / Messages / AIs / Answers / Install.
 for icon in \
-  teddyos-search teddyos-claude teddyos-grok teddyos-gemini teddyos-codex \
+  teddyos-search teddyos-web teddyos-whatsapp teddyos-accounts \
+  teddyos-claude teddyos-grok teddyos-gemini teddyos-codex \
   teddyos-copilot teddyos-antigravity teddyos-perplexity teddyos-cursor \
-  teddyos-answers teddyos-install
+  teddyos-devin teddyos-replit \
+  teddyos-answers teddyos-install teddyos-github
 do
-  install -Dm644 "$REPO/linux/icons/$icon.svg" \
+  src="$REPO/linux/icons/$icon.svg"
+  if [[ ! -f "$src" ]]; then
+    echo "ERROR: missing icon $src" >&2
+    exit 1
+  fi
+  install -Dm644 "$src" \
     "config/includes.chroot/usr/share/icons/hicolor/scalable/apps/$icon.svg"
+  if command -v rsvg-convert >/dev/null; then
+    for size in 48 64 128 256; do
+      rsvg-convert -w "$size" -h "$size" -o "/tmp/${icon}-${size}.png" "$src"
+      install -Dm644 "/tmp/${icon}-${size}.png" \
+        "config/includes.chroot/usr/share/icons/hicolor/${size}x${size}/apps/${icon}.png"
+      rm -f "/tmp/${icon}-${size}.png"
+    done
+  fi
 done
+# Empty index.theme marker is not required for hicolor; cache is rebuilt in a
+# chroot hook so the live image does not ship a stale/missing icon cache.
 
 # Which build this is, readable from inside the running system. `cat
 # /etc/teddyos-build` settles "am I testing the thing you just fixed?" without
@@ -1309,40 +1353,88 @@ echo "calamares: branded teddyOS"
 HOOK
 chmod +x config/hooks/live/0700-teddyos-calamares.hook.chroot
 
-cat > config/hooks/live/0800-teddyos-webicon.hook.chroot <<'HOOK'
+cat > config/hooks/live/0800-teddyos-icons.hook.chroot <<'HOOK'
 #!/bin/sh
-# The Web launcher wears Chromium's own icon.
+# Ensure every teddyOS app icon is present and the hicolor cache is current.
 #
-# It started as `Icon=web-browser`, which the icon theme resolves to SAFARI's
-# compass — Apple's mark, on a browser that is not Apple's, misleading about
-# what the button opens. It was then a drawn globe, and then a drawn browser
-# window, both of which are honest but neither of which anybody recognises as
-# "the internet" the way a browser's real icon is.
+# Web: we ship our own globe tile (teddyos-web.svg + PNGs). Chromium PNGs are
+# an optional extra only when our raster is missing — never leave Web pointing
+# at theme name `web-browser` (Safari compass under WhiteSur).
 #
-# Chromium's own artwork is the answer: it IS Chromium, so it is accurate and
-# raises no trademark question at all, and the pinwheel silhouette reads as
-# Chrome-family to anyone who has used a computer.
-#
-# Copied to our own icon name rather than referencing `chromium` directly,
-# because WhiteSur themes common applications and could substitute Chrome's
-# four-colour mark — which would put Google's trademark back where Apple's just
-# was. Under our name in hicolor, nothing can override it.
+# WhatsApp / Install / Search must not depend on Papirus panel glyphs or
+# symbolic theme names — they are full dock tiles.
 set -e
-found=0
-for size in 16 24 32 48 64 128 256; do
-  src="/usr/share/icons/hicolor/${size}x${size}/apps/chromium.png"
-  if [ -f "$src" ]; then
-    install -Dm644 "$src" "/usr/share/icons/hicolor/${size}x${size}/apps/teddyos-web.png"
-    found=$((found + 1))
+need="teddyos-search teddyos-web teddyos-whatsapp teddyos-accounts teddyos-install teddyos-answers teddyos-claude"
+missing=0
+for name in $need; do
+  if [ ! -f "/usr/share/icons/hicolor/scalable/apps/${name}.svg" ] \
+     && [ ! -f "/usr/share/icons/hicolor/48x48/apps/${name}.png" ]; then
+    echo "ERROR: missing icon $name in hicolor" >&2
+    missing=1
   fi
 done
-if [ "$found" -eq 0 ]; then
-  echo "ERROR: chromium ships no hicolor icon to copy — the Web tile would be blank" >&2
-  exit 1
+# Raster fallbacks if the build host lacked rsvg-convert but the chroot has it.
+if command -v rsvg-convert >/dev/null 2>&1; then
+  for svg in /usr/share/icons/hicolor/scalable/apps/teddyos-*.svg; do
+    [ -f "$svg" ] || continue
+    base=$(basename "$svg" .svg)
+    for size in 48 64 128 256; do
+      out="/usr/share/icons/hicolor/${size}x${size}/apps/${base}.png"
+      if [ ! -f "$out" ]; then
+        mkdir -p "$(dirname "$out")"
+        rsvg-convert -w "$size" -h "$size" -o "$out" "$svg"
+      fi
+    done
+  done
 fi
-echo "web icon: chromium artwork at $found sizes"
+# Last resort for Web: copy chromium if still no web tile at all.
+if [ ! -f /usr/share/icons/hicolor/scalable/apps/teddyos-web.svg ] \
+   && [ ! -f /usr/share/icons/hicolor/48x48/apps/teddyos-web.png ]; then
+  found=0
+  for size in 16 24 32 48 64 128 256; do
+    src="/usr/share/icons/hicolor/${size}x${size}/apps/chromium.png"
+    if [ -f "$src" ]; then
+      install -Dm644 "$src" "/usr/share/icons/hicolor/${size}x${size}/apps/teddyos-web.png"
+      found=$((found + 1))
+    fi
+  done
+  if [ "$found" -eq 0 ]; then
+    echo "ERROR: teddyos-web missing and chromium has no hicolor icon" >&2
+    missing=1
+  else
+    echo "web icon: fell back to chromium artwork at $found sizes"
+  fi
+fi
+# Rebuild cache so the live session sees new names immediately.
+if command -v gtk-update-icon-cache >/dev/null 2>&1; then
+  gtk-update-icon-cache -f /usr/share/icons/hicolor 2>/dev/null \
+    || gtk-update-icon-cache -f -t /usr/share/icons/hicolor 2>/dev/null \
+    || true
+fi
+# Desktop files must not ship with theme placeholders.
+for pair in \
+  "teddyos-search.desktop:teddyos-search" \
+  "teddyos-web.desktop:teddyos-web" \
+  "teddyos-whatsapp.desktop:teddyos-whatsapp" \
+  "teddyos-install.desktop:teddyos-install" \
+  "teddyos-answers.desktop:teddyos-answers" \
+  "teddyos-accounts.desktop:teddyos-accounts" \
+  "teddyos-perplexity.desktop:teddyos-perplexity" \
+  "teddyos-devin.desktop:teddyos-devin" \
+  "teddyos-replit.desktop:teddyos-replit" \
+  "teddyos-claude.desktop:teddyos-claude"
+do
+  desk=${pair%%:*}
+  icon=${pair##*:}
+  path="/usr/share/applications/$desk"
+  if [ -f "$path" ]; then
+    sed -i "s|^Icon=.*|Icon=$icon|" "$path"
+  fi
+done
+[ "$missing" -eq 0 ] || exit 1
+echo "teddyos icons: ok"
 HOOK
-chmod +x config/hooks/live/0800-teddyos-webicon.hook.chroot
+chmod +x config/hooks/live/0800-teddyos-icons.hook.chroot
 
 chmod +x config/hooks/live/0*-teddyos-*.hook.chroot
 

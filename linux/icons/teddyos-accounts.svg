@@ -1,9 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
-  <!-- Answers — WhiteSur-style plate. -->
+  <!-- Getting you ready / accounts — WhiteSur-style plate. -->
   <defs>
-    <linearGradient id="p" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#B08CFF"/>
-      <stop offset="100%" stop-color="#5A3AD0"/>
+    <linearGradient id="b" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#6B9BFF"/>
+      <stop offset="100%" stop-color="#2B56C8"/>
     </linearGradient>
     <filter id="sh" x="-20%" y="-20%" width="140%" height="140%">
       <feDropShadow dx="0" dy="1.5" stdDeviation="1.6" flood-opacity="0.22"/>
@@ -12,10 +12,8 @@
   <rect x="5" y="7" width="54" height="54" rx="13.5" fill="#000" opacity="0.10"/>
   <rect x="5" y="5" width="54" height="54" rx="13.5" fill="#ffffff" filter="url(#sh)"/>
   <rect x="5" y="5" width="54" height="54" rx="13.5" fill="none" stroke="#000" stroke-opacity="0.06" stroke-width="0.5"/>
-  <!-- Speech bubble -->
-  <path fill="url(#p)"
-        d="M18 18 h28 a8 8 0 0 1 8 8 v14 a8 8 0 0 1 -8 8 h-6 l-8 9 -1.5 -9 H18 a8 8 0 0 1 -8 -8 V26 a8 8 0 0 1 8 -8 z"/>
-  <circle cx="26" cy="33" r="2.6" fill="#fff"/>
-  <circle cx="32" cy="33" r="2.6" fill="#fff"/>
-  <circle cx="38" cy="33" r="2.6" fill="#fff"/>
+  <!-- Person -->
+  <circle cx="32" cy="25" r="8" fill="url(#b)"/>
+  <path fill="url(#b)"
+        d="M16 48 c0 -9 7 -14 16 -14 s16 5 16 14 v2 H16 z"/>
 </svg>

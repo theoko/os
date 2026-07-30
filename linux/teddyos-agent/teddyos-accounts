@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Connect your helpers — calm setup, browser sign-in, never a terminal.
+"""Getting you ready — calm setup, browser sign-in, never a terminal.
 
 Flow for one helper:
   1. Soft “Let’s set you up” animation (skip anytime)
@@ -39,6 +39,8 @@ except Exception:  # noqa: BLE001
 APP_ID = "com.teddyos.Accounts"
 
 _URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.I)
+# Device-style codes only (e.g. AB12-CD34). Never match inside URLs — Claude’s
+# OAuth client_id is a UUID and used to false-match as e61b-44d9.
 _CODE_RE = re.compile(
     r"\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b"
     r"|\bone-time code[:\s]+([A-Z0-9-]{6,})\b"
@@ -46,6 +48,17 @@ _CODE_RE = re.compile(
     r"|\buser code[:\s]+([A-Z0-9-]{6,})\b",
     re.I,
 )
+_PASTE_PROMPT_RE = re.compile(
+    r"paste code here|paste the code|paste (your |the )?authorization"
+    r"|enter (the )?code (here|below|above)?"
+    r"|if prompted",
+    re.I,
+)
+# OAuth tools open the browser themselves via $BROWSER. We must not also open
+# the “fallback” authorize URL from stdout — Claude’s printed fallback uses a
+# different redirect_uri (platform.claude.com) than the live $BROWSER open
+# (localhost callback), which strands people with a code and no way to finish.
+_DEVICE_CODE_ACCOUNTS = frozenset({"github", "copilot"})
 
 # Vendor device pages where we can pre-fill the code in the URL.
 _DEVICE_URL_FOR_ACCOUNT = {
@@ -121,6 +134,8 @@ class SignInWindow(Adw.ApplicationWindow):
         self._login_started = False
         self._anims: list[Adw.TimedAnimation] = []
         self._device_opened = False
+        self._browser_opened = False  # $BROWSER / teddyos-open-signin already fired
+        self._paste_ready = False
 
         # Soft look
         css = Gtk.CssProvider()
@@ -168,6 +183,30 @@ class SignInWindow(Adw.ApplicationWindow):
         self._code_box.append(code_cap)
         self._code_box.append(self._code_label)
 
+        # Claude / OAuth: browser may show a one-shot code to paste back here.
+        self._paste_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self._paste_box.set_halign(Gtk.Align.CENTER)
+        self._paste_box.set_visible(False)
+        paste_cap = Gtk.Label(
+            label="If the browser shows a code, paste it here:",
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+        )
+        paste_cap.add_css_class("dim-label")
+        self._paste_entry = Gtk.Entry()
+        self._paste_entry.set_placeholder_text("Paste code from the browser")
+        self._paste_entry.set_width_chars(36)
+        self._paste_entry.set_max_width_chars(48)
+        self._paste_entry.connect("activate", self._submit_paste)
+        paste_btn = Gtk.Button(label="Send code")
+        paste_btn.add_css_class("suggested-action")
+        paste_btn.add_css_class("pill")
+        paste_btn.set_halign(Gtk.Align.CENTER)
+        paste_btn.connect("clicked", self._submit_paste)
+        self._paste_box.append(paste_cap)
+        self._paste_box.append(self._paste_entry)
+        self._paste_box.append(paste_btn)
+
         self._link_btn = Gtk.Button(label="Open sign-in page again")
         self._link_btn.add_css_class("flat")
         self._link_btn.set_halign(Gtk.Align.CENTER)
@@ -193,6 +232,7 @@ class SignInWindow(Adw.ApplicationWindow):
         page_col.append(self._body)
         page_col.append(self._spinner)
         page_col.append(self._code_box)
+        page_col.append(self._paste_box)
         page_col.append(self._link_btn)
         page_col.append(self._done)
         page_col.set_opacity(0.0)
@@ -314,10 +354,21 @@ class SignInWindow(Adw.ApplicationWindow):
 
     def _begin_login_ui(self) -> bool:
         self._spinner.start()
-        self._body.set_text(
-            f"Getting {self._account.title} ready…\n"
-            "A sign-in page may open next."
-        )
+        if self._account.id in _DEVICE_CODE_ACCOUNTS:
+            body = (
+                f"Getting {self._account.title} ready…\n"
+                "A sign-in page may open next. We’ll handle any codes."
+            )
+        else:
+            # Claude / Grok / Codex style: pure browser OAuth.
+            body = (
+                f"A sign-in page is opening for {self._account.title}.\n"
+                "Sign in and approve there. If the page shows a code, "
+                "paste it in the box below — no terminal needed."
+            )
+            # Offer paste early so people aren’t stuck staring at a code.
+            self._paste_box.set_visible(True)
+        self._body.set_text(body)
         self._done.set_sensitive(True)
         self._start_login_process()
         return False
@@ -416,11 +467,16 @@ class SignInWindow(Adw.ApplicationWindow):
         GLib.idle_add(self._login_process_finished, code)
 
     def _handle_line(self, line: str) -> None:
+        # Strip URLs first so UUID fragments inside OAuth links are never
+        # mistaken for device codes (Claude client_id → fake “e61b-44d9”).
+        scrubbed = _URL_RE.sub(" ", line)
         code = None
-        for m in _CODE_RE.finditer(line):
-            code = next((g for g in m.groups() if g), None)
-            if code:
-                break
+        if self._account.id in _DEVICE_CODE_ACCOUNTS:
+            for m in _CODE_RE.finditer(scrubbed):
+                code = next((g for g in m.groups() if g), None)
+                if code:
+                    break
+
         urls = [
             m.group(0).rstrip(").,;]")
             for m in _URL_RE.finditer(line)
@@ -428,15 +484,38 @@ class SignInWindow(Adw.ApplicationWindow):
         ]
         if code:
             GLib.idle_add(self._on_code, code, urls[0] if urls else "")
+
+        if re.search(r"opening browser|opened? (the )?browser", line, re.I):
+            self._browser_opened = True
+
+        browser_failed = bool(
+            re.search(r"didn.?t open|could not open|failed to open", line, re.I)
+        )
+        if _PASTE_PROMPT_RE.search(scrubbed):
+            GLib.idle_add(self._show_paste_prompt)
+
         for url in urls:
-            if url not in self._opened_urls:
-                # Prefer opening once with code baked in (handled in _on_code).
+            if url in self._opened_urls:
+                continue
+            self._opened_urls.add(url)
+            GLib.idle_add(self._on_url, url)
+
+            # Device-code vendors: we open (and pre-fill) the page ourselves.
+            if self._account.id in _DEVICE_CODE_ACCOUNTS:
                 if code and self._account.id in _DEVICE_URL_FOR_ACCOUNT:
-                    self._opened_urls.add(url)
+                    # _on_code will open the pre-filled URL.
                     continue
-                self._opened_urls.add(url)
-                GLib.idle_add(self._on_url, url)
                 _open_signin_url(url)
+                self._browser_opened = True
+                continue
+
+            # OAuth tools (Claude, …): $BROWSER already opened the correct URL
+            # (with localhost callback). Only re-open the printed fallback if
+            # the tool says the browser failed — otherwise people land on the
+            # wrong redirect and get stuck with a code they cannot finish.
+            if browser_failed:
+                _open_signin_url(url)
+                self._browser_opened = True
 
     def _copy_text(self, text: str) -> None:
         try:
@@ -478,13 +557,71 @@ class SignInWindow(Adw.ApplicationWindow):
                 self._last_url = filled
                 _open_signin_url(filled)
                 self._device_opened = True
+                self._browser_opened = True
+        if self._account.id in _DEVICE_CODE_ACCOUNTS:
+            body = (
+                f"Finish in the window we opened for {self._account.title}, "
+                "then tap I’m done. You shouldn’t need to type anything."
+            )
+        else:
+            body = (
+                f"Sign in to {self._account.title} in the browser window. "
+                "If it shows a code at the end, paste it below and tap Send code."
+            )
+            self._paste_box.set_visible(True)
+        self._set_status("Sign in is open", body, spinning=True)
+        return False
+
+    def _show_paste_prompt(self) -> bool:
+        self._paste_ready = True
+        self._paste_box.set_visible(True)
         self._set_status(
-            "Sign in is open",
-            f"Finish in the window we opened for {self._account.title}, "
-            "then tap I’m done. You shouldn’t need to type anything.",
+            "Almost done — paste the code",
+            f"The {self._account.title} page should show a code. "
+            "Copy it, paste it in the box below, and tap Send code.",
             spinning=True,
         )
+        try:
+            self._paste_entry.grab_focus()
+        except Exception:  # noqa: BLE001
+            pass
         return False
+
+    def _submit_paste(self, *_a) -> None:
+        text = (self._paste_entry.get_text() or "").strip()
+        if not text:
+            self._set_status(
+                "Paste the code first",
+                "Copy the code from the browser window, paste it here, "
+                "then tap Send code.",
+                spinning=False,
+            )
+            return
+        if not self._proc or self._proc.poll() is not None:
+            self._set_status(
+                "Sign-in already finished",
+                "Tap I’m done, or close this and try Connect again.",
+                spinning=False,
+            )
+            return
+        try:
+            assert self._proc.stdin is not None
+            self._proc.stdin.write(text + "\n")
+            self._proc.stdin.flush()
+        except OSError as exc:
+            log.error("paste code write failed: %s", exc)
+            self._set_status(
+                "Couldn’t send the code",
+                "Try Open sign-in page again, or close and Connect once more.",
+                spinning=False,
+            )
+            return
+        self._paste_entry.set_text("")
+        self._set_status(
+            "Code sent — finishing up",
+            f"Hang on while we finish connecting {self._account.title}…",
+            spinning=True,
+        )
 
     def _on_code(self, code: str, url_hint: str = "") -> bool:
         self._last_code = code
@@ -549,8 +686,8 @@ class SignInWindow(Adw.ApplicationWindow):
         else:
             self._title.set_text("Still need a moment?")
             self._body.set_text(
-                f"If nothing opened, tap “Open sign-in again”. "
-                f"Or close this and try Connect on {self._account.title} once more."
+                f"If nothing opened, tap “Open sign-in page again”. "
+                f"Or close this and try signing in to {self._account.title} once more."
             )
             self._link_btn.set_visible(True)
         self._done.set_sensitive(True)
@@ -581,7 +718,7 @@ class SignInWindow(Adw.ApplicationWindow):
 
 class AccountsWindow(Adw.ApplicationWindow):
     def __init__(self, app: Adw.Application, focus_id: str | None = None):
-        super().__init__(application=app, title="Connect your helpers")
+        super().__init__(application=app, title="Getting you ready")
         self.set_default_size(560, 640)
         self._rows: dict[str, Adw.ActionRow] = {}
         self._focus_id = focus_id
@@ -740,7 +877,7 @@ class AccountsWindow(Adw.ApplicationWindow):
         ))
         later(500 + 450 + 1000, lambda: fade(self._welcome_line, 0.0, 350, Adw.Easing.EASE_IN_CUBIC))
         later(500 + 450 + 1000 + 400, lambda: (
-            self._welcome_line.set_text("Connect the helpers you want to use."),
+            self._welcome_line.set_text("A few short sign-ins, then you’re ready."),
             fade(self._welcome_line, 1.0, 450),
         ))
         later(500 + 450 + 1000 + 400 + 450 + 1100, lambda: (
@@ -819,7 +956,9 @@ class AccountsWindow(Adw.ApplicationWindow):
                     ready.append(account.title if account else account_id)
                 else:
                     btn_label = "Connect"
-                    if account and account.id != "perplexity":
+                    # Web apps (Perplexity / Devin / Replit) are optional —
+                    # never block Continue on them.
+                    if account and not getattr(account, "always_available", False):
                         need.append(account)
                 sensitive = True
                 row.remove_css_class("dim-label")
@@ -867,7 +1006,8 @@ class AccountsWindow(Adw.ApplicationWindow):
             if not installed or status.ok is True:
                 continue
             account = acc.get_account(account_id) if acc else None
-            if account is None or account.id == "perplexity":
+            # Optional web apps: skip the forced multi-sign-in queue.
+            if account is None or getattr(account, "always_available", False):
                 continue
             by_id[account.id] = account
         for pid in preferred:
@@ -875,7 +1015,8 @@ class AccountsWindow(Adw.ApplicationWindow):
                 need.append(by_id.pop(pid))
         need.extend(by_id.values())
         if not need:
-            self._toast("You’re already set up. Close this and go back to Search.")
+            self._toast("You’re already set up — taking you back…")
+            GLib.timeout_add(700, self._return_to_search)
             return
         self._setup_queue = list(need)
         self._toast(f"Next up: {need[0].title}")
@@ -887,13 +1028,29 @@ class AccountsWindow(Adw.ApplicationWindow):
         self._setup_queue = self._setup_queue[1:]
         if not self._setup_queue:
             self._reload_statuses()
-            self._toast(
-                "You’re set up. Close this window, then type what you need help with."
-            )
+            self._toast("You’re set up — taking you back…")
+            # Return to Search with their saved question if any.
+            GLib.timeout_add(700, self._return_to_search)
             return
         nxt = self._setup_queue[0]
         self._toast(f"Next up: {nxt.title}")
         GLib.timeout_add(400, lambda: (self._connect(nxt), False)[1])
+
+    def _return_to_search(self) -> bool:
+        search = shutil.which("teddyos-search-app")
+        if search:
+            try:
+                subprocess.Popen(  # noqa: S603
+                    [search],
+                    start_new_session=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except OSError:
+                pass
+        self.close()
+        return False
 
     def _connect(self, account: "acc.Account | None") -> None:
         if account is None:
@@ -902,7 +1059,8 @@ class AccountsWindow(Adw.ApplicationWindow):
         if not argv:
             self._toast(f"{account.title} isn’t available on this computer.")
             return
-        if account.id == "perplexity":
+        # Web app wrappers: open browser, no device-code SignInWindow.
+        if getattr(account, "always_available", False):
             try:
                 subprocess.Popen(  # noqa: S603
                     argv,
@@ -911,10 +1069,11 @@ class AccountsWindow(Adw.ApplicationWindow):
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                self._toast("Perplexity opened — sign in there if you want.")
+                self._toast(f"{account.title} opened — sign in there if you want.")
             except OSError:
-                self._toast("Couldn’t open Perplexity.")
+                self._toast(f"Couldn’t open {account.title}.")
             return
+
 
         log.info("open sign-in id=%s argv=%s", account.id, argv)
         win = SignInWindow(self.get_application(), account, argv)

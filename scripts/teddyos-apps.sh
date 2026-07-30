@@ -46,9 +46,9 @@ run 'command -v chromium >/dev/null' || {
 # without a per-app icon the dock shows three identical Chromium marbles and
 # the only way to tell WhatsApp from Gmail is to open it. The names below
 # resolve in both WhiteSur and Papirus, so they survive a theme change.
-APPS='whatsapp|WhatsApp|https://web.whatsapp.com|Network;InstantMessaging;|whatsapp
+APPS='whatsapp|WhatsApp|https://web.whatsapp.com|Network;InstantMessaging;|teddyos-whatsapp
 gmail|Gmail|https://mail.google.com|Network;Email;|gmail-desktop
-teddysearch|teddysearch|https://teddysearch.com|Network;|system-search'
+teddysearch|teddysearch|https://teddysearch.com|Network;|teddyos-search'
 
 echo ">>> installing web apps"
 while IFS='|' read -r id name url cats icon; do

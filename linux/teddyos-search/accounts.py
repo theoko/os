@@ -44,10 +44,13 @@ _ACCOUNTS: list[Account] = [
         blurb="From Anthropic — helps write and change code",
         icon="teddyos-claude",
         binaries=("claude", "teddyos-claude"),
-        connect_argv=("claude", "auth", "login"),
+        # --claudeai skips the interactive “subscription vs console” menu
+        # (nobody can see that menu in our guided window).
+        connect_argv=("claude", "auth", "login", "--claudeai"),
         connect_hint=(
             "A browser window will open so you can sign in to Claude. "
-            "When you’re done there, come back here — you can close this window."
+            "Approve there. If the page shows a code to paste, paste it "
+            "in the teddyOS window — you never need a terminal."
         ),
     ),
     Account(
@@ -125,10 +128,36 @@ _ACCOUNTS: list[Account] = [
         always_available=True,
     ),
     Account(
+        id="devin",
+        title="Devin",
+        blurb="From Cognition — AI software engineer on the web",
+        icon="teddyos-devin",
+        binaries=("teddyos-devin", "devin"),
+        connect_argv=("teddyos-devin",),
+        connect_hint=(
+            "Devin opens in a simple browser window. "
+            "Sign in with Google or GitHub there, then come back here."
+        ),
+        always_available=True,
+    ),
+    Account(
+        id="replit",
+        title="Replit",
+        blurb="Build apps from a plain-English description",
+        icon="teddyos-replit",
+        binaries=("teddyos-replit", "replit"),
+        connect_argv=("teddyos-replit",),
+        connect_hint=(
+            "Replit opens in a simple browser window. "
+            "Sign in there if you have an account — or just start building."
+        ),
+        always_available=True,
+    ),
+    Account(
         id="github",
         title="GitHub",
         blurb="Download your projects onto this computer",
-        icon="user-info-symbolic",
+        icon="teddyos-github",
         binaries=("gh",),
         # Web-oriented flags. If GitHub still issues a one-time code, Connect
         # opens the page with the code already filled in (no typing).
@@ -174,8 +203,17 @@ def _which_any(names: tuple[str, ...]) -> str | None:
     return None
 
 
+# Web wrappers that ship with the image (Chromium --app). Always “installed”
+# when a browser is present, even if the thin launcher script is missing.
+_WEB_APP_URLS: dict[str, str] = {
+    "perplexity": "https://www.perplexity.ai/",
+    "devin": "https://app.devin.ai/",
+    "replit": "https://replit.com/",
+}
+
+
 def is_installed(account: Account) -> bool:
-    if account.always_available and account.id == "perplexity":
+    if account.always_available and account.id in _WEB_APP_URLS:
         return bool(
             _which_any(account.binaries)
             or shutil.which("chromium")
@@ -195,8 +233,9 @@ def resolve_connect_argv(account: Account) -> list[str] | None:
     else:
         exe = _which_any((head,)) or shutil.which(head)
     if not exe:
-        # Perplexity fallback: open chromium app URL without wrapper.
-        if account.id == "perplexity":
+        # Web app fallback: open chromium --app without the wrapper script.
+        url = _WEB_APP_URLS.get(account.id)
+        if url:
             browser = (
                 shutil.which("chromium")
                 or shutil.which("chromium-browser")
@@ -204,8 +243,9 @@ def resolve_connect_argv(account: Account) -> list[str] | None:
             if browser:
                 return [
                     browser,
-                    "--app=https://www.perplexity.ai/",
-                    "--class=teddyos-perplexity",
+                    f"--app={url}",
+                    f"--class=teddyos-{account.id}",
+                    f"--user-data-dir={Path.home() / '.config' / f'teddyos-{account.id}'}",
                 ]
         return None
     return [exe, *account.connect_argv[1:]]
@@ -374,14 +414,19 @@ def _status_github() -> AccountStatus:
     return AccountStatus(ok=False, label="Needs sign-in")
 
 
-def _status_perplexity() -> AccountStatus:
-    """Connected only if the Chromium profile has a real Perplexity session.
+def _status_web_cookies(
+    *,
+    profile: str,
+    host_like: str,
+    extra_anonymous: frozenset[str] | None = None,
+) -> AccountStatus:
+    """Connected only if Chromium profile has auth-ish cookies for host.
 
     Opening the app once creates a profile and tracking cookies — that is
     not sign-in. Require an auth-ish cookie name, not mere presence of cookies.
     """
     cookies = (
-        Path.home() / ".config" / "teddyos-perplexity" / "Default" / "Cookies"
+        Path.home() / ".config" / profile / "Default" / "Cookies"
     )
     if not cookies.is_file():
         return AccountStatus(ok=False, label="Needs sign-in")
@@ -401,7 +446,8 @@ def _status_perplexity() -> AccountStatus:
             try:
                 cur = con.execute(
                     "SELECT name FROM cookies "
-                    "WHERE host_key LIKE '%perplexity%' LIMIT 80"
+                    f"WHERE host_key LIKE ? LIMIT 80",
+                    (f"%{host_like}%",),
                 )
                 names = {str(n[0]).lower() for n in cur.fetchall()}
             finally:
@@ -412,16 +458,21 @@ def _status_perplexity() -> AccountStatus:
     if not names:
         return AccountStatus(ok=False, label="Needs sign-in")
 
+    anon_extra = extra_anonymous or frozenset()
+
     # Anonymous / CDN noise from merely opening the site (not a login).
     def _anonymous(n: str) -> bool:
+        if n in anon_extra:
+            return True
         if n in {
             "__frs", "__cf_bm", "__cflb", "cf_clearance", "cf_appsession",
             "g_state", "singular_device_id",
             "pplx.edge-sid", "pplx.edge-vid", "pplx.visitor-id",
             "pplx.session-id", "pplx.metadata",
+            "ajs_anonymous_id", "_ga", "_gid", "_gcl_au",
         }:
             return True
-        if n.startswith(("_dd", "__cf", "cf_", "pplx.edge", "pplx.visitor")):
+        if n.startswith(("_dd", "__cf", "cf_", "pplx.edge", "pplx.visitor", "_ga")):
             return True
         # Generic "session-id" style analytics, not account auth.
         if n in {"pplx.session-id", "sessionid", "session_id"}:
@@ -445,6 +496,27 @@ def _status_perplexity() -> AccountStatus:
     return AccountStatus(ok=False, label="Needs sign-in")
 
 
+def _status_perplexity() -> AccountStatus:
+    return _status_web_cookies(
+        profile="teddyos-perplexity",
+        host_like="perplexity",
+    )
+
+
+def _status_devin() -> AccountStatus:
+    return _status_web_cookies(
+        profile="teddyos-devin",
+        host_like="devin",
+    )
+
+
+def _status_replit() -> AccountStatus:
+    return _status_web_cookies(
+        profile="teddyos-replit",
+        host_like="replit",
+    )
+
+
 def _status_soft() -> AccountStatus:
     return AccountStatus(ok=None, label="Tap Connect to sign in")
 
@@ -457,5 +529,7 @@ _STATUS_PROBES: dict[str, Callable[[], AccountStatus]] = {
     "copilot": _status_copilot,
     "antigravity": _status_soft,
     "perplexity": _status_perplexity,
+    "devin": _status_devin,
+    "replit": _status_replit,
     "github": _status_github,
 }

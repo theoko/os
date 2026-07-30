@@ -1,20 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
-  <!-- Antigravity launcher: blue tile + upward chevron (lift). -->
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64">
+  <!-- Antigravity — WhiteSur-style plate. -->
   <defs>
-    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#5B9BFF"/>
-      <stop offset="100%" stop-color="#1A5FE0"/>
+    <linearGradient id="a" x1="0" y1="1" x2="0" y2="0">
+      <stop offset="0%" stop-color="#1A5FE0"/>
+      <stop offset="100%" stop-color="#5B9BFF"/>
     </linearGradient>
-    <linearGradient id="sheen" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#ffffff" stop-opacity="0.28"/>
-      <stop offset="55%" stop-color="#ffffff" stop-opacity="0.04"/>
-      <stop offset="100%" stop-color="#ffffff" stop-opacity="0"/>
-    </linearGradient>
+    <filter id="sh" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="1.5" stdDeviation="1.6" flood-opacity="0.22"/>
+    </filter>
   </defs>
-  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#tile)"/>
-  <rect x="62" y="62" width="900" height="900" rx="208" ry="208" fill="url(#sheen)"/>
-  <path fill="none" stroke="#ffffff" stroke-width="72" stroke-linecap="round" stroke-linejoin="round"
-        d="M280 620 L512 340 L744 620"/>
-  <path fill="none" stroke="#ffffff" stroke-width="72" stroke-linecap="round"
-        d="M360 720 L512 520 L664 720"/>
+  <rect x="5" y="7" width="54" height="54" rx="13.5" fill="#000" opacity="0.10"/>
+  <rect x="5" y="5" width="54" height="54" rx="13.5" fill="#ffffff" filter="url(#sh)"/>
+  <rect x="5" y="5" width="54" height="54" rx="13.5" fill="none" stroke="#000" stroke-opacity="0.06" stroke-width="0.5"/>
+  <!-- Upward lift chevrons -->
+  <g fill="none" stroke="url(#a)" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M20 38 L32 24 L44 38"/>
+    <path d="M24 46 L32 36 L40 46"/>
+  </g>
 </svg>

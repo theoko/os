@@ -459,12 +459,10 @@ class SetupWindow(Adw.ApplicationWindow):
         note.add_css_class("dim-label")
         note.add_css_class("caption")
         note.set_text(
-            # Was two paragraphs restating what the switch above already says.
-            # One sentence of fact, one of consequence.
-            "Ranking happens here, so what you type is never sent. That needs "
-            "a copy of the index — about 68 MB, downloaded once at the end of "
-            "setup. “Help improve teddyOS” is separate: it only allows log "
-            "snapshots on this machine, off unless you turn it on."
+            # One sentence of fact, one of consequence — no jargon.
+            "What you type stays on this computer. A small download at the end "
+            "of setup makes search work offline. “Help improve teddyOS” only "
+            "allows log snapshots on this machine, and stays off unless you turn it on."
         )
         box.append(note)
 
@@ -562,10 +560,24 @@ class SetupWindow(Adw.ApplicationWindow):
         self.sync_bar.set_size_request(320, -1)
         box.append(self.sync_bar)
         button = pill("Start using teddyOS")
-        button.connect("clicked", lambda *_: self.get_application().quit())
+        # First boot: hand off to the short tour so they are not left staring
+        # at a wallpaper with no idea what the bottom icons do.
+        button.connect("clicked", self._leave_setup)
         box.append(button)
         self.done_page.set_child(box)
         return self.done_page
+
+    def _leave_setup(self, *_a) -> None:
+        if getattr(self, "first_boot", False):
+            # Fresh tour even if they somehow already have a seen marker.
+            try:
+                Gio.Subprocess.new(
+                    ["teddyos-welcome", "--force"],
+                    Gio.SubprocessFlags.NONE,
+                )
+            except GLib.Error:
+                pass
+        self.get_application().quit()
 
     # --- getting search ready, without a terminal ---------------------------
 

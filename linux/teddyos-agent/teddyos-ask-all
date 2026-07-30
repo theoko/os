@@ -131,21 +131,30 @@ def _parse() -> argparse.Namespace:
 
 
 class ToolCard(Gtk.Box):
-    """One helper’s status + answer inside the shared window."""
+    """One AI’s status + answer inside the shared window."""
 
     def __init__(
         self,
         tool_id: str,
         project: str,
         prompt: str,
+        *,
+        parent: Gtk.Window | None = None,
         on_done=None,
+        on_rerun=None,
     ):
         super().__init__(orientation=Gtk.Orientation.VERTICAL, spacing=8)
         self.tool_id = tool_id
         self.project = project
         self.prompt = prompt
         self.title = _TITLES.get(tool_id, tool_id.title())
+        self._parent = parent
         self._on_done = on_done
+        # Called as on_rerun(tool_id, prompt) to re-run headless in this window.
+        self._on_rerun = on_rerun
+        self._busy = False
+        # Progress counter only for the first finish — re-asks must not re-count.
+        self._reported_done = False
         self.add_css_class("card")
         self.set_margin_top(4)
         self.set_margin_bottom(8)
@@ -192,11 +201,17 @@ class ToolCard(Gtk.Box):
         self.append(self.actions)
 
     def set_working(self) -> None:
+        self._busy = True
         self.spinner.set_visible(True)
         self.spinner.start()
         self.status.set_text("Thinking…")
+        self.body.add_css_class("dim-label")
+        self.body.set_text("Please wait — this can take a minute.")
+        # Hide buttons while a run is in flight so double-taps don't stack.
+        self.actions.set_visible(False)
 
     def set_answer(self, text: str) -> None:
+        self._busy = False
         self.spinner.stop()
         self.spinner.set_visible(False)
         self.status.set_text("Done")
@@ -205,19 +220,24 @@ class ToolCard(Gtk.Box):
         if len(cleaned) > _MAX_CHARS:
             cleaned = cleaned[:_MAX_CHARS] + "\n\n… (cut short here)"
         self.body.set_text(cleaned)
-        self._add_continue()
-        if self._on_done:
-            self._on_done()
+        self._add_continue(failed=False)
+        self._notify_done_once()
 
     def set_error(self, message: str) -> None:
+        self._busy = False
         self.spinner.stop()
         self.spinner.set_visible(False)
         self.status.set_text("Couldn’t finish")
         self.body.remove_css_class("dim-label")
         self.body.set_text(message)
         self._add_continue(failed=True)
-        if self._on_done:
-            self._on_done()
+        self._notify_done_once()
+
+    def _notify_done_once(self) -> None:
+        if self._reported_done or self._on_done is None:
+            return
+        self._reported_done = True
+        self._on_done()
 
     def _add_continue(self, failed: bool = False) -> None:
         child = self.actions.get_first_child()
@@ -225,28 +245,36 @@ class ToolCard(Gtk.Box):
             nxt = child.get_next_sibling()
             self.actions.remove(child)
             child = nxt
-        # Never open a CLI/agent TUI — re-run headless ask for this one helper.
-        label = (
-            f"Ask {self.title} again"
-            if failed
-            else f"Ask {self.title} something else"
-        )
-        btn = Gtk.Button(label=label)
-        if not failed:
-            btn.add_css_class("suggested-action")
-        btn.connect("clicked", self._ask_again)
-        self.actions.append(btn)
+        # Always re-run inside this window. Spawning a second teddyos-ask-all
+        # is a no-op: GApplication single-instance only re-presents this window
+        # and ignores the new argv (so “something else” looked broken).
+        if failed:
+            retry = Gtk.Button(label=f"Ask {self.title} again")
+            retry.connect("clicked", self._retry_same)
+            self.actions.append(retry)
+        else:
+            other = Gtk.Button(label=f"Ask {self.title} something else")
+            other.add_css_class("suggested-action")
+            other.connect("clicked", self._ask_something_else)
+            self.actions.append(other)
+            again = Gtk.Button(label="Ask the same thing again")
+            again.connect("clicked", self._retry_same)
+            self.actions.append(again)
         self.actions.set_visible(True)
 
-    def _ask_again(self, *_a) -> None:
-        """Retry answer, or open Connect if this helper needs sign-in."""
-        # If last error looked like auth, prefer Connect over a doomed retry.
+    def _retry_same(self, *_a) -> None:
+        """Retry the last prompt on this card (or open sign-in if needed)."""
+        if self._busy:
+            return
         body = ""
         try:
             body = (self.body.get_text() or "").lower()
         except Exception:  # noqa: BLE001
             pass
-        if any(s in body for s in ("sign-in", "sign in", "connect", "not signed")):
+        if any(
+            s in body
+            for s in ("sign-in", "sign in", "not signed", "finish sign-in")
+        ):
             accounts = shutil.which("teddyos-accounts")
             if accounts:
                 try:
@@ -260,27 +288,51 @@ class ToolCard(Gtk.Box):
                     return
                 except OSError as exc:
                     log.error("open accounts failed: %s", exc)
-        ask = shutil.which("teddyos-ask-all")
-        if not ask:
+        self._kick_rerun(self.prompt)
+
+    def _ask_something_else(self, *_a) -> None:
+        """Collect a new question, then re-run this card in place."""
+        if self._busy:
             return
-        try:
-            env = os.environ.copy()
-            subprocess.Popen(  # noqa: S603
-                [
-                    ask,
-                    "--project", self.project,
-                    "--prompt", self.prompt,
-                    "--tools", self.tool_id,
-                ],
-                cwd=self.project,
-                env=env,
-                start_new_session=True,
-                stdin=subprocess.DEVNULL,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-        except OSError as exc:
-            log.error("ask-again failed tool=%s: %s", self.tool_id, exc)
+        dialog = Adw.MessageDialog(
+            transient_for=self._parent,
+            heading=f"Ask {self.title}",
+            body="What else do you need help with?",
+        )
+        entry = Gtk.Entry()
+        entry.set_placeholder_text("Type a new question…")
+        entry.set_margin_top(8)
+        # Seed with previous prompt so they can edit rather than start blank.
+        if self.prompt:
+            entry.set_text(self.prompt)
+            entry.select_region(0, -1)
+        dialog.set_extra_child(entry)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("ask", "Get help")
+        dialog.set_response_appearance("ask", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("ask")
+        dialog.set_close_response("cancel")
+
+        def on_response(_d, response: str) -> None:
+            if response != "ask":
+                return
+            text = (entry.get_text() or "").strip()
+            if not text:
+                return
+            self._kick_rerun(text)
+
+        dialog.connect("response", on_response)
+        dialog.present()
+        entry.grab_focus()
+
+    def _kick_rerun(self, prompt: str) -> None:
+        prompt = (prompt or "").strip()
+        if not prompt or self._on_rerun is None:
+            return
+        self.prompt = prompt
+        log.info("rerun in-window tool=%s prompt_len=%d", self.tool_id, len(prompt))
+        self.set_working()
+        self._on_rerun(self.tool_id, prompt)
 
 
 class AskAllWindow(Adw.ApplicationWindow):
@@ -316,17 +368,17 @@ class AskAllWindow(Adw.ApplicationWindow):
         you_asked.set_margin_start(4)
         you_asked.set_margin_end(4)
 
-        prompt_label = Gtk.Label(
+        self._prompt_label = Gtk.Label(
             label=prompt,
             wrap=True,
             xalign=0.0,
             selectable=True,
         )
-        prompt_label.add_css_class("title-4")
-        prompt_label.set_margin_top(2)
-        prompt_label.set_margin_bottom(8)
-        prompt_label.set_margin_start(4)
-        prompt_label.set_margin_end(4)
+        self._prompt_label.add_css_class("title-4")
+        self._prompt_label.set_margin_top(2)
+        self._prompt_label.set_margin_bottom(8)
+        self._prompt_label.set_margin_start(4)
+        self._prompt_label.set_margin_end(4)
 
         self._progress = Gtk.Label(
             label="Getting answers… sit tight.",
@@ -341,7 +393,14 @@ class AskAllWindow(Adw.ApplicationWindow):
         cards_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
         runnable: list[str] = []
         for tid in tool_ids:
-            card = ToolCard(tid, project, prompt, on_done=self._mark_done)
+            card = ToolCard(
+                tid,
+                project,
+                prompt,
+                parent=self,
+                on_done=self._mark_done,
+                on_rerun=self._rerun_one,
+            )
             self._cards[tid] = card
             cards_box.append(card)
             if _headless_argv(tid, prompt, project):
@@ -359,7 +418,7 @@ class AskAllWindow(Adw.ApplicationWindow):
         outer.set_margin_start(18)
         outer.set_margin_end(18)
         outer.append(you_asked)
-        outer.append(prompt_label)
+        outer.append(self._prompt_label)
         outer.append(self._progress)
         outer.append(cards_box)
 
@@ -374,11 +433,14 @@ class AskAllWindow(Adw.ApplicationWindow):
         if self._total:
             self._progress.set_text(
                 f"Getting answers from {self._total} "
-                f"{'helper' if self._total == 1 else 'helpers'}… "
+                f"{'place' if self._total == 1 else 'places'}… "
                 "they appear below as they finish."
             )
         else:
-            self._progress.set_text("Nothing could start. Try opening one helper from Search.")
+            self._progress.set_text(
+                "Nothing could start. Close this, go back to Search, "
+                "and tap Continue to finish sign-in."
+            )
 
         for tid in runnable:
             threading.Thread(
@@ -392,15 +454,35 @@ class AskAllWindow(Adw.ApplicationWindow):
         if self._finished >= self._total and self._total:
             self._progress.set_text(
                 "All done. Read the answers below. "
-                "Tap “Continue with …” on any one to keep going."
+                "Tap a button under any answer to ask again or something else."
             )
         elif self._total:
             self._progress.set_text(
                 f"{self._finished} of {self._total} finished…"
             )
 
-    def _run_one(self, tool_id: str) -> None:
-        argv = _headless_argv(tool_id, self._prompt, self._project)
+    def _rerun_one(self, tool_id: str, prompt: str) -> None:
+        """In-window re-ask (same or new prompt) — does not spawn a second app."""
+        prompt = (prompt or "").strip()
+        self._prompt = prompt
+        # Keep “You asked” in sync so a new question isn’t still titled with the old one.
+        if prompt and getattr(self, "_prompt_label", None) is not None:
+            self._prompt_label.set_text(prompt)
+        name = _TITLES.get(tool_id, tool_id)
+        self._progress.set_text(
+            f"Asking {name}…"
+            if prompt
+            else f"Asking {name} again…"
+        )
+        threading.Thread(
+            target=self._run_one,
+            args=(tool_id, prompt),
+            daemon=True,
+        ).start()
+
+    def _run_one(self, tool_id: str, prompt: str | None = None) -> None:
+        prompt = prompt if prompt is not None else self._prompt
+        argv = _headless_argv(tool_id, prompt, self._project)
         title = _TITLES.get(tool_id, tool_id)
         if not argv:
             GLib.idle_add(
@@ -445,16 +527,16 @@ class AskAllWindow(Adw.ApplicationWindow):
             if not text:
                 GLib.idle_add(
                     self._cards[tool_id].set_error,
-                    f"{title} finished without an answer. Try “Keep chatting” "
-                    "to open it and ask again.",
+                    f"{title} finished without an answer. "
+                    "Try asking again in a moment.",
                 )
                 return
             GLib.idle_add(self._cards[tool_id].set_answer, text)
         except subprocess.TimeoutExpired:
             GLib.idle_add(
                 self._cards[tool_id].set_error,
-                f"{title} is taking too long. Try opening it on its own, or "
-                "ask a shorter question.",
+                f"{title} is taking too long. Try a shorter question, or "
+                "ask again in a moment.",
             )
         except OSError as exc:
             log.error("headless oserror tool=%s: %s", tool_id, exc)
@@ -475,12 +557,12 @@ class AskAllWindow(Adw.ApplicationWindow):
         ):
             return (
                 f"{title} needs a quick sign-in first. "
-                "Open Connect your helpers, connect this one, then ask again."
+                "Go back to Search, tap Continue, finish sign-in, then ask again."
             )
         if "permission denied" in low or "permissions" in low and "denied" in low:
             return (
-                f"{title} couldn’t use tools on this project. "
-                "Try Connect your helpers for this account, or ask again in a moment."
+                f"{title} couldn’t work on this project. "
+                "Try signing in again from Search, or ask again in a moment."
             )
         if any(
             s in low
@@ -488,16 +570,16 @@ class AskAllWindow(Adw.ApplicationWindow):
         ):
             return (
                 f"{title} is out of free uses for now. "
-                "Try another helper, or try again later."
+                "Try another answer above, or try again later."
             )
         if "403" in low:
             return (
-                f"{title} was refused access. Connect the account again in "
-                "Connect your helpers, then retry."
+                f"{title} was refused access. "
+                "Go back to Search, sign in again, then retry."
             )
         return (
             f"{title} couldn’t answer this time. "
-            "Try again, or open Connect your helpers if you haven’t signed in."
+            "Try again, or finish sign-in from Search if you haven’t yet."
         )
 
 

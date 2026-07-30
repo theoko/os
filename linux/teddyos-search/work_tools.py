@@ -124,6 +124,30 @@ _CATALOG: list[tuple] = [
         ),
     ),
     (
+        # Devin (Cognition): web app at app.devin.ai; optional CLI `devin`.
+        "devin", "Devin", "From Cognition · open in a simple window",
+        "teddyos-devin", True, True,
+        ("teddyos-devin", "devin"),
+        (),
+        (
+            "teddyos-devin.desktop",
+            "devin.desktop",
+            "Devin.desktop",
+        ),
+    ),
+    (
+        # Replit Agent: web-first; native desktop binary if installed.
+        "replit", "Replit", "Build apps from plain words",
+        "teddyos-replit", True, True,
+        ("teddyos-replit", "replit", "Replit"),
+        (),
+        (
+            "teddyos-replit.desktop",
+            "replit.desktop",
+            "Replit.desktop",
+        ),
+    ),
+    (
         "windsurf", "Windsurf", "Open in the Windsurf app",
         "text-editor", True, True,
         ("windsurf", "windsurf-bin"),
@@ -749,6 +773,12 @@ PROBES: dict[str, Callable[[], CreditStatus]] = {
     "cursor": _probe_cursor,
     "perplexity": lambda: _probe_any_binary(
         "Perplexity", ("teddyos-perplexity", "perplexity", "pplx"),
+    ),
+    "devin": lambda: _probe_any_binary(
+        "Devin", ("teddyos-devin", "devin"),
+    ),
+    "replit": lambda: _probe_any_binary(
+        "Replit", ("teddyos-replit", "replit", "Replit"),
     ),
     "windsurf": lambda: _probe_generic_installed("Windsurf", "windsurf"),
     "codex": _probe_codex,

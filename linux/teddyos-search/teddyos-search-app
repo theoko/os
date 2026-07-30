@@ -47,6 +47,26 @@ import search as engine  # noqa: E402
 import work_tools  # noqa: E402
 from work_tools import CreditStatus, WorkTool  # noqa: E402
 
+# Pending question after sign-in. Optional so a partial deploy cannot make the
+# dock Search tile a silent no-op (ModuleNotFoundError on launch).
+try:
+    import pending_ask  # noqa: E402
+except ImportError:  # pragma: no cover
+    class _PendingAskStub:  # noqa: D101
+        @staticmethod
+        def save(*_a, **_k) -> None:
+            return None
+
+        @staticmethod
+        def load() -> None:
+            return None
+
+        @staticmethod
+        def clear() -> None:
+            return None
+
+    pending_ask = _PendingAskStub()  # type: ignore[assignment]
+
 try:
     from logutil import get_logger
     log = get_logger("search-app")
@@ -89,10 +109,10 @@ SEARCH_CLI = "teddyos-search"
 WEB_SEARCH = "https://teddysearch.com/tsearch/?q="
 
 SOURCE_LABEL = {
-    "teddysearch": "on the web",
-    "portal": "on the web",
-    "your files": "your files",
-    "built-in": "built-in help",
+    "teddysearch": "Web",
+    "portal": "Guide",
+    "your files": "Your files",
+    "built-in": "Help",
 }
 
 
@@ -193,9 +213,24 @@ class SearchWindow(Adw.ApplicationWindow):
         # word is furniture around a thing that needs none. Escape closes,
         # because an undecorated window with no way out is a trap.
         self.set_decorated(False)
+        # Spotlight behaviour: click anywhere else (or switch apps) and Search
+        # goes away. Without this, an undecorated floating window sits forever
+        # over the desktop and a non-technical person has no idea how to dismiss
+        # it short of discovering Escape.
+        #
+        # Only after Search has been active at least once. Launch from the dock
+        # (or e2e over ssh) can present the window while is-active is still
+        # false — closing then made the Search tile look dead.
+        self._blur_close_armed = False
+        self._ever_active = False
+        self._blur_close_source = 0
+        self._hold_for_dialog = False
         esc = Gtk.EventControllerKey()
         esc.connect("key-pressed", self._on_key)
         self.add_controller(esc)
+        self.connect("notify::is-active", self._on_is_active_changed)
+        # Arm after first present so the initial focus dance does not close us.
+        GLib.timeout_add(400, self._arm_blur_close)
 
         # Bumped on every keystroke. A slow search that finishes after a newer
         # one must not overwrite it — without this, typing "nolan" can end up
@@ -301,11 +336,64 @@ class SearchWindow(Adw.ApplicationWindow):
         self._refresh_banner()
         self.entry.grab_focus()
         log.info("search-app ready (launch=app-window for AI tools)")
+        # After first-time sign-in, restore the project + question they typed.
+        GLib.timeout_add(400, self._restore_pending_ask)
 
     def _on_key(self, _c, keyval, _code, _state) -> bool:
         if keyval == Gdk.KEY_Escape:
             self.close()
             return True
+        return False
+
+    def _arm_blur_close(self) -> bool:
+        self._blur_close_armed = True
+        return GLib.SOURCE_REMOVE
+
+    def _on_is_active_changed(self, *_a) -> None:
+        """Close when the person clicks outside Search (focus leaves)."""
+        if self.is_active():
+            self._ever_active = True
+            # Cancel a pending close if focus came back (e.g. dock re-activate).
+            if self._blur_close_source:
+                GLib.source_remove(self._blur_close_source)
+                self._blur_close_source = 0
+            return
+        if not self._blur_close_armed or not self._ever_active or self._hold_for_dialog:
+            return
+        if self._has_transient_dialog():
+            return
+        # Short debounce: focus can flicker when a child dialog or launcher
+        # steals it for a few frames. If still inactive after that, go away.
+        if self._blur_close_source:
+            GLib.source_remove(self._blur_close_source)
+        self._blur_close_source = GLib.timeout_add(150, self._close_if_still_blurred)
+
+    def _close_if_still_blurred(self) -> bool:
+        self._blur_close_source = 0
+        if self.is_active() or self._hold_for_dialog or not self._ever_active:
+            return GLib.SOURCE_REMOVE
+        if self._has_transient_dialog():
+            return GLib.SOURCE_REMOVE
+        log.info("search closed: click away / lost focus")
+        self.close()
+        return GLib.SOURCE_REMOVE
+
+    def _has_transient_dialog(self) -> bool:
+        """True while a modal/dialog we own is open (don’t close under it)."""
+        app = self.get_application()
+        if app is None:
+            return False
+        try:
+            for win in app.get_windows():
+                if win is self or not win.get_visible():
+                    continue
+                try:
+                    if win.get_transient_for() is self:
+                        return True
+                except Exception:  # noqa: BLE001
+                    continue
+        except Exception:  # noqa: BLE001
+            return False
         return False
 
     # --- what the machine is currently allowed to do ------------------------
@@ -539,16 +627,17 @@ class SearchWindow(Adw.ApplicationWindow):
         """Layout a non-technical person can scan top-to-bottom.
 
         1) Big obvious ask box (recommended)
-        2) Or open just one helper
+        2) Or open just one app (only after sign-in)
         3) Folder / other options last
         """
         recent = set(work_tools.recent_ids())
         for project in projects[:5]:
             label = project.name
             rows.append(self._section_label(f"Found “{label}”"))
+            # First-timers only see the Continue card; this line is refined
+            # after the readiness probe. Keep it calm and free of jargon.
             intro = self._plain_notice(
-                f"You’re set up to work on “{label}”. "
-                "Type what you need below, or open one helper."
+                f"You’re looking at “{label}”. Start with the box below."
             )
             rows.append(intro)
 
@@ -817,9 +906,10 @@ class SearchWindow(Adw.ApplicationWindow):
         prompt = (entry.get_text() if entry else "").strip()
 
         if not ready:
-            # Natural next step — no mention of “helpers” or settings apps.
+            # Natural next step — no jargon, no separate app to invent.
             if prompt:
                 self._pending_task = prompt
+            pending_ask.save(str(project), prompt or "")
             self._notify("Opening a short sign-in…", timeout=3)
             self._open_accounts(setup_all=True)
             return
@@ -913,7 +1003,7 @@ class SearchWindow(Adw.ApplicationWindow):
         if self._open_accounts("github"):
             return
         self.results.append(self._notice_row(
-            "Couldn’t open Connect helpers. "
+            "Couldn’t open sign-in. "
             "Copy the project folder into your home folder, or try again.",
             "dialog-information-symbolic",
         ))
@@ -940,7 +1030,7 @@ class SearchWindow(Adw.ApplicationWindow):
         if "could not read username" in low or "authentication failed" in low:
             return (
                 f"Couldn’t download “{name}” — GitHub needs you signed in first. "
-                "Tap Connect your helpers below, connect GitHub, then try again."
+                "Tap Sign in below, connect GitHub, then try again."
             )
         if "permission denied" in low or "403" in low or "not found" in low:
             return (
@@ -1069,7 +1159,7 @@ class SearchWindow(Adw.ApplicationWindow):
         return row
 
     def _on_tool_activated(self, tool: WorkTool, project: Path) -> None:
-        """Open the helper, or Connect if it still needs a sign-in."""
+        """Open the app, or start sign-in if it still needs an account."""
         status = self._credit_statuses.get(tool.id)
         if (
             tool.metered
@@ -1092,7 +1182,7 @@ class SearchWindow(Adw.ApplicationWindow):
         *,
         setup_all: bool = False,
     ) -> bool:
-        """Open the plain-language Connect your helpers window."""
+        """Open Getting you ready (sign-in walkthrough)."""
         exe = shutil.which("teddyos-accounts")
         if not exe:
             return False
@@ -1104,7 +1194,7 @@ class SearchWindow(Adw.ApplicationWindow):
         return self._spawn(argv, cwd=str(Path.home()))
 
     def _accounts_row(self) -> Gtk.Widget:
-        # Kept for clone-auth recovery; wording is plain, not “helpers app”.
+        # Kept for clone-auth recovery; plain language only.
         row = Adw.ActionRow(title="Sign in to GitHub or an AI")
         row.set_subtitle(
             "Needed once so teddyOS can download projects and answer questions"
@@ -1235,6 +1325,34 @@ class SearchWindow(Adw.ApplicationWindow):
         except Exception:  # noqa: BLE001
             pass
 
+    def _restore_pending_ask(self) -> bool:
+        """Return from sign-in to the same project and question."""
+        data = pending_ask.load()
+        if not data:
+            return False
+        project = (data.get("project") or "").strip()
+        prompt = (data.get("prompt") or "").strip()
+        if not project or not Path(project).is_dir():
+            pending_ask.clear()
+            return False
+        # Drive Search as if they typed work on <folder name> again.
+        name = Path(project).name
+        self._pending_task = prompt
+        self.entry.set_text(f"work on {name}")
+        self._run(f"work on {name}")
+        pending_ask.clear()
+        if prompt:
+            self._notify(
+                "You’re signed in. Your question is ready — tap Get help.",
+                timeout=5,
+            )
+        else:
+            self._notify(
+                "You’re signed in. Type what you need, then tap Get help.",
+                timeout=5,
+            )
+        return False
+
     def _launch_tool(
         self,
         tool: WorkTool,
@@ -1277,11 +1395,13 @@ class SearchWindow(Adw.ApplicationWindow):
             pass
 
     def _prompt_then_ask(self, tool: WorkTool, project: Path) -> None:
-        """Ask what they need, then open the single-helper answers window."""
+        """Ask what they need, then open the Answers window for one AI."""
+        # Hold blur-close while the dialog has focus (parent is-active goes false).
+        self._hold_for_dialog = True
         dialog = Adw.MessageDialog(
             transient_for=self,
             heading=f"Ask {tool.title}",
-            body="What do you need help with? You’ll get an answer in a simple window — not a terminal.",
+            body="What do you need help with? You’ll get an answer in a simple window.",
         )
         entry = Gtk.Entry()
         entry.set_placeholder_text("e.g. Explain this project in simple words")
@@ -1297,6 +1417,9 @@ class SearchWindow(Adw.ApplicationWindow):
         dialog.set_close_response("cancel")
 
         def on_response(_d, response: str) -> None:
+            self._hold_for_dialog = False
+            # Dialog is gone; re-arm blur-close after focus settles.
+            GLib.timeout_add(200, self._arm_blur_close)
             if response != "ask":
                 return
             text = entry.get_text().strip()
@@ -1321,7 +1444,7 @@ class SearchWindow(Adw.ApplicationWindow):
             return
         names = ", ".join(
             t.title for t in self._broadcast_tools if t.id in tool_ids
-        ) or "your helper"
+        ) or "your AIs"
         self._notify(f"Asking {names}…", timeout=3)
         ok = self._spawn(
             [
@@ -1338,23 +1461,18 @@ class SearchWindow(Adw.ApplicationWindow):
             self._notify("Couldn’t open the answers window.", timeout=4)
 
     def _yield_to_launched_app(self) -> bool:
-        """Minimize Search so the tool window is not hidden behind it."""
+        """Dismiss Search once another window takes over (Answers, sign-in, …).
+
+        Click-away already closes on focus loss; this is a fast path so the
+        Answers window is never buried under Search for a beat.
+        """
         try:
-            self.minimize()
+            self.close()
         except Exception:  # noqa: BLE001
             try:
                 self.set_visible(False)
-                GLib.timeout_add_seconds(30, self._restore_after_hide)
             except Exception:  # noqa: BLE001
                 pass
-        return False
-
-    def _restore_after_hide(self) -> bool:
-        try:
-            self.set_visible(True)
-            self.present()
-        except Exception:  # noqa: BLE001
-            pass
         return False
 
     def _spawn(self, argv: list[str], *, cwd: str) -> bool:
