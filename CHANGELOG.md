@@ -1,5 +1,5 @@
 ---
-version: v0.15.1
+version: v0.15.2
 project: os
 updated: 2026-07-31
 type: changelog
@@ -10,6 +10,15 @@ type: changelog
 Runtime version is the top-level `VERSION` file (no `v` prefix there).
 This file is newest-first. When behavior ships: bump `VERSION`, add an entry
 here, update this frontmatter `version:` / `updated:`, then conventional-commit.
+
+## [v0.15.2] — 2026-07-31
+
+### Fixed — disable the Debian/GNOME “Welcome / Tour” popup
+
+`gnome-core` pulls **gnome-tour**, which greets first login with “Welcome to
+Debian” / Take the Tour. Removed on provision and live ISO build, autostart
+overridden, and `org.gnome.shell welcome-dialog-last-shown-version` set so the
+shell does not re-open it. Applied on the running UTM guest as well.
 
 ## [v0.15.1] — 2026-07-31
 

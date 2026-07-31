@@ -1156,6 +1156,20 @@ apt-get remove -y --purge power-profiles-daemon >/dev/null 2>&1 || true
 # it, which is the same deal every capability on that screen offers.
 apt-get remove -y --purge gnome-remote-desktop >/dev/null 2>&1 || true
 
+# gnome-tour is the "Welcome to Debian / Take the Tour" first-login popup.
+# Nontechnical first boot should land on the desktop, not a distro greeter.
+apt-get remove -y --purge gnome-tour >/dev/null 2>&1 || true
+mkdir -p /etc/xdg/autostart
+cat > /etc/xdg/autostart/org.gnome.Tour.desktop <<'TOUR'
+[Desktop Entry]
+Type=Application
+Name=Tour
+Exec=true
+Hidden=true
+NoDisplay=true
+X-GNOME-Autostart-enabled=false
+TOUR
+
 # Settings has 25 panels. These two come off cleanly and neither belongs in a
 # first-run desktop: gnome-user-share serves your files over the network (same
 # argument as remote-desktop), malcontent-gui is parental controls.

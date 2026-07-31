@@ -65,6 +65,9 @@ titlebar-font='Inter Semi Bold 12'
 [org/gnome/shell]
 enabled-extensions=['dash-to-dock@micxgx.gmail.com', 'blur-my-shell@aunetx', 'user-theme@gnome-shell-extensions.gcampax.github.com', 'just-perfection-desktop@just-perfection', 'rounded-window-corners@fxgn', 'light-style@gnome-shell-extensions.gcampax.github.com', 'appindicatorsupport@rgcjonas.gmail.com', 'teddyos@teddysearch.com']
 favorite-apps=[$FAVORITES]
+# Skip the GNOME/Debian "Welcome / Take the Tour" first-login dialog.
+# Value is a shell version string; anything non-empty marks the dialog as seen.
+welcome-dialog-last-shown-version='99.0'
 
 [org/gnome/shell/extensions/user-theme]
 name='$GTK_THEME'

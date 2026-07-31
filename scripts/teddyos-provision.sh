@@ -54,6 +54,24 @@ run 'sudo npm install -g --silent @anthropic-ai/claude-code 2>&1 | tail -3'
 echo ">>> boot to the desktop"
 run 'sudo systemctl set-default graphical.target'
 
+echo ">>> no Debian/GNOME welcome tour"
+# gnome-core pulls gnome-tour ("Welcome to Debian / Take the Tour"). First boot
+# should land on the desktop, not a distro greeter.
+run 'sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y -qq gnome-tour 2>/dev/null || true'
+run 'sudo mkdir -p /etc/xdg/autostart /etc/dconf/db/local.d /etc/dconf/profile'
+run "printf '%s\n' \
+  '[Desktop Entry]' 'Type=Application' 'Name=Tour' 'Exec=true' \
+  'Hidden=true' 'NoDisplay=true' 'X-GNOME-Autostart-enabled=false' \
+  | sudo tee /etc/xdg/autostart/org.gnome.Tour.desktop >/dev/null"
+run "printf '%s\n' 'user-db:user' 'system-db:local' \
+  | sudo tee /etc/dconf/profile/user >/dev/null"
+run 'VER=$(gnome-shell --version 2>/dev/null | awk "{print \$3}"); VER=${VER:-48}
+printf "%s\n" "[org/gnome/shell]" "welcome-dialog-last-shown-version='"'"'$VER'"'"'" \
+  | sudo tee /etc/dconf/db/local.d/00-teddyos-no-welcome >/dev/null
+sudo dconf update
+gsettings set org.gnome.shell welcome-dialog-last-shown-version "$VER" 2>/dev/null || true
+'
+
 echo ">>> versions"
 run 'echo "  chromium: $(chromium --version 2>/dev/null || echo MISSING)"
      echo "  node:     $(node --version 2>/dev/null || echo MISSING)"
