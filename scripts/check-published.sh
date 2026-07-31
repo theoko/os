@@ -95,20 +95,19 @@ ok "published release $commit"
 #     costs is that machines cannot tell whether they are behind — they report
 #     state=undetermined, because a commit and a version are not comparable.
 fetch "$SITE/os/manifest.json" "$WORK/manifest.json" || true
-if grep -q '"x86_sha256"' "$WORK/manifest.json" 2>/dev/null; then
+if grep -qE '"version"|"live_.*_sha256"|"software_commit"' "$WORK/manifest.json" 2>/dev/null; then
   ok "manifest.json (update.check can name a version)"
 else
   warn "manifest.json is not published — the catch-all page is answering, so update.check reports state=undetermined. Fixed by the next 'make publish-os'."
 fi
 
-# 4. The images themselves, fetched the way the page links them. This is the
-#    check that matters: it is the exact bytes a visitor receives.
+# 4. Linux live images (stable names). Freestanding os.iso / os-arm64.iso are gone.
 tmp="$WORK/images"
 mkdir -p "$tmp"
-for image in os.iso os-arm64.iso; do
+for image in teddyos-amd64.iso teddyos-arm64.iso; do
   want="$(awk -v f="$image" '$2 == f {print $1}' "$WORK/SHA256SUMS")"
   if [ -z "$want" ]; then
-    bad "$image has no entry in SHA256SUMS"
+    warn "$image has no entry in SHA256SUMS (may not be published yet)"
     continue
   fi
   if ! fetch "$SITE/os/$image?v=$commit" "$tmp/$image"; then
@@ -123,8 +122,6 @@ for image in os.iso os-arm64.iso; do
     ok "$image ($size bytes) matches SHA256SUMS"
   fi
 
-  # The bare URL is what someone gets if they type it or follow an old link.
-  # Expected to lag the CDN TTL after a release, so this is a warning.
   bare=""
   if fetch "$SITE/os/$image" "$tmp/bare-$image"; then
     bare="$(shasum -a 256 "$tmp/bare-$image" | awk '{print $1}')"

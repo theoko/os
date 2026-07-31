@@ -1,5 +1,5 @@
 ---
-version: v0.14.0
+version: v0.15.0
 project: os
 updated: 2026-07-31
 type: changelog
@@ -10,6 +10,44 @@ type: changelog
 Runtime version is the top-level `VERSION` file (no `v` prefix there).
 This file is newest-first. When behavior ships: bump `VERSION`, add an entry
 here, update this frontmatter `version:` / `updated:`, then conventional-commit.
+
+## [v0.15.0] — 2026-07-31
+
+### Removed — freestanding kernel and everything that only served it
+
+This repo is **Linux-only**. Deleted from the tree:
+
+- `kernel/`, `core/`, Cargo workspace, Limine submodule, freestanding fonts
+- Freestanding scripts: `make-utm`, `make-virtualbox-arm64`, `make-usb`, QEMU
+  smoke, drive-ui / e2e kernel suite, bake-corpus, health-check (kernel), …
+- Kernel-era docs (architecture, boot, UI, UTM freestanding, VirtualBox
+  freestanding kernel, skills/search freestanding notes, …)
+- Default skills playbooks and portals catalog for the freestanding guest
+
+### Changed — product surface is Linux only
+
+- `make` / `make desktop` → UTM Linux guest (`teddyos`)
+- `make test` → `scripts/linux-contract-unit.sh` (no Rust/QEMU ISO)
+- `publish-os` ships live images + update payload only (no `os.iso` / `os-arm64.iso`)
+- CI runs Linux contracts only
+- Identity cards and STATUS describe Linux-only
+
+What remains: `linux/`, Linux scripts, optional `search/seed.json` for live ISO
+bake, docs for daily-driver / install / intent / UX audit / live VirtualBox.
+
+## [v0.14.1] — 2026-07-31
+
+### Changed — Linux is the only product path; freestanding is noise
+
+Operators kept launching freestanding `os.iso` / UTM `os` / VirtualBox ARM
+kernel and seeing “hello” instead of the desktop. Defaults now point at Linux:
+
+- **`make desktop`** (also `make`, `make run`, `make utm`) opens the Linux guest
+  in UTM via `scripts/teddyos-desktop.sh` + `teddyos-utm.sh`.
+- **`make linux-init`** / **`make linux-provision`** for first-time disk + GNOME.
+- Freestanding renamed to explicit lab targets: `kernel-iso`, `kernel-utm`,
+  `virtualbox-kernel-arm64`. Old `make virtualbox-arm64` errors with a pointer.
+- Identity cards and `linux/README.md` state Linux-first; freestanding is CI/lab.
 
 ## [v0.14.0] — 2026-07-31
 

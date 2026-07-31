@@ -1,49 +1,31 @@
-# linux/ — teddyOS desktop on a Linux live image
+# linux/ — teddyOS (the product)
 
-This directory is the **daily-driver** path for the standalone tip: a Debian
-live image plus teddyOS apps. It is **not** a guest for a host MCP bridge.
+Debian live image + desktop apps. This directory **is** the OS for daily use.
 
-On this tip (`AGENTS.md` / `STATUS.md`):
+## Run (Apple Silicon)
 
-- No `host/bridge` in the tree
-- No COM2 host connector — freestanding / offline stubs only
-- Non-technical audience first
+```sh
+make help
+make linux-init          # once — Debian aarch64 disk + cloud-init
+make linux-provision     # once — GNOME + Chromium (headless QEMU, ssh :2222)
+make desktop             # open the Linux guest in UTM (VM name: teddyos)
+```
 
-## What ships
+## What ships here
 
 | Piece | Role |
 |-------|------|
-| `iso/` + `make linux-iso` | Build the live ISO (`scripts/build-linux-iso.sh`) |
-| `teddyos-search/` | In-guest search over baked corpus / granted sources |
-| `teddyos-setup/` | First-run / capabilities UI on the desktop |
-| `teddyos-claude/` | Launch Claude in a project folder |
-| `teddyos-update/` | Update helpers |
+| `iso/` + `make linux-iso` | Live ISO build |
+| `teddyos-search/` | Search, intent router, work-on / messaging |
+| `teddyos-setup/` | First-run / capabilities |
+| `teddyos-agent/` | Display, LinkedIn, WhatsApp, accounts |
+| `teddyos-update/` | In-guest updates |
 | `shell-extension/` | GNOME shell bits |
-| `logging/` | Journal / collect helpers |
+| `logging/` | Journal / collect |
 | `icons/` | App icons |
 
-Build:
-
 ```sh
-make linux-iso                 # native arch of this machine
+make linux-iso                 # native arch of the guest
 make linux-iso ARCH=amd64      # cross-build when needed
+make test                      # host contract unit tests
 ```
-
-See `linux/iso/build-iso.sh` and `scripts/build-linux-iso.sh`.
-
-## Search from the desktop
-
-```sh
-teddyos-search wheel strategy
-teddyos-search --caps
-teddyos-search --json nvda
-```
-
-Exit codes matter: blocked/denied must never look like “no matches.” See the
-header comment in `teddyos-search/teddyos-search`.
-
-## Related docs
-
-- [`AGENTS.md`](../AGENTS.md) — identity / non-negotiables for this tip
-- [`STATUS.md`](../STATUS.md) — review-only fork vs MCP `main`
-- [`docs/linux-os-doc-v02.md`](../docs/linux-os-doc-v02.md) — proposal history (not live wiring)

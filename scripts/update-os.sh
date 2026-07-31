@@ -47,9 +47,9 @@ command -v curl >/dev/null 2>&1 || die "curl not found"
 command -v shasum >/dev/null 2>&1 || die "shasum not found"
 
 case "$ARCH" in
-  x86_64) IMG=os.iso ;;
-  arm64)  IMG=os-arm64.iso ;;
-  *) die "unknown architecture '$ARCH' — published: x86_64, arm64" ;;
+  x86_64|amd64) IMG=teddyos-amd64.iso ;;
+  arm64|aarch64) IMG=teddyos-arm64.iso ;;
+  *) die "unknown architecture '$ARCH' — published: amd64, arm64 live images" ;;
 esac
 
 # /tsearch/ has a catch-all: a missing path answers HTTP 200 with the
