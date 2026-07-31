@@ -36,7 +36,8 @@ run 'sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
        gnome-core gdm3 \
        fonts-noto fonts-noto-color-emoji \
        pipewire-audio wireplumber \
-       xdg-utils desktop-file-utils'
+       xdg-utils desktop-file-utils \
+       qrencode'
 
 echo ">>> browser"
 # Google publishes Chrome for Linux on amd64 only. On aarch64 the browser is

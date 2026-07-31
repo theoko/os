@@ -116,7 +116,7 @@ done
 
 # --- libraries ---
 for m in caps search sandbox work_tools git_projects accounts audience intent \
-         pending_ask progress; do
+         pending_ask progress phone_auth; do
   [[ -f "linux/teddyos-search/$m.py" ]] && put "linux/teddyos-search/$m.py" "usr/lib/teddyos/$m.py"
 done
 put linux/logging/logutil.py usr/lib/teddyos/logutil.py

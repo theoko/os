@@ -27,14 +27,17 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
 
 sys.path.insert(0, "/usr/lib/teddyos")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "teddyos-search"))
 try:
     import accounts as acc
+    import phone_auth
     from logutil import get_logger
     log = get_logger("accounts")
 except Exception:  # noqa: BLE001
     import logging
     log = logging.getLogger("teddyos.accounts")
     acc = None  # type: ignore
+    phone_auth = None  # type: ignore
 
 APP_ID = "com.teddyos.Accounts"
 
@@ -142,7 +145,8 @@ class SignInWindow(Adw.ApplicationWindow):
         css.load_from_data(b"""
             .teddyos-setup-title { font-size: 28px; font-weight: 600; }
             .teddyos-setup-line { font-size: 22px; font-weight: 500; }
-            .teddyos-setup-code { font-size: 32px; font-weight: 700; letter-spacing: 2px; }
+            .teddyos-setup-code { font-size: 36px; font-weight: 700; letter-spacing: 3px; }
+            .teddyos-phone-caption { font-size: 14px; font-weight: 600; }
             window { background: #fbfbfa; }
         """)
         Gtk.StyleContext.add_provider_for_display(
@@ -172,16 +176,36 @@ class SignInWindow(Adw.ApplicationWindow):
         self._spinner.set_size_request(36, 36)
         self._spinner.set_halign(Gtk.Align.CENTER)
 
-        self._code_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        # Phone-friendly card: QR (when we can) + big code.
+        self._code_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         self._code_box.set_halign(Gtk.Align.CENTER)
         self._code_box.set_visible(False)
-        code_cap = Gtk.Label(label="Your code (already copied — you usually don’t need it):")
+        phone_cap = Gtk.Label(label="On your phone")
+        phone_cap.add_css_class("teddyos-phone-caption")
+        phone_cap.set_halign(Gtk.Align.CENTER)
+        self._qr_image = Gtk.Image()
+        self._qr_image.set_pixel_size(180)
+        self._qr_image.set_halign(Gtk.Align.CENTER)
+        self._qr_image.set_visible(False)
+        self._qr_hint = Gtk.Label(
+            label="Scan with your camera — or use the code below",
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+        )
+        self._qr_hint.add_css_class("dim-label")
+        self._qr_hint.add_css_class("caption")
+        self._qr_hint.set_visible(False)
+        code_cap = Gtk.Label(label="Your code (already copied):")
         code_cap.add_css_class("dim-label")
         self._code_label = Gtk.Label(label="")
         self._code_label.add_css_class("teddyos-setup-code")
         self._code_label.set_selectable(True)
+        self._code_box.append(phone_cap)
+        self._code_box.append(self._qr_image)
+        self._code_box.append(self._qr_hint)
         self._code_box.append(code_cap)
         self._code_box.append(self._code_label)
+        self._qr_path: Path | None = None
 
         # Claude / OAuth: browser may show a one-shot code to paste back here.
         self._paste_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
@@ -320,7 +344,7 @@ class SignInWindow(Adw.ApplicationWindow):
         return [
             "Let’s set you up.",
             f"We’ll connect {name} in a moment.",
-            "A page may open — just approve. We’ll handle any codes.",
+            "Prefer your phone? We’ll show a code or QR when we can.",
         ]
 
     def _start_intro(self) -> None:
@@ -569,21 +593,27 @@ class SignInWindow(Adw.ApplicationWindow):
             filled = self._device_url(self._last_code, url)
             if filled:
                 self._last_url = filled
+                self._show_phone_qr(filled)
                 _open_signin_url(filled)
                 self._device_opened = True
                 self._browser_opened = True
+        elif self._account.id not in _DEVICE_CODE_ACCOUNTS:
+            # Browser OAuth: QR the authorize URL so a phone can open it too.
+            self._code_box.set_visible(True)
+            self._show_phone_qr(url)
         if self._account.id in _DEVICE_CODE_ACCOUNTS:
             body = (
-                f"Finish in the window we opened for {self._account.title}, "
-                "then tap I’m done. You shouldn’t need to type anything."
+                f"Scan the QR with your phone, or finish in the window for "
+                f"{self._account.title}. Then tap I’m done."
             )
         else:
             body = (
-                f"Sign in to {self._account.title} in the browser window. "
+                f"Sign in to {self._account.title} in the browser window "
+                f"(or scan the QR on your phone). "
                 "If it shows a code at the end, paste it below and tap Send code."
             )
             self._paste_box.set_visible(True)
-        self._set_status("Sign in is open", body, spinning=True)
+        self._set_status("On your phone or this screen", body, spinning=True)
         return False
 
     def _show_paste_prompt(self) -> bool:
@@ -637,6 +667,36 @@ class SignInWindow(Adw.ApplicationWindow):
             spinning=True,
         )
 
+    def _show_phone_qr(self, data: str) -> None:
+        """Show a QR for phone camera when generation works."""
+        if not data or phone_auth is None:
+            self._qr_image.set_visible(False)
+            self._qr_hint.set_visible(False)
+            return
+        path = phone_auth.qr_temp_png(data)
+        if path is None:
+            self._qr_image.set_visible(False)
+            self._qr_hint.set_text(
+                "Open the sign-in page on your phone and enter the code below."
+            )
+            self._qr_hint.set_visible(True)
+            return
+        # Drop previous temp file
+        if self._qr_path and self._qr_path != path:
+            try:
+                self._qr_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._qr_path = path
+        try:
+            self._qr_image.set_from_file(str(path))
+            self._qr_image.set_visible(True)
+            self._qr_hint.set_text("Scan with your phone camera")
+            self._qr_hint.set_visible(True)
+        except GLib.Error:
+            self._qr_image.set_visible(False)
+            self._qr_hint.set_visible(False)
+
     def _on_code(self, code: str, url_hint: str = "") -> bool:
         self._last_code = code
         self._code_box.set_visible(True)
@@ -644,25 +704,33 @@ class SignInWindow(Adw.ApplicationWindow):
         self._copy_text(code)
 
         filled = self._device_url(code, url_hint or self._last_url)
+        # Phone card: QR of the complete device URL when we have it.
+        qr_target = filled or url_hint or self._last_url
+        if qr_target:
+            self._show_phone_qr(qr_target)
+        elif code and phone_auth is not None:
+            # Fall back to GitHub-style device page with code.
+            self._show_phone_qr(phone_auth.github_device_url(code))
+
         if filled and not self._device_opened:
             self._last_url = filled
             self._opened_urls.add(filled)
+            # Still open on this computer for people without a phone handy.
             _open_signin_url(filled)
             self._device_opened = True
             self._link_btn.set_visible(True)
             self._set_status(
-                "Almost done — just approve",
-                f"We opened {self._account.title} sign-in and filled in your "
-                "code. In the browser, sign in if needed and click Approve. "
-                "Then come back and tap I’m done.",
+                "On your phone or this screen",
+                f"Scan the code with your phone, or use the window we opened "
+                f"for {self._account.title}. Approve there, then tap I’m done.",
                 spinning=True,
             )
         else:
             self._link_btn.set_visible(True)
             self._set_status(
                 "Code ready",
-                "We copied the code for you. Tap “Open sign-in page again” "
-                "if the browser didn’t open, then Approve.",
+                "Scan the QR with your phone, or open the sign-in page on this "
+                "computer. The code is already copied.",
                 spinning=True,
             )
         return False

@@ -2618,6 +2618,35 @@ else
   bad "progress toast/line/meter" "failed"
 fi
 
+# --- phone_auth: device URL + pair server ---
+if python3 - <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, "linux/teddyos-search")
+import phone_auth
+u = phone_auth.github_device_url("ABCD-EF12")
+assert "github.com/login/device" in u and "user_code=ABCD-EF12" in u
+assert phone_auth.github_device_url("X", "https://github.com/login/device?user_code=X").endswith("user_code=X")
+srv = phone_auth.PhonePairServer(title="T", open_url="https://example.com/")
+url = srv.start()
+assert url.startswith("http://")
+import urllib.request
+assert b"ok" in urllib.request.urlopen(url + "health", timeout=2).read()
+srv.stop()
+# Connect + email guides import phone path
+acc = Path("linux/teddyos-agent/teddyos-accounts").read_text()
+assert "phone_auth" in acc and "_show_phone_qr" in acc
+gm = Path("linux/teddyos-agent/teddyos-gmail").read_text()
+assert "Link from phone" in gm or "phone" in gm.lower()
+assert "PhonePairServer" in gm or "phone_auth" in gm
+print("phone-auth-ok")
+PY
+then
+  ok "phone_auth QR helpers + Connect/Email wiring"
+else
+  bad "phone_auth" "failed"
+fi
+
 echo
 echo "PASS=$PASS  FAIL=$FAIL  TOTAL=$((PASS + FAIL))"
 if [[ "$FAIL" -gt 0 ]]; then

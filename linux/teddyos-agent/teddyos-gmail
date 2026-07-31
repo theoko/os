@@ -19,7 +19,14 @@ import gi
 
 gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
-from gi.repository import Adw, Gdk, Gio, Gtk  # noqa: E402
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+sys.path.insert(0, "/usr/lib/teddyos")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "teddyos-search"))
+try:
+    import phone_auth
+except Exception:  # noqa: BLE001
+    phone_auth = None  # type: ignore
 
 APP_ID = "com.teddyos.Gmail"
 STATE = Path.home() / ".config" / "teddyos" / "email-provider.json"
@@ -208,6 +215,30 @@ class GuideWindow(Adw.ApplicationWindow):
         self._later.set_margin_top(4)
         self._later.connect("clicked", lambda *_: self._finish(open_inbox=True))
 
+        self._phone_btn = Gtk.Button(
+            label="Link from phone (QR)",
+            halign=Gtk.Align.CENTER,
+        )
+        self._phone_btn.add_css_class("flat")
+        self._phone_btn.set_margin_top(2)
+        self._phone_btn.connect("clicked", self._start_phone_link)
+        self._phone_btn.set_visible(False)
+
+        self._phone_box = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL, spacing=8, halign=Gtk.Align.CENTER
+        )
+        self._phone_box.set_visible(False)
+        self._phone_qr = Gtk.Image(pixel_size=180, halign=Gtk.Align.CENTER)
+        self._phone_label = Gtk.Label(
+            wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=40
+        )
+        self._phone_label.add_css_class("dim-label")
+        self._phone_label.add_css_class("caption")
+        self._phone_box.append(self._phone_qr)
+        self._phone_box.append(self._phone_label)
+        self._pair_server = None
+        self._qr_path: Path | None = None
+
         buttons = Gtk.Box(
             orientation=Gtk.Orientation.VERTICAL,
             spacing=8,
@@ -217,6 +248,8 @@ class GuideWindow(Adw.ApplicationWindow):
         buttons.set_margin_bottom(20)
         buttons.append(self._primary)
         buttons.append(self._secondary)
+        buttons.append(self._phone_btn)
+        buttons.append(self._phone_box)
         buttons.append(self._later)
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -447,34 +480,44 @@ class GuideWindow(Adw.ApplicationWindow):
             self._primary.set_label("Continue")
             self._secondary.set_label("Back")
             self._later.set_visible(False)
+            self._phone_btn.set_visible(False)
+            self._phone_box.set_visible(False)
+            self._stop_phone_link()
         elif step == self.STEP_OPEN:
             p = _provider_by_id(self._provider_id) or PROVIDERS[0]
             self._open_title.set_text(f"Open {p['label']}")
             if p["id"] == "other":
                 self._open_body.set_text(
-                    "We’ll open the web address you entered in its own simple window.\n\n"
-                    "Sign in there if asked. Your password stays on that site — "
-                    "teddyOS never stores it."
+                    "Open on this computer, or link from your phone with a QR "
+                    "(same Wi‑Fi).\n\n"
+                    "Your password stays on the email site — teddyOS never stores it."
                 )
             else:
                 self._open_body.set_text(
-                    f"We’ll open {p['label']} in its own simple window — "
-                    "like an app, not a tab lost in a browser.\n\n"
-                    "Sign in once if needed. After that, it stays on this computer "
-                    "until you sign out."
+                    f"Open {p['label']} on this computer, or scan a QR to continue "
+                    "on your phone (same Wi‑Fi).\n\n"
+                    "Sign in once if needed. AI never sends mail for you."
                 )
             self._open_dots.set_text(self._dots_for(step))
-            self._primary.set_label(f"Open {p['label']}")
+            self._primary.set_label(f"Open on this computer")
             self._secondary.set_label("Back")
             self._later.set_visible(False)
+            self._phone_btn.set_visible(True)
+            self._phone_box.set_visible(False)
         elif step == self.STEP_INTRO:
             self._primary.set_label("Show me how")
             self._secondary.set_label("Skip for now")
             self._later.set_visible(True)
+            self._phone_btn.set_visible(False)
+            self._phone_box.set_visible(False)
+            self._stop_phone_link()
         else:
             self._primary.set_label("Next")
             self._secondary.set_label("Back")
             self._later.set_visible(False)
+            self._phone_btn.set_visible(False)
+            self._phone_box.set_visible(False)
+            self._stop_phone_link()
 
     def _on_key(self, _c, keyval, _code, _state) -> bool:
         if keyval == Gdk.KEY_Escape:
@@ -509,6 +552,69 @@ class GuideWindow(Adw.ApplicationWindow):
             return
         self._show_step(self._step - 1)
 
+    def _start_phone_link(self, *_a) -> None:
+        """LAN page + QR so the phone can open the same webmail (same Wi‑Fi)."""
+        resolved = self._resolved_provider()
+        if resolved is None:
+            self._show_step(self.STEP_CHOOSE)
+            self._other_entry.grab_focus()
+            return
+        p, url = resolved
+        if phone_auth is None:
+            self._phone_label.set_text(
+                "Phone link isn’t available right now. Use Open on this computer."
+            )
+            self._phone_box.set_visible(True)
+            return
+        self._stop_phone_link()
+        try:
+            srv = phone_auth.PhonePairServer(
+                title=f"{p['label']} on your phone",
+                open_url=url,
+                blurb=(
+                    f"Open {p['label']} here to sign in or read mail on your phone. "
+                    "Then continue on the computer if you also want it there."
+                ),
+            )
+            pair_url = srv.start()
+            self._pair_server = srv
+        except OSError:
+            self._phone_label.set_text(
+                "Couldn’t start phone link. Use Open on this computer instead."
+            )
+            self._phone_box.set_visible(True)
+            return
+        path = phone_auth.qr_temp_png(pair_url)
+        if path is not None:
+            self._qr_path = path
+            try:
+                self._phone_qr.set_from_file(str(path))
+                self._phone_qr.set_visible(True)
+            except GLib.Error:
+                self._phone_qr.set_visible(False)
+        else:
+            self._phone_qr.set_visible(False)
+        self._phone_label.set_text(
+            f"Scan with your phone (same Wi‑Fi).\n{pair_url}\n\n"
+            "Then you can also open it on this computer."
+        )
+        self._phone_box.set_visible(True)
+        self._phone_btn.set_label("Refresh phone QR")
+
+    def _stop_phone_link(self) -> None:
+        if self._pair_server is not None:
+            try:
+                self._pair_server.stop()
+            except Exception:  # noqa: BLE001
+                pass
+            self._pair_server = None
+        if self._qr_path is not None:
+            try:
+                self._qr_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            self._qr_path = None
+
     def _finish(self, *, open_inbox: bool) -> None:
         if open_inbox:
             resolved = self._resolved_provider()
@@ -525,6 +631,7 @@ class GuideWindow(Adw.ApplicationWindow):
                 }
             )
             _open_mail_app(url=url, profile=p["profile"], class_name=p["class"])
+        self._stop_phone_link()
         self.close()
 
 

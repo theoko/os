@@ -316,6 +316,8 @@ gnome-session-xsession
 xserver-xorg-core
 xserver-xorg-video-fbdev
 xserver-xorg-input-libinput
+# QR codes for phone-friendly Connect / Email link-from-phone
+qrencode
 
 # Look
 fonts-inter
@@ -413,6 +415,8 @@ install -Dm644 "$REPO/linux/teddyos-search/pending_ask.py" \
   config/includes.chroot/usr/lib/teddyos/pending_ask.py
 install -Dm644 "$REPO/linux/teddyos-search/intent.py" \
   config/includes.chroot/usr/lib/teddyos/intent.py
+install -Dm644 "$REPO/linux/teddyos-search/phone_auth.py" \
+  config/includes.chroot/usr/lib/teddyos/phone_auth.py
 
 # --- logs -------------------------------------------------------------------
 # Persistent journal + per-app files + daily snapshots. Without this, a failed

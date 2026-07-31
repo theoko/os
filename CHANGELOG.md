@@ -1,5 +1,5 @@
 ---
-version: v0.15.6
+version: v0.16.0
 project: os
 updated: 2026-07-31
 type: changelog
@@ -10,6 +10,24 @@ type: changelog
 Runtime version is the top-level `VERSION` file (no `v` prefix there).
 This file is newest-first. When behavior ships: bump `VERSION`, add an entry
 here, update this frontmatter `version:` / `updated:`, then conventional-commit.
+
+## [v0.16.0] — 2026-07-31
+
+### Added — phone-friendly Connect + Email “link from phone”
+
+- **Connect** shows a unified phone card: large code, **QR** of the device/sign-in
+  URL when `qrencode` (or Python `qrcode`) is available, copy-to-clipboard still
+  works. GitHub/Copilot pre-filled device URLs preferred. Browser OAuth also
+  gets a QR of the authorize URL so a phone can open it.
+- **Email** setup adds **Link from phone (QR)** on the last step: a tiny LAN
+  server serves a calm mobile page that opens the chosen webmail; desktop can
+  still open the same inbox. Same Wi‑Fi required for the QR URL.
+- New `phone_auth.py` helper (QR + `PhonePairServer`); ISO/provision install
+  `qrencode`.
+
+Honest limit: true single-session Google OAuth completed only on the phone
+and mirrored to the desktop still needs a registered OAuth app / public
+callback — not required for this ship.
 
 ## [v0.15.6] — 2026-07-31
 
