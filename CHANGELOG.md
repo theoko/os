@@ -1,5 +1,5 @@
 ---
-version: v0.15.2
+version: v0.15.3
 project: os
 updated: 2026-07-31
 type: changelog
@@ -10,6 +10,15 @@ type: changelog
 Runtime version is the top-level `VERSION` file (no `v` prefix there).
 This file is newest-first. When behavior ships: bump `VERSION`, add an entry
 here, update this frontmatter `version:` / `updated:`, then conventional-commit.
+
+## [v0.15.3] — 2026-07-31
+
+### Changed — Gmail opens a setup guide, not a naked Google page
+
+Dock **Gmail** now launches `teddyos-gmail`: a short plain-language guide
+(control, sign-in once, then inbox). Signing in still opens Gmail in its own
+Chromium app window at the end — not as the first thing you see. Wired through
+apps install, product install, update payload, and live ISO.
 
 ## [v0.15.2] — 2026-07-31
 

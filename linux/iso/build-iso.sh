@@ -398,6 +398,7 @@ install -Dm755 "$REPO/linux/teddyos-agent/teddyos-open-signin"  config/includes.
 # asks to reply to messages (draft-only; never auto-send).
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-linkedin"     config/includes.chroot/usr/bin/teddyos-linkedin
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-whatsapp"     config/includes.chroot/usr/bin/teddyos-whatsapp
+install -Dm755 "$REPO/linux/teddyos-agent/teddyos-gmail"        config/includes.chroot/usr/bin/teddyos-gmail
 # Highest available display mode at login (VM-friendly; no Settings homework).
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-display"      config/includes.chroot/usr/bin/teddyos-display
 install -Dm755 "$REPO/linux/teddyos-update/teddyos-update"      config/includes.chroot/usr/bin/teddyos-update
@@ -535,6 +536,19 @@ Icon=teddyos-whatsapp
 Terminal=false
 Categories=Network;InstantMessaging;
 StartupWMClass=teddyos-whatsapp
+DESKTOP
+
+# Gmail opens a setup guide first — not a naked mail.google.com tab.
+install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-gmail.desktop <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=Gmail
+Comment=Set up Gmail on teddyOS
+Exec=teddyos-gmail
+Icon=gmail-desktop
+Terminal=false
+Categories=Network;Email;
+StartupNotify=true
 DESKTOP
 
 # Claude desktop entry — installed but hidden from the dock/app grid.

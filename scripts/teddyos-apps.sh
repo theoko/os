@@ -40,14 +40,9 @@ run 'command -v chromium >/dev/null' || {
   exit 1
 }
 
-# name|Display Name|url|categories|icon
-#
-# The icon name is not cosmetic. Every one of these launches chromium, so
-# without a per-app icon the dock shows three identical Chromium marbles and
-# the only way to tell WhatsApp from Gmail is to open it. The names below
-# resolve in both WhiteSur and Papirus, so they survive a theme change.
+# Web Chromium apps (own profile, app window). Gmail is *not* here — it opens
+# teddyos-gmail, a calm setup guide, instead of dumping people on mail.google.com.
 APPS='whatsapp|WhatsApp|https://web.whatsapp.com|Network;InstantMessaging;|teddyos-whatsapp
-gmail|Gmail|https://mail.google.com|Network;Email;|gmail-desktop
 teddysearch|teddysearch|https://teddysearch.com|Network;|teddyos-search'
 
 echo ">>> installing web apps"
@@ -67,6 +62,23 @@ Categories=$cats
 StartupWMClass=teddyos-$id
 EOF"
 done <<< "$APPS"
+
+# Gmail: setup guide first (sign-in explained, then optional inbox window).
+echo "    Gmail  ->  teddyos-gmail (setup guide)"
+run 'mkdir -p ~/.local/share/applications
+cat > ~/.local/share/applications/teddyos-gmail.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=Gmail
+Comment=Set up Gmail on teddyOS
+Exec=teddyos-gmail
+Icon=gmail-desktop
+Terminal=false
+Categories=Network;Email;
+StartupNotify=true
+EOF'
+# Prefer system binary when install-product / ISO placed it; else leave Exec as is.
+run 'command -v teddyos-gmail >/dev/null && true'
 
 echo ">>> verifying each icon actually resolves"
 # A .desktop pointing at a missing icon falls back to a generic tile silently.

@@ -64,12 +64,23 @@ sed -i.bak '\|teddyos-search"))|d'  "$STAGE/usr/bin/teddyos-setup"
 sed -i.bak '\|resolve().parent.parent|d' "$STAGE/usr/bin/teddyos-welcome"
 rm -f "$STAGE"/usr/bin/*.bak
 
-# The libraries they import.
-for m in caps search sandbox work_tools git_projects; do
+# The libraries they import (include newer modules used by Search / intent).
+for m in caps search sandbox work_tools git_projects accounts audience intent \
+         pending_ask progress; do
+  [ -f "linux/teddyos-search/$m.py" ] || continue
   put "linux/teddyos-search/$m.py" "usr/lib/teddyos/$m.py"
 done
 put linux/logging/logutil.py usr/lib/teddyos/logutil.py
 put linux/logging/teddyos-log-collect usr/bin/teddyos-log-collect 755
+
+# Agents beyond the original four.
+for a in teddyos-ask-all teddyos-perplexity teddyos-devin teddyos-replit \
+         teddyos-accounts teddyos-open-signin teddyos-linkedin teddyos-whatsapp \
+         teddyos-gmail teddyos-display; do
+  [ -f "linux/teddyos-agent/$a" ] || continue
+  put "linux/teddyos-agent/$a" "usr/bin/$a" 755
+done
+put linux/teddyos-update/teddyos-update usr/bin/teddyos-update 755
 
 # The shell extension and the icons.
 put linux/shell-extension/teddyos@teddysearch.com/extension.js \

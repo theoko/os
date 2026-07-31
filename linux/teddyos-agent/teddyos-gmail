@@ -1,0 +1,291 @@
+#!/usr/bin/env python3
+"""Gmail setup guide — not a raw mail.google.com dump.
+
+People expect “Gmail” on the dock to mean *help me use email here*, not
+“open a naked browser at Google’s login.” This is a short calm guide:
+what teddyOS does with mail, what you stay in control of, then optional
+sign-in in its own Chromium window.
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+APP_ID = "com.teddyos.Gmail"
+GMAIL_URL = "https://mail.google.com/"
+PROFILE = Path.home() / ".local/share/teddyos-apps" / "gmail"
+CLASS = "teddyos-gmail"
+
+# One idea per page — plain language only.
+GUIDE: list[dict] = [
+    {
+        "icon": "mail-unread-symbolic",
+        "fallback": "mail-unread-symbolic",
+        "title": "Gmail on teddyOS",
+        "body": (
+            "This isn’t a random browser tab.\n\n"
+            "We’ll walk through how email works here in a few short steps. "
+            "You can skip any time."
+        ),
+        "primary": "Show me how",
+        "secondary": "Skip for now",
+    },
+    {
+        "icon": "security-high-symbolic",
+        "fallback": "security-high-symbolic",
+        "title": "You’re always in control",
+        "body": (
+            "teddyOS never sends a message for you on its own.\n\n"
+            "When AI helps with a reply, it only drafts. You read it, "
+            "change it if you want, and you tap send — or you don’t."
+        ),
+        "primary": "Next",
+        "secondary": "Back",
+    },
+    {
+        "icon": "system-users-symbolic",
+        "fallback": "system-users-symbolic",
+        "title": "Sign in once",
+        "body": (
+            "Sign in with your Google account in a private window we open for you.\n\n"
+            "It stays signed in on this computer until you sign out. "
+            "Nobody else can see the password — you type it only on Google’s page."
+        ),
+        "primary": "Next",
+        "secondary": "Back",
+    },
+    {
+        "icon": "mail-send-symbolic",
+        "fallback": "mail-send-symbolic",
+        "title": "Then open your inbox",
+        "body": (
+            "After you’re signed in, Gmail opens as its own simple window — "
+            "like an app, not a tab lost in a browser.\n\n"
+            "From Search you can also say things like “help me reply to emails” "
+            "when that path is ready on your machine."
+        ),
+        "primary": "Sign in to Gmail",
+        "secondary": "Back",
+        "finish": True,
+    },
+]
+
+
+def _open_gmail_app() -> None:
+    chromium = (
+        shutil.which("chromium")
+        or shutil.which("chromium-browser")
+        or shutil.which("google-chrome")
+        or shutil.which("google-chrome-stable")
+    )
+    if not chromium:
+        return
+    PROFILE.mkdir(parents=True, exist_ok=True)
+    argv = [
+        chromium,
+        f"--app={GMAIL_URL}",
+        f"--class={CLASS}",
+        f"--user-data-dir={PROFILE}",
+        "--password-store=basic",
+        "--ozone-platform-hint=auto",
+    ]
+    try:
+        subprocess.Popen(  # noqa: S603
+            argv,
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError:
+        pass
+
+
+class GuideWindow(Adw.ApplicationWindow):
+    def __init__(self, app: Adw.Application):
+        super().__init__(application=app, title="Gmail setup")
+        self.set_default_size(560, 520)
+        self.set_resizable(False)
+        self._step = 0
+
+        css = Gtk.CssProvider()
+        css.load_from_data(
+            b"""
+            .teddyos-guide-title { font-size: 26px; font-weight: 700; }
+            .teddyos-guide-body { font-size: 15px; line-height: 1.45; }
+            .teddyos-guide-dots { letter-spacing: 4px; }
+            window { background: #fbfbfa; }
+            """
+        )
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
+        self._icon = Gtk.Image(pixel_size=80, halign=Gtk.Align.CENTER)
+        self._icon.set_margin_top(8)
+
+        self._title = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
+        self._title.add_css_class("teddyos-guide-title")
+        self._title.set_margin_top(16)
+        self._title.set_margin_start(8)
+        self._title.set_margin_end(8)
+
+        self._body = Gtk.Label(
+            wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=42
+        )
+        self._body.add_css_class("teddyos-guide-body")
+        self._body.add_css_class("dim-label")
+        self._body.set_margin_top(12)
+        self._body.set_margin_start(12)
+        self._body.set_margin_end(12)
+
+        self._dots = Gtk.Label(halign=Gtk.Align.CENTER)
+        self._dots.add_css_class("teddyos-guide-dots")
+        self._dots.add_css_class("dim-label")
+        self._dots.set_margin_top(20)
+
+        self._primary = Gtk.Button(halign=Gtk.Align.CENTER)
+        self._primary.add_css_class("suggested-action")
+        self._primary.add_css_class("pill")
+        self._primary.set_size_request(240, -1)
+        self._primary.connect("clicked", self._on_primary)
+
+        self._secondary = Gtk.Button(halign=Gtk.Align.CENTER)
+        self._secondary.add_css_class("flat")
+        self._secondary.connect("clicked", self._on_secondary)
+
+        # Quiet alternate: open inbox without finishing the guide.
+        self._later = Gtk.Button(
+            label="Open inbox without the guide",
+            halign=Gtk.Align.CENTER,
+        )
+        self._later.add_css_class("flat")
+        self._later.add_css_class("caption")
+        self._later.set_margin_top(4)
+        self._later.connect("clicked", lambda *_: self._finish(open_inbox=True))
+
+        buttons = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=8,
+            halign=Gtk.Align.CENTER,
+        )
+        buttons.set_margin_top(22)
+        buttons.append(self._primary)
+        buttons.append(self._secondary)
+        buttons.append(self._later)
+
+        col = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=0,
+            valign=Gtk.Align.CENTER,
+            halign=Gtk.Align.CENTER,
+        )
+        col.set_margin_top(28)
+        col.set_margin_bottom(28)
+        col.set_margin_start(36)
+        col.set_margin_end(36)
+        for w in (self._icon, self._title, self._body, self._dots, buttons):
+            col.append(w)
+
+        toolbar = Adw.ToolbarView()
+        header = Adw.HeaderBar(show_title=False)
+        skip = Gtk.Button(label="Close")
+        skip.add_css_class("flat")
+        skip.connect("clicked", lambda *_: self._finish(open_inbox=False))
+        header.pack_end(skip)
+        toolbar.add_top_bar(header)
+        toolbar.set_content(Adw.Clamp(maximum_size=480, child=col))
+        self.set_content(toolbar)
+
+        esc = Gtk.EventControllerKey()
+        esc.connect("key-pressed", self._on_key)
+        self.add_controller(esc)
+        self._show_step(0)
+
+    def _on_key(self, _c, keyval, _code, _state) -> bool:
+        if keyval == Gdk.KEY_Escape:
+            self._finish(open_inbox=False)
+            return True
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter, Gdk.KEY_Right):
+            self._on_primary()
+            return True
+        if keyval == Gdk.KEY_Left and self._step > 0:
+            self._show_step(self._step - 1)
+            return True
+        return False
+
+    def _show_step(self, index: int) -> None:
+        index = max(0, min(index, len(GUIDE) - 1))
+        self._step = index
+        page = GUIDE[index]
+
+        name = page["icon"]
+        theme = Gtk.IconTheme.get_for_display(self.get_display())
+        if theme and theme.has_icon(name):
+            self._icon.set_from_icon_name(name)
+        else:
+            self._icon.set_from_icon_name(page.get("fallback", "mail-unread-symbolic"))
+
+        self._title.set_text(page["title"])
+        self._body.set_text(page["body"])
+        self._dots.set_text(
+            " ".join("●" if i == index else "○" for i in range(len(GUIDE)))
+        )
+        self._primary.set_label(page["primary"])
+        self._secondary.set_label(page["secondary"])
+        # Hide “open without guide” after the first page — less clutter mid-tour.
+        self._later.set_visible(index == 0)
+
+    def _on_primary(self, *_args) -> None:
+        page = GUIDE[self._step]
+        if page.get("finish"):
+            self._finish(open_inbox=True)
+            return
+        self._show_step(self._step + 1)
+
+    def _on_secondary(self, *_args) -> None:
+        if self._step == 0:
+            self._finish(open_inbox=False)
+            return
+        self._show_step(self._step - 1)
+
+    def _finish(self, *, open_inbox: bool) -> None:
+        if open_inbox:
+            _open_gmail_app()
+        self.close()
+
+
+class App(Adw.Application):
+    def __init__(self) -> None:
+        super().__init__(
+            application_id=APP_ID,
+            flags=Gio.ApplicationFlags.FLAGS_NONE,
+        )
+
+    def do_activate(self) -> None:  # noqa: N802
+        win = self.props.active_window
+        if win is None:
+            win = GuideWindow(self)
+        win.present()
+
+
+def main() -> int:
+    # Headless / no display: still open inbox so scripts don’t hang.
+    if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
+        _open_gmail_app()
+        return 0
+    return App().run(None)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
