@@ -1,13 +1,15 @@
-"""Gamification for teddyOS — personas, levels, and mode switches.
+"""Gamification for teddyOS — make productive use feel addictive.
 
 Progress tracks *fluency* overall and a **level per persona** (Ultracode,
-LinkedIn, Fitness, …). Each ask detects an audience:
+LinkedIn, Fitness, …). Each real ask detects an audience and:
 
   • awards XP to that persona (level up: “I’m level 2 in LinkedIn”)
   • if the persona changed since last ask → switch event + celebration
-  • Ultracode (code) stays the flashiest path
+  • builds daily missions, combos, and streaks that reward *showing up and
+    finishing work* — not empty spam (debounce still applies)
 
-Never blocks; never shows quest IDs.
+Hook: dopamine for productive loops (Get help, mode switch, multi-AI,
+deep asks, message drafts). Never blocks; never shows raw quest IDs.
 """
 
 from __future__ import annotations
@@ -27,27 +29,31 @@ CONFIG_DIR = Path(
 PROGRESS_FILE = CONFIG_DIR / "progress.json"
 
 # Overall journey titles (global fluency XP).
+# Early rungs are denser so the first hour of real use feels like motion.
 _LEVELS: list[tuple[int, str, str]] = [
     (0, "Just getting started", "Ask anything — plain words are perfect."),
-    (15, "Curious", "You’re asking real questions. Mode follows how you talk."),
-    (40, "Explorer", "You know the flow. Try a new kind of ask to unlock modes."),
-    (80, "Builder", "You’re steering the helpers. Personas switch with your ask."),
-    (140, "Ultracode Pilot", "You talk code — we switch modes and dig in."),
-    (220, "Multi-AI Pro", "You fan out to several AIs and compare answers."),
-    (320, "Ultracode Regular", "Code-mode is how you work here."),
-    (450, "Fluency+", "You and the tools finish each other’s sentences."),
+    (10, "Curious", "You’re asking real questions. Mode follows how you talk."),
+    (28, "On a roll", "Keep going — each Get help stacks fluency."),
+    (50, "Explorer", "You know the flow. Try a new kind of ask to unlock modes."),
+    (90, "Builder", "You’re steering the AIs. Personas switch with your ask."),
+    (150, "Ultracode Pilot", "You talk code — we switch modes and dig in."),
+    (230, "Multi-AI Pro", "You fan out to several AIs and compare answers."),
+    (330, "Ultracode Regular", "Code-mode is how you work here."),
+    (460, "Fluency+", "You and the tools finish each other’s sentences."),
+    (600, "Unstoppable", "Daily missions, combos, and modes — you’re in flow."),
 ]
 
 # Per-persona ladder: min_xp → display level number + title.
-# User-facing: “Level 2 · Apprentice” in that mode.
+# User-facing: “Level 2 · Apprentice” in that mode. Early levels come fast.
 _PERSONA_LADDER: list[tuple[int, int, str]] = [
     (0, 1, "Novice"),
-    (12, 2, "Apprentice"),
-    (30, 3, "Regular"),
-    (60, 4, "Pro"),
-    (100, 5, "Master"),
-    (160, 6, "Legend"),
-    (240, 7, "Virtuoso"),
+    (10, 2, "Apprentice"),
+    (24, 3, "Regular"),
+    (45, 4, "Pro"),
+    (75, 5, "Master"),
+    (120, 6, "Legend"),
+    (180, 7, "Virtuoso"),
+    (260, 8, "Mythic"),
 ]
 
 # id → (title, blurb, xp_to_fluency)
@@ -69,7 +75,7 @@ _BADGES: dict[str, tuple[str, str, int]] = {
     ),
     "ultracode_10": (
         "Ultracode fluent",
-        "Ten Ultracode sessions. The helpers know you speak code.",
+        "Ten Ultracode sessions. The AIs know you speak code.",
         45,
     ),
     "plain_then_code": (
@@ -93,7 +99,7 @@ _BADGES: dict[str, tuple[str, str, int]] = {
         20,
     ),
     "multi_ai": (
-        "Crowd of helpers",
+        "Crowd of AIs",
         "You asked more than one AI at once.",
         18,
     ),
@@ -104,12 +110,12 @@ _BADGES: dict[str, tuple[str, str, int]] = {
     ),
     "ultracode_multi": (
         "Ultracode + multi-AI",
-        "Code-mode ask across several helpers. High skill play.",
+        "Code-mode ask across several AIs. High skill play.",
         28,
     ),
     "first_signin": (
         "Signed in",
-        "A helper is connected. Setup, not the main game.",
+        "An AI is connected. Setup, not the main game.",
         6,
     ),
     "all_set": (
@@ -137,27 +143,89 @@ _BADGES: dict[str, tuple[str, str, int]] = {
         "Seven days of showing up.",
         30,
     ),
+    "streak_14": (
+        "Two-week streak",
+        "Fourteen days. Productivity is a habit now.",
+        50,
+    ),
+    "combo_3": (
+        "On a tear",
+        "Three productive asks in one sitting. Stay in flow.",
+        14,
+    ),
+    "combo_5": (
+        "Flow state",
+        "Five asks chained. You’re unstoppable today.",
+        22,
+    ),
+    "deep_work": (
+        "Deep work",
+        "You gave real detail — better answers follow better asks.",
+        16,
+    ),
+    "reply_coach": (
+        "Reply coach",
+        "You used AI to draft real messages. Paste and send.",
+        18,
+    ),
+    "mission_complete": (
+        "Mission complete",
+        "You finished today’s productivity mission.",
+        12,
+    ),
+    "missions_3": (
+        "Triple threat",
+        "Three daily missions cleared. That’s a workday.",
+        28,
+    ),
+    "five_today": (
+        "Power hour",
+        "Five asks in one day. Momentum compounds.",
+        20,
+    ),
+    "ten_today": (
+        "Ship day",
+        "Ten productive asks today. Absolute unit.",
+        35,
+    ),
 }
 
 _ACTION_XP: dict[str, int] = {
-    "plain_ask": 4,
-    "persona_ask": 8,       # specialist persona (LinkedIn, Fitness, …)
-    "ultracode_ask": 14,
-    "multi_ai_bonus": 5,
-    "ultracode_multi_bonus": 6,
-    "switch_bonus": 3,      # small spice for changing modes
-    "synthesis": 8,
+    "plain_ask": 5,
+    "persona_ask": 10,      # specialist persona (LinkedIn, Fitness, …)
+    "ultracode_ask": 16,
+    "multi_ai_bonus": 6,
+    "ultracode_multi_bonus": 8,
+    "switch_bonus": 5,      # reward exploring modes
+    "deep_bonus": 6,        # long / specific asks
+    "combo_tick": 2,        # per step of combo (capped in award)
+    "synthesis": 10,
     "signin": 3,
     "clone": 4,
     "tour": 2,
-    "daily": 2,
+    "daily": 4,             # show-up bonus
+    "mission": 12,
+    "messaging": 3,         # LI/WA draft sessions
 }
+
+# Daily productivity missions (id, title, day_stats key, need, bonus xp).
+# Soft goals that push real product use — not busywork.
+_DAILY_MISSIONS: list[tuple[str, str, str, int, int]] = [
+    ("m_asks", "Get help 3 times today", "asks", 3, 15),
+    ("m_switch", "Switch modes once", "switches", 1, 10),
+    ("m_deep", "One deep ask (real detail)", "deep", 1, 12),
+    ("m_multi", "Ask more than one AI", "multi", 1, 12),
+]
+
+# Combo: asks within this many seconds of each other keep the chain.
+_COMBO_WINDOW_SEC = 45 * 60
+_COMBO_MAX_MULT = 1.5
 
 
 @dataclass
 class ProgressEvent:
     """Something the UI can celebrate (toast / animation)."""
-    kind: str  # xp | badge | level | streak | ultracode | switch | persona_level
+    kind: str  # xp | badge | level | streak | ultracode | switch | persona_level | mission | combo
     title: str
     detail: str = ""
     xp_delta: int = 0
@@ -195,6 +263,10 @@ class ProgressSnapshot:
     # (id, level, short label)
     last_switch: str = ""
     switch_count: int = 0
+    combo: int = 0
+    asks_today: int = 0
+    mission_line: str = ""
+    missions_done_today: int = 0
     events: list[ProgressEvent] = field(default_factory=list)
 
 
@@ -270,6 +342,105 @@ def _persona_stats(data: dict[str, Any], pid: str) -> dict[str, int]:
     return entry  # type: ignore[return-value]
 
 
+def _day_stats(data: dict[str, Any]) -> dict[str, Any]:
+    """Per-calendar-day counters for missions and combos."""
+    today = _today()
+    raw = data.get("day_stats")
+    if not isinstance(raw, dict) or raw.get("day") != today:
+        raw = {
+            "day": today,
+            "asks": 0,
+            "switches": 0,
+            "deep": 0,
+            "multi": 0,
+            "messaging": 0,
+            "missions_done": [],
+        }
+        data["day_stats"] = raw
+    raw.setdefault("asks", 0)
+    raw.setdefault("switches", 0)
+    raw.setdefault("deep", 0)
+    raw.setdefault("multi", 0)
+    raw.setdefault("messaging", 0)
+    if not isinstance(raw.get("missions_done"), list):
+        raw["missions_done"] = []
+    return raw
+
+
+def _mission_progress_line(data: dict[str, Any]) -> str:
+    """One urgent daily mission left, or celebration when clear."""
+    day = _day_stats(data)
+    done = set(day.get("missions_done") or [])
+    for mid, title, key, need, _xp in _DAILY_MISSIONS:
+        if mid in done:
+            continue
+        have = int(day.get(key) or 0)
+        left = max(0, need - have)
+        if left <= 0:
+            continue
+        return f"Mission · {title} ({have}/{need})"
+    if done:
+        return f"Missions clear · {len(done)} today · 🔥 keep the streak"
+    return "Mission · Get help once to start today’s board"
+
+
+def _check_missions(data: dict[str, Any], events: list[ProgressEvent]) -> None:
+    day = _day_stats(data)
+    done = list(day.get("missions_done") or [])
+    newly = 0
+    for mid, title, key, need, bonus in _DAILY_MISSIONS:
+        if mid in done:
+            continue
+        if int(day.get(key) or 0) >= need:
+            done.append(mid)
+            newly += 1
+            data["xp"] = int(data.get("xp") or 0) + bonus
+            events.append(ProgressEvent(
+                kind="mission",
+                title=f"Mission · {title}",
+                detail=f"+{bonus} fluency — productive day building.",
+                xp_delta=bonus,
+            ))
+            _award_badge(data, "mission_complete", events)
+    day["missions_done"] = done
+    if len(done) >= 3:
+        _award_badge(data, "missions_3", events)
+    if newly:
+        log_line = f"missions newly={newly} total={len(done)}"
+        data["last_mission_note"] = log_line
+
+
+def _update_combo(data: dict[str, Any], events: list[ProgressEvent]) -> int:
+    """Return combo count after this ask (1 = first in chain)."""
+    now = time.time()
+    last = float(data.get("last_ask_ts") or 0)
+    combo = int(data.get("combo") or 0)
+    if last and (now - last) <= _COMBO_WINDOW_SEC:
+        combo += 1
+    else:
+        combo = 1
+    data["combo"] = combo
+    if combo >= 5:
+        _award_badge(data, "combo_5", events)
+    elif combo >= 3:
+        _award_badge(data, "combo_3", events)
+    if combo >= 3:
+        events.append(ProgressEvent(
+            kind="combo",
+            title=f"Combo ×{combo}",
+            detail="Stay in flow — each Get help stacks harder.",
+            xp_delta=0,
+        ))
+    return combo
+
+
+def _combo_multiplier(combo: int) -> float:
+    if combo <= 1:
+        return 1.0
+    # 1.0, 1.1, 1.2 … capped
+    return min(_COMBO_MAX_MULT, 1.0 + 0.1 * (combo - 1))
+
+
 def _chip_label_for(pid: str) -> str:
     if pid == "code":
         return "Ultracode"
@@ -335,6 +506,7 @@ def snapshot(events: list[ProgressEvent] | None = None) -> ProgressSnapshot:
     ranked.sort(key=lambda t: (-t[1], -t[2], t[0]))
     top = [(pid, lv, lab) for pid, lv, _px, lab in ranked[:5]]
 
+    day = _day_stats(data)
     return ProgressSnapshot(
         xp=xp,
         level=idx,
@@ -358,6 +530,10 @@ def snapshot(events: list[ProgressEvent] | None = None) -> ProgressSnapshot:
         top_personas=top,
         last_switch=str(data.get("last_switch_msg") or ""),
         switch_count=int(data.get("switch_count") or 0),
+        combo=int(data.get("combo") or 0),
+        asks_today=int(day.get("asks") or 0),
+        mission_line=_mission_progress_line(data),
+        missions_done_today=len(day.get("missions_done") or []),
         events=list(events or []),
     )
 
@@ -397,10 +573,21 @@ def _touch_streak(data: dict[str, Any], events: list[ProgressEvent]) -> None:
             xp_delta=gain,
         ))
 
+    if streak >= 14 and "streak_14" not in (data.get("badges") or []):
+        _award_badge(data, "streak_14", events)
     if streak >= 7 and "streak_7" not in (data.get("badges") or []):
         _award_badge(data, "streak_7", events)
     elif streak >= 3 and "streak_3" not in (data.get("badges") or []):
         _award_badge(data, "streak_3", events)
+    # Celebrate streak once per calendar day (not every ask).
+    if streak >= 2 and data.get("streak_toast_day") != today:
+        data["streak_toast_day"] = today
+        events.append(ProgressEvent(
+            kind="streak",
+            title=f"🔥 {streak}-day streak",
+            detail="Come back tomorrow — break the chain and it resets.",
+            xp_delta=0,
+        ))
 
 
 def _award_badge(
@@ -492,6 +679,8 @@ def award(
     ask: bool = False,
     persona: str = "",
     switched_from: str = "",
+    deep: bool = False,
+    messaging: bool = False,
 ) -> ProgressSnapshot:
     """Record a product moment. Persona asks + Ultracode drive XP."""
     data = _load_raw()
@@ -502,10 +691,16 @@ def award(
     _touch_streak(data, events)
 
     if ask:
+        combo = _update_combo(data, events)
+        mult = _combo_multiplier(combo)
         data["ask_count"] = int(data.get("ask_count") or 0) + 1
-        data["last_ask_ts"] = time.time()
+        # last_ask_ts set after combo uses previous timestamp
         prev = (data.get("last_audience") or "").strip()
         data["last_audience"] = pid
+        data["last_ask_ts"] = time.time()
+
+        day = _day_stats(data)
+        day["asks"] = int(day.get("asks") or 0) + 1
 
         if ultracode or pid == "code":
             data["ultracode_asks"] = int(data.get("ultracode_asks") or 0) + 1
@@ -544,6 +739,7 @@ def award(
         if switched:
             gain += _ACTION_XP["switch_bonus"]
             data["switch_count"] = int(data.get("switch_count") or 0) + 1
+            day["switches"] = int(day.get("switches") or 0) + 1
             from_lab = _short_label(prev)
             to_lab = _short_label(pid)
             msg = f"{from_lab} → {to_lab}"
@@ -563,6 +759,29 @@ def award(
             if prev == "plain" and pid == "code":
                 _award_badge(data, "plain_then_code", events)
             title = f"+{gain} · switch to {to_lab}"
+
+        if deep:
+            gain += _ACTION_XP["deep_bonus"]
+            day["deep"] = int(day.get("deep") or 0) + 1
+            detail = f"{detail} · deep ask"
+            _award_badge(data, "deep_work", events)
+
+        if multi_ai:
+            day["multi"] = int(day.get("multi") or 0) + 1
+
+        if messaging or pid in ("linkedin", "whatsapp"):
+            day["messaging"] = int(day.get("messaging") or 0) + 1
+            gain += _ACTION_XP["messaging"]
+            if int(day.get("messaging") or 0) >= 2:
+                _award_badge(data, "reply_coach", events)
+
+        # Combo multiplier on the whole gain (feels juicy after 3+)
+        raw_gain = gain
+        if mult > 1.0:
+            gain = max(raw_gain, int(round(raw_gain * mult)))
+            if gain > raw_gain:
+                title = f"+{gain} · combo ×{combo}"
+                detail = f"{detail} · flow ×{combo}"
 
         data["xp"] = int(data.get("xp") or 0) + gain
         events.append(ProgressEvent(
@@ -596,13 +815,22 @@ def award(
         if multi_ai:
             _award_badge(data, "multi_ai", events)
 
+        asks_today = int(day.get("asks") or 0)
+        if asks_today >= 10:
+            _award_badge(data, "ten_today", events)
+        elif asks_today >= 5:
+            _award_badge(data, "five_today", events)
+
+        _check_missions(data, events)
+
     if badge:
         _award_badge(data, badge, events)
 
     if action and action in _ACTION_XP and not ask:
         if action not in (
             "plain_ask", "persona_ask", "ultracode_ask", "multi_ai_bonus",
-            "ultracode_multi_bonus", "switch_bonus", "daily",
+            "ultracode_multi_bonus", "switch_bonus", "daily", "deep_bonus",
+            "combo_tick", "mission", "messaging",
         ):
             gain = _ACTION_XP[action]
             data["xp"] = int(data.get("xp") or 0) + gain
@@ -641,6 +869,8 @@ def award_ask(
     ultracode: bool = False,
     multi_ai: bool = False,
     persona: str = "",
+    deep: bool = False,
+    messaging: bool = False,
 ) -> ProgressSnapshot:
     """Award an ask. Debounces XP if Search + Answers both fire."""
     data = _load_raw()
@@ -664,6 +894,9 @@ def award_ask(
                 ultracode=(pid == "code"),
             ))
             _award_badge(data, "mode_switcher", events)
+            day = _day_stats(data)
+            day["switches"] = int(day.get("switches") or 0) + 1
+            _check_missions(data, events)
         if ultracode or pid == "code":
             data["ever_ultracode"] = True
             data["last_audience"] = "code"
@@ -679,7 +912,7 @@ def award_ask(
         return snapshot(events)
     return award(
         ask=True, ultracode=ultracode or pid == "code",
-        multi_ai=multi_ai, persona=pid,
+        multi_ai=multi_ai, persona=pid, deep=deep, messaging=messaging,
     )
 
 
@@ -692,9 +925,10 @@ def award_from_prompt(
     """Detect audience → award persona XP + switch when the mode changes."""
     pid = "plain"
     is_code = False
+    text = (prompt or "").strip()
     try:
         from audience import Audience, detect_audience  # type: ignore
-        aud = detect_audience(prompt or "")
+        aud = detect_audience(text)
         is_code = aud is Audience.CODE
         pid = getattr(aud, "value", None) or "plain"
     except Exception:  # noqa: BLE001
@@ -702,7 +936,16 @@ def award_from_prompt(
         pid = "plain"
     if tool_ids is not None:
         multi_ai = len([t for t in tool_ids if t]) >= 2
-    return award_ask(ultracode=is_code, multi_ai=multi_ai, persona=pid)
+    # Deep ask: enough detail that answers can be useful (productivity hook).
+    deep = len(text) >= 80 or text.count("\n") >= 2
+    messaging = pid in ("linkedin", "whatsapp") or any(
+        w in text.lower()
+        for w in ("linkedin", "whatsapp", "draft replies", "reply to my")
+    )
+    return award_ask(
+        ultracode=is_code, multi_ai=multi_ai, persona=pid,
+        deep=deep, messaging=messaging,
+    )
 
 
 def award_synthesis() -> ProgressSnapshot:
@@ -715,17 +958,23 @@ def format_toast(events: list[ProgressEvent]) -> str | None:
     order = {
         "persona_level": 0,
         "level": 1,
-        "switch": 2,
-        "badge": 3,
-        "ultracode": 4,
-        "streak": 5,
-        "xp": 6,
+        "mission": 2,
+        "combo": 3,
+        "switch": 4,
+        "badge": 5,
+        "ultracode": 6,
+        "streak": 7,
+        "xp": 8,
     }
     best = sorted(events, key=lambda e: order.get(e.kind, 9))[0]
     if best.kind == "persona_level":
         return f"⬆ {best.title}"
     if best.kind == "level":
         return f"⬆ {best.title}"
+    if best.kind == "mission":
+        return f"🎯 {best.title}" + (f" · +{best.xp_delta}" if best.xp_delta else "")
+    if best.kind == "combo":
+        return f"🔥 {best.title}"
     if best.kind == "switch":
         return f"⇄ {best.title}"
     if best.kind == "badge":
@@ -741,16 +990,23 @@ def format_toast(events: list[ProgressEvent]) -> str | None:
 
 
 def progress_line(snap: ProgressSnapshot | None = None) -> str:
-    """Status strip: overall title + top persona levels."""
+    """Status strip: overall title + top persona levels + mission tease."""
     s = snap or snapshot()
     if s.ask_count <= 0 and s.ultracode_asks <= 0 and not s.persona_levels:
-        return f"{s.level_title} · ask to start · modes switch with your ask"
+        return (
+            f"{s.level_title} · ask to start · daily missions unlock after "
+            "your first Get help"
+        )
 
     if s.next_level_xp is None:
         base = f"{s.level_title} · {s.xp} fluency"
     else:
         left = max(0, s.next_level_xp - s.xp)
-        base = f"{s.level_title} · {s.xp} fluency · {left} to next"
+        # Near-miss language is more addictive than a flat number.
+        if left <= 8:
+            base = f"{s.level_title} · {s.xp} fluency · only {left} to next!"
+        else:
+            base = f"{s.level_title} · {s.xp} fluency · {left} to next"
 
     # Active persona level (what you just used / last used)
     if s.active_persona and s.active_persona_level:
@@ -766,9 +1022,19 @@ def progress_line(snap: ProgressSnapshot | None = None) -> str:
     if extras:
         base += " · " + " · ".join(extras)
 
+    if s.combo >= 2:
+        base += f" · combo ×{s.combo}"
     if s.streak_days > 1:
         base += f" · 🔥{s.streak_days}"
     return base
+
+
+def daily_mission_line(snap: ProgressSnapshot | None = None) -> str:
+    """Second strip line: today’s productivity mission."""
+    s = snap or snapshot()
+    if s.mission_line:
+        return s.mission_line
+    return _mission_progress_line(_load_raw())
 
 
 def persona_level_line(persona: str | object | None = None) -> str:

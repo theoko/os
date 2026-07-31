@@ -29,6 +29,11 @@ CONFIG_DIR = Path(
     os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
 ) / "teddyos"
 RECENTS_FILE = CONFIG_DIR / "work-tools.json"
+# Tools the person just finished signing into (this session). Soft probes
+# (Gemini/Antigravity) never flip ok=True on their own — without this mark,
+# Get help stays stuck on Continue after a successful browser login.
+SESSION_READY_FILE = CONFIG_DIR / "session-ready.json"
+_SESSION_READY_TTL_SEC = 12 * 3600
 
 
 @dataclass(frozen=True)
@@ -274,6 +279,47 @@ def prompt_argv(tool_id: str, prompt: str) -> list[str]:
     return [text]
 
 
+def mark_session_ready(tool_id: str) -> None:
+    """Remember a successful sign-in so Get help unlocks without a perfect probe."""
+    tid = (tool_id or "").strip()
+    if not tid:
+        return
+    try:
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        data: dict = {}
+        if SESSION_READY_FILE.is_file():
+            try:
+                data = json.loads(SESSION_READY_FILE.read_text())
+            except (OSError, json.JSONDecodeError, TypeError):
+                data = {}
+        ready = data.get("ready") if isinstance(data.get("ready"), dict) else {}
+        ready[tid] = time.time()
+        # Drop stale entries
+        now = time.time()
+        ready = {
+            k: float(v)
+            for k, v in ready.items()
+            if now - float(v) < _SESSION_READY_TTL_SEC
+        }
+        SESSION_READY_FILE.write_text(json.dumps({"ready": ready}, indent=2) + "\n")
+    except OSError:
+        pass
+
+
+def is_session_ready(tool_id: str) -> bool:
+    tid = (tool_id or "").strip()
+    if not tid:
+        return False
+    try:
+        data = json.loads(SESSION_READY_FILE.read_text())
+        ready = data.get("ready") if isinstance(data, dict) else None
+        if not isinstance(ready, dict) or tid not in ready:
+            return False
+        return (time.time() - float(ready[tid])) < _SESSION_READY_TTL_SEC
+    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+        return False
+
+
 def ready_for_broadcast(
     tool: WorkTool,
     status: CreditStatus | None,
@@ -282,13 +328,23 @@ def ready_for_broadcast(
 
     Only helpers we know are signed in / ready. Including "unknown" used to
     fire Grok/Codex while logged out and show useless permission errors.
+    Session-ready (just finished Connect) unlocks soft-probe tools.
     """
     if tool.id not in _PROMPT_TOOLS or not tool.is_ai:
         return False
+    if status is not None and status.ok is True:
+        return True
+    # Recent successful Connect unlocks soft/unknown/stale "needs sign-in"
+    # probes so Get help is seamless right after the browser dance.
+    if is_session_ready(tool.id):
+        if status is not None and status.ok is False:
+            lab = (status.label or "").lower()
+            if "not on this computer" in lab or "isn't installed" in lab:
+                return False
+        return True
     if status is None:
         return False
-    # Free local tools (ok True) or metered with confirmed capacity.
-    return status.ok is True
+    return False
 
 
 def tools_ready_for_broadcast(
@@ -343,7 +399,7 @@ def available_work_tools() -> list[WorkTool]:
             id="files",
             title="Files",
             subtitle="See the project’s files",
-            icon="folder",
+            icon="folder-symbolic",
             argv=(file_mgr, "{path}"),
             metered=False,
             is_ai=False,
@@ -578,17 +634,21 @@ def probe_credits(tool: WorkTool) -> CreditStatus:
     """Best-effort remaining-credit check for one tool."""
     probe = PROBES.get(tool.id)
     if probe is not None:
-        return probe()
-    # Files / Terminal are not credit products — empty label means the UI
-    # keeps the action subtitle ("Open the project folder") as-is.
-    if not tool.is_ai:
+        st = probe()
+    elif not tool.is_ai:
+        # Files / Terminal — empty label keeps the action subtitle as-is.
         return CreditStatus(ok=True, label="")
-    if not tool.metered:
-        return CreditStatus(ok=True, label="Ready · tap to open")
-    return CreditStatus(
-        ok=None,
-        label="Ready · tap to open",
-    )
+    elif not tool.metered:
+        st = CreditStatus(ok=True, label="Ready · tap to open")
+    else:
+        st = CreditStatus(ok=None, label="Ready · tap to open")
+    # After Connect, soft probes often stay unknown — treat as ready so
+    # Get help / Draft my replies is not stuck on Continue.
+    if st.ok is not True and is_session_ready(tool.id):
+        if st.ok is False and "not on this computer" in (st.label or "").lower():
+            return st
+        return CreditStatus(ok=True, label="Connected · ready")
+    return st
 
 
 def probe_all(tools: list[WorkTool] | None = None) -> dict[str, CreditStatus]:
@@ -851,7 +911,7 @@ def _probe_generic_installed(name: str, binary: str) -> CreditStatus:
     # Installed but we cannot prove login — do not mark ready for Get help.
     return CreditStatus(
         ok=None,
-        label="May need sign-in · use Connect if it fails",
+        label="May need a one-time sign-in",
     )
 
 
@@ -860,14 +920,14 @@ def _probe_any_binary(name: str, binaries: tuple[str, ...]) -> CreditStatus:
         if shutil.which(b):
             return CreditStatus(
                 ok=None,
-                label="May need sign-in · use Connect if it fails",
+                label="May need a one-time sign-in",
             )
         for d in _extra_bin_dirs():
             cand = d / b
             if cand.is_file() and os.access(cand, os.X_OK):
                 return CreditStatus(
                     ok=None,
-                    label="May need sign-in · use Connect if it fails",
+                    label="May need a one-time sign-in",
                 )
     return CreditStatus(ok=False, label="Not on this computer")
 
@@ -946,8 +1006,10 @@ PROBES: dict[str, Callable[[], CreditStatus]] = {
     "claude": _probe_claude,
     "grok": _probe_grok,
     "copilot": _probe_copilot,
-    "antigravity": lambda: _probe_any_binary(
-        "Antigravity", ("agy", "antigravity"),
+    "antigravity": lambda: (
+        _probe_any_binary("Antigravity", ("agy", "antigravity"))
+        if not is_session_ready("antigravity")
+        else CreditStatus(ok=True, label="Connected · ready")
     ),
     "cursor": _probe_cursor,
     "perplexity": lambda: _probe_web_app(

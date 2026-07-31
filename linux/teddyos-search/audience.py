@@ -535,6 +535,7 @@ class Audience(str, Enum):
     INTERNSHIP = "internship"
     CAREER_CHANGE = "career_change"
     LINKEDIN = "linkedin"
+    WHATSAPP = "whatsapp"
     NETWORKING_CAREER = "networking_career"
     HOA_LIVING = "hoa_living"
     COOP_HOUSING = "coop_housing"
@@ -2531,10 +2532,13 @@ _FIRST_AID_PHRASES = (
 )
 
 _PUBLIC_HEALTH_WORDS = frozenset({
-    "epidemiology", "outbreak", "vaccination", "herd-immunity", "surveillance", "health-equity", "cdc", "who", "pandemic",
+    # No bare "who" — matches English “who is …”.
+    "epidemiology", "outbreak", "vaccination", "herd-immunity", "surveillance",
+    "health-equity", "cdc", "pandemic",
 })
 _PUBLIC_HEALTH_PHRASES = (
     'public health', 'outbreak response', 'health equity', 'epidemiology basics',
+    'world health organization', 'who guidelines', 'who pandemic',
 )
 
 _ML_AI_WORDS = frozenset({
@@ -3350,24 +3354,32 @@ _CAMPING_PHRASES = (
 )
 
 _BACKPACKING_WORDS = frozenset({
-    "backpacking", "thru-hike", "ultralight", "base-weight", "trail-legs", "resupply", "pct", "at",
+    # Never include bare "at" (Appalachian Trail) — it matches the English
+    # preposition and flips “look at the results” into Backpacking mode.
+    "backpacking", "thru-hike", "ultralight", "base-weight", "trail-legs",
+    "resupply", "pct", "appalachian",
 })
 _BACKPACKING_PHRASES = (
     'backpacking trip', 'ultralight gear', 'thru hike', 'base weight',
+    'appalachian trail', 'at thru-hike', 'section hike on the at',
 )
 
 _CROSSFIT_WORDS = frozenset({
-    "crossfit", "wod", "amrap", "emom", "box", "rx", "scaling", "metcon", "thruster",
+    # No bare "box" — matches “dialog box”, “text box”, etc.
+    "crossfit", "wod", "amrap", "emom", "rx", "scaling", "metcon", "thruster",
 })
 _CROSSFIT_PHRASES = (
     'crossfit wod', 'scale this wod', 'crossfit program', 'amrap workout',
+    'crossfit box', 'garage gym box',
 )
 
 _PILATES_WORDS = frozenset({
-    "pilates", "reformer", "mat-pilates", "core", "hundred", "plank-series", "contrology",
+    # No bare "core" / "hundred" — everyday English (“core of the issue”).
+    "pilates", "reformer", "mat-pilates", "plank-series", "contrology",
 })
 _PILATES_PHRASES = (
     'pilates workout', 'reformer pilates', 'pilates core', 'mat pilates',
+    'the hundred pilates', 'pilates hundred',
 )
 
 _GYMNASTICS_WORDS = frozenset({
@@ -3707,10 +3719,12 @@ _RETIREMENT_PHRASES = (
 )
 
 _ESTATE_PLANNING_WORDS = frozenset({
-    "will", "trust", "estate", "beneficiary", "probate", "power-of-attorney", "executor", "inheritance",
+    # No bare "will" — matches English future tense (“I will look…”).
+    "trust", "estate", "beneficiary", "probate", "power-of-attorney", "executor", "inheritance",
 })
 _ESTATE_PLANNING_PHRASES = (
     'write a will', 'estate plan', 'living trust', 'power of attorney',
+    'last will', 'will and testament', 'my will',
 )
 
 _SIDE_HUSTLE_WORDS = frozenset({
@@ -3973,7 +3987,9 @@ _PODCAST_EDITING_PHRASES = (
 )
 
 _NEWSLETTER_WORDS = frozenset({
-    "newsletter", "email-newsletter", "subject-line", "open-rate", "subscriber", "issue", "beehiiv", "convertkit",
+    # No bare "issue" — everyday English (“core of the issue”).
+    "newsletter", "email-newsletter", "subject-line", "open-rate", "subscriber",
+    "beehiiv", "convertkit",
 })
 _NEWSLETTER_PHRASES = (
     'newsletter issue', 'subject line ideas', 'grow newsletter', 'email newsletter',
@@ -4253,10 +4269,12 @@ _RUGBY_PHRASES = (
 )
 
 _CRICKET_WORDS = frozenset({
-    "cricket", "batting", "bowling", "wicket", "over", "spinner", "pace", "fielding", "ashes",
+    # No bare "over" — English preposition / “over there”.
+    "cricket", "batting", "bowling", "wicket", "spinner", "pace", "fielding", "ashes",
 })
 _CRICKET_PHRASES = (
     'cricket batting', 'bowling action', 'fielding drills', 'cricket strategy',
+    'cricket over', 'maiden over', 'powerplay over',
 )
 
 _SOFTBALL_WORDS = frozenset({
@@ -4981,15 +4999,25 @@ _CAREER_CHANGE_PHRASES = (
 )
 
 _LINKEDIN_WORDS = frozenset({
+    # Keep LinkedIn-specific tokens only — generic "messages"/"reply" must not
+    # steal WhatsApp, email, or plain inbox asks into LinkedIn mode.
     "linkedin", "headline", "about-section", "connection-request", "inmail", "open-to-work",
-    "messages", "message", "messaging", "inbox", "dm", "dms", "reply", "replies",
-    "respond", "connection", "connections", "network",
 })
 _LINKEDIN_PHRASES = (
     'linkedin profile', 'linkedin headline', 'connection request', 'linkedin about',
     'linkedin messages', 'linkedin message', 'linkedin inbox', 'linkedin dm',
     'respond to my linkedin', 'reply to linkedin', 'linkedin reply',
     'answer linkedin messages', 'check linkedin messages', 'linkedin inmail',
+)
+
+_WHATSAPP_WORDS = frozenset({
+    "whatsapp", "whats-app", "wa-web", "web-whatsapp",
+})
+_WHATSAPP_PHRASES = (
+    'whatsapp messages', 'whatsapp message', 'whatsapp chat', 'whatsapp chats',
+    'reply to whatsapp', 'reply to my whatsapp', 'respond to my whatsapp',
+    'answer whatsapp', 'check whatsapp', 'whatsapp inbox', 'whats app',
+    'open whatsapp', 'my whatsapp messages',
 )
 
 _NETWORKING_CAREER_WORDS = frozenset({
@@ -5311,13 +5339,34 @@ def _score_code(raw: str, low: str, toks: set[str]) -> int:
     return score
 
 
+# Never score these as domain keywords even if a lexicon mistakenly lists them.
+# Short English glue words flip personas (e.g. “look at results” → backpacking
+# because Appalachian Trail “AT” was stored as the token “at”).
+_LEXICON_STOPWORDS = frozenset("""
+a an the and or but if then than that this these those of in on at to from by
+for with about into over after is are was were be been being do does did doing
+have has had having i me my we us our you your he him his she her it its they
+them their what which who whom whose when where why how can could should would
+will shall may might must please just also only more some any all not no nor
+so up out off on as per via vs etc look see get got go going went make made
+find search result results help need want open close box core hundred family
+school work life world home day time year people way man woman
+""".split())
+
+
 def _score_lexicon(
     low: str,
     toks: set[str],
     words: frozenset[str],
     phrases: tuple[str, ...],
 ) -> int:
-    score = min(len(toks & words), 8) * 2
+    # Word hits: ignore stopwords and 1–2 letter tokens (except digits like 5k
+    # are rare; prefer phrases for acronyms). Stops “at”/“will”/“who” disasters.
+    matched = {
+        t for t in (toks & words)
+        if len(t) >= 3 and t not in _LEXICON_STOPWORDS
+    }
+    score = min(len(matched), 8) * 2
     for ph in phrases:
         if ph in low:
             score += 4
@@ -5839,6 +5888,7 @@ _PRIORITY = (
     Audience.INTERNSHIP,
     Audience.CAREER_CHANGE,
     Audience.LINKEDIN,
+    Audience.WHATSAPP,
     Audience.NETWORKING_CAREER,
     Audience.HOA_LIVING,
     Audience.COOP_HOUSING,
@@ -6394,6 +6444,7 @@ _LEXICONS: list[tuple[Audience, frozenset[str], tuple[str, ...]]] = [
     (Audience.INTERNSHIP, _INTERNSHIP_WORDS, _INTERNSHIP_PHRASES),
     (Audience.CAREER_CHANGE, _CAREER_CHANGE_WORDS, _CAREER_CHANGE_PHRASES),
     (Audience.LINKEDIN, _LINKEDIN_WORDS, _LINKEDIN_PHRASES),
+    (Audience.WHATSAPP, _WHATSAPP_WORDS, _WHATSAPP_PHRASES),
     (Audience.NETWORKING_CAREER, _NETWORKING_CAREER_WORDS, _NETWORKING_CAREER_PHRASES),
     (Audience.HOA_LIVING, _HOA_LIVING_WORDS, _HOA_LIVING_PHRASES),
     (Audience.COOP_HOUSING, _COOP_HOUSING_WORDS, _COOP_HOUSING_PHRASES),
@@ -6445,6 +6496,26 @@ def score_audiences(text: str) -> dict[Audience, int]:
     scores[Audience.CODE] = _score_code(raw, low, toks)
     for aud, words, phrases in _LEXICONS:
         scores[aud] = _score_lexicon(low, toks, words, phrases)
+
+    # "work on tsearch-revival" / "work on my-app" — project folders are code
+    # work by default, not backpacking/plain specialty noise.
+    m_work = re.search(
+        r"\b(?:work|working)\s+on\s+([a-z0-9][\w./-]{1,64})",
+        low,
+    )
+    if m_work:
+        subj = m_work.group(1).strip("/").strip()
+        taskish = any(
+            w in subj
+            for w in (
+                "message", "email", "inbox", "reply", "linkedin", "whatsapp",
+                "fitness", "workout", "recipe", "meal", "travel", "trip",
+            )
+        )
+        if subj and not taskish and (
+            "-" in subj or "/" in subj or "_" in subj or subj.isidentifier()
+        ):
+            scores[Audience.CODE] = max(scores[Audience.CODE], 4)
 
     # Disambiguation nudges
     # Cover letter / resume → job, not generic writer
@@ -6803,6 +6874,25 @@ def score_audiences(text: str) -> dict[Audience, int]:
         scores[Audience.LINKEDIN] += 8
         scores[Audience.JOB] = max(0, scores[Audience.JOB] - 5)
         scores[Audience.MARKETING] = max(0, scores[Audience.MARKETING] - 2)
+        scores[Audience.EMAIL_PRODUCTIVITY] = max(0, scores[Audience.EMAIL_PRODUCTIVITY] - 2)
+        scores[Audience.WHATSAPP] = max(0, scores[Audience.WHATSAPP] - 3)
+    # WhatsApp chat replies — not LinkedIn, not support desk
+    if (
+        "whatsapp" in low
+        or "whats app" in low
+        or any(
+            p in low
+            for p in (
+                "reply to my whatsapp", "respond to my whatsapp",
+                "whatsapp messages", "whatsapp message", "whatsapp chat",
+                "check whatsapp", "open whatsapp",
+            )
+        )
+    ):
+        scores[Audience.WHATSAPP] += 10
+        scores[Audience.LINKEDIN] = max(0, scores[Audience.LINKEDIN] - 8)
+        scores[Audience.MARKETING] = max(0, scores[Audience.MARKETING] - 3)
+        scores[Audience.SUPPORT] = max(0, scores[Audience.SUPPORT] - 2)
         scores[Audience.EMAIL_PRODUCTIVITY] = max(0, scores[Audience.EMAIL_PRODUCTIVITY] - 2)
     if any(p in low for p in ("career change", "career pivot", "transferable skills")):
         scores[Audience.CAREER_CHANGE] += 4
@@ -9049,6 +9139,12 @@ _SHAPE: dict[Audience, str] = {
         "honest—no fabricated experience.\n\n"
         "Their request:\n{text}"
     ),
+    Audience.WHATSAPP: (
+        "[WhatsApp mode] WhatsApp help. Draft natural, paste-ready replies for "
+        "chats the person pastes in—match their tone, keep it short, never claim "
+        "you sent anything. No WhatsApp Business API; they paste and send.\n\n"
+        "Their request:\n{text}"
+    ),
     Audience.NETWORKING_CAREER: (
         "[Career networking mode] Career networking. Warm intros and relationship craft—not sleaze.\n\n"
         "Their request:\n{text}"
@@ -9754,6 +9850,7 @@ _CHIP_LABELS: dict[Audience, str] = {
     Audience.INTERNSHIP: "Internship mode",
     Audience.CAREER_CHANGE: "Career change mode",
     Audience.LINKEDIN: "LinkedIn mode",
+    Audience.WHATSAPP: "WhatsApp mode",
     Audience.NETWORKING_CAREER: "Career networking mode",
     Audience.HOA_LIVING: "HOA mode",
     Audience.COOP_HOUSING: "Co-op housing mode",
@@ -10310,6 +10407,7 @@ _CHIP_HINTS: dict[Audience, str] = {
     Audience.INTERNSHIP: "Finding, applying, and succeeding as an intern.",
     Audience.CAREER_CHANGE: "Pivots with honest transferable stories.",
     Audience.LINKEDIN: "Messages, profile, and outreach — human, not spam.",
+    Audience.WHATSAPP: "Chats and replies — natural, paste-ready, you send.",
     Audience.NETWORKING_CAREER: "Warm intros and relationship craft.",
     Audience.HOA_LIVING: "HOA rules and neighborly process.",
     Audience.COOP_HOUSING: "Co-ops, shares, and shared living.",
@@ -10866,6 +10964,7 @@ _HEADER_TITLES: dict[Audience, str] = {
     Audience.INTERNSHIP: "Internship help",
     Audience.CAREER_CHANGE: "Career change help",
     Audience.LINKEDIN: "LinkedIn help",
+    Audience.WHATSAPP: "WhatsApp help",
     Audience.NETWORKING_CAREER: "Career networking help",
     Audience.HOA_LIVING: "HOA help",
     Audience.COOP_HOUSING: "Co-op housing help",

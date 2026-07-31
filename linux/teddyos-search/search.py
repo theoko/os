@@ -140,6 +140,7 @@ _TASK_GOAL_RE = re.compile(
     \b(
         respond\s+to|reply\s+to|answer\s+my|
         linkedin\s+messages?|linkedin\s+inbox|linkedin\s+dms?|
+        whatsapp\s+messages?|whatsapp\s+chats?|whats\s*app|
         (?:my\s+)?(?:messages?|emails?|inbox)|
         inmail|connection\s+requests?|
         draft\s+(?:a\s+)?reply|write\s+(?:a\s+)?reply
@@ -259,6 +260,135 @@ def is_freeform_help_goal(text: str) -> bool:
     ):
         return True
     return False
+
+
+_LINKEDIN_MSG_RE = re.compile(
+    r"""
+    \b(
+        linkedin\s+(messages?|inbox|dms?|inmail|messaging)|
+        (reply|respond|answer|check|clear|draft)\s+(to\s+)?(my\s+)?linkedin|
+        (reply|respond|draft)\s+(to\s+)?(my\s+)?linkedin\s+messages?
+    )\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def is_linkedin_messages_goal(text: str) -> bool:
+    """True when the person wants AI help with LinkedIn messaging / replies.
+
+    Requires an explicit LinkedIn signal — bare “reply to my messages” is not
+    LinkedIn (that may be WhatsApp, email, or generic inbox help).
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    low = stripped.lower()
+    if "linkedin" not in low:
+        return False
+    if any(
+        w in low
+        for w in (
+            "message", "messages", "inbox", "dm", "dms", "inmail",
+            "reply", "replies", "respond", "answer", "draft", "messaging",
+        )
+    ):
+        return True
+    return bool(_LINKEDIN_MSG_RE.search(stripped))
+
+
+# Action prompt when we open Get help for LinkedIn replies.
+# LinkedIn has no public messaging API for the guest — we open the inbox and
+# AI drafts paste-ready replies (never auto-send).
+LINKEDIN_REPLY_PROMPT = (
+    "I want AI help replying to my LinkedIn messages right now. LinkedIn "
+    "Messaging should be open (or about to open) on this computer.\n\n"
+    "You are my reply co-pilot. Clear the inbox one thread at a time:\n"
+    "1) In one short sentence, ask me to paste the latest message (or short "
+    "thread) I need to answer.\n"
+    "2) When I paste, draft a warm, professional reply I can paste back into "
+    "LinkedIn — under ~90 words, no hashtags, no fake claims about my work.\n"
+    "3) Offer two options if useful: (A) short & friendly (B) a bit more formal.\n"
+    "4) End each draft with “Ready to paste — send the next message when you want.”\n"
+    "5) Never claim you sent anything. You only draft; I paste and send.\n\n"
+    "Start now with step 1."
+)
+
+
+def linkedin_reply_action_prompt(user_query: str = "") -> str:
+    """Full model prompt for a LinkedIn reply session."""
+    q = (user_query or "").strip()
+    if q and q.lower() not in LINKEDIN_REPLY_PROMPT.lower():
+        return f"{LINKEDIN_REPLY_PROMPT}\n\nTheir words: {q}"
+    return LINKEDIN_REPLY_PROMPT
+
+
+_WHATSAPP_MSG_RE = re.compile(
+    r"""
+    \b(
+        whats\s*app\s+(messages?|chats?|inbox|dms?|messaging|replies)?|
+        (reply|respond|answer|check|clear|draft)\s+(to\s+)?(my\s+)?whats\s*app|
+        (reply|respond|draft)\s+(to\s+)?(my\s+)?whats\s*app(\s+messages?)?|
+        draft\s+whats\s*app
+    )\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def is_whatsapp_messages_goal(text: str) -> bool:
+    """True when the person wants AI help with WhatsApp messaging / replies.
+
+    Requires an explicit WhatsApp signal.
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    low = stripped.lower().replace("whats app", "whatsapp")
+    if "whatsapp" not in low:
+        return False
+    if any(
+        w in low
+        for w in (
+            "message", "messages", "chat", "chats", "inbox",
+            "dm", "dms", "reply", "replies", "respond", "answer",
+            "check", "draft", "help", "ai",
+        )
+    ):
+        return True
+    # Bare “whatsapp” / “my whatsapp” still means open chat + AI help
+    if low in ("whatsapp", "my whatsapp", "open whatsapp"):
+        return True
+    if any(w in low for w in ("wanna", "want", "open", "read", "catch", "use")):
+        return True
+    return bool(_WHATSAPP_MSG_RE.search(stripped))
+
+
+# Same product model as LinkedIn: open Web WhatsApp, AI drafts paste-ready
+# replies (never auto-send). No WhatsApp Business API in the guest.
+WHATSAPP_REPLY_PROMPT = (
+    "I want AI help replying to my WhatsApp messages right now. WhatsApp Web "
+    "should be open (or about to open) on this computer.\n\n"
+    "You are my reply co-pilot. Clear chats one thread at a time:\n"
+    "1) In one short sentence, ask me to paste the latest message (or short "
+    "thread) I need to answer.\n"
+    "2) When I paste, draft a natural reply I can paste back into WhatsApp — "
+    "under ~80 words, match their tone (casual if they are casual), no "
+    "corporate fluff, no fake claims.\n"
+    "3) Offer two options if useful: (A) short & chill (B) a bit clearer / "
+    "more careful.\n"
+    "4) End each draft with “Ready to paste — send the next message when you want.”\n"
+    "5) Never claim you sent anything. You only draft; I paste and send.\n\n"
+    "Start now with step 1."
+)
+
+
+def whatsapp_reply_action_prompt(user_query: str = "") -> str:
+    """Full model prompt for a WhatsApp reply session."""
+    q = (user_query or "").strip()
+    if q and q.lower() not in WHATSAPP_REPLY_PROMPT.lower():
+        return f"{WHATSAPP_REPLY_PROMPT}\n\nTheir words: {q}"
+    return WHATSAPP_REPLY_PROMPT
 
 
 def resolve_project_dirs(name: str, roots: list[Path] | None = None) -> list[Path]:

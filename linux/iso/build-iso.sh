@@ -394,6 +394,12 @@ install -Dm755 "$REPO/linux/teddyos-agent/teddyos-devin"       config/includes.c
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-replit"      config/includes.chroot/usr/bin/teddyos-replit
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-accounts"     config/includes.chroot/usr/bin/teddyos-accounts
 install -Dm755 "$REPO/linux/teddyos-agent/teddyos-open-signin"  config/includes.chroot/usr/bin/teddyos-open-signin
+# LinkedIn / WhatsApp messaging wrappers — Search opens these when someone
+# asks to reply to messages (draft-only; never auto-send).
+install -Dm755 "$REPO/linux/teddyos-agent/teddyos-linkedin"     config/includes.chroot/usr/bin/teddyos-linkedin
+install -Dm755 "$REPO/linux/teddyos-agent/teddyos-whatsapp"     config/includes.chroot/usr/bin/teddyos-whatsapp
+# Highest available display mode at login (VM-friendly; no Settings homework).
+install -Dm755 "$REPO/linux/teddyos-agent/teddyos-display"      config/includes.chroot/usr/bin/teddyos-display
 install -Dm755 "$REPO/linux/teddyos-update/teddyos-update"      config/includes.chroot/usr/bin/teddyos-update
 # Account / sign-in helpers used by teddyos-accounts and Search.
 install -Dm644 "$REPO/linux/teddyos-search/accounts.py" \
@@ -404,6 +410,8 @@ install -Dm644 "$REPO/linux/teddyos-search/progress.py" \
   config/includes.chroot/usr/lib/teddyos/progress.py
 install -Dm644 "$REPO/linux/teddyos-search/pending_ask.py" \
   config/includes.chroot/usr/lib/teddyos/pending_ask.py
+install -Dm644 "$REPO/linux/teddyos-search/intent.py" \
+  config/includes.chroot/usr/lib/teddyos/intent.py
 
 # --- logs -------------------------------------------------------------------
 # Persistent journal + per-app files + daily snapshots. Without this, a failed
@@ -457,6 +465,20 @@ OnlyShowIn=GNOME;
 X-GNOME-Autostart-Phase=Applications
 NoDisplay=true
 DESKTOP
+
+# Max display resolution once the session (and Mutter) is up. Delay so gdctl
+# can talk to DisplayConfig; persistent so the choice sticks across logins.
+install -Dm644 /dev/stdin config/includes.chroot/etc/xdg/autostart/teddyos-display.desktop <<'DESKTOP'
+[Desktop Entry]
+Type=Application
+Name=teddyOS Display
+Comment=Use the highest available screen resolution
+Exec=teddyos-display
+OnlyShowIn=GNOME;
+X-GNOME-Autostart-Phase=Application
+X-GNOME-Autostart-Delay=2
+NoDisplay=true
+DESKTOP
 # Both entry points import from /usr/lib/teddyos once installed, not from a
 # sibling directory in a git checkout.
 sed -i 's|sys.path.insert(0, str(Path(__file__).resolve().parent))|sys.path.insert(0, "/usr/lib/teddyos")|' \
@@ -508,7 +530,7 @@ install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-
 Type=Application
 Name=WhatsApp
 Comment=Messages
-Exec=chromium --app=https://web.whatsapp.com/ --class=teddyos-whatsapp --user-data-dir=/home/teddy/.config/teddyos-whatsapp
+Exec=teddyos-whatsapp
 Icon=teddyos-whatsapp
 Terminal=false
 Categories=Network;InstantMessaging;
@@ -798,31 +820,36 @@ DESKTOP
 # computer again. What changes between releases is a few hundred kilobytes;
 # teddyos-update moves that much instead.
 #
-# The timer only CHECKS. It posts a notification and stops there, because a
-# machine that rewrites its own programs unattended is precisely what the setup
-# screen promises this is not — and the promise is worth more than the
-# convenience.
-install -Dm644 /dev/stdin config/includes.chroot/usr/lib/systemd/user/teddyos-update.service <<'UNIT'
+# Auto-install is OFF by default. The system timer always fires, but
+# `teddyos-update auto` no-ops unless setup granted “Keep teddyOS up to date”
+# (software.auto_update) — same consent shape as diagnostics.share.
+install -Dm644 /dev/stdin config/includes.chroot/etc/systemd/system/teddyos-update.service <<'UNIT'
 [Unit]
-Description=Check whether a teddyOS update is available
+Description=Apply teddyOS software updates when the user allowed it
+After=network-online.target
+Wants=network-online.target
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/teddyos-update check --notify
+ExecStart=/usr/bin/teddyos-update auto
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
 UNIT
 
-install -Dm644 /dev/stdin config/includes.chroot/usr/lib/systemd/user/teddyos-update.timer <<'UNIT'
+install -Dm644 /dev/stdin config/includes.chroot/etc/systemd/system/teddyos-update.timer <<'UNIT'
 [Unit]
-Description=Check for teddyOS updates daily
+Description=Daily teddyOS software update (only installs if allowed in setup)
 [Timer]
-# 10 minutes after login rather than at boot: the network is rarely up yet at
-# boot, and a check that fails on every cold start trains people to ignore it.
-OnStartupSec=10min
-OnUnitActiveSec=24h
+# After the network is usually up; Persistent catches machines that sleep a lot.
+OnBootSec=15min
+OnUnitActiveSec=1d
 Persistent=true
+Unit=teddyos-update.service
 [Install]
 WantedBy=timers.target
 UNIT
 
+# Manual path for anyone who left auto-update off (or wants it now).
 install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-update.desktop <<'DESKTOP'
 [Desktop Entry]
 Type=Application
@@ -830,7 +857,7 @@ Name=Software Update
 Comment=Check for and install teddyOS updates
 Exec=pkexec /usr/bin/teddyos-update apply
 Icon=software-update-available
-Terminal=true
+Terminal=false
 Categories=System;
 DESKTOP
 
@@ -1203,13 +1230,19 @@ systemd-tmpfiles --create /usr/lib/tmpfiles.d/teddyos.conf 2>/dev/null || true
 systemctl enable teddyos-log-collect.timer 2>/dev/null \
   || systemctl --root=/ enable teddyos-log-collect.timer 2>/dev/null \
   || true
+systemctl enable teddyos-update.timer 2>/dev/null \
+  || systemctl --root=/ enable teddyos-update.timer 2>/dev/null \
+  || true
 # In a live-build chroot systemctl enable sometimes only works via the
 # wants/ symlink. Force the link so a chroot without a running systemd still
 # ships the timer enabled.
 mkdir -p /etc/systemd/system/timers.target.wants
 ln -sfn /etc/systemd/system/teddyos-log-collect.timer \
   /etc/systemd/system/timers.target.wants/teddyos-log-collect.timer
+ln -sfn /etc/systemd/system/teddyos-update.timer \
+  /etc/systemd/system/timers.target.wants/teddyos-update.timer
 echo "logs: journald persistent + teddyos-log-collect.timer enabled"
+echo "updates: teddyos-update.timer enabled (installs only if software.auto_update granted)"
 HOOK
 
 # Only ours. The glob `config/hooks/live/*.hook.chroot` also matches the hooks

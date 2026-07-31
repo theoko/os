@@ -192,6 +192,17 @@ assert detect_audience("build a habit stack tracker") is Audience.HABIT_BUILDING
 # LinkedIn *messages* are product use, not job-search coaching
 assert detect_audience("i wanna respond to my linkedin messages") is Audience.LINKEDIN
 assert detect_audience("reply to linkedin messages in my inbox") is Audience.LINKEDIN
+assert detect_audience("i wanna reply to my whatsapp messages") is Audience.WHATSAPP
+assert detect_audience("respond to my whatsapp") is Audience.WHATSAPP
+# Stopword false positives must not steal project follow-ups
+assert detect_audience('look at the results for "julia roberts"') is Audience.PLAIN
+assert detect_audience("look at the results") is Audience.PLAIN
+assert detect_audience("i will look at that later") is Audience.PLAIN
+assert detect_audience("who is the best for this role") is Audience.PLAIN
+assert detect_audience("open the dialog box") is Audience.PLAIN
+# Project work → Ultracode, not a random hobby mode
+assert detect_audience("i wanna work on tsearch-revival") is Audience.CODE
+assert detect_audience("work on my-app") is Audience.CODE
 assert "message" in shape_prompt_for_claude(
     "i wanna respond to my linkedin messages"
 ).lower() or "linkedin" in shape_prompt_for_claude(
@@ -401,15 +412,201 @@ assert s.is_freeform_help_goal("i need to check my email inbox")
 assert s.is_work_goal("help me draft a reply to this message")
 # Search app wires freeform path
 app = Path("linux/teddyos-search/teddyos-search-app").read_text()
-assert "is_freeform_help_goal" in app
-assert "Open LinkedIn messages" in app
-assert "_open_link_row" in app
+assert "is_freeform_help_goal" in app or "intent" in app
+assert "Open LinkedIn messages" in app or "_linkedin_action" in app
+assert "_open_link_row" in app or "_intent_message" in app
 print("freeform-help-ok")
 PY
 then
   ok "freeform help goals (LinkedIn messages → Get help)"
 else
   bad "freeform help" "work_goal / freeform path broken"
+fi
+
+# --- intent router (local rules → structured jobs) --------------------------
+if python3 - <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path("linux/teddyos-search").resolve()))
+from intent import (
+    classify, IntentKind, Channel, choice_label, force_message_reply,
+)
+
+# High-confidence messaging
+i = classify("i wanna reply to my linkedin messages")
+assert i.kind is IntentKind.MESSAGE_REPLY and i.channel is Channel.LINKEDIN
+assert i.confidence >= 0.9 and i.auto_start_ok
+i = classify("draft whatsapp replies with AI")
+assert i.kind is IntentKind.MESSAGE_REPLY and i.channel is Channel.WHATSAPP
+
+# Generic reply → ambiguous choices (not silent LinkedIn)
+i = classify("reply to my messages with AI")
+assert i.kind is IntentKind.AMBIGUOUS
+labels = [choice_label(a) for a in i.alternatives]
+assert any("WhatsApp" in x for x in labels)
+assert any("LinkedIn" in x for x in labels)
+
+# Project vs lookup
+assert classify("i wanna work on tsearch").kind is IntentKind.PROJECT_HELP
+assert classify("what is photosynthesis").kind is IntentKind.LOOKUP
+assert classify("i need to check my email inbox").kind is IntentKind.FREEFORM_HELP
+
+# User pick is certain
+p = force_message_reply("help", Channel.WHATSAPP)
+assert p.source == "user_pick" and p.confidence == 1.0
+
+# ISO + Search wiring
+assert "intent.py" in Path("linux/iso/build-iso.sh").read_text()
+app = Path("linux/teddyos-search/teddyos-search-app").read_text()
+for need in (
+    "import intent",
+    "intent_mod.classify",
+    "_on_intent_choice",
+    "_intent_ambiguous_rows",
+    "_forced_intent",
+):
+    assert need in app, need
+print("intent-router-ok")
+PY
+then
+  ok "intent router classifies messaging / project / ambiguous"
+else
+  bad "intent router" "classify or Search wiring failed"
+fi
+
+# --- LinkedIn do-it: open messaging + draft playbook (never auto-send) ------
+if python3 - <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path("linux/teddyos-search").resolve()))
+import search as s
+from audience import detect_audience, Audience
+
+# Natural phrasing people actually type
+for q in (
+    "i wanna reply to my linkedin messages",
+    "i wanna respond to my linkedin messages",
+    "reply to linkedin messages",
+    "check linkedin inbox",
+    "answer linkedin dms",
+):
+    assert s.is_linkedin_messages_goal(q), q
+    assert s.is_freeform_help_goal(q), q
+    assert detect_audience(q) is Audience.LINKEDIN, (q, detect_audience(q))
+
+# Profile/job asks are NOT the messaging do-it path
+assert not s.is_linkedin_messages_goal("linkedin profile headline about")
+assert not s.is_linkedin_messages_goal("update my resume for jobs")
+# Bare “reply to my messages” is not LinkedIn (needs explicit linkedin)
+assert not s.is_linkedin_messages_goal("reply to my messages with AI")
+assert s.is_linkedin_messages_goal("help me reply to linkedin with AI")
+
+# Action prompt: draft paste-ready, never claim sent
+p = s.linkedin_reply_action_prompt("i wanna reply to my linkedin messages")
+assert "Never claim you sent" in p
+assert "paste" in p.lower()
+assert "LinkedIn" in p
+assert s.LINKEDIN_REPLY_PROMPT in p or "reply to my LinkedIn" in p
+
+# Wrapper binary exists and points at messaging
+wrap = Path("linux/teddyos-agent/teddyos-linkedin").read_text()
+assert "linkedin.com/messaging" in wrap
+assert "--app=" in wrap or "app=" in wrap
+
+# Search app: intent router + open inbox + auto-start + Draft button
+app = Path("linux/teddyos-search/teddyos-search-app").read_text()
+for need in (
+    "intent_mod.classify",
+    "linkedin_reply_action_prompt",
+    "_open_linkedin_messaging",
+    "_auto_start_messaging_replies",
+    "_linkedin_action",
+    "Draft my replies",
+    "teddyos-linkedin",
+    "linkedin.com/messaging",
+    "Nothing is sent without you",
+    "MESSAGE_REPLY",
+):
+    assert need in app, need
+# Detector lives in search/intent modules
+assert Path("linux/teddyos-search/intent.py").is_file()
+assert "is_linkedin_messages_goal" in Path("linux/teddyos-search/intent.py").read_text() or \
+       "is_linkedin_messages_goal" in Path("linux/teddyos-search/search.py").read_text()
+
+# ISO install ships the wrapper
+iso = Path("linux/iso/build-iso.sh").read_text()
+assert "teddyos-linkedin" in iso
+print("linkedin-do-it-ok")
+PY
+then
+  ok "LinkedIn do-it (messaging + draft playbook, never auto-send)"
+else
+  bad "LinkedIn do-it" "messaging open / draft path incomplete"
+fi
+
+# --- WhatsApp do-it: open chat + draft playbook (never auto-send) -----------
+if python3 - <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path("linux/teddyos-search").resolve()))
+import search as s
+from audience import detect_audience, Audience
+
+for q in (
+    "i wanna reply to my whatsapp messages",
+    "respond to my whatsapp",
+    "check whatsapp",
+    "answer whatsapp chats",
+    "draft whatsapp replies with AI",
+    "reply to my whatsapp messages with AI",
+):
+    assert s.is_whatsapp_messages_goal(q), q
+    assert s.is_freeform_help_goal(q), q
+    assert detect_audience(q) is Audience.WHATSAPP, (q, detect_audience(q))
+    assert not s.is_linkedin_messages_goal(q), q
+
+# LinkedIn still exclusive
+assert not s.is_whatsapp_messages_goal("i wanna reply to my linkedin messages")
+assert not s.is_whatsapp_messages_goal("linkedin profile headline")
+
+# Both named → both detectors fire (Search offers a picker)
+both = "reply to linkedin or whatsapp messages with AI"
+assert s.is_linkedin_messages_goal(both) and s.is_whatsapp_messages_goal(both)
+
+p = s.whatsapp_reply_action_prompt("i wanna reply to my whatsapp messages")
+assert "Never claim you sent" in p
+assert "paste" in p.lower()
+assert "WhatsApp" in p
+assert "AI help" in p or "co-pilot" in p
+
+wrap = Path("linux/teddyos-agent/teddyos-whatsapp").read_text()
+assert "web.whatsapp.com" in wrap
+assert "--app=" in wrap or "app=" in wrap
+
+app = Path("linux/teddyos-search/teddyos-search-app").read_text()
+for need in (
+    "intent_mod.classify",
+    "whatsapp_reply_action_prompt",
+    "_open_whatsapp",
+    "_whatsapp_action",
+    "_auto_start_messaging_replies",
+    "Draft my replies",
+    "teddyos-whatsapp",
+    "web.whatsapp.com",
+    "Opening WhatsApp",
+    "Channel.WHATSAPP",
+):
+    assert need in app, need
+assert "is_whatsapp_messages_goal" in Path("linux/teddyos-search/search.py").read_text()
+
+iso = Path("linux/iso/build-iso.sh").read_text()
+assert "teddyos-whatsapp" in iso
+print("whatsapp-do-it-ok")
+PY
+then
+  ok "WhatsApp do-it (chat open + draft playbook, never auto-send)"
+else
+  bad "WhatsApp do-it" "messaging open / draft path incomplete"
 fi
 
 # --- credit parser host unit ------------------------------------------------
@@ -629,7 +826,10 @@ from audience import detect_audience, Audience
 
 cases = [
     ("i wanna respond to my linkedin messages", True, True, Audience.LINKEDIN),
+    ("i wanna reply to my linkedin messages", True, True, Audience.LINKEDIN),
     ("reply to linkedin messages in my inbox", True, True, Audience.LINKEDIN),
+    ("i wanna reply to my whatsapp messages", True, True, Audience.WHATSAPP),
+    ("respond to my whatsapp", True, True, Audience.WHATSAPP),
     ("i need to check my email inbox", True, True, None),  # freeform; audience flexible
     ("help me draft a reply to this message", True, True, None),
     ("catch up on my messages", True, True, None),
@@ -651,6 +851,11 @@ assert not fails, fails
 # focus_query strips intent
 assert "linkedin" in s.focus_query("i wanna respond to my linkedin messages").lower()
 assert s.focus_query("i wanna work on tsearch").lower() in ("tsearch", "work on tsearch") or "tsearch" in s.focus_query("i wanna work on tsearch").lower()
+# Messaging do-it detectors
+assert s.is_linkedin_messages_goal("i wanna reply to my linkedin messages")
+assert not s.is_linkedin_messages_goal("linkedin profile headline")
+assert s.is_whatsapp_messages_goal("i wanna reply to my whatsapp messages")
+assert not s.is_whatsapp_messages_goal("i wanna reply to my linkedin messages")
 print("freeform-matrix-ok", len(cases))
 PY
 then
@@ -679,7 +884,7 @@ for need in (
     "progress_line",
     "award_from_prompt",
     "_progress_bar",
-    "is_freeform_help_goal",
+    "intent_mod.classify",
     "Open LinkedIn messages",
 ):
     assert need in app, need
@@ -709,11 +914,14 @@ assert "multi_ai" in progress.snapshot().badges or any(
     e.badge_id == "multi_ai" for e in s1.events
 ) or "ultracode_multi" in progress.snapshot().badges
 xp1 = progress.snapshot().xp
+asks1 = progress.snapshot().ask_count
 
-# Immediate second ask — debounce (little/no XP stack)
+# Immediate second ask — debounce (no second full ask XP)
 s2 = progress.award_from_prompt("i wanna respond to my linkedin messages")
 xp2 = progress.snapshot().xp
-assert xp2 - xp1 < 25, (xp1, xp2)  # soft switch badges only-ish
+assert progress.snapshot().ask_count == asks1, "debounce must not double-count asks"
+# Soft switch may unlock mode_switcher / mission badges (XP ok); no full ask stack
+assert xp2 - xp1 < 80, (xp1, xp2)
 # Soft switch still updates last_audience
 assert progress.snapshot().active_persona in ("linkedin", "code")
 # After debounce window, linkedin ask sticks
@@ -780,22 +988,41 @@ fi
 
 # --- pending_ask host module ------------------------------------------------
 if python3 - <<'PY'
-import sys, tempfile
+import sys, tempfile, os, importlib
 from pathlib import Path
+td = tempfile.mkdtemp(prefix="pending-cfg-")
+os.environ["XDG_CONFIG_HOME"] = td
 sys.path.insert(0, str(Path("linux/teddyos-search").resolve()))
 import pending_ask
-td = tempfile.mkdtemp(prefix="pending-")
+importlib.reload(pending_ask)
 pending_ask.clear()
 # save/load with custom project path semantics used by Search
-pending_ask.save(td, "hello from e2e suite")
+proj = tempfile.mkdtemp(prefix="pending-proj-")
+pending_ask.save(proj, "hello from e2e suite")
 data = pending_ask.load()
 assert data and data.get("prompt") == "hello from e2e suite"
+assert data.get("kind") == "work"
+# Messaging: human query + kind, never require dumping the AI playbook
+pending_ask.save(
+    str(Path.home()),
+    "",
+    query="i wanna reply to my linkedin messages",
+    kind="linkedin",
+)
+data = pending_ask.load()
+assert data["kind"] == "linkedin"
+assert data["query"] == "i wanna reply to my linkedin messages"
+assert data["prompt"] == ""
+# Search-app restore path understands kind
+app = Path("linux/teddyos-search/teddyos-search-app").read_text()
+assert 'kind in ("linkedin", "whatsapp", "freeform")' in app or "linkedin" in app and "whatsapp" in app
+assert "_user_query" in app
 pending_ask.clear()
 assert pending_ask.load() is None
 print("pending-ask-ok")
 PY
 then
-  ok "pending_ask save/load/clear"
+  ok "pending_ask save/load/clear + messaging kinds"
 else
   bad "pending_ask" "module contract failed"
 fi
@@ -995,6 +1222,7 @@ def ask(p, multi=False):
 
 ask("what is this app")
 assert "first_ask" in progress.snapshot().badges
+assert progress.daily_mission_line()
 ask("refactor TypeError in x.py")
 assert "ultracode" in progress.snapshot().badges
 # three ultracode
@@ -1011,6 +1239,9 @@ assert "mode_switcher" in b
 # synthesis
 progress.award_synthesis()
 assert "across_all" in progress.snapshot().badges
+# Combos / missions are part of the addictive loop
+assert hasattr(progress, "daily_mission_line")
+assert progress.snapshot().asks_today >= 1
 print("badge-ladder-ok", sorted(progress.snapshot().badges))
 PY
 then
@@ -1051,12 +1282,20 @@ if python3 - <<'PY'
 from pathlib import Path
 app = Path("linux/teddyos-search/teddyos-search-app").read_text()
 for need in (
-    "is_work_goal", "is_freeform_help_goal", "Open LinkedIn messages",
+    "intent_mod.classify", "Open LinkedIn messages",
+    "Draft my replies", "_open_linkedin_messaging",
+    "_auto_start_messaging_replies", "linkedin_reply_action_prompt",
+    "whatsapp_reply_action_prompt", "_open_whatsapp",
+    "_on_intent_choice", "_intent_ambiguous_rows",
     "_open_link_row", "award_from_prompt", "_progress_bar", "persona_meter",
     "every ready AI", "pull them together", "Get help", "teddyos-ask-all",
     "pending_ask", "com.teddyos.Search",
+    "_user_query", "kind=", "Draft my replies", "MESSAGE_REPLY",
 ):
     assert need in app, need
+# After sign-in, messaging restores original query (not work on $HOME)
+assert "linkedin" in app and "whatsapp" in app and "_restore_pending_ask" in app
+assert 'kind in ("linkedin", "whatsapp", "freeform")' in app
 print("search-app-src-ok")
 PY
 then
@@ -1069,10 +1308,13 @@ fi
 if grep -q 'audience.py' linux/iso/build-iso.sh \
   && grep -q 'progress.py' linux/iso/build-iso.sh \
   && grep -q 'pending_ask.py' linux/iso/build-iso.sh \
+  && grep -q 'intent.py' linux/iso/build-iso.sh \
   && grep -q 'accounts.py' linux/iso/build-iso.sh \
   && grep -q 'work_tools.py' linux/iso/build-iso.sh \
   && grep -q teddyos-ask-all linux/iso/build-iso.sh \
-  && grep -q teddyos-search-app linux/iso/build-iso.sh; then
+  && grep -q teddyos-search-app linux/iso/build-iso.sh \
+  && grep -q teddyos-linkedin linux/iso/build-iso.sh \
+  && grep -q 'teddyos-agent/teddyos-whatsapp' linux/iso/build-iso.sh; then
   ok "build-iso installs full search/agent stack"
 else
   bad "build-iso stack" "missing install lines"
@@ -1094,6 +1336,18 @@ assert work_tools.prompt_argv("claude", "  hello  ") == ["hello"]
 assert work_tools.prompt_argv("gemini", "hi") == ["-i", "hi"]
 assert work_tools.prompt_argv("antigravity", "x") == ["-i", "x"]
 assert work_tools.prompt_argv("codex", "y") == ["y"]
+# Session-ready unlocks soft probes after Connect
+work_tools.mark_session_ready("gemini")
+assert work_tools.is_session_ready("gemini")
+fake = work_tools.WorkTool(
+    id="gemini", title="G", subtitle="", icon="teddyos-gemini",
+    argv=("{path}",), metered=True, is_ai=True,
+)
+assert work_tools.ready_for_broadcast(fake, work_tools.CreditStatus(None, "May need a one-time sign-in"))
+# Files uses a real theme icon name
+files = [t for t in work_tools.available_work_tools() if t.id == "files"]
+if files:
+    assert files[0].icon in ("folder-symbolic", "folder", "system-file-manager")
 
 # recents
 work_tools.record_use("claude")
@@ -1225,6 +1479,8 @@ for name, url in (
     ("teddyos-devin", "app.devin.ai"),
     ("teddyos-replit", "replit.com"),
     ("teddyos-perplexity", "perplexity"),
+    ("teddyos-linkedin", "linkedin.com/messaging"),
+    ("teddyos-whatsapp", "web.whatsapp.com"),
 ):
     p = Path(f"linux/teddyos-agent/{name}")
     assert p.is_file(), name
@@ -1653,6 +1909,9 @@ import caps
 assert len(caps.CAPABILITIES) >= 3
 ids = {c["id"] for c in caps.CAPABILITIES}
 assert set(caps.DEFAULTS.keys()) == ids
+assert "software.auto_update" in ids
+assert caps.DEFAULTS["software.auto_update"] is False
+assert "diagnostics.share" in ids
 for c in caps.CAPABILITIES:
     for f in ("id", "label", "detail", "default"):
         assert f in c, (c.get("id"), f)
@@ -1661,6 +1920,9 @@ for c in caps.CAPABILITIES:
     plain = caps.text(c, "label", True)
     adv = caps.text(c, "label", False)
     assert plain and adv
+auto = next(c for c in caps.CAPABILITIES if c["id"] == "software.auto_update")
+assert "up to date" in auto["label"].lower()
+assert auto["enforced"] is True
 assert {l["id"] for l in caps.LEVELS} == {"guided", "advanced"}
 assert caps.DEFAULT_LEVEL in {l["id"] for l in caps.LEVELS}
 assert len(caps.SKILLS) >= 3
@@ -1671,6 +1933,106 @@ then
   ok "caps CAPABILITIES/DEFAULTS/LEVELS/text schema"
 else
   bad "caps schema" "failed"
+fi
+
+# --- display max-resolution helper ------------------------------------------
+if python3 - <<'PY'
+from pathlib import Path
+import importlib.machinery
+import importlib.util
+import sys
+p = Path("linux/teddyos-agent/teddyos-display")
+assert p.is_file()
+# Extensionless install script — load via SourceFileLoader.
+loader = importlib.machinery.SourceFileLoader("teddyos_display", str(p))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+assert spec and spec.loader
+mod = importlib.util.module_from_spec(spec)
+sys.modules[loader.name] = mod  # required for dataclasses under 3.14
+loader.exec_module(mod)
+sample = """
+Monitors:
+└──Monitor Virtual-1 (Red Hat)
+   ├──Modes
+   │   ├──5120x2160@50.000
+   │   │   ├──Preferred scale: 2.75
+   │   ├──3840x2160@60.000
+   │   │   ├──Preferred scale: 2.0
+   │   ├──1920x1200@59.885
+   │   │   ├──Preferred scale: 1.25
+   │   │   ├──is-current ⇒  yes
+   │   ├──1920x1080@60.000
+   │   │   ├──Preferred scale: 1.0
+"""
+c, modes, cur = mod._parse_gdctl_show(sample)
+assert c == "Virtual-1", c
+# Current is 16:10 — must NOT pick ultrawide 5120x2160 just for max pixels.
+best = mod._best_mode(modes, cur)
+assert best is not None
+assert abs(best.aspect - 16 / 10) < 0.05, (best.label, best.aspect)
+assert best.width == 1920 and best.height == 1200, best.label
+# No current → prefer 16:9 max (4K), not ultrawide.
+best16 = mod._best_mode(modes, None)
+assert best16 and best16.width == 3840 and best16.height == 2160, best16.label
+# Stuck on ultrawide → recover to 16:9 4K (not stay on 5K ultra)
+ultra_cur = mod.Mode(2560, 1080, 50.0)
+best_u = mod._best_mode(modes, ultra_cur)
+assert best_u and best_u.width == 3840 and best_u.height == 2160, best_u.label
+iso = Path("linux/iso/build-iso.sh").read_text()
+assert "teddyos-display" in iso
+assert "teddyos-display.desktop" in iso
+print("display-max-ok", best.label, "no-cur", best16.label, "ultra-fix", best_u.label)
+PY
+then
+  ok "display helper picks max res for correct aspect + ISO autostart"
+else
+  bad "display max" "parser or aspect selection failed"
+fi
+
+# --- auto-update consent gate + CLI -----------------------------------------
+if python3 - <<'PY'
+import os, tempfile, sys, importlib, subprocess
+from pathlib import Path
+sys.path.insert(0, str(Path("linux/teddyos-search").resolve()))
+td = tempfile.mkdtemp(prefix="teddyos-auto-")
+os.environ["XDG_CONFIG_HOME"] = td
+import caps
+importlib.reload(caps)
+assert not caps.auto_update_allowed()
+# Grant only auto-update
+granted = dict(caps.DEFAULTS)
+granted["software.auto_update"] = True
+caps.save(granted)
+importlib.reload(caps)
+assert caps.auto_update_allowed()
+# Binary no-ops without grant
+env = {**os.environ, "XDG_CONFIG_HOME": tempfile.mkdtemp(prefix="no-grant-")}
+r = subprocess.run(
+    [sys.executable, "linux/teddyos-update/teddyos-update", "auto"],
+    capture_output=True, text=True, env=env, timeout=30,
+)
+assert r.returncode == 0, (r.returncode, r.stdout, r.stderr)
+assert "off" in (r.stdout + r.stderr).lower()
+# help lists auto
+h = subprocess.run(
+    [sys.executable, "linux/teddyos-update/teddyos-update", "-h"],
+    capture_output=True, text=True, timeout=15,
+)
+assert "auto" in h.stdout
+# ISO ships system timer (not ambient apply without consent)
+iso = Path("linux/iso/build-iso.sh").read_text()
+assert "teddyos-update auto" in iso
+assert "software.auto_update" in iso or "Keep teddyOS up to date" in Path("linux/teddyos-search/caps.py").read_text()
+assert "teddyos-update.timer" in iso
+# Setup arms on grant
+setup = Path("linux/teddyos-setup/teddyos-setup").read_text()
+assert "software.auto_update" in setup and "_arm_auto_update" in setup
+print("auto-update-ok")
+PY
+then
+  ok "auto-update opt-in (default off, timer gated, setup arms)"
+else
+  bad "auto-update" "consent gate or wiring failed"
 fi
 
 # --- search Outcome + Result dataclasses ------------------------------------

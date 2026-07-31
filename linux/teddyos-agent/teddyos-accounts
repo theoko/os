@@ -241,16 +241,30 @@ class SignInWindow(Adw.ApplicationWindow):
         # --- intro layer ---
         self._intro_icon = Gtk.Image()
         self._intro_icon.set_pixel_size(56)
-        icon_path = (
-            Path("/usr/share/icons/hicolor/scalable/apps")
-            / f"{account.icon}.svg"
-        )
-        if icon_path.is_file():
-            self._intro_icon.set_from_file(str(icon_path))
-        elif Gtk.IconTheme.get_for_display(self.get_display()).has_icon(account.icon):
-            self._intro_icon.set_from_icon_name(account.icon)
-        else:
-            self._intro_icon.set_from_icon_name("emblem-ok-symbolic")
+        # Prefer on-disk teddyOS artwork so Connect never shows a generic badge.
+        loaded = False
+        for base in (
+            Path("/usr/share/icons/hicolor/scalable/apps"),
+            Path("/usr/share/icons/hicolor/48x48/apps"),
+            Path(__file__).resolve().parent.parent / "icons",
+        ):
+            for ext in (".svg", ".png"):
+                icon_path = base / f"{account.icon}{ext}"
+                if icon_path.is_file():
+                    try:
+                        self._intro_icon.set_from_file(str(icon_path))
+                        loaded = True
+                        break
+                    except GLib.Error:
+                        continue
+            if loaded:
+                break
+        if not loaded:
+            theme = Gtk.IconTheme.get_for_display(self.get_display())
+            if theme and theme.has_icon(account.icon):
+                self._intro_icon.set_from_icon_name(account.icon)
+            else:
+                self._intro_icon.set_from_icon_name("emblem-ok-symbolic")
         self._intro_icon.set_opacity(0.0)
 
         self._intro_line = Gtk.Label(
@@ -681,8 +695,15 @@ class SignInWindow(Adw.ApplicationWindow):
                     pass
             self._title.set_text(f"{self._account.title} is ready")
             self._body.set_text(
-                "You’re all set. Tap I’m done, then go back to Search."
+                "You’re all set. Tap I’m done — we’ll take you back to Search."
             )
+            # Unlock Get help even when credit probes stay soft/unknown.
+            try:
+                import work_tools as wt  # type: ignore
+                if hasattr(wt, "mark_session_ready"):
+                    wt.mark_session_ready(self._account.id)
+            except Exception:  # noqa: BLE001
+                pass
             try:
                 import progress as prog  # type: ignore
                 prog.award_signin()
@@ -898,21 +919,7 @@ class AccountsWindow(Adw.ApplicationWindow):
         row = Adw.ActionRow(title=account.title)
         row.set_subtitle(account.blurb)
         row.set_subtitle_lines(2)
-        icon = Gtk.Image()
-        icon.set_pixel_size(28)
-        theme = Gtk.IconTheme.get_for_display(self.get_display())
-        if theme and theme.has_icon(account.icon):
-            icon.set_from_icon_name(account.icon)
-        else:
-            path = (
-                Path("/usr/share/icons/hicolor/scalable/apps")
-                / f"{account.icon}.svg"
-            )
-            if path.is_file():
-                icon.set_from_file(str(path))
-            else:
-                icon.set_from_icon_name("system-users-symbolic")
-        row.add_prefix(icon)
+        row.add_prefix(self._account_icon(account.icon))
 
         btn = Gtk.Button(label="Connect")
         btn.add_css_class("suggested-action")
@@ -922,6 +929,30 @@ class AccountsWindow(Adw.ApplicationWindow):
         self._rows[account.id] = row
         row._connect_btn = btn  # type: ignore[attr-defined]
         return row
+
+    def _account_icon(self, name: str) -> Gtk.Image:
+        """Theme icon with on-disk SVG/PNG fallback (never a blank square)."""
+        img = Gtk.Image()
+        img.set_pixel_size(28)
+        theme = Gtk.IconTheme.get_for_display(self.get_display())
+        if theme and theme.has_icon(name):
+            img.set_from_icon_name(name)
+            return img
+        for base in (
+            Path("/usr/share/icons/hicolor/scalable/apps"),
+            Path("/usr/share/icons/hicolor/48x48/apps"),
+            Path(__file__).resolve().parent.parent / "icons",
+        ):
+            for ext in (".svg", ".png"):
+                path = base / f"{name}{ext}"
+                if path.is_file():
+                    try:
+                        img.set_from_file(str(path))
+                        return img
+                    except GLib.Error:
+                        continue
+        img.set_from_icon_name("system-users-symbolic")
+        return img
 
     def _reload_statuses(self) -> None:
         if acc is None:
@@ -1005,17 +1036,25 @@ class AccountsWindow(Adw.ApplicationWindow):
         return False
 
     def _setup_all_needed(self) -> None:
-        """Walk through every account that still needs sign-in, one at a time."""
+        """One calm first sign-in (Claude), not an OAuth marathon.
+
+        Extra AIs stay on the list for later; Get help only needs one ready
+        chat tool. GitHub is offered only when nothing AI-like is available.
+        """
         need = []
-        # Order: AI people care about first, then GitHub for downloads.
-        preferred = (
-            "claude", "grok", "copilot", "gemini", "codex", "antigravity",
-            "github",
-        )
+        # Prefer a single reliable AI first — seamless for new users.
+        preferred = ("claude", "grok", "copilot", "codex", "gemini", "antigravity")
         by_id = {}
         for account_id, (installed, status) in (self._status_cache or {}).items():
             if not installed or status.ok is True:
                 continue
+            # Session-ready from a prior Connect this boot counts as done.
+            try:
+                import work_tools as wt  # type: ignore
+                if hasattr(wt, "is_session_ready") and wt.is_session_ready(account_id):
+                    continue
+            except Exception:  # noqa: BLE001
+                pass
             account = acc.get_account(account_id) if acc else None
             # Optional web apps: skip the forced multi-sign-in queue.
             if account is None or getattr(account, "always_available", False):
@@ -1024,18 +1063,33 @@ class AccountsWindow(Adw.ApplicationWindow):
         for pid in preferred:
             if pid in by_id:
                 need.append(by_id.pop(pid))
-        need.extend(by_id.values())
+                break  # one AI is enough to unlock Get help
+        # GitHub only if we found no AI to connect (clone path).
+        if not need and "github" in by_id:
+            need.append(by_id["github"])
         if not need:
             self._toast("You’re already set up — taking you back…")
             GLib.timeout_add(700, self._return_to_search)
             return
         self._setup_queue = list(need)
-        self._toast(f"Next up: {need[0].title}")
+        self._toast(f"Next up: {need[0].title} — one short sign-in")
         self._connect(need[0])
 
     def _advance_setup_queue(self) -> None:
         if not self._setup_queue:
             return
+        # After any successful first AI, stop the queue — seamless return.
+        finished_id = self._setup_queue[0].id if self._setup_queue else ""
+        try:
+            import work_tools as wt  # type: ignore
+            if finished_id and hasattr(wt, "is_session_ready") and wt.is_session_ready(finished_id):
+                self._setup_queue = []
+                self._reload_statuses()
+                self._toast("You’re set up — taking you back to Search…")
+                GLib.timeout_add(700, self._return_to_search)
+                return
+        except Exception:  # noqa: BLE001
+            pass
         self._setup_queue = self._setup_queue[1:]
         if not self._setup_queue:
             self._reload_statuses()

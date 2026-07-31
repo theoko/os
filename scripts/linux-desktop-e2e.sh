@@ -1431,6 +1431,95 @@ else
   bad "LinkedIn messages path" "still treated as job/corpus search"
 fi
 
+# --- 49c. LinkedIn do-it: messaging wrapper + draft playbook on guest ------
+echo ">>> LinkedIn do-it path on guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys, shutil
+from pathlib import Path
+sys.path.insert(0, "/usr/lib/teddyos")
+import search as s
+from audience import detect_audience, Audience
+
+q = "i wanna reply to my linkedin messages"
+assert s.is_linkedin_messages_goal(q), q
+assert s.is_freeform_help_goal(q), q
+assert detect_audience(q) is Audience.LINKEDIN
+p = s.linkedin_reply_action_prompt(q)
+assert "Never claim you sent" in p
+assert "paste" in p.lower()
+
+src = Path("/usr/bin/teddyos-search-app").read_text()
+for need in (
+    "is_linkedin_messages_goal",
+    "_open_linkedin_messaging",
+    "Draft my replies",
+    "linkedin.com/messaging",
+    "Nothing is sent without you",
+):
+    assert need in src, need
+# auto-start may be messaging-shared or linkedin-named
+assert (
+    "_auto_start_messaging_replies" in src
+    or "_auto_start_linkedin_replies" in src
+)
+
+# Wrapper optional until next ISO rebuild; search-app falls back to chromium --app
+wrap = shutil.which("teddyos-linkedin")
+if wrap:
+    body = Path(wrap).read_text()
+    assert "linkedin.com/messaging" in body
+print("linkedin-do-it-guest-ok", "wrapper=" + ("yes" if wrap else "fallback"))
+PY
+REMOTE
+then
+  ok "LinkedIn do-it (draft playbook + open messaging)"
+else
+  bad "LinkedIn do-it guest" "missing draft/open wiring"
+fi
+
+# --- 49d. WhatsApp do-it: open chat + draft playbook on guest --------------
+echo ">>> WhatsApp do-it path on guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys, shutil
+from pathlib import Path
+sys.path.insert(0, "/usr/lib/teddyos")
+import search as s
+from audience import detect_audience, Audience
+
+q = "i wanna reply to my whatsapp messages"
+assert s.is_whatsapp_messages_goal(q), q
+assert s.is_freeform_help_goal(q), q
+assert detect_audience(q) is Audience.WHATSAPP
+p = s.whatsapp_reply_action_prompt(q)
+assert "Never claim you sent" in p
+assert "paste" in p.lower()
+
+src = Path("/usr/bin/teddyos-search-app").read_text()
+for need in (
+    "is_whatsapp_messages_goal",
+    "_open_whatsapp",
+    "_whatsapp_action",
+    "Draft my replies",
+    "web.whatsapp.com",
+    "Opening WhatsApp",
+):
+    assert need in src, need
+
+wrap = shutil.which("teddyos-whatsapp")
+if wrap:
+    body = Path(wrap).read_text()
+    assert "web.whatsapp.com" in body
+print("whatsapp-do-it-guest-ok", "wrapper=" + ("yes" if wrap else "fallback"))
+PY
+REMOTE
+then
+  ok "WhatsApp do-it (draft playbook + open chat)"
+else
+  bad "WhatsApp do-it guest" "missing draft/open wiring"
+fi
+
 # --- 49. progress awards specialty asks without forcing Ultracode -----------
 echo ">>> progress specialty vs ultracode"
 if remote_bash <<'REMOTE'
@@ -1948,11 +2037,21 @@ assert "Path.home()" in src or "home()" in src
 assert "freeform" in src
 assert "Open LinkedIn messages" in src
 assert "linkedin.com/messaging" in src
+assert "is_linkedin_messages_goal" in src
+assert "Draft my replies" in src
+assert "linkedin_reply_action_prompt" in src
+assert "is_whatsapp_messages_goal" in src
+assert "whatsapp_reply_action_prompt" in src
+assert "_open_whatsapp" in src
+assert (
+    "_auto_start_messaging_replies" in src
+    or "_auto_start_linkedin_replies" in src
+)
 print("freeform-block-src-ok")
 PY
 REMOTE
 then
-  ok "freeform block sets pending task + LinkedIn URL"
+  ok "freeform block sets pending task + messaging do-it paths"
 else
   bad "freeform block src" "missing"
 fi

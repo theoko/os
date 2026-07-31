@@ -739,6 +739,30 @@ class SetupWindow(Adw.ApplicationWindow):
         else:
             log.info("diagnostics.share off — log collector stays idle")
 
+        # Auto-update consent: timer is always installed; the binary no-ops
+        # without the grant. Kick one check soon so a first-day patch lands.
+        if granted.get("software.auto_update"):
+            self._arm_auto_update()
+        else:
+            log.info("software.auto_update off — update timer stays idle")
+
+    def _arm_auto_update(self) -> None:
+        """Ensure the daily update timer is on; try one auto-run if permitted.
+
+        Best-effort: without root the grant is still saved and the next boot’s
+        system timer will see it.
+        """
+        log.info("software.auto_update on — arming update timer")
+        for argv in (
+            ["systemctl", "enable", "--now", "teddyos-update.timer"],
+            ["systemctl", "start", "teddyos-update.service"],
+            ["teddyos-update", "auto"],
+        ):
+            try:
+                Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE)
+            except GLib.Error:
+                pass
+
     def _arm_diagnostics(self) -> None:
         """Start the snapshot timer and take one snapshot if we can.
 

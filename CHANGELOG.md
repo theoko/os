@@ -1,8 +1,65 @@
 ---
-version: 0.13.0
+version: v0.14.0
+project: os
+updated: 2026-07-31
+type: changelog
 ---
 
 # Changelog
+
+Runtime version is the top-level `VERSION` file (no `v` prefix there).
+This file is newest-first. When behavior ships: bump `VERSION`, add an entry
+here, update this frontmatter `version:` / `updated:`, then conventional-commit.
+
+## [v0.14.0] — 2026-07-31
+
+### Added — trading-style version control (so we know what we are shipping)
+
+`VERSION` + `CHANGELOG.md` now follow the same discipline as
+`~/Desktop/iakovos/trading`: YAML frontmatter carries the current version,
+entries are newest-first with `## [vX.Y.Z] — date` headers, and identity cards
+require a bump on real work. Linux live images still bake `VERSION` into
+`/etc/teddyos-software` and the ISO filename — freestanding kernel ISOs do not
+surface it on the “hello” screen (that product line is separate).
+
+### Added — Search intent router (agent decides, product executes)
+
+Search classifies free text into structured intents (`message_reply`,
+`project_help`, `freeform_help`, `lookup`, `ambiguous`) via
+`linux/teddyos-search/intent.py`, then runs known playbooks. Ambiguous input
+offers plain choice rows. Never free-roams; never auto-sends. Design record:
+`docs/intent-router-os-doc-v01.md`.
+
+### Added — LinkedIn / WhatsApp “do it” = open + AI draft
+
+`teddyos-linkedin` and `teddyos-whatsapp` open the messaging surface and drive
+an AI draft playbook. Reply paths are draft-only — no auto-send. Wired through
+Search when the intent is a message reply.
+
+### Added — aspect-aware display lift + auto-update opt-in
+
+`teddyos-display` picks the densest mode that **matches the current aspect**
+(blocks ultrawide by default; `TEDDYOS_ALLOW_ULTRAWIDE` escape hatch). Setup
+gains an optional software auto-update grant (`software.auto_update`), off by
+default. VirtualBox ARM default resolution preference is 1920×1080.
+
+### Fixed — backpacking false positive and project audience
+
+“look at results” no longer scores as backpacking (stopword “at” removed from
+lexicon matching). Work-on goals like `tsearch-revival` resolve to CODE-style
+project audience more reliably. Session-ready after Connect unblocks “get help”
+stuck states; multi-OAuth prefers Claude-first when several are pending.
+
+### Changed — nontechnical UX depth (post-0.13 catch-up)
+
+Multi-persona help, freeform goals, levels, Connect helpers, Ask-all / AI
+picker polish, and contract/e2e coverage for the Linux desktop path landed
+after 0.13.0 without a version bump — they are part of this tree as of 0.14.0.
+Audit: `docs/nontechnical-ux-audit-os-doc-v02.md`.
+
+**Note for operators:** `make virtualbox-arm64` boots the **freestanding
+kernel** (“hello” setup). The Linux daily-driver UX above is on
+`make linux-iso` / the `teddyos-*-*.iso` live image — not `os-arm64.iso`.
 
 ## 0.13.0 — 2026-07-28
 

@@ -131,6 +131,25 @@ CAPABILITIES = [
                    "sharing a snapshot is a separate, explicit step.",
         "default": False,
     },
+    {
+        "id": "software.auto_update",
+        "label": "Keep teddyOS up to date",
+        "label_adv": "Automatic software updates",
+        "detail": "Download and install teddyOS updates when this computer is online",
+        "detail_adv": "software.auto_update — daily check + apply",
+        "enforced": True,
+        "badge": "the system enforces this",
+        "badge_adv": "enforced",
+        "why": "Off unless you turn it on. When on, teddyOS checks once a day "
+               "and installs small software updates by itself. Your files and "
+               "what you type in Search are never part of an update. You can "
+               "still install updates yourself any time from Software Update.",
+        "why_adv": "When denied, the system update timer no-ops (no network). "
+                   "When granted, teddyos-update auto runs daily as root: "
+                   "verify checksum, atomic install, rollback kept. Manual "
+                   "apply via Software Update always works.",
+        "default": False,
+    },
 ]
 
 
@@ -283,20 +302,18 @@ def is_configured() -> bool:
     return USER_CONF.exists()
 
 
-def diagnostics_share_allowed() -> bool:
-    """True when any configured user granted diagnostics.share.
+def _any_user_granted(cap_id: str) -> bool:
+    """True if this process or any desktop user granted ``cap_id``.
 
-    The log collector and its timer run as root (or as a service user), so
-    they cannot rely on load() alone — that reads *this* process's home.
-    A consent given by the desktop user must still be visible to them.
+    System timers (root) cannot rely on load() alone — that reads *this*
+    process's home. Consent from the desktop user must still be visible.
     """
-    if load().get("diagnostics.share"):
+    if load().get(cap_id):
         return True
     homes: list[Path] = []
     home_root = Path("/home")
     if home_root.is_dir():
         homes.extend(p for p in home_root.iterdir() if p.is_dir())
-    # Also the service's own home, and root, for odd setups.
     for extra in (Path.home(), Path("/root")):
         if extra not in homes:
             homes.append(extra)
@@ -307,6 +324,20 @@ def diagnostics_share_allowed() -> bool:
         except (OSError, ValueError):
             continue
         granted = data.get("granted", {})
-        if isinstance(granted, dict) and granted.get("diagnostics.share") is True:
+        if isinstance(granted, dict) and granted.get(cap_id) is True:
             return True
     return False
+
+
+def diagnostics_share_allowed() -> bool:
+    """True when any configured user granted diagnostics.share."""
+    return _any_user_granted("diagnostics.share")
+
+
+def auto_update_allowed() -> bool:
+    """True when any configured user granted software.auto_update.
+
+    The system update timer runs as root and must not rewrite programs
+    without an explicit setup opt-in (default off).
+    """
+    return _any_user_granted("software.auto_update")

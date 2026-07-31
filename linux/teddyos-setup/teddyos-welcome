@@ -99,7 +99,10 @@ TOUR: list[dict] = [
         "title": "Web and messages",
         "body": (
             "Web opens the internet — same idea as Chrome or Safari.\n\n"
-            "WhatsApp is for messages. Files shows the folders on this computer."
+            "WhatsApp is for messages. Files shows the folders on this computer.\n\n"
+            "Want AI to help you reply? In Search type "
+            "“reply to my WhatsApp messages” or “reply to my LinkedIn messages” — "
+            "AI drafts; you always send."
         ),
         "primary": "Next",
         "secondary": "Back",

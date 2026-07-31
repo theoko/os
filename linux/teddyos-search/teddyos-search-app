@@ -43,8 +43,10 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 import caps  # noqa: E402
 import git_projects  # noqa: E402
+import intent as intent_mod  # noqa: E402
 import search as engine  # noqa: E402
 import work_tools  # noqa: E402
+from intent import Channel, Intent, IntentKind  # noqa: E402
 from work_tools import CreditStatus, WorkTool  # noqa: E402
 
 # Pending question after sign-in. Optional so a partial deploy cannot make the
@@ -231,6 +233,8 @@ class SearchWindow(Adw.ApplicationWindow):
         self.connect("notify::is-active", self._on_is_active_changed)
         # Arm after first present so the initial focus dance does not close us.
         GLib.timeout_add(400, self._arm_blur_close)
+        # When returning from Getting you ready, re-check which AIs are ready.
+        self._reprobe_on_focus = False
 
         # Bumped on every keystroke. A slow search that finishes after a newer
         # one must not overwrite it — without this, typing "nolan" can end up
@@ -283,7 +287,7 @@ class SearchWindow(Adw.ApplicationWindow):
         top.set_margin_start(16)
         top.set_margin_end(16)
 
-        # Light progress strip — level + XP + streak (gamification, not a grind).
+        # Progress strip — fluency bar + daily mission (productivity loop).
         self._progress_bar = Gtk.ProgressBar()
         self._progress_bar.set_hexpand(True)
         self._progress_bar.set_margin_start(16)
@@ -293,10 +297,15 @@ class SearchWindow(Adw.ApplicationWindow):
         self._progress_label.add_css_class("dim-label")
         self._progress_label.set_margin_start(16)
         self._progress_label.set_margin_end(16)
-        self._progress_label.set_margin_bottom(8)
+        self._mission_label = Gtk.Label(xalign=0.0)
+        self._mission_label.add_css_class("caption")
+        self._mission_label.set_margin_start(16)
+        self._mission_label.set_margin_end(16)
+        self._mission_label.set_margin_bottom(8)
         prog_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
         prog_box.append(self._progress_bar)
         prog_box.append(self._progress_label)
+        prog_box.append(self._mission_label)
         self._progress_box = prog_box
         self._refresh_progress_ui()
 
@@ -375,6 +384,11 @@ class SearchWindow(Adw.ApplicationWindow):
             if self._blur_close_source:
                 GLib.source_remove(self._blur_close_source)
                 self._blur_close_source = 0
+            # Back from Getting you ready — refresh which AIs can answer.
+            if getattr(self, "_reprobe_on_focus", False):
+                self._reprobe_on_focus = False
+                self._hold_for_dialog = False
+                self._reprobe_credits_after_signin()
             return
         if not self._blur_close_armed or not self._ever_active or self._hold_for_dialog:
             return
@@ -385,6 +399,18 @@ class SearchWindow(Adw.ApplicationWindow):
         if self._blur_close_source:
             GLib.source_remove(self._blur_close_source)
         self._blur_close_source = GLib.timeout_add(150, self._close_if_still_blurred)
+
+    def _reprobe_credits_after_signin(self) -> None:
+        """Seamless unlock of Get help / Draft my replies after Connect."""
+        tools = getattr(self, "_broadcast_tools", None) or []
+        if not tools:
+            tools = work_tools.available_work_tools()
+        if not tools:
+            return
+        log.info("re-probe credits after sign-in tools=%s", [t.id for t in tools if t.is_ai])
+        self._begin_credit_probes(list(tools))
+        # Nudge UI even if probes are slow — session-ready may already unlock.
+        self._refresh_broadcast_ui()
 
     def _close_if_still_blurred(self) -> bool:
         self._blur_close_source = 0
@@ -422,11 +448,12 @@ class SearchWindow(Adw.ApplicationWindow):
               if grants.get(c["id"])]
         if not on:
             return (
-                "Try “work on my project name”, or open Settings to turn on "
-                "what teddyOS may search."
+                "Try “work on my project name”, “reply to my LinkedIn messages”, "
+                "or open Settings to turn on what teddyOS may search."
             )
         return (
-            "Try “work on …” for a project, or type any question. "
+            "Try “work on …” for a project, “reply to my WhatsApp messages”, "
+            "or type any question. "
             f"Looking in: {', '.join(on).lower()}."
         )
 
@@ -566,47 +593,205 @@ class SearchWindow(Adw.ApplicationWindow):
         return row
 
     def _work_goal_block(self, query: str) -> list[Gtk.Widget]:
-        """Rows that open a project with an AI tool, or explain why not.
+        """Route Search text through the intent router, then run a playbook.
 
-        Returns an empty list when the query is ordinary search — the rest of
-        _show then behaves as before.
+        Returns an empty list for ordinary lookup — the rest of _show ranks
+        documents as before. Forced intents (choice rows) live on
+        ``self._forced_intent`` until the next free-typed query.
         """
-        if not engine.is_work_goal(query):
-            return []
-        subject = engine.focus_query(query)
-        if not subject:
+        forced = getattr(self, "_forced_intent", None)
+        if forced is not None and (forced.raw_query or "").strip() == (query or "").strip():
+            decided = forced
+        else:
+            self._forced_intent = None
+            decided = intent_mod.classify(query)
+
+        self._last_intent = decided
+        log.info(
+            "intent kind=%s channel=%s conf=%.2f source=%s",
+            decided.kind.value,
+            decided.channel.value,
+            decided.confidence,
+            decided.source,
+        )
+
+        if decided.kind is IntentKind.LOOKUP:
             return []
 
-        projects = engine.resolve_project_dirs(subject)
         tools = work_tools.available_work_tools()
         rows: list[Gtk.Widget] = []
         self._tool_rows = {}
         self._credit_labels = {}
         self._credit_statuses = {}
         self._freeform_help = False
-        # Optional task after the project name: "work on trading fix the risk".
-        self._pending_task = self._task_from_query(query, subject)
+        self._linkedin_action = False
+        self._whatsapp_action = False
+        self._messaging_auto_started = False
+        self._user_query = (query or "").strip()
 
-        if projects:
-            self._append_project_tools(rows, projects, tools)
-            self._begin_credit_probes(tools)
+        if decided.kind is IntentKind.AMBIGUOUS:
+            return self._intent_ambiguous_rows(decided)
+
+        if decided.kind is IntentKind.MESSAGE_REPLY:
+            return self._intent_message_reply_rows(decided, tools)
+
+        if decided.kind is IntentKind.FREEFORM_HELP:
+            return self._intent_freeform_rows(decided, tools)
+
+        if decided.kind is IntentKind.PROJECT_HELP:
+            return self._intent_project_rows(decided, tools, query)
+
+        if decided.kind is IntentKind.SETUP:
+            rows.append(self._plain_notice(
+                decided.summary or "Let’s get you set up."
+            ))
+            rows.append(self._github_connect_row())
             return rows
 
-        # Everyday tasks ("respond to my LinkedIn messages") are not folders.
-        # Offer Get help with the full ask — never a dead-end GitHub story.
-        if engine.is_freeform_help_goal(query):
-            self._freeform_help = True
-            self._pending_task = (query or "").strip()
-            low = query.lower()
-            if "linkedin" in low:
-                rows.append(self._open_link_row(
-                    "Open LinkedIn messages",
-                    "Read the thread there, then come back for reply help",
-                    "https://www.linkedin.com/messaging/",
-                ))
-            self._append_project_tools(
-                rows, [Path.home()], tools, freeform=True,
+        return []
+
+    def _intent_ambiguous_rows(self, decided: Intent) -> list[Gtk.Widget]:
+        """Plain choices when the router is not sure — never silent guess."""
+        rows: list[Gtk.Widget] = []
+        rows.append(self._plain_notice(
+            decided.summary or "What do you want to do?"
+        ))
+        rows.append(self._section_label("Choose one"))
+        for alt in intent_mod.all_choice_intents(decided):
+            rows.append(self._intent_choice_row(alt))
+        return rows
+
+    def _intent_choice_row(self, choice: Intent) -> Gtk.Widget:
+        title = intent_mod.choice_label(choice)
+        sub = intent_mod.choice_subtitle(choice)
+        row = Adw.ActionRow(title=title)
+        if sub:
+            row.set_subtitle(sub)
+        icon = "mail-unread-symbolic"
+        if choice.kind is IntentKind.MESSAGE_REPLY:
+            if choice.channel is Channel.WHATSAPP:
+                icon = "user-available-symbolic"
+            else:
+                icon = "mail-unread-symbolic"
+        elif choice.kind is IntentKind.PROJECT_HELP:
+            icon = "folder-symbolic"
+        elif choice.kind is IntentKind.LOOKUP:
+            icon = "system-search-symbolic"
+        elif choice.kind is IntentKind.FREEFORM_HELP:
+            icon = "help-about-symbolic"
+        row.add_prefix(Gtk.Image.new_from_icon_name(icon))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect("activated", lambda *_a, c=choice: self._on_intent_choice(c))
+        return row
+
+    def _on_intent_choice(self, choice: Intent) -> None:
+        """User picked a path — re-run Search with a forced intent."""
+        picked = choice.with_user_pick()
+        q = (picked.raw_query or getattr(self, "_user_query", "") or "").strip()
+        if not q:
+            if picked.kind is IntentKind.MESSAGE_REPLY:
+                if picked.channel is Channel.WHATSAPP:
+                    q = "i wanna reply to my whatsapp messages"
+                else:
+                    q = "i wanna reply to my linkedin messages"
+            else:
+                q = picked.subject or "help"
+            picked = intent_mod.force_kind(q, picked.kind, subject=picked.subject)
+            if picked.kind is IntentKind.MESSAGE_REPLY:
+                picked = intent_mod.force_message_reply(q, choice.channel)
+        elif picked.kind is IntentKind.MESSAGE_REPLY:
+            picked = intent_mod.force_message_reply(q, choice.channel)
+        self._forced_intent = picked
+        self.entry.set_text(q)
+        self._run(q)
+
+    def _intent_message_reply_rows(
+        self, decided: Intent, tools: list[WorkTool],
+    ) -> list[Gtk.Widget]:
+        """Open the channel + AI draft playbook (never auto-send)."""
+        rows: list[Gtk.Widget] = []
+        self._freeform_help = True
+        query = decided.raw_query
+        self._user_query = query
+        self._messaging_auto_started = False
+
+        if decided.channel is Channel.WHATSAPP:
+            self._whatsapp_action = True
+            self._linkedin_action = False
+            self._pending_task = engine.whatsapp_reply_action_prompt(query)
+            self._open_whatsapp()
+            notice = (
+                decided.summary
+                or "Looks like you want AI help with WhatsApp messages. "
+                "AI drafts; you always send."
             )
+            if "square code" not in notice.lower():
+                notice = (
+                    f"{notice} Opening WhatsApp — if you see a square code, "
+                    "scan it with WhatsApp on your phone once."
+                )
+            rows.append(self._plain_notice(notice))
+            rows.append(self._whatsapp_action_row())
+        elif decided.channel is Channel.LINKEDIN:
+            self._linkedin_action = True
+            self._whatsapp_action = False
+            self._pending_task = engine.linkedin_reply_action_prompt(query)
+            self._open_linkedin_messaging()
+            notice = (
+                decided.summary
+                or "Looks like you want AI help with LinkedIn messages. "
+                "AI drafts; you always send."
+            )
+            if "opening linkedin" not in notice.lower():
+                notice = f"{notice} Opening LinkedIn messaging now."
+            rows.append(self._plain_notice(notice))
+            rows.append(self._linkedin_action_row())
+        else:
+            rows.append(self._plain_notice(
+                decided.summary
+                or "AI can draft replies. Pick LinkedIn or WhatsApp — you always send."
+            ))
+            rows.append(self._linkedin_action_row())
+            rows.append(self._whatsapp_action_row())
+            self._pending_task = (query or "").strip()
+
+        self._append_project_tools(
+            rows, [Path.home()], tools, freeform=True,
+        )
+        self._begin_credit_probes(tools)
+        return rows
+
+    def _intent_freeform_rows(
+        self, decided: Intent, tools: list[WorkTool],
+    ) -> list[Gtk.Widget]:
+        rows: list[Gtk.Widget] = []
+        self._freeform_help = True
+        query = decided.raw_query
+        self._user_query = query
+        self._pending_task = (query or "").strip()
+        if decided.summary:
+            rows.append(self._plain_notice(decided.summary))
+        self._append_project_tools(
+            rows, [Path.home()], tools, freeform=True,
+        )
+        self._begin_credit_probes(tools)
+        return rows
+
+    def _intent_project_rows(
+        self,
+        decided: Intent,
+        tools: list[WorkTool],
+        query: str,
+    ) -> list[Gtk.Widget]:
+        subject = (decided.subject or engine.focus_query(query) or "").strip()
+        if not subject:
+            return []
+        rows: list[Gtk.Widget] = []
+        self._pending_task = self._task_from_query(query, subject)
+        projects = engine.resolve_project_dirs(subject)
+        if projects:
+            self._append_project_tools(rows, projects, tools)
             self._begin_credit_probes(tools)
             return rows
 
@@ -619,7 +804,6 @@ class SearchWindow(Adw.ApplicationWindow):
                 "try again. Or copy the project folder into your home folder.",
                 "dialog-information-symbolic",
             ))
-            # One clear button beats "run this command in a terminal".
             rows.append(self._github_connect_row())
             return rows
 
@@ -672,11 +856,24 @@ class SearchWindow(Adw.ApplicationWindow):
         recent = set(work_tools.recent_ids())
         for project in projects[:5]:
             if freeform:
-                rows.append(self._section_label("Here’s help with that"))
-                intro = self._plain_notice(
-                    "Your question is ready below. Tap Get help when you’re signed in, "
-                    "or edit it first."
-                )
+                if getattr(self, "_linkedin_action", False):
+                    rows.append(self._section_label("AI LinkedIn replies"))
+                    intro = self._plain_notice(
+                        "Messaging is open. When you’re signed in to an AI, we "
+                        "start drafting paste-ready replies — or tap “Draft my replies”."
+                    )
+                elif getattr(self, "_whatsapp_action", False):
+                    rows.append(self._section_label("AI WhatsApp replies"))
+                    intro = self._plain_notice(
+                        "WhatsApp is open. When you’re signed in to an AI, we "
+                        "start drafting paste-ready replies — or tap “Draft my replies”."
+                    )
+                else:
+                    rows.append(self._section_label("Here’s help with that"))
+                    intro = self._plain_notice(
+                        "Your question is ready below. Tap Get help when you’re signed in, "
+                        "or edit it first."
+                    )
             else:
                 label = project.name
                 rows.append(self._section_label(f"Found “{label}”"))
@@ -888,8 +1085,22 @@ class SearchWindow(Adw.ApplicationWindow):
         freeform = bool(getattr(self, "_freeform_help", False))
         pname = project.name if project else "this project"
 
+        linkedin = bool(getattr(self, "_linkedin_action", False))
+        whatsapp = bool(getattr(self, "_whatsapp_action", False))
+        messaging = linkedin or whatsapp
+        msg_name = "WhatsApp" if whatsapp else ("LinkedIn" if linkedin else "")
+
         if self._broadcast_title is not None:
-            if freeform:
+            if freeform and messaging:
+                if probing:
+                    self._broadcast_title.set_text(f"Getting {msg_name} replies ready…")
+                elif not ready:
+                    self._broadcast_title.set_text(
+                        f"One sign-in, then we draft {msg_name} replies"
+                    )
+                else:
+                    self._broadcast_title.set_text(f"Draft replies for {msg_name}")
+            elif freeform:
                 if probing:
                     self._broadcast_title.set_text("Getting help ready…")
                 elif not ready:
@@ -908,9 +1119,12 @@ class SearchWindow(Adw.ApplicationWindow):
                 self._broadcast_title.set_text("What do you need help with?")
 
         if self._broadcast_step is not None:
-            self._broadcast_step.set_text(
-                "Almost ready" if not ready and not probing else "Start here"
-            )
+            if freeform and messaging and ready:
+                self._broadcast_step.set_text("Doing it for you")
+            else:
+                self._broadcast_step.set_text(
+                    "Almost ready" if not ready and not probing else "Start here"
+                )
 
         if self._broadcast_hint is not None:
             if not self._broadcast_tools:
@@ -921,7 +1135,17 @@ class SearchWindow(Adw.ApplicationWindow):
             elif probing:
                 self._broadcast_hint.set_text("One moment…")
             elif not ready:
-                if freeform:
+                if freeform and messaging:
+                    where = (
+                        "WhatsApp stays open"
+                        if whatsapp
+                        else "LinkedIn Messaging stays open"
+                    )
+                    self._broadcast_hint.set_text(
+                        f"Sign in once. Then we open Answers and draft paste-ready "
+                        f"replies while {where}. You always send."
+                    )
+                elif freeform:
                     self._broadcast_hint.set_text(
                         "Next we’ll open a short sign-in in your browser. "
                         "You only do this once. Then you can get help with "
@@ -933,6 +1157,15 @@ class SearchWindow(Adw.ApplicationWindow):
                         "You only do this once. Then you can ask anything about "
                         f"“{pname}”."
                     )
+            elif freeform and messaging:
+                summary = self._credit_summary_line(ready) if len(ready) > 1 else ""
+                base = (
+                    f"{msg_name} is open. We’ll start drafting replies — paste each "
+                    "message into Answers when asked. Nothing is sent without you."
+                )
+                self._broadcast_hint.set_text(
+                    f"{base}\n{summary}" if summary else base
+                )
             elif len(ready) == 1:
                 st = self._credit_statuses.get(ready[0].id)
                 bal = self._plain_status(st.label) if st else "ready"
@@ -951,11 +1184,15 @@ class SearchWindow(Adw.ApplicationWindow):
 
         if self._broadcast_entry is not None:
             # Don’t force a question before the person is signed in.
-            self._broadcast_entry.set_visible(bool(ready) or probing)
-            if ready:
-                self._broadcast_entry.set_placeholder_text(
-                    "e.g. Explain this project in simple words"
-                )
+            # Messaging actions: hide the entry — the action prompt is fixed.
+            if freeform and messaging:
+                self._broadcast_entry.set_visible(False)
+            else:
+                self._broadcast_entry.set_visible(bool(ready) or probing)
+                if ready:
+                    self._broadcast_entry.set_placeholder_text(
+                        "e.g. Explain this project in simple words"
+                    )
 
         if self._broadcast_btn is not None:
             if probing:
@@ -966,9 +1203,22 @@ class SearchWindow(Adw.ApplicationWindow):
                 self._broadcast_btn.set_label("Continue")
             else:
                 self._broadcast_btn.set_sensitive(True)
-                self._broadcast_btn.set_label("Get help")
+                self._broadcast_btn.set_label(
+                    "Draft my replies" if freeform and messaging else "Get help"
+                )
 
         self._rebuild_advanced_options(ready=bool(ready), probing=probing)
+
+        # Messaging: when signed in, auto-start drafting (once per query).
+        if (
+            freeform
+            and messaging
+            and ready
+            and not probing
+            and not getattr(self, "_messaging_auto_started", False)
+        ):
+            self._messaging_auto_started = True
+            GLib.timeout_add(500, self._auto_start_messaging_replies)
 
     def _on_broadcast_clicked(self) -> None:
         """Continue = setup if needed, else ask. One story for new users."""
@@ -980,12 +1230,51 @@ class SearchWindow(Adw.ApplicationWindow):
         )
         entry = self._broadcast_entry
         prompt = (entry.get_text() if entry else "").strip()
+        # Messaging actions: fixed draft prompt, not free-typed box.
+        if getattr(self, "_linkedin_action", False):
+            prompt = (
+                getattr(self, "_pending_task", None)
+                or engine.linkedin_reply_action_prompt()
+            ).strip()
+        elif getattr(self, "_whatsapp_action", False):
+            prompt = (
+                getattr(self, "_pending_task", None)
+                or engine.whatsapp_reply_action_prompt()
+            ).strip()
 
         if not ready:
             # Natural next step — no jargon, no separate app to invent.
-            if prompt:
+            # Remember kind + original Search words so freeform/messaging
+            # comes back after sign-in (not “work on home-folder-name”).
+            if getattr(self, "_linkedin_action", False):
+                kind = "linkedin"
+            elif getattr(self, "_whatsapp_action", False):
+                kind = "whatsapp"
+            elif getattr(self, "_freeform_help", False):
+                kind = "freeform"
+            else:
+                kind = "work"
+            user_q = (getattr(self, "_user_query", None) or "").strip()
+            if not user_q and entry is not None:
+                # Project path: keep typed need as prompt, not as Search query.
+                user_q = ""
+            # Never persist the long internal playbook as the only restore key.
+            store_prompt = prompt if kind == "work" else ""
+            if kind == "freeform" and not store_prompt:
+                store_prompt = (getattr(self, "_pending_task", None) or prompt or "").strip()
+                # If freeform pending was already a long playbook, drop it.
+                if len(store_prompt) > 280:
+                    store_prompt = user_q or ""
+            if kind in ("linkedin", "whatsapp"):
+                store_prompt = ""
+            if prompt and kind == "work":
                 self._pending_task = prompt
-            pending_ask.save(str(project), prompt or "")
+            pending_ask.save(
+                str(project),
+                store_prompt,
+                query=user_q or (prompt if kind == "freeform" else ""),
+                kind=kind,
+            )
             self._notify("Opening a short sign-in…", timeout=3)
             self._open_accounts(setup_all=True)
             return
@@ -996,10 +1285,161 @@ class SearchWindow(Adw.ApplicationWindow):
                 entry.grab_focus()
             return
         log.info(
-            "ask-all project=%s tools=%s prompt_len=%d",
+            "ask-all project=%s tools=%s prompt_len=%d linkedin=%s whatsapp=%s",
             project, [t.id for t in ready], len(prompt),
+            bool(getattr(self, "_linkedin_action", False)),
+            bool(getattr(self, "_whatsapp_action", False)),
+        )
+        if getattr(self, "_linkedin_action", False):
+            self._open_linkedin_messaging()
+            self._notify("Drafting LinkedIn replies… paste messages when asked.", timeout=4)
+        elif getattr(self, "_whatsapp_action", False):
+            self._open_whatsapp()
+            self._notify("Drafting WhatsApp replies… paste messages when asked.", timeout=4)
+        self._open_ask_all(project, prompt, [t.id for t in ready])
+
+    def _auto_start_messaging_replies(self) -> bool:
+        """One-shot: open Answers with the inbox draft playbook when ready."""
+        linkedin = bool(getattr(self, "_linkedin_action", False))
+        whatsapp = bool(getattr(self, "_whatsapp_action", False))
+        if not (linkedin or whatsapp):
+            return False
+        project = self._broadcast_project
+        if project is None:
+            return False
+        ready = work_tools.tools_ready_for_broadcast(
+            self._broadcast_tools, self._credit_statuses,
+        )
+        if not ready:
+            return False
+        if linkedin:
+            prompt = (
+                getattr(self, "_pending_task", None)
+                or engine.linkedin_reply_action_prompt()
+            ).strip()
+            self._open_linkedin_messaging()
+            label = "LinkedIn"
+        else:
+            prompt = (
+                getattr(self, "_pending_task", None)
+                or engine.whatsapp_reply_action_prompt()
+            ).strip()
+            self._open_whatsapp()
+            label = "WhatsApp"
+        if not prompt:
+            return False
+        log.info(
+            "%s auto-start tools=%s prompt_len=%d",
+            label.lower(), [t.id for t in ready], len(prompt),
+        )
+        self._notify(
+            f"Drafting replies — paste each {label} message when asked.",
+            timeout=4,
         )
         self._open_ask_all(project, prompt, [t.id for t in ready])
+        return False  # one-shot GLib timeout
+
+    def _auto_start_linkedin_replies(self) -> bool:
+        """Back-compat alias for LinkedIn auto-start."""
+        return self._auto_start_messaging_replies()
+
+    def _open_linkedin_messaging(self) -> None:
+        """Launch LinkedIn Messaging (wrapper or browser)."""
+        exe = shutil.which("teddyos-linkedin")
+        if exe:
+            if self._spawn([exe], cwd=str(Path.home())):
+                log.info("linkedin messaging opened via teddyos-linkedin")
+                return
+        # Fallback: Chromium --app or UriLauncher
+        chromium = (
+            shutil.which("chromium")
+            or shutil.which("chromium-browser")
+            or shutil.which("google-chrome")
+            or shutil.which("google-chrome-stable")
+        )
+        url = "https://www.linkedin.com/messaging/"
+        if chromium:
+            data = str(Path.home() / ".config" / "teddyos-linkedin")
+            Path(data).mkdir(parents=True, exist_ok=True)
+            argv = [
+                chromium,
+                f"--app={url}",
+                "--class=teddyos-linkedin",
+                f"--user-data-dir={data}",
+            ]
+            if self._spawn(argv, cwd=str(Path.home())):
+                log.info("linkedin messaging opened via chromium --app")
+                return
+        try:
+            Gtk.UriLauncher.new(url).launch(self, None, None, None)
+            log.info("linkedin messaging opened via UriLauncher")
+        except GLib.Error as exc:
+            log.warning("linkedin open failed: %s", exc)
+
+    def _open_whatsapp(self) -> None:
+        """Launch WhatsApp Web (wrapper, desktop app, or browser)."""
+        exe = shutil.which("teddyos-whatsapp")
+        if exe:
+            if self._spawn([exe], cwd=str(Path.home())):
+                log.info("whatsapp opened via teddyos-whatsapp")
+                return
+        # gtk-launch desktop entry if present
+        gtk_launch = shutil.which("gtk-launch")
+        if gtk_launch:
+            if self._spawn([gtk_launch, "teddyos-whatsapp.desktop"], cwd=str(Path.home())):
+                log.info("whatsapp opened via gtk-launch")
+                return
+        chromium = (
+            shutil.which("chromium")
+            or shutil.which("chromium-browser")
+            or shutil.which("google-chrome")
+            or shutil.which("google-chrome-stable")
+        )
+        url = "https://web.whatsapp.com/"
+        if chromium:
+            data = str(Path.home() / ".config" / "teddyos-whatsapp")
+            Path(data).mkdir(parents=True, exist_ok=True)
+            argv = [
+                chromium,
+                f"--app={url}",
+                "--class=teddyos-whatsapp",
+                f"--user-data-dir={data}",
+            ]
+            if self._spawn(argv, cwd=str(Path.home())):
+                log.info("whatsapp opened via chromium --app")
+                return
+        try:
+            Gtk.UriLauncher.new(url).launch(self, None, None, None)
+            log.info("whatsapp opened via UriLauncher")
+        except GLib.Error as exc:
+            log.warning("whatsapp open failed: %s", exc)
+
+    def _linkedin_action_row(self) -> Gtk.Widget:
+        """Re-open LinkedIn messaging without leaving Search."""
+        row = Adw.ActionRow(title="Open LinkedIn messages again")
+        row.set_subtitle("Inbox window — you paste messages; we only draft")
+        # No dedicated LinkedIn tile in hicolor yet — mail icon is clear enough.
+        row.add_prefix(Gtk.Image.new_from_icon_name("mail-unread-symbolic"))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect(
+            "activated",
+            lambda *_: self._open_linkedin_messaging(),
+        )
+        return row
+
+    def _whatsapp_action_row(self) -> Gtk.Widget:
+        """Re-open WhatsApp without leaving Search."""
+        row = Adw.ActionRow(title="Open WhatsApp again")
+        row.set_subtitle("Chat window — you paste messages; we only draft")
+        row.add_prefix(self._tool_icon("teddyos-whatsapp"))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect(
+            "activated",
+            lambda *_: self._open_whatsapp(),
+        )
+        return row
 
     def _begin_git_lookup(self, subject: str, generation: int) -> None:
         def work() -> None:
@@ -1062,7 +1502,7 @@ class SearchWindow(Adw.ApplicationWindow):
         row = Adw.ActionRow(title="Connect GitHub")
         row.set_subtitle("Opens a short sign-in so teddyOS can download your projects")
         row.set_subtitle_lines(2)
-        row.add_prefix(Gtk.Image.new_from_icon_name("user-info-symbolic"))
+        row.add_prefix(self._tool_icon("teddyos-github"))
         row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
         row.set_activatable(True)
         row.connect("activated", lambda *_: self._start_github_connect())
@@ -1273,7 +1713,14 @@ class SearchWindow(Adw.ApplicationWindow):
             argv.append("--setup-all")
         elif focus_id:
             argv.extend(["--connect", focus_id])
-        return self._spawn(argv, cwd=str(Path.home()))
+        # Don’t dismiss Search under the sign-in window; re-probe when back.
+        self._hold_for_dialog = True
+        self._reprobe_on_focus = True
+        ok = self._spawn(argv, cwd=str(Path.home()))
+        if not ok:
+            self._hold_for_dialog = False
+            self._reprobe_on_focus = False
+        return ok
 
     def _accounts_row(self) -> Gtk.Widget:
         # Kept for clone-auth recovery; plain language only.
@@ -1282,7 +1729,7 @@ class SearchWindow(Adw.ApplicationWindow):
             "Needed once so teddyOS can download projects and answer questions"
         )
         row.set_subtitle_lines(2)
-        row.add_prefix(Gtk.Image.new_from_icon_name("system-users-symbolic"))
+        row.add_prefix(self._tool_icon("teddyos-accounts"))
         row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
         row.set_activatable(True)
         row.connect("activated", lambda *_: self._open_accounts(setup_all=True))
@@ -1293,26 +1740,40 @@ class SearchWindow(Adw.ApplicationWindow):
 
         The live image installs teddyos-*.svg into hicolor. A guest that was
         upgraded without re-baking the icon cache still needs a picture — so
-        we also try the on-disk SVG path. Never leave a blank square for the
-        three AI tools that are the whole point of this list.
+        we also try on-disk SVG/PNG. Symbolic names (folder-symbolic) stay
+        theme-only. Never leave a blank square.
         """
         img = Gtk.Image()
         img.set_pixel_size(32)
+        name = (name or "").strip() or "application-x-executable"
         theme = Gtk.IconTheme.get_for_display(self.get_display())
         if theme and theme.has_icon(name):
             img.set_from_icon_name(name)
             return img
+        # Symbolic / generic GNOME names
+        if name.endswith("-symbolic") or "/" not in name and not name.startswith("teddyos-"):
+            if theme and theme.has_icon(name):
+                img.set_from_icon_name(name)
+                return img
+            # folder → folder-symbolic fallback
+            alt = f"{name}-symbolic" if not name.endswith("-symbolic") else name
+            if theme and theme.has_icon(alt):
+                img.set_from_icon_name(alt)
+                return img
         for base in (
             Path("/usr/share/icons/hicolor/scalable/apps"),
+            Path("/usr/share/icons/hicolor/48x48/apps"),
+            Path("/usr/share/icons/hicolor/64x64/apps"),
             Path(__file__).resolve().parent.parent / "icons",
         ):
-            svg = base / f"{name}.svg"
-            if svg.is_file():
-                try:
-                    img.set_from_file(str(svg))
-                    return img
-                except GLib.Error:
-                    pass
+            for ext in (".svg", ".png"):
+                path = base / f"{name}{ext}"
+                if path.is_file():
+                    try:
+                        img.set_from_file(str(path))
+                        return img
+                    except GLib.Error:
+                        continue
         img.set_from_icon_name("application-x-executable")
         return img
 
@@ -1478,11 +1939,20 @@ class SearchWindow(Adw.ApplicationWindow):
                 line = prog.progress_line(snap)
             self._progress_bar.set_fraction(frac)
             self._progress_label.set_text(line)
+            if hasattr(self, "_mission_label"):
+                mission = ""
+                if hasattr(prog, "daily_mission_line"):
+                    mission = prog.daily_mission_line(snap) or ""
+                elif getattr(snap, "mission_line", ""):
+                    mission = snap.mission_line
+                self._mission_label.set_text(mission)
+                self._mission_label.set_visible(bool(mission))
             # Accent once any persona (esp. Ultracode) is part of their story.
             if (
                 getattr(snap, "ultracode_asks", 0) > 0
                 or getattr(snap, "switch_count", 0) > 0
                 or bool(getattr(snap, "persona_levels", None))
+                or getattr(snap, "combo", 0) >= 2
             ):
                 self._progress_bar.add_css_class("accent")
             else:
@@ -1504,16 +1974,53 @@ class SearchWindow(Adw.ApplicationWindow):
             pass
 
     def _restore_pending_ask(self) -> bool:
-        """Return from sign-in to the same project and question."""
+        """Return from sign-in to the same job — project or messaging."""
         data = pending_ask.load()
         if not data:
             return False
         project = (data.get("project") or "").strip()
         prompt = (data.get("prompt") or "").strip()
+        query = (data.get("query") or "").strip()
+        kind = (data.get("kind") or "work").strip().lower()
+        # Messaging / freeform: re-run the human Search words so action flags
+        # rebuild (LinkedIn open, Draft my replies, etc.).
+        if kind in ("linkedin", "whatsapp", "freeform") and query:
+            self._user_query = query
+            self._pending_task = prompt
+            self.entry.set_text(query)
+            self._run(query)
+            pending_ask.clear()
+            if kind in ("linkedin", "whatsapp"):
+                self._notify(
+                    "You’re signed in. AI will draft replies — tap “Draft my replies” "
+                    "if it doesn’t start on its own.",
+                    timeout=6,
+                )
+            elif prompt:
+                self._notify(
+                    "You’re signed in. Your question is ready — tap Get help.",
+                    timeout=5,
+                )
+            else:
+                self._notify(
+                    "You’re signed in. Type what you need, then tap Get help.",
+                    timeout=5,
+                )
+            return False
         if not project or not Path(project).is_dir():
+            # Fallback: if we only have a query, re-run it.
+            if query:
+                self.entry.set_text(query)
+                self._run(query)
+                pending_ask.clear()
+                self._notify(
+                    "You’re signed in. Continue where you left off.",
+                    timeout=5,
+                )
+                return False
             pending_ask.clear()
             return False
-        # Drive Search as if they typed work on <folder name> again.
+        # Project path: drive Search as if they typed work on <folder> again.
         name = Path(project).name
         self._pending_task = prompt
         self.entry.set_text(f"work on {name}")

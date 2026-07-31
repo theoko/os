@@ -1030,21 +1030,61 @@ def flow_freeform_linkedin_goal_runtime() -> None:
         "sys.path.insert(0, '/usr/lib/teddyos')\n"
         "import search as s\n"
         "from audience import detect_audience, Audience, shape_prompt\n"
-        "q = 'i wanna respond to my linkedin messages'\n"
+        "q = 'i wanna reply to my linkedin messages'\n"
         "assert s.is_work_goal(q) and s.is_freeform_help_goal(q)\n"
+        "assert s.is_linkedin_messages_goal(q)\n"
         "assert detect_audience(q) is Audience.LINKEDIN\n"
         "assert 'linkedin' in shape_prompt(q).lower()\n"
         "assert 'career mode' not in shape_prompt(q).lower()\n"
+        "p = s.linkedin_reply_action_prompt(q)\n"
+        "assert 'Never claim you sent' in p and 'paste' in p.lower()\n"
         "src = open('/usr/bin/teddyos-search-app').read()\n"
         "assert 'is_freeform_help_goal' in src and 'Open LinkedIn messages' in src\n"
+        "assert 'is_linkedin_messages_goal' in src\n"
+        "assert 'Draft my replies' in src\n"
+        "assert '_open_linkedin_messaging' in src\n"
+        "assert 'linkedin.com/messaging' in src\n"
+        "assert ('_auto_start_messaging_replies' in src or '_auto_start_linkedin_replies' in src)\n"
         "print('freeform-linkedin-ok')\n"
         "PY",
         timeout=15,
     )
     if r.returncode == 0 and "freeform-linkedin-ok" in (r.stdout or ""):
-        ok("freeform LinkedIn messages goal runtime")
+        ok("freeform LinkedIn do-it goal runtime")
     else:
         bad("freeform LinkedIn goal", (r.stderr or r.stdout or "")[-300:])
+
+
+def flow_freeform_whatsapp_goal_runtime() -> None:
+    """WhatsApp messages is freeform Get help + WhatsApp audience."""
+    print(">>> flow: freeform WhatsApp messages goal")
+    r = sh(
+        "python3 - <<'PY'\n"
+        "import sys\n"
+        "sys.path.insert(0, '/usr/lib/teddyos')\n"
+        "import search as s\n"
+        "from audience import detect_audience, Audience, shape_prompt\n"
+        "q = 'i wanna reply to my whatsapp messages'\n"
+        "assert s.is_work_goal(q) and s.is_freeform_help_goal(q)\n"
+        "assert s.is_whatsapp_messages_goal(q)\n"
+        "assert not s.is_linkedin_messages_goal(q)\n"
+        "assert detect_audience(q) is Audience.WHATSAPP\n"
+        "assert 'whatsapp' in shape_prompt(q).lower()\n"
+        "p = s.whatsapp_reply_action_prompt(q)\n"
+        "assert 'Never claim you sent' in p and 'paste' in p.lower()\n"
+        "src = open('/usr/bin/teddyos-search-app').read()\n"
+        "assert 'is_whatsapp_messages_goal' in src\n"
+        "assert '_open_whatsapp' in src\n"
+        "assert 'Draft my replies' in src\n"
+        "assert 'web.whatsapp.com' in src\n"
+        "print('freeform-whatsapp-ok')\n"
+        "PY",
+        timeout=15,
+    )
+    if r.returncode == 0 and "freeform-whatsapp-ok" in (r.stdout or ""):
+        ok("freeform WhatsApp do-it goal runtime")
+    else:
+        bad("freeform WhatsApp goal", (r.stderr or r.stdout or "")[-300:])
 
 
 def flow_persona_switch_source_and_level_chip() -> None:
@@ -1967,6 +2007,7 @@ def main() -> int:
         flow_code_plain_force_runtime,
         flow_core_modules_import,
         flow_freeform_linkedin_goal_runtime,
+        flow_freeform_whatsapp_goal_runtime,
         flow_freeform_help_matrix_runtime,
         flow_shaped_tools_matrix,
         flow_persona_switch_source_and_level_chip,

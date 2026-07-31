@@ -98,7 +98,9 @@ do
     fi
     sleep 0.1
 done
-VBOX_RES="${RESOLUTION:-1280x800}"
+# Prefer a sharp default; guest teddyos-display then lifts to the highest
+# mode the virtual GPU exposes once GNOME is up.
+VBOX_RES="${RESOLUTION:-1920x1080}"
 VBoxManage setextradata "$VM_NAME" \
     VBoxInternal2/EfiGraphicsResolution "$VBOX_RES"
 

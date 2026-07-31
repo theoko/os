@@ -520,7 +520,7 @@ def _status_replit() -> AccountStatus:
 
 
 def _status_soft() -> AccountStatus:
-    return AccountStatus(ok=None, label="Tap Connect to sign in")
+    return AccountStatus(ok=None, label="Tap Continue to sign in")
 
 
 _STATUS_PROBES: dict[str, Callable[[], AccountStatus]] = {
