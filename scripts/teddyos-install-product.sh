@@ -259,6 +259,14 @@ run 'set -e
      test -f /usr/share/applications/teddyos-search.desktop
      echo installed-ok'
 
+echo ">>> brand (no Debian watermark on login / os-release)"
+if [[ -x "$ROOT/scripts/teddyos-brand.sh" ]]; then
+  TEDDYOS_VM_HOST="$HOST" TEDDYOS_VM_SSH_PORT="$PORT" TEDDYOS_VM_USER="$VM_USER" \
+    bash "$ROOT/scripts/teddyos-brand.sh" 2>&1 || {
+      echo "warning: teddyos-brand.sh failed" >&2
+    }
+fi
+
 echo ">>> look (WhiteSur theme, dock, wallpaper)"
 # teddyos-look expects TEDDYOS_VM_HOST / PORT
 export TEDDYOS_VM_HOST="$HOST"

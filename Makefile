@@ -5,8 +5,8 @@
 MAKEFLAGS += --no-builtin-rules
 .SUFFIXES:
 
-.PHONY: all help desktop desktop-force linux-init linux-provision linux-iso linux-vm \
-	test test-host publish-os update-os update-check \
+.PHONY: all help desktop desktop-force linux-init linux-provision linux-product \
+	linux-iso linux-vm test test-host publish-os update-os update-check \
 	check-published check-published-install check-published-uninstall clean
 
 # Default: open the Linux guest in UTM.
@@ -18,7 +18,8 @@ help:
 	@echo "  make desktop           open Linux guest in UTM (VM: teddyos)"
 	@echo "  make desktop-force     recreate UTM VM + re-copy disk (repair)"
 	@echo "  make linux-init        first-time Debian disk + cloud-init"
-	@echo "  make linux-provision   GNOME + Chromium (headless QEMU + ssh :2222)"
+	@echo "  make linux-provision   GNOME + Chromium (substrate only)"
+	@echo "  make linux-product     Search/dock/theme — the recording experience"
 	@echo "  make linux-iso         build live ISO via guest (dist/)"
 	@echo "  make test              Linux contract unit tests on the host"
 	@echo "  make publish-os        publish live images + update payload"
@@ -39,6 +40,12 @@ linux-init:
 linux-provision:
 	chmod +x scripts/teddyos-desktop.sh scripts/teddyos-provision.sh
 	./scripts/teddyos-desktop.sh --provision
+
+# Install Search, welcome, dock, WhiteSur look into a running guest.
+# UTM: TEDDYOS_VM_HOST=$(ip from dhcpd_leases) make linux-product
+linux-product:
+	chmod +x scripts/teddyos-install-product.sh scripts/teddyos-look.sh scripts/teddyos-apps.sh
+	./scripts/teddyos-install-product.sh
 
 # Live Debian ISO via the guest build host.
 #   make linux-iso

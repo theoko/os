@@ -55,6 +55,14 @@ run 'sudo npm install -g --silent @anthropic-ai/claude-code 2>&1 | tail -3'
 echo ">>> boot to the desktop"
 run 'sudo systemctl set-default graphical.target'
 
+echo ">>> teddyOS branding (login + os-release, no Debian watermark)"
+# Shell script on the host; uses same SSH as this provision run.
+ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+TEDDYOS_VM_SSH_PORT="$PORT" TEDDYOS_VM_USER="$VM_USER" TEDDYOS_VM_HOST="${TEDDYOS_VM_HOST:-localhost}" \
+  bash "$ROOT_DIR/scripts/teddyos-brand.sh" 2>&1 || {
+    echo "    warning: brand step failed (non-fatal)" >&2
+  }
+
 echo ">>> no Debian/GNOME welcome tour"
 # gnome-core pulls gnome-tour ("Welcome to Debian / Take the Tour"). First boot
 # should land on the desktop, not a distro greeter.
