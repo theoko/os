@@ -280,8 +280,10 @@ fi
 
 echo ">>> reload user session hints"
 run 'gsettings set org.gnome.shell welcome-dialog-last-shown-version "99.0" 2>/dev/null || true
-     # Favorites dock (in case dconf system-db not picked up until next login)
-     gsettings set org.gnome.shell favorite-apps "[\"teddyos-search.desktop\", \"teddyos-web.desktop\", \"teddyos-whatsapp.desktop\", \"org.gnome.Nautilus.desktop\"]" 2>/dev/null || true
+     # Favorites dock — Search first (product). Include Email after WhatsApp.
+     FAV="['\''teddyos-search.desktop'\'', '\''teddyos-web.desktop'\'', '\''teddyos-whatsapp.desktop'\'', '\''teddyos-gmail.desktop'\'', '\''org.gnome.Nautilus.desktop'\'']"
+     gsettings set org.gnome.shell favorite-apps "$FAV" 2>/dev/null || true
+     gsettings set org.gnome.shell.extensions.dash-to-dock favorite-apps "$FAV" 2>/dev/null || true
      true'
 
 cat <<DONE

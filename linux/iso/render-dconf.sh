@@ -32,7 +32,8 @@ WALL_DARK="${WALL_DARK:-/usr/share/backgrounds/teddyos/Monterey-dark.jpg}"
 # safe rather than permanent clutter.
 # Search first — no bare AI tiles. Chat AIs open from Search after sign-in so a
 # new user never hits a CLI-shaped window from the dock.
-FAVORITES="${FAVORITES:-'teddyos-search.desktop', 'teddyos-web.desktop', 'teddyos-whatsapp.desktop', 'org.gnome.Nautilus.desktop', 'teddyos-install.desktop'}"
+# Search first — never Chromium/Terminal as the product face of the dock.
+FAVORITES="${FAVORITES:-'teddyos-search.desktop', 'teddyos-web.desktop', 'teddyos-whatsapp.desktop', 'teddyos-gmail.desktop', 'org.gnome.Nautilus.desktop', 'teddyos-install.desktop'}"
 
 cat <<EOF
 [org/gnome/desktop/interface]

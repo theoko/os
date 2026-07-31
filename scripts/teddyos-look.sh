@@ -193,9 +193,11 @@ echo ">>> writing desktop defaults"
 # The keyfile itself comes from linux/iso/render-dconf.sh, which is the same
 # generator the ISO build uses. Two copies of these eighty lines is a guarantee
 # that the image and the machine you tested on disagree about something small.
+# Dock must lead with Search — the product. Never demote to Chromium/Terminal
+# (that made Search "disappear" after look ran over a product install).
 DCONF="$(GTK_THEME="$GTK_THEME" ICON_THEME="$ICON_THEME" CURSOR_THEME="$CURSOR_THEME" \
          WALL="$WALL" WALL_DARK="$WALL_DARK" \
-         FAVORITES="'chromium.desktop', 'teddyos-whatsapp.desktop', 'teddyos-gmail.desktop', 'org.gnome.Nautilus.desktop', 'org.gnome.Terminal.desktop'" \
+         FAVORITES="'teddyos-search.desktop', 'teddyos-web.desktop', 'teddyos-whatsapp.desktop', 'teddyos-gmail.desktop', 'org.gnome.Nautilus.desktop'" \
          "$ROOT_DIR/linux/iso/render-dconf.sh")"
 
 run "sudo mkdir -p /etc/dconf/db/local.d /etc/dconf/profile
@@ -206,7 +208,12 @@ EOF
 sudo tee /etc/dconf/db/local.d/00-teddyos >/dev/null <<'TEDDYOS_DCONF_EOF'
 $DCONF
 TEDDYOS_DCONF_EOF
-sudo dconf update"
+sudo dconf update
+# User keys win over system defaults once written — pin the product dock now
+# so a previous bad favorite-apps list does not stick after look.
+gsettings set org.gnome.shell favorite-apps \"['teddyos-search.desktop', 'teddyos-web.desktop', 'teddyos-whatsapp.desktop', 'teddyos-gmail.desktop', 'org.gnome.Nautilus.desktop']\" 2>/dev/null || true
+gsettings set org.gnome.shell.extensions.dash-to-dock favorite-apps \"['teddyos-search.desktop', 'teddyos-web.desktop', 'teddyos-whatsapp.desktop', 'teddyos-gmail.desktop', 'org.gnome.Nautilus.desktop']\" 2>/dev/null || true
+"
 
 echo ">>> verifying the defaults compiled and resolve"
 # dconf update is silent on a malformed keyfile — it just does not apply. Read

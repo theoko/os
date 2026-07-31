@@ -1,5 +1,5 @@
 ---
-version: v0.16.0
+version: v0.16.1
 project: os
 updated: 2026-07-31
 type: changelog
@@ -7,9 +7,18 @@ type: changelog
 
 # Changelog
 
-Runtime version is the top-level `VERSION` file (no `v` prefix there).
-This file is newest-first. When behavior ships: bump `VERSION`, add an entry
-here, update this frontmatter `version:` / `updated:`, then conventional-commit.
+Runtime version is the top-level  file (no  prefix there).
+This file is newest-first. When behavior ships: bump , add an entry
+here, update this frontmatter  / , then conventional-commit.
+
+## [v0.16.1] — 2026-07-31
+
+### Fixed — Search back on the dock
+
+ had been writing dock favorites as Chromium / WhatsApp /
+Gmail / Files / Terminal — **no Search**. Restored product order: Search,
+Web, WhatsApp, Email, Files. User + dash-to-dock keys set after look so a
+stale list does not stick.
 
 ## [v0.16.0] — 2026-07-31
 
