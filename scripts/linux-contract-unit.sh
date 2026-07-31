@@ -2495,16 +2495,16 @@ assert "typeerror" in [t.lower() for t in terms] or "TypeError" in terms or any(
 toks = s.tokenize("immigration status check USCIS")
 assert len(toks) >= 2
 
-# prune: deduplicates by URL, keeps highest score
-r1 = s.Result(title="A", url="https://x/a", snippet="", source="builtin", score=2.0, matched=1, terms=1)
-r2 = s.Result(title="A dup", url="https://x/a", snippet="", source="portal", score=1.0, matched=1, terms=1)
-r3 = s.Result(title="B", url="https://x/b", snippet="", source="builtin", score=1.5, matched=1, terms=1)
-pruned = s.prune([r1, r2, r3])
-urls = [r.url for r in pruned]
-assert urls.count("https://x/a") == 1   # deduped
-assert len(pruned) == 2
-# Higher-scored duplicate wins
-assert next(r for r in pruned if r.url == "https://x/a").score == 2.0
+# prune: drops results below 20 % of the best score
+r_high = s.Result(title="A", url="https://x/a", snippet="", source="builtin", score=2.0, matched=1, terms=1)
+r_low  = s.Result(title="B", url="https://x/b", snippet="", source="builtin", score=0.1, matched=1, terms=1)
+pruned = s.prune([r_high, r_low])
+assert len(pruned) == 1 and pruned[0].url == "https://x/a"
+# full-match case: keep only results that matched every term
+r_full    = s.Result(title="Full", url="https://x/full", snippet="", source="builtin", score=1.5, matched=2, terms=2)
+r_partial = s.Result(title="Part", url="https://x/part", snippet="", source="builtin", score=1.8, matched=1, terms=2)
+p2 = s.prune([r_full, r_partial])
+assert len(p2) == 1 and p2[0].title == "Full"
 
 print("search-helpers-ok")
 PY

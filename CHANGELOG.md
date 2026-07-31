@@ -1,5 +1,5 @@
 ---
-version: v0.15.4
+version: v0.15.5
 project: os
 updated: 2026-07-31
 type: changelog
@@ -10,6 +10,32 @@ type: changelog
 Runtime version is the top-level `VERSION` file (no `v` prefix there).
 This file is newest-first. When behavior ships: bump `VERSION`, add an entry
 here, update this frontmatter `version:` / `updated:`, then conventional-commit.
+
+## [v0.15.5] — 2026-07-31
+
+### Added — expanded host-side contract test suite (71 → 79 tests)
+
+Added 8 new contract tests covering previously-untested modules:
+
+- **`intent.py`** — `classify()` for all paths (LinkedIn, WhatsApp, both,
+  generic reply, project slug, lookup, empty); `force_message_reply()`,
+  `force_kind()`, `choice_label()`, `choice_subtitle()`,
+  `all_choice_intents()`, `intents_equal_job()`
+- **`pending_ask.py`** — save/load/clear round-trip; invalid kind normalises
+  to `"work"`; empty project+query skips write; messaging kinds preserved
+- **`sandbox.py`** — `sandboxed()` false outside guard; `properties()` always
+  includes unconditional hardening props; `available()` returns bool
+- **`logutil.py`** — `get_logger()` idempotent; returns correct `Logger`;
+  `_log_path()` doesn't raise
+- **`search.py` helpers** — `normalise_url()` for all three URL shapes;
+  `focus_query()`; `is_work_goal()` / `is_freeform_help_goal()` /
+  `is_linkedin_messages_goal()` / `is_whatsapp_messages_goal()`; `prune()`
+  score-floor and full-match cases
+- **`teddyos-claude`** — `_cwd_from_argv()` for valid dir, no-args, flag
+  skip, and non-existent path (no GTK required)
+- **`progress.py`** — `format_toast()` priority ordering and empty-list
+  guard; `progress_line()` non-empty; `ultracode_meter()` fraction bounds;
+  `award_signin()` / `award_clone()` / `award_tour()` return `ProgressSnapshot`
 
 ## [v0.15.4] — 2026-07-31
 
