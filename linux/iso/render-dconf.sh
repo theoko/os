@@ -81,7 +81,12 @@ name='$GTK_THEME'
 startup-status=0
 activities-button=false
 app-menu=false
-dash=false
+# MUST stay true when dash-to-dock is enabled. Just Perfection's dash=false
+# calls overview.dash.hide() and sets height=0 on the same actor Dash to Dock
+# reparents into the bottom dock — so "hide the overview dash" silently makes
+# the whole dock vanish (Spurious clutter_actor_allocate / not in the stage).
+# Dash to Dock already removes the overview-only dash by owning it.
+dash=true
 workspace-popup=false
 workspaces-in-app-grid=false
 # The clock's dropdown ships a world clock and a weather card, both empty and
