@@ -539,17 +539,18 @@ Categories=Network;InstantMessaging;
 StartupNotify=true
 DESKTOP
 
-# Gmail opens a setup guide first — not a naked mail.google.com tab.
+# Email setup guide — Gmail or another provider (not a naked vendor tab).
 install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-gmail.desktop <<'DESKTOP'
 [Desktop Entry]
 Type=Application
-Name=Gmail
-Comment=Set up Gmail on teddyOS
+Name=Email
+Comment=Set up Gmail or another email provider
 Exec=teddyos-gmail
 Icon=gmail-desktop
 Terminal=false
 Categories=Network;Email;
 StartupNotify=true
+Keywords=Gmail;Outlook;Yahoo;Mail;Email;
 DESKTOP
 
 # Claude desktop entry — installed but hidden from the dock/app grid.
