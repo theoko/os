@@ -2173,3 +2173,120 @@ mod row_budget_tests {
         );
     }
 }
+
+#[cfg(test)]
+mod expanded_mcp_tests {
+    use super::*;
+
+    #[test]
+    fn parse_row_field_edge_cases() {
+        assert_eq!(parse_row_field("", "key"), None);
+        assert_eq!(parse_row_field("ROW ", "key"), None);
+        assert_eq!(parse_row_field("ROW key=val", "key"), Some("val"));
+        assert_eq!(parse_row_field("ROW other=123|key=val", "key"), Some("val"));
+        assert_eq!(parse_row_field("ROW key=val|other=123", "key"), Some("val"));
+        assert_eq!(parse_row_field("ROW key=", "key"), Some(""));
+        assert_eq!(parse_row_field("ROW keyboard=val", "key"), None);
+        assert_eq!(parse_row_field("ROW key=val1|key=val2", "key"), Some("val1"));
+        assert_eq!(parse_row_field("ROW a=b||key=val", "key"), Some("val"));
+    }
+
+    #[test]
+    fn mail_peek_bounds_safety() {
+        let mut peek = MailPeek::empty(BridgeStatus::Online);
+        assert_eq!(peek.count, 0);
+        assert_eq!(peek.row_from(0), "");
+        assert_eq!(peek.row_subj(0), "");
+        assert_eq!(peek.row_id(0), "");
+        assert_eq!(peek.row_url(0), "");
+
+        copy_field(&mut peek.rows[0].from, "sender@test.com");
+        copy_field(&mut peek.rows[0].subj, "Hello");
+        copy_field(&mut peek.rows[0].id, "msg123");
+        copy_field(&mut peek.rows[0].url, "https://mail.google.com");
+        peek.count = 1;
+
+        assert_eq!(peek.row_from(0), "sender@test.com");
+        assert_eq!(peek.row_subj(0), "Hello");
+        assert_eq!(peek.row_id(0), "msg123");
+        assert_eq!(peek.row_url(0), "https://mail.google.com");
+        
+        let mut buf = [0u8; 40];
+        assert_eq!(peek.url_at(0, &mut buf), Some("email://msg123"));
+        assert_eq!(peek.url_at(1, &mut buf), None);
+    }
+
+    #[test]
+    fn file_peek_bounds_safety() {
+        let mut peek = FilePeek::empty(BridgeStatus::Online, true);
+        assert_eq!(peek.count, 0);
+        assert_eq!(peek.title_at(0), "");
+        assert_eq!(peek.url_at(0), "");
+
+        copy_field(&mut peek.rows[0].title, "doc.txt");
+        copy_field(&mut peek.rows[0].url, "file://docs/doc.txt");
+        peek.count = 1;
+
+        assert_eq!(peek.title_at(0), "doc.txt");
+        assert_eq!(peek.url_at(0), "file://docs/doc.txt");
+    }
+
+    #[test]
+    fn calendar_peek_bounds_safety() {
+        let mut cal = CalendarPeek::empty(BridgeStatus::Online, true);
+        assert_eq!(cal.count, 0);
+
+        copy_field(&mut cal.rows[0].title, "Meeting");
+        copy_field(&mut cal.rows[0].when, "10:00 AM");
+        copy_field(&mut cal.rows[0].id, "evt123");
+        cal.count = 1;
+
+        assert_eq!(str_prefix(trim_buf(&cal.rows[0].title)), "Meeting");
+        assert_eq!(str_prefix(trim_buf(&cal.rows[0].when)), "10:00 AM");
+        assert_eq!(str_prefix(trim_buf(&cal.rows[0].id)), "evt123");
+    }
+
+    #[test]
+    fn doc_deny_full_parse_coverage() {
+        assert_eq!(DocDeny::from_err("ERR doc.read needs_workspace_cap"), DocDeny::NeedFiles);
+        assert_eq!(DocDeny::from_err("ERR doc.read needs_audio_cap"), DocDeny::NeedAudio);
+        assert_eq!(DocDeny::from_err("ERR doc.read needs_email_cap"), DocDeny::NeedEmail);
+        assert_eq!(DocDeny::from_err("ERR doc.read needs_portal_cap"), DocDeny::NeedPortal);
+        assert_eq!(DocDeny::from_err("ERR doc.read no such transcript"), DocDeny::NoBody);
+        assert_eq!(DocDeny::from_err("ERR doc.read path outside the indexed roots"), DocDeny::OutsideRoots);
+        assert_eq!(DocDeny::from_err("ERR doc.read unknown error occurred"), DocDeny::Other);
+    }
+
+    #[test]
+    fn doc_deny_messages_are_ascii() {
+        for deny in [
+            DocDeny::NeedFiles,
+            DocDeny::NeedAudio,
+            DocDeny::NeedEmail,
+            DocDeny::NeedPortal,
+            DocDeny::NoBody,
+            DocDeny::OutsideRoots,
+            DocDeny::Other,
+        ] {
+            let msg = deny.message();
+            assert!(!msg.is_empty());
+            assert!(msg.bytes().all(|b| (0x20..=0x7E).contains(&b)));
+        }
+    }
+
+    #[test]
+    fn portal_set_status_and_unlock_status_variants() {
+        let ok_portal = PortalSetStatus::Ok(PortalFamily::Teddy);
+        assert_eq!(ok_portal, PortalSetStatus::Ok(PortalFamily::Teddy));
+        assert_ne!(ok_portal, PortalSetStatus::Locked);
+        assert_ne!(PortalSetStatus::Locked, PortalSetStatus::Offline);
+
+        assert_eq!(UnlockStatus::Ok, UnlockStatus::Ok);
+        assert_ne!(UnlockStatus::Ok, UnlockStatus::BadPass);
+        assert_ne!(UnlockStatus::BadPass, UnlockStatus::Offline);
+    }
+}
+
+
+
+

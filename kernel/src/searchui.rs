@@ -537,10 +537,26 @@ mod tests {
     fn media_paths_are_recognised() {
         assert!(is_media_path("/tmp/rec.wav"));
         assert!(is_media_path("/Users/a/Desktop/note.MP3"));
+        assert!(is_media_path("/var/audio.m4a"));
+        assert!(is_media_path("/home/user/music.flac"));
+        assert!(is_media_path("/path/to/voice.ogg"));
         assert!(!is_media_path("rec.wav"), "must be absolute");
         assert!(!is_media_path("/tmp/notes.md"));
         assert!(!is_media_path("/tmp/has space.wav"));
         assert_eq!(media_stem("/tmp/os-smoke-rec.wav"), "os-smoke-rec");
+    }
+
+    #[test]
+    fn hit_test_back_and_field_regions() {
+        let (_bx, _by, bw, bh) = back_rect(1024);
+        assert!(bw >= 44 && bh >= 24);
+
+        let (_fx, _fy, fw, fh) = field_rect(1024, 768);
+        assert!(fw > 0 && fh > 0);
+
+        let (rx, ry, rw, rh) = row_rect(1024, 768, 0);
+        assert_eq!(result_hit(1024, 768, 3, rx + rw / 2, ry + rh / 2), Some(0));
+        assert_eq!(result_hit(1024, 768, 0, rx + rw / 2, ry + rh / 2), None);
     }
 
     #[test]
@@ -1140,4 +1156,23 @@ mod say_matches_rows_tests {
             v.say()
         );
     }
+
+    #[test]
+    fn searchview_new_is_unsearched_and_empty() {
+        let v = SearchView::new();
+        assert!(!v.searched);
+        assert_eq!(v.count, 0);
+        assert!(v.say().is_empty());
+    }
+
+    #[test]
+    fn searchview_rows_title_and_url() {
+        let mut v = SearchView::new();
+        v.run("capability");
+        assert!(v.count > 0);
+        assert!(!v.rows[0].title().is_empty());
+        assert!(!v.rows[0].url().is_empty());
+    }
 }
+
+

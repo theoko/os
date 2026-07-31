@@ -246,4 +246,12 @@ mod tests {
         assert_eq!(p.name_at(p.count()), "");
         assert_eq!(p.desc_at(99), "");
     }
+
+    #[test]
+    fn workflow_for_unknown_name_returns_default() {
+        let wf = workflow_for("custom-unknown-skill");
+        assert!(!wf.title.is_empty());
+        assert_eq!(wf.required, None);
+    }
 }
+

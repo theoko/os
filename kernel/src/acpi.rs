@@ -290,4 +290,23 @@ mod tests {
         assert_eq!(VBOX_ARM_ECAM.base, 0xFEDD_C000);
         assert_eq!(ecam_span(&VBOX_ARM_ECAM), 16 << 20);
     }
+
+    #[test]
+    fn sdt_len_below_header_size_is_none() {
+        assert!(sdt_len(&[0u8; 10]).is_none());
+        assert!(sdt_len(&[]).is_none());
+    }
+
+    #[test]
+    fn checksum_ok_empty_is_true() {
+        assert!(checksum_ok(&[]));
+    }
+
+    #[test]
+    fn mcfg_single_bus_parsing() {
+        let got = parse_mcfg(&mcfg(0xE000_0000, 0, 0)).expect("single bus MCFG");
+        assert_eq!((got.start_bus, got.end_bus), (0, 0));
+        assert_eq!(ecam_span(&got), 1 << 20);
+    }
 }
+

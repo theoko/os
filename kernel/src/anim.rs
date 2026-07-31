@@ -233,4 +233,19 @@ mod tests {
             prev = dy;
         }
     }
+
+    #[test]
+    fn lerp_reversed_range() {
+        assert_eq!(lerp(100, 0, 0), 100);
+        assert_eq!(lerp(100, 0, ONE), 0);
+        assert_eq!(lerp(100, 0, ONE / 2), 50);
+    }
+
+    #[test]
+    fn lerp_color_black_and_white() {
+        assert_eq!(lerp_color(0x00000000, 0x00FFFFFF, 0), 0x00000000);
+        assert_eq!(lerp_color(0x00000000, 0x00FFFFFF, ONE), 0x00FFFFFF);
+        assert_eq!(lerp_color(0x00000000, 0x00FFFFFF, ONE / 2), 0x007F7F7F);
+    }
 }
+

@@ -25,15 +25,16 @@ fn isqrt(n: i32) -> i32 {
     if n <= 0 {
         return 0;
     }
-    let mut x = n;
+    let n64 = n as u64;
+    let mut x = n64;
     loop {
-        let next = (x + n / x) / 2;
+        let next = (x + n64 / x) / 2;
         if next >= x {
             break;
         }
         x = next;
     }
-    x
+    x as i32
 }
 
 /// Q16 progress of `frame` through the window `[start, start+dur)`, clamped 0..ONE.
@@ -289,4 +290,49 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn isqrt_edge_cases() {
+        assert_eq!(isqrt(-5), 0);
+        assert_eq!(isqrt(1), 1);
+        assert_eq!(isqrt(2), 1);
+        assert_eq!(isqrt(3), 1);
+        assert_eq!(isqrt(65536), 256);
+        assert_eq!(isqrt(2147483647), 46340);
+    }
+
+    #[test]
+    fn window_edge_cases() {
+        assert_eq!(window(0, 0, 10), 0);
+        assert_eq!(window(5, 0, 10), ONE / 2);
+        assert_eq!(window(10, 0, 10), ONE);
+        assert_eq!(window(50, 0, 10), ONE);
+    }
+
+    #[test]
+    fn draw_frame_all_phases_rendering() {
+        let mut buf = vec![0u32; 1024 * 768];
+        let fb = unsafe { crate::fb::Surface::in_memory(buf.as_mut_ptr(), 1024, 768) };
+        for frame in [0, 15, 30, 45, 60, 75, 90, 105, 110] {
+            let active = draw_frame(&fb, frame);
+            if frame < TOTAL_FRAMES {
+                assert!(active, "frame {frame} should be active");
+            } else {
+                assert!(!active, "frame {frame} should be finished");
+            }
+        }
+    }
+
+    #[test]
+    fn ease_out_cubic_bounds_and_monotonicity() {
+        assert_eq!(ease_out_cubic(0), 0);
+        assert_eq!(ease_out_cubic(ONE), ONE);
+        let e1 = ease_out_cubic(ONE / 4);
+        let e2 = ease_out_cubic(ONE / 2);
+        let e3 = ease_out_cubic(3 * ONE / 4);
+        assert!(e1 > 0 && e1 < e2);
+        assert!(e2 < e3 && e3 < ONE);
+    }
 }
+
+

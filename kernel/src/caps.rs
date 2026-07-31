@@ -247,7 +247,31 @@ mod tests {
         assert!(d.contains("project") || d.contains("folder"), "{d}");
         assert!(d.bytes().all(|b| (0x20..=0x7E).contains(&b)));
     }
+
+    #[test]
+    fn toggle_enables_and_revokes() {
+        let mut c = Caps::none();
+        assert!(!c.allows(Cap::EmailSearch));
+        c.set(Cap::EmailSearch, true);
+        assert!(c.allows(Cap::EmailSearch));
+        c.set(Cap::EmailSearch, false);
+        assert!(!c.allows(Cap::EmailSearch));
+    }
+
+    #[test]
+    fn all_caps_details_and_names_are_ascii() {
+        for cap in Cap::ALL {
+            assert!(cap.label().bytes().all(|b| (0x20..=0x7E).contains(&b)));
+            assert!(cap.detail().bytes().all(|b| (0x20..=0x7E).contains(&b)));
+            assert!(cap.name().bytes().all(|b| (0x20..=0x7E).contains(&b)));
+            for level in crate::level::Level::ALL {
+                assert!(cap.blurb(level).bytes().all(|b| (0x20..=0x7E).contains(&b)));
+            }
+        }
+    }
 }
+
+
 
 #[cfg(test)]
 mod order_tests {

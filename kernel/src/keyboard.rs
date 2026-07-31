@@ -645,4 +645,57 @@ mod nav_tests {
         }
         assert!(f.is_empty());
     }
+
+    #[test]
+    fn text_field_backspace_and_capacity_bounds() {
+        let mut f = TextField::<4>::new();
+        assert!(!f.apply(Key::Backspace), "backspace on empty should return false");
+        assert!(f.apply(Key::Char(b'a')));
+        assert!(f.apply(Key::Char(b'b')));
+        assert!(f.apply(Key::Char(b'c')));
+        assert!(f.apply(Key::Char(b'd')));
+        assert!(!f.apply(Key::Char(b'e')), "over-capacity char should return false");
+        assert_eq!(f.as_str(), "abcd");
+        assert!(f.apply(Key::Backspace));
+        assert_eq!(f.as_str(), "abc");
+        f.clear();
+        assert!(f.is_empty());
+    }
+
+    #[test]
+    fn serial_unprintable_bytes_return_none() {
+        assert_eq!(Keyboard::from_serial(0x01), None);
+        assert_eq!(Keyboard::from_serial(0x1F), None);
+        assert_eq!(Keyboard::from_serial(0x80), None);
+        assert_eq!(Keyboard::from_serial(0xFF), None);
+    }
+
+    #[test]
+    fn text_field_delete_word_and_pop() {
+        let mut f = TextField::<16>::new();
+        assert_eq!(f.len(), 0);
+        f.apply(Key::Char(b'a'));
+        f.apply(Key::Char(b'b'));
+        f.apply(Key::Char(b' '));
+        f.apply(Key::Char(b'c'));
+        f.apply(Key::Char(b'd'));
+        assert_eq!(f.as_str(), "ab cd");
+        assert!(f.delete_word());
+        assert_eq!(f.as_str(), "ab ");
+        assert_eq!(f.pop(), Some(b' '));
+        assert_eq!(f.as_str(), "ab");
+    }
+
+
+
+    #[test]
+    fn serial_control_key_mappings() {
+        assert_eq!(Keyboard::from_serial(0x1B), Some(Key::Escape));
+        assert_eq!(Keyboard::from_serial(0x08), Some(Key::Backspace));
+        assert_eq!(Keyboard::from_serial(0x7F), Some(Key::Backspace));
+        assert_eq!(Keyboard::from_serial(b'\n'), Some(Key::Enter));
+        assert_eq!(Keyboard::from_serial(b'\r'), Some(Key::Enter));
+    }
 }
+
+

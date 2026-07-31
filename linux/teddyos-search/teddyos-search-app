@@ -279,9 +279,26 @@ class SearchWindow(Adw.ApplicationWindow):
         top.append(self.entry)
         top.append(self.spinner)
         top.set_margin_top(14)
-        top.set_margin_bottom(14)
+        top.set_margin_bottom(8)
         top.set_margin_start(16)
         top.set_margin_end(16)
+
+        # Light progress strip — level + XP + streak (gamification, not a grind).
+        self._progress_bar = Gtk.ProgressBar()
+        self._progress_bar.set_hexpand(True)
+        self._progress_bar.set_margin_start(16)
+        self._progress_bar.set_margin_end(16)
+        self._progress_label = Gtk.Label(xalign=0.0)
+        self._progress_label.add_css_class("caption")
+        self._progress_label.add_css_class("dim-label")
+        self._progress_label.set_margin_start(16)
+        self._progress_label.set_margin_end(16)
+        self._progress_label.set_margin_bottom(8)
+        prog_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        prog_box.append(self._progress_bar)
+        prog_box.append(self._progress_label)
+        self._progress_box = prog_box
+        self._refresh_progress_ui()
 
         self.banner = Adw.Banner(button_label="Change permissions")
         self.banner.connect("button-clicked", self._open_setup)
@@ -317,6 +334,7 @@ class SearchWindow(Adw.ApplicationWindow):
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         outer.append(top)
+        outer.append(self._progress_box)
         outer.append(body)
         # Toast overlay so "Opening Gemini…" is visible when a click works —
         # without it, a slow window or a Terminal that opens behind Search
@@ -565,11 +583,30 @@ class SearchWindow(Adw.ApplicationWindow):
         self._tool_rows = {}
         self._credit_labels = {}
         self._credit_statuses = {}
+        self._freeform_help = False
         # Optional task after the project name: "work on trading fix the risk".
         self._pending_task = self._task_from_query(query, subject)
 
         if projects:
             self._append_project_tools(rows, projects, tools)
+            self._begin_credit_probes(tools)
+            return rows
+
+        # Everyday tasks ("respond to my LinkedIn messages") are not folders.
+        # Offer Get help with the full ask — never a dead-end GitHub story.
+        if engine.is_freeform_help_goal(query):
+            self._freeform_help = True
+            self._pending_task = (query or "").strip()
+            low = query.lower()
+            if "linkedin" in low:
+                rows.append(self._open_link_row(
+                    "Open LinkedIn messages",
+                    "Read the thread there, then come back for reply help",
+                    "https://www.linkedin.com/messaging/",
+                ))
+            self._append_project_tools(
+                rows, [Path.home()], tools, freeform=True,
+            )
             self._begin_credit_probes(tools)
             return rows
 
@@ -623,6 +660,8 @@ class SearchWindow(Adw.ApplicationWindow):
         rows: list[Gtk.Widget],
         projects: list[Path],
         tools: list[WorkTool],
+        *,
+        freeform: bool = False,
     ) -> None:
         """Layout a non-technical person can scan top-to-bottom.
 
@@ -632,18 +671,25 @@ class SearchWindow(Adw.ApplicationWindow):
         """
         recent = set(work_tools.recent_ids())
         for project in projects[:5]:
-            label = project.name
-            rows.append(self._section_label(f"Found “{label}”"))
-            # First-timers only see the Continue card; this line is refined
-            # after the readiness probe. Keep it calm and free of jargon.
-            intro = self._plain_notice(
-                f"You’re looking at “{label}”. Start with the box below."
-            )
+            if freeform:
+                rows.append(self._section_label("Here’s help with that"))
+                intro = self._plain_notice(
+                    "Your question is ready below. Tap Get help when you’re signed in, "
+                    "or edit it first."
+                )
+            else:
+                label = project.name
+                rows.append(self._section_label(f"Found “{label}”"))
+                # First-timers only see the Continue card; this line is refined
+                # after the readiness probe. Keep it calm and free of jargon.
+                intro = self._plain_notice(
+                    f"You’re looking at “{label}”. Start with the box below."
+                )
             rows.append(intro)
 
             # First project owns the primary ask box.
             if project == projects[0]:
-                rows.append(self._broadcast_block(project, tools))
+                rows.append(self._broadcast_block(project, tools, freeform=freeform))
 
             chat_tools = [
                 t for t in tools
@@ -686,7 +732,7 @@ class SearchWindow(Adw.ApplicationWindow):
         return row
 
     def _broadcast_block(
-        self, project: Path, tools: list[WorkTool],
+        self, project: Path, tools: list[WorkTool], *, freeform: bool = False,
     ) -> Gtk.Widget:
         """The only path a new user should notice.
 
@@ -695,6 +741,7 @@ class SearchWindow(Adw.ApplicationWindow):
         """
         self._broadcast_project = project
         self._broadcast_tools = [t for t in tools if t.is_ai]
+        self._freeform_help = freeform
         name = project.name
 
         box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
@@ -712,8 +759,13 @@ class SearchWindow(Adw.ApplicationWindow):
         self._broadcast_step.set_margin_end(14)
         box.append(self._broadcast_step)
 
+        title = (
+            "Let’s get you ready to help with that"
+            if freeform
+            else f"Let’s get you ready to work on “{name}”"
+        )
         self._broadcast_title = Gtk.Label(
-            label=f"Let’s get you ready to work on “{name}”",
+            label=title,
             xalign=0.0,
             wrap=True,
         )
@@ -833,10 +885,20 @@ class SearchWindow(Adw.ApplicationWindow):
         )
         names = ", ".join(t.title for t in ready) if ready else ""
         project = self._broadcast_project
+        freeform = bool(getattr(self, "_freeform_help", False))
         pname = project.name if project else "this project"
 
         if self._broadcast_title is not None:
-            if probing:
+            if freeform:
+                if probing:
+                    self._broadcast_title.set_text("Getting help ready…")
+                elif not ready:
+                    self._broadcast_title.set_text(
+                        "Let’s get you ready to help with that"
+                    )
+                else:
+                    self._broadcast_title.set_text("What do you need help with?")
+            elif probing:
                 self._broadcast_title.set_text(f"Working on “{pname}”")
             elif not ready:
                 self._broadcast_title.set_text(
@@ -859,18 +921,32 @@ class SearchWindow(Adw.ApplicationWindow):
             elif probing:
                 self._broadcast_hint.set_text("One moment…")
             elif not ready:
-                self._broadcast_hint.set_text(
-                    "Next we’ll open a short sign-in in your browser. "
-                    "You only do this once. Then you can ask anything about "
-                    f"“{pname}”."
-                )
+                if freeform:
+                    self._broadcast_hint.set_text(
+                        "Next we’ll open a short sign-in in your browser. "
+                        "You only do this once. Then you can get help with "
+                        "messages, drafts, and everyday tasks."
+                    )
+                else:
+                    self._broadcast_hint.set_text(
+                        "Next we’ll open a short sign-in in your browser. "
+                        "You only do this once. Then you can ask anything about "
+                        f"“{pname}”."
+                    )
             elif len(ready) == 1:
+                st = self._credit_statuses.get(ready[0].id)
+                bal = self._plain_status(st.label) if st else "ready"
                 self._broadcast_hint.set_text(
-                    "Type what you need. You’ll get an answer in a simple window."
+                    f"Type what you need. {ready[0].title}: {bal}."
                 )
             else:
+                summary = self._credit_summary_line(ready)
+                base = (
+                    "Type what you need. We’ll ask every ready AI, then "
+                    "read all their answers and pull them together for you."
+                )
                 self._broadcast_hint.set_text(
-                    "Type what you need. You’ll get answers in one window."
+                    f"{base}\n{summary}" if summary else base
                 )
 
         if self._broadcast_entry is not None:
@@ -1109,6 +1185,12 @@ class SearchWindow(Adw.ApplicationWindow):
             return False
 
         log.info("cloned %s → %s (%s)", repo.full_name, path, message)
+        prog = self._progress_mod()
+        if prog is not None:
+            try:
+                self._celebrate(prog.award_clone())
+            except Exception:  # noqa: BLE001
+                pass
         tools = work_tools.available_work_tools()
         rows: list[Gtk.Widget] = []
         self._tool_rows = {}
@@ -1234,6 +1316,24 @@ class SearchWindow(Adw.ApplicationWindow):
         img.set_from_icon_name("application-x-executable")
         return img
 
+    def _credit_summary_line(self, ready: list) -> str:
+        """One line of helper balances for the Get help card."""
+        parts: list[str] = []
+        for t in ready[:5]:
+            st = self._credit_statuses.get(t.id)
+            if st is None:
+                continue
+            lab = self._plain_status(st.label)
+            # Shorten for the summary strip
+            if lab.startswith("Needs sign-in"):
+                lab = "needs sign-in"
+            elif lab == "Out of uses for now":
+                lab = "out of uses"
+            elif lab in ("Ready · tap to open", "Tap to open"):
+                lab = "ready"
+            parts.append(f"{t.title}: {lab}")
+        return " · ".join(parts)
+
     def _format_tool_subtitle(
         self, tool_id: str, credit_label: str, recent: bool | None = None
     ) -> str:
@@ -1241,32 +1341,52 @@ class SearchWindow(Adw.ApplicationWindow):
             recent = work_tools.is_recent(tool_id)
         label = self._plain_status(credit_label)
         if recent and label and "used this" not in label.lower():
-            return f"{label}"
+            return f"{label} · used before"
         return label
 
     @staticmethod
     def _plain_status(label: str) -> str:
-        """Map probe jargon to words a non-technical person understands."""
+        """Map probe jargon to words a non-technical person understands.
+
+        Preserve real balance / plan lines (e.g. “Max plan · ready”,
+        “72% left”). Older code rewrote anything with “remaining” to a
+        useless “Ready · tap to open”, which hid credit detection.
+        """
         raw = (label or "").strip()
         if not raw:
             return "Tap to open"
         low = raw.lower()
         if "checking" in low:
             return "Checking…"
-        if any(s in low for s in ("isn’t installed", "isn't installed", "not installed")):
+        if any(s in low for s in ("isn’t installed", "isn't installed", "not installed", "not on this computer")):
             return "Not on this computer"
+        if "web app" in low:
+            return raw[:72]
         if any(s in low for s in (
-            "sign in", "not logged", "log in", "login", "auth",
-        )):
+            "needs sign-in", "sign in", "not logged", "log in", "login",
+            "not signed",
+        )) and "plan" not in low and "web app" not in low:
             return "Needs sign-in · tap to connect"
         if any(s in low for s in (
-            "too low", "out of", "no credit", "quota", "usage limit", "depleted",
+            "too low", "out of uses", "out of", "no credit", "quota",
+            "usage limit", "depleted", "credit balance is too low",
         )):
             return "Out of uses for now"
-        if any(s in low for s in ("ready", "installed", "available", "remaining")):
+        # Real balance / plan / connected lines — keep them visible.
+        if any(
+            s in low
+            for s in (
+                "%", "plan", "connected", "chatgpt", "api key",
+                "resets", "left", "remaining", "balance", "credits",
+            )
+        ):
+            return raw[:72]
+        if low in ("ready · tap to open", "ready", "tap to open"):
             return "Ready · tap to open"
+        if "may need sign-in" in low:
+            return raw[:72]
         # Keep short unknown labels; never dump raw CLI errors into the list.
-        if len(raw) > 60:
+        if len(raw) > 72:
             return "Tap to open"
         return raw
 
@@ -1322,6 +1442,64 @@ class SearchWindow(Adw.ApplicationWindow):
             toast = Adw.Toast.new(message)
             toast.set_timeout(timeout)
             self._toasts.add_toast(toast)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _progress_mod(self):
+        try:
+            import progress as prog  # type: ignore
+            return prog
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _refresh_progress_ui(self) -> None:
+        """Update fluency strip: overall XP + per-persona levels."""
+        prog = self._progress_mod()
+        if prog is None or not hasattr(self, "_progress_bar"):
+            return
+        try:
+            snap = prog.snapshot()
+            # Prefer active persona meter when they have persona XP; else global.
+            if (
+                hasattr(prog, "persona_meter")
+                and getattr(snap, "persona_xp", None)
+                and snap.persona_xp
+            ):
+                frac, _cap = prog.persona_meter(snap.active_persona, snap)
+                line = prog.progress_line(snap)
+            elif hasattr(prog, "ultracode_meter"):
+                frac, line = prog.ultracode_meter(snap)
+            else:
+                frac = (
+                    min(1.0, max(0.0, snap.xp_into_level / snap.xp_for_level))
+                    if snap.next_level_xp is not None and snap.xp_for_level > 0
+                    else 1.0
+                )
+                line = prog.progress_line(snap)
+            self._progress_bar.set_fraction(frac)
+            self._progress_label.set_text(line)
+            # Accent once any persona (esp. Ultracode) is part of their story.
+            if (
+                getattr(snap, "ultracode_asks", 0) > 0
+                or getattr(snap, "switch_count", 0) > 0
+                or bool(getattr(snap, "persona_levels", None))
+            ):
+                self._progress_bar.add_css_class("accent")
+            else:
+                self._progress_bar.remove_css_class("accent")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _celebrate(self, snap) -> None:
+        """Toast the best progress event (badge / level / streak)."""
+        prog = self._progress_mod()
+        if prog is None or snap is None:
+            return
+        try:
+            line = prog.format_toast(getattr(snap, "events", []) or [])
+            if line:
+                self._notify(line, timeout=4)
+            self._refresh_progress_ui()
         except Exception:  # noqa: BLE001
             pass
 
@@ -1401,10 +1579,16 @@ class SearchWindow(Adw.ApplicationWindow):
         dialog = Adw.MessageDialog(
             transient_for=self,
             heading=f"Ask {tool.title}",
-            body="What do you need help with? You’ll get an answer in a simple window.",
+            body=(
+                "What do you need help with? We’ll match how you sound — "
+                "simple by default, or Ultracode / student / academic / writer / "
+                "business / design / career and more."
+            ),
         )
         entry = Gtk.Entry()
-        entry.set_placeholder_text("e.g. Explain this project in simple words")
+        entry.set_placeholder_text(
+            "e.g. homework · resume · pitch deck · literature review · refactor api.ts"
+        )
         entry.set_margin_top(8)
         pending = (getattr(self, "_pending_task", None) or "").strip()
         if pending:
@@ -1445,7 +1629,39 @@ class SearchWindow(Adw.ApplicationWindow):
         names = ", ".join(
             t.title for t in self._broadcast_tools if t.id in tool_ids
         ) or "your AIs"
-        self._notify(f"Asking {names}…", timeout=3)
+        # Audience detect → Ultracode toast + fluency XP (gamification core).
+        mode = ""
+        prog = self._progress_mod()
+        snap = None
+        if prog is not None and hasattr(prog, "award_from_prompt"):
+            try:
+                snap = prog.award_from_prompt(prompt, tool_ids=tool_ids)
+                if getattr(snap, "ultracode_asks", 0) > 0 or any(
+                    getattr(e, "ultracode", False) for e in (snap.events or [])
+                ):
+                    # Fresh ultracode event this turn?
+                    if any(getattr(e, "ultracode", False) for e in (snap.events or [])):
+                        mode = " · Ultracode"
+                # Detect from events if first unlock
+                if any(
+                    getattr(e, "badge_id", "") == "ultracode"
+                    or (getattr(e, "kind", "") == "ultracode")
+                    for e in (snap.events or [])
+                ):
+                    mode = " · Ultracode"
+            except Exception:  # noqa: BLE001
+                snap = None
+        if not mode:
+            try:
+                sys.path.insert(0, "/usr/lib/teddyos")
+                from audience import detect_audience, Audience  # type: ignore
+                if detect_audience(prompt) is Audience.CODE:
+                    mode = " · Ultracode"
+            except Exception:  # noqa: BLE001
+                pass
+        self._notify(f"Asking {names}{mode}…", timeout=3)
+        if snap is not None:
+            GLib.timeout_add(900, lambda s=snap: (self._celebrate(s), False)[1])
         ok = self._spawn(
             [
                 ask,
@@ -1643,6 +1859,26 @@ class SearchWindow(Adw.ApplicationWindow):
         row.set_activatable(True)
         row.connect("activated", lambda *_a, r=res: self._open(r))
         return row
+
+    def _open_link_row(self, title: str, subtitle: str, url: str) -> Gtk.Widget:
+        """One-tap open of a useful site (e.g. LinkedIn messages)."""
+        row = Adw.ActionRow(title=GLib.markup_escape_text(title))
+        row.set_subtitle(GLib.markup_escape_text(subtitle))
+        row.set_subtitle_lines(2)
+        row.add_prefix(Gtk.Image.new_from_icon_name("web-browser-symbolic"))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect(
+            "activated",
+            lambda *_a, u=url: self._open_url(u),
+        )
+        return row
+
+    def _open_url(self, url: str) -> None:
+        try:
+            Gtk.UriLauncher.new(url).launch(self, None, None, None)
+        except GLib.Error:
+            pass
 
     def _web_row(self, query: str) -> Gtk.Widget:
         # Truncate. The title interpolates the query, and a stuck key or a

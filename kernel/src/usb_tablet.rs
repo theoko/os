@@ -724,3 +724,20 @@ pub fn alloc_dma_pages(mmap: &limine::response::MemoryMapResponse) -> Option<(u6
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn set_err_formats_null_terminated_ascii_string() {
+        let mut buf = [0u8; 32];
+        set_err(&mut buf, "no UHCI tablet found");
+        assert_eq!(
+            core::str::from_utf8(&buf[..20]).unwrap(),
+            "no UHCI tablet found"
+        );
+        assert_eq!(buf[20], 0);
+    }
+}
+

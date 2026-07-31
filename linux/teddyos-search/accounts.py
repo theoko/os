@@ -117,39 +117,39 @@ _ACCOUNTS: list[Account] = [
     Account(
         id="perplexity",
         title="Perplexity",
-        blurb="Answers questions on the web",
+        blurb="Answers on the web — web app, no download",
         icon="teddyos-perplexity",
         binaries=("teddyos-perplexity", "perplexity"),
         connect_argv=("teddyos-perplexity",),
         connect_hint=(
-            "Perplexity opens in a simple browser window. "
-            "Sign in there if you have an account — or just start asking."
+            "Perplexity is already on this computer as a web app — nothing to install. "
+            "We’ll open a simple window. Sign in there if you want, or just start asking."
         ),
         always_available=True,
     ),
     Account(
         id="devin",
         title="Devin",
-        blurb="From Cognition — AI software engineer on the web",
+        blurb="From Cognition — web app, no download (opens in a simple window)",
         icon="teddyos-devin",
         binaries=("teddyos-devin", "devin"),
         connect_argv=("teddyos-devin",),
         connect_hint=(
-            "Devin opens in a simple browser window. "
-            "Sign in with Google or GitHub there, then come back here."
+            "Devin is already on this computer as a web app — nothing to install. "
+            "We’ll open a simple window. Sign in with Google or GitHub there if you want."
         ),
         always_available=True,
     ),
     Account(
         id="replit",
         title="Replit",
-        blurb="Build apps from a plain-English description",
+        blurb="Build apps from plain words — web app, no download",
         icon="teddyos-replit",
         binaries=("teddyos-replit", "replit"),
         connect_argv=("teddyos-replit",),
         connect_hint=(
-            "Replit opens in a simple browser window. "
-            "Sign in there if you have an account — or just start building."
+            "Replit is already on this computer as a web app — nothing to install. "
+            "We’ll open a simple window. Sign in there if you want, or just start."
         ),
         always_available=True,
     ),
@@ -428,8 +428,9 @@ def _status_web_cookies(
     cookies = (
         Path.home() / ".config" / profile / "Default" / "Cookies"
     )
+    # No profile yet — still installed as a web app (not “missing download”).
     if not cookies.is_file():
-        return AccountStatus(ok=False, label="Needs sign-in")
+        return AccountStatus(ok=False, label="Web app · open to sign in")
 
     try:
         with tempfile.TemporaryDirectory() as tmp:
@@ -453,10 +454,10 @@ def _status_web_cookies(
             finally:
                 con.close()
     except (OSError, sqlite3.Error):
-        return AccountStatus(ok=False, label="Needs sign-in")
+        return AccountStatus(ok=False, label="Web app · open to sign in")
 
     if not names:
-        return AccountStatus(ok=False, label="Needs sign-in")
+        return AccountStatus(ok=False, label="Web app · open to sign in")
 
     anon_extra = extra_anonymous or frozenset()
 
@@ -493,7 +494,8 @@ def _status_web_cookies(
     }
     if strong:
         return AccountStatus(ok=True, label="Connected")
-    return AccountStatus(ok=False, label="Needs sign-in")
+    # Profile exists but no auth cookies yet.
+    return AccountStatus(ok=False, label="Web app · open to sign in")
 
 
 def _status_perplexity() -> AccountStatus:

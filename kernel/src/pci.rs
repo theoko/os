@@ -621,13 +621,50 @@ mod survey_tests {
             ..Default::default()
         };
         assert_eq!(s.unsupported_name(), Some("xHCI"));
+
+        let e = UsbSurvey {
+            ehci: 1,
+            ..Default::default()
+        };
+        assert_eq!(e.unsupported_name(), Some("EHCI"));
     }
 
     #[test]
     fn an_empty_survey_is_not_mistaken_for_a_working_bus() {
         assert!(UsbSurvey::default().none_at_all());
     }
+
+    #[test]
+    fn multiple_unsupported_controllers_prioritise_name() {
+        let both = UsbSurvey {
+            ehci: 1,
+            xhci: 1,
+            ..Default::default()
+        };
+        assert!(both.has_unsupported());
+        assert!(both.unsupported_name().is_some());
+    }
+
+    #[test]
+    fn usb_survey_default_has_zero_controllers() {
+        let def = UsbSurvey::default();
+        assert_eq!(def.uhci, 0);
+        assert_eq!(def.ohci, 0);
+        assert_eq!(def.ehci, 0);
+        assert_eq!(def.xhci, 0);
+        assert!(def.none_at_all());
+        assert!(!def.has_unsupported());
+    }
+
+    #[test]
+    fn prog_if_constants_distinct() {
+        assert_ne!(PROG_IF_UHCI, PROG_IF_OHCI);
+        assert_ne!(PROG_IF_OHCI, PROG_IF_EHCI);
+        assert_ne!(PROG_IF_EHCI, PROG_IF_XHCI);
+    }
 }
+
+
 
 #[cfg(test)]
 mod ecam_tests {

@@ -251,4 +251,14 @@ mod tests {
         assert_eq!(health.required, None);
         assert_eq!(health.title, "System health check");
     }
+
+    #[test]
+    fn workflow_for_all_builtins_returns_valid_workflow() {
+        for builtin in BUILTIN {
+            let wf = workflow_for(builtin.name);
+            assert!(!wf.title.is_empty());
+            assert!(!wf.steps.is_empty());
+        }
+    }
 }
+

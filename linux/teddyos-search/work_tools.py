@@ -54,6 +54,10 @@ class CreditStatus:
       True  — signed in and has remaining capacity
       False — depleted, not signed in, or missing
       None  — installed but we could not tell
+
+    label:
+      Short plain-language line for the UI. Prefer real balance/plan text
+      when we have it (e.g. “Max plan · ready”, “Out of uses for now”).
     """
     ok: bool | None
     label: str
@@ -113,8 +117,9 @@ _CATALOG: list[tuple] = [
     ),
     (
         # Perplexity: web app wrapper (always on image) or local desktop binary.
-        "perplexity", "Perplexity", "Ask on the web",
-        "teddyos-perplexity", True, True,
+        # Perplexity: Chromium --app wrapper — no separate download.
+        "perplexity", "Perplexity", "Web app · no download needed",
+        "teddyos-perplexity", False, True,
         ("teddyos-perplexity", "perplexity", "pplx"),
         (),
         (
@@ -124,9 +129,9 @@ _CATALOG: list[tuple] = [
         ),
     ),
     (
-        # Devin (Cognition): web app at app.devin.ai; optional CLI `devin`.
-        "devin", "Devin", "From Cognition · open in a simple window",
-        "teddyos-devin", True, True,
+        # Devin (Cognition): web app wrapper — no separate download / AppImage.
+        "devin", "Devin", "Web app · no download needed",
+        "teddyos-devin", False, True,
         ("teddyos-devin", "devin"),
         (),
         (
@@ -136,9 +141,9 @@ _CATALOG: list[tuple] = [
         ),
     ),
     (
-        # Replit Agent: web-first; native desktop binary if installed.
-        "replit", "Replit", "Build apps from plain words",
-        "teddyos-replit", True, True,
+        # Replit: web app wrapper (native binary used only if user installed one).
+        "replit", "Replit", "Web app · no download needed",
+        "teddyos-replit", False, True,
         ("teddyos-replit", "replit", "Replit"),
         (),
         (
@@ -628,48 +633,105 @@ def _run(argv: list[str], timeout: float = 8.0) -> tuple[int, str]:
     return completed.returncode, text
 
 
+def _parse_balance_snippet(text: str) -> str | None:
+    """Pull a short human balance line from CLI usage output."""
+    if not text:
+        return None
+    # Prefer first non-empty line that looks like balance / plan / %.
+    for line in text.splitlines():
+        line = line.strip()
+        if not line or len(line) > 90:
+            continue
+        low = line.lower()
+        if any(
+            s in low
+            for s in (
+                "not sure which", "quick options", "built-in",
+                "ambiguous", "say which", "usage of some",
+            )
+        ):
+            return None  # interactive help, not real usage
+        if _LOW.search(line):
+            return "Out of uses for now"
+        if re.search(
+            r"\d+\s*%|\d+\s*/\s*\d+|remaining|left|balance|resets|"
+            r"\$\d|credits?",
+            low,
+        ):
+            # Clean decorative bullets
+            return re.sub(r"^[\s•\-\*]+", "", line)[:72]
+    return None
+
+
+def _claude_plan_label(data: dict) -> str | None:
+    sub = (data.get("subscriptionType") or data.get("subscription") or "")
+    sub = str(sub).strip().lower()
+    if not sub:
+        return None
+    pretty = {
+        "max": "Max plan",
+        "pro": "Pro plan",
+        "team": "Team plan",
+        "enterprise": "Enterprise",
+        "free": "Free plan",
+    }.get(sub, sub.title() + " plan")
+    return pretty
+
+
 def _probe_claude() -> CreditStatus:
-    """Use `claude auth status` + `claude usage`."""
+    """Use `claude auth status` + `claude usage` when it returns real numbers."""
     if not shutil.which("claude"):
         return CreditStatus(ok=False, label="Not on this computer")
 
     code, auth_text = _run(["claude", "auth", "status"], timeout=6)
     logged_in = False
+    plan: str | None = None
     try:
         blob = auth_text
         start = blob.find("{")
         if start >= 0:
             data = json.loads(blob[start:])
             logged_in = bool(data.get("loggedIn"))
+            plan = _claude_plan_label(data)
     except (json.JSONDecodeError, TypeError, ValueError):
         logged_in = '"loggedIn": true' in auth_text
+        if '"subscriptionType": "max"' in auth_text.lower():
+            plan = "Max plan"
+        elif '"subscriptionType": "pro"' in auth_text.lower():
+            plan = "Pro plan"
 
-    if not logged_in and code == 0 and "loggedIn" in auth_text:
-        return CreditStatus(
-            ok=False,
-            label="Needs sign-in · tap to connect",
-        )
+    if not logged_in:
+        # JSON may say loggedIn false, or no status at all.
+        if code != 0 or "loggedIn" in auth_text or "not logged" in auth_text.lower():
+            return CreditStatus(
+                ok=False,
+                label="Needs sign-in · tap to connect",
+            )
 
     _code, usage = _run(["claude", "usage"], timeout=10)
-    text = usage.strip()
-    if not text:
-        if logged_in:
-            return CreditStatus(ok=None, label="Ready · tap to open")
-        return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
-
-    first = text.splitlines()[0].strip()
+    text = (usage or "").strip()
     if "not logged in" in text.lower():
         return CreditStatus(
             ok=False,
             label="Needs sign-in · tap to connect",
         )
     if _LOW.search(text):
+        # Real low-balance line (API-key style credits).
         return CreditStatus(ok=False, label="Out of uses for now")
 
-    if _OKISH.search(text) or _code == 0:
-        return CreditStatus(ok=True, label="Ready · tap to open")
+    snippet = _parse_balance_snippet(text)
+    if snippet and snippet != "Out of uses for now":
+        # e.g. "72% remaining" or "Resets in 4h"
+        if plan:
+            return CreditStatus(ok=True, label=f"{plan} · {snippet}")
+        return CreditStatus(ok=True, label=snippet)
 
-    return CreditStatus(ok=None, label="Ready · tap to open")
+    # Subscription (Max/Pro): `claude usage` often refuses headless quota.
+    if logged_in and plan:
+        return CreditStatus(ok=True, label=f"{plan} · ready")
+    if logged_in:
+        return CreditStatus(ok=True, label="Connected · ready")
+    return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
 
 
 def _probe_cursor() -> CreditStatus:
@@ -691,12 +753,34 @@ def _probe_grok() -> CreditStatus:
                 break
         if not found:
             return CreditStatus(ok=False, label="Not on this computer")
+    # Prefer a status/login command if present (faster than -p ping).
+    for argv in (
+        ["grok", "auth", "status"],
+        ["grok", "status"],
+        ["grok", "whoami"],
+    ):
+        code, text = _run(argv, timeout=6)
+        low = (text or "").lower()
+        if not text:
+            continue
+        if any(s in low for s in ("not signed", "not logged", "unauthenticated")):
+            return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
+        if _LOW.search(text):
+            return CreditStatus(ok=False, label="Out of uses for now")
+        snippet = _parse_balance_snippet(text)
+        if snippet:
+            return CreditStatus(ok=True, label=snippet)
+        if code == 0 and any(s in low for s in ("signed", "logged", "ok", "user")):
+            return CreditStatus(ok=True, label="Connected · ready")
+
     code, text = _run(["grok", "-p", "ping"], timeout=12)
     low = (text or "").lower()
     if "not signed in" in low:
         return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
+    if _LOW.search(text or ""):
+        return CreditStatus(ok=False, label="Out of uses for now")
     if code == 0:
-        return CreditStatus(ok=True, label="Ready · tap to open")
+        return CreditStatus(ok=True, label="Connected · ready")
     if any(s in low for s in ("auth", "login", "sign in", "authenticate")):
         return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
     return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
@@ -710,22 +794,47 @@ def _probe_codex() -> CreditStatus:
     if "not logged in" in low or (code != 0 and "logged in" not in low):
         return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
     if code == 0 and "logged in" in low and "not logged" not in low:
-        return CreditStatus(ok=True, label="Ready · tap to open")
+        # "Logged in using ChatGPT" / API key
+        if "chatgpt" in low:
+            return CreditStatus(ok=True, label="ChatGPT · connected")
+        if "api" in low:
+            return CreditStatus(ok=True, label="API key · connected")
+        return CreditStatus(ok=True, label="Connected · ready")
     return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
 
 
 def _probe_copilot() -> CreditStatus:
     if not shutil.which("copilot"):
         return CreditStatus(ok=False, label="Not on this computer")
-    # Lightweight: config with credentials; full -p is slow for every keystroke probe.
+    # Prefer explicit auth if the CLI exposes it (fast paths only).
+    for argv in (
+        ["copilot", "auth", "status"],
+        ["copilot", "status"],
+    ):
+        code, text = _run(argv, timeout=6)
+        low = (text or "").lower()
+        if not text or code == 127:
+            continue
+        if any(s in low for s in ("not logged", "not signed", "unauthenticated")):
+            return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
+        if _LOW.search(text):
+            return CreditStatus(ok=False, label="Out of uses for now")
+        snippet = _parse_balance_snippet(text)
+        if snippet:
+            return CreditStatus(ok=True, label=snippet)
+        if code == 0 and any(
+            s in low for s in ("logged in", "signed in", "authenticated", "ok")
+        ):
+            return CreditStatus(ok=True, label="Connected · ready")
+
+    # Lightweight fallback: config with credentials.
     home = Path.home() / ".copilot"
     if not home.is_dir():
         return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
-    # Presence of apps/config after login — not perfect, better than always-ready.
     markers = list(home.glob("**/*"))
     if len(markers) < 2:
         return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
-    return CreditStatus(ok=True, label="Ready · tap to open")
+    return CreditStatus(ok=True, label="Connected · ready")
 
 
 def _probe_generic_installed(name: str, binary: str) -> CreditStatus:
@@ -763,6 +872,76 @@ def _probe_any_binary(name: str, binaries: tuple[str, ...]) -> CreditStatus:
     return CreditStatus(ok=False, label="Not on this computer")
 
 
+def _have_chromium() -> bool:
+    return any(
+        shutil.which(n)
+        for n in (
+            "chromium", "chromium-browser",
+            "google-chrome", "google-chrome-stable",
+        )
+    )
+
+
+def _probe_web_app(wrapper: str, *, profile: str = "") -> CreditStatus:
+    """Devin / Replit / Perplexity — no download; Chromium --app wrappers.
+
+    They are always “installed” when the wrapper + browser exist. Cookie
+    sign-in is optional and happens inside the window.
+    """
+    if not shutil.which(wrapper):
+        # Wrapper missing from image — rare; not “needs download” for the user.
+        return CreditStatus(
+            ok=False,
+            label="Not on this computer · reinstall teddyOS",
+        )
+    if not _have_chromium():
+        return CreditStatus(
+            ok=False,
+            label="Needs a browser · install Chromium",
+        )
+    # Optional: nicer label if they already signed in once.
+    if profile:
+        cookies = (
+            Path.home() / ".config" / profile / "Default" / "Cookies"
+        )
+        if cookies.is_file() and cookies.stat().st_size > 0:
+            return CreditStatus(ok=True, label="Web app · signed in before")
+    return CreditStatus(ok=True, label="Web app · tap to open")
+
+
+def _probe_gemini() -> CreditStatus:
+    if not shutil.which("gemini"):
+        return CreditStatus(ok=False, label="Not on this computer")
+    for argv in (
+        ["gemini", "auth", "status"],
+        ["gemini", "whoami"],
+    ):
+        code, text = _run(argv, timeout=6)
+        low = (text or "").lower()
+        if not text:
+            continue
+        if any(s in low for s in ("not logged", "not signed", "unauthenticated")):
+            return CreditStatus(ok=False, label="Needs sign-in · tap to connect")
+        if _LOW.search(text):
+            return CreditStatus(ok=False, label="Out of uses for now")
+        snippet = _parse_balance_snippet(text)
+        if snippet:
+            return CreditStatus(ok=True, label=snippet)
+        if code == 0:
+            return CreditStatus(ok=True, label="Connected · ready")
+    # Credential crumbs Google tools often leave.
+    for p in (
+        Path.home() / ".gemini",
+        Path.home() / ".config" / "gemini",
+    ):
+        if p.is_dir() and any(p.iterdir()):
+            return CreditStatus(ok=True, label="Connected · ready")
+    return CreditStatus(
+        ok=None,
+        label="May need sign-in · use Connect if it fails",
+    )
+
+
 PROBES: dict[str, Callable[[], CreditStatus]] = {
     "claude": _probe_claude,
     "grok": _probe_grok,
@@ -771,18 +950,18 @@ PROBES: dict[str, Callable[[], CreditStatus]] = {
         "Antigravity", ("agy", "antigravity"),
     ),
     "cursor": _probe_cursor,
-    "perplexity": lambda: _probe_any_binary(
-        "Perplexity", ("teddyos-perplexity", "perplexity", "pplx"),
+    "perplexity": lambda: _probe_web_app(
+        "teddyos-perplexity", profile="teddyos-perplexity",
     ),
-    "devin": lambda: _probe_any_binary(
-        "Devin", ("teddyos-devin", "devin"),
+    "devin": lambda: _probe_web_app(
+        "teddyos-devin", profile="teddyos-devin",
     ),
-    "replit": lambda: _probe_any_binary(
-        "Replit", ("teddyos-replit", "replit", "Replit"),
+    "replit": lambda: _probe_web_app(
+        "teddyos-replit", profile="teddyos-replit",
     ),
     "windsurf": lambda: _probe_generic_installed("Windsurf", "windsurf"),
     "codex": _probe_codex,
-    "gemini": lambda: _probe_generic_installed("Gemini", "gemini"),
+    "gemini": _probe_gemini,
     "aider": lambda: _probe_generic_installed("Aider", "aider"),
     "amp": lambda: _probe_generic_installed("Amp", "amp"),
     "crush": lambda: _probe_generic_installed("Crush", "crush"),

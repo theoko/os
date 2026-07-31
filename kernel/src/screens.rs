@@ -1560,4 +1560,46 @@ mod status_tests {
         assert!(s.starts_with("12448"), "wrong digits: {s}");
         assert!(s.contains("documents cached"));
     }
+
+    #[test]
+    fn fmt_usize_boundary_values() {
+        for (v, want_prefix) in [
+            (1, "1"),
+            (9, "9"),
+            (10, "10"),
+            (99, "99"),
+            (100, "100"),
+            (999_999, "999999"),
+        ] {
+            let mut buf = [0u8; 24];
+            let n = fmt_usize(&mut buf, v);
+            let s = core::str::from_utf8(&buf[..n]).unwrap();
+            assert!(s.starts_with(want_prefix), "v={v} rendered as {s}");
+        }
+    }
+
+    #[test]
+    fn screens_toggle_flips_grant_bit() {
+        let init = Caps::none();
+        assert!(!init.allows(Cap::EmailSearch));
+        let toggled = toggle(init, 0);
+        assert!(toggled.allows(Cap::EmailSearch));
+        let toggled_back = toggle(toggled, 0);
+        assert!(!toggled_back.allows(Cap::EmailSearch));
+    }
+
+    #[test]
+    fn fmt_usize_pluralization() {
+        let mut buf1 = [0u8; 24];
+        let n1 = fmt_usize(&mut buf1, 1);
+        let s1 = core::str::from_utf8(&buf1[..n1]).unwrap();
+        assert_eq!(s1, "1 documents cached");
+
+        let mut buf2 = [0u8; 24];
+        let n2 = fmt_usize(&mut buf2, 5);
+        let s2 = core::str::from_utf8(&buf2[..n2]).unwrap();
+        assert_eq!(s2, "5 documents cached");
+    }
 }
+
+

@@ -209,4 +209,22 @@ mod tests {
         };
         assert!(d.expired());
     }
+
+    #[test]
+    fn deadline_wait_spins_and_checks_expiration() {
+        let tb = Timebase::fixed(24_000_000);
+        let mut d = Deadline {
+            tb,
+            end: 0,
+            spins: 0,
+        };
+        assert!(!d.wait(), "wait() must return false when expired");
+    }
+
+    #[test]
+    fn zero_ms_returns_zero_ticks() {
+        let tb = Timebase::fixed(24_000_000);
+        assert_eq!(tb.ms_to_ticks(0), 0);
+    }
 }
+

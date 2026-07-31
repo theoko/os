@@ -2286,3 +2286,94 @@ mod dedup_tests {
         assert_eq!(b.count, 2);
     }
 }
+
+#[cfg(test)]
+mod expanded_agent_tests {
+    use super::*;
+
+    #[test]
+    fn brief_plan_steps_and_bounds() {
+        let mut b = Brief::empty();
+        assert_eq!(b.plan_n, 0);
+        b.push_plan("Step 1: Parse query");
+        b.push_plan("Step 2: Check caps");
+        b.push_plan("Step 3: Execute search");
+        assert_eq!(b.plan_n, 3);
+        assert_eq!(b.plan_at(0), "Step 1: Parse query");
+        assert_eq!(b.plan_at(1), "Step 2: Check caps");
+        assert_eq!(b.plan_at(2), "Step 3: Execute search");
+
+        // Exceeding plans.len() should clamp without panic
+        for i in 4..=10 {
+            let mut buf = [0u8; 16];
+            let s = b"Step ";
+            buf[..5].copy_from_slice(s);
+            buf[5] = b'0' + i as u8;
+            let step_str = core::str::from_utf8(&buf[..6]).unwrap();
+            b.push_plan(step_str);
+        }
+        assert!(b.plan_n <= b.plans.len());
+        for i in 0..b.plan_n {
+            assert!(!b.plan_at(i).is_empty());
+        }
+    }
+
+    #[test]
+    fn brief_doc_and_event_urls() {
+        let mut b = Brief::empty();
+        b.arm_doc("file://workspace/readme.md", 0);
+        assert_eq!(b.doc_url_at(0), Some("file://workspace/readme.md"));
+        assert_eq!(b.doc_url_at(5), None);
+
+        b.arm_event("evt_998877", 0);
+        let mut buf = [0u8; 40];
+        assert_eq!(b.event_url_at(0, &mut buf), Some("cal://evt_998877"));
+        assert_eq!(b.event_url_at(10, &mut buf), None);
+    }
+
+    #[test]
+    fn mail_lane_classification_coverage() {
+        // Urgent lane
+        assert!(matches!(classify_mail("URGENT: system fail", "admin@co.com"), MailLane::Urgent));
+        assert!(matches!(classify_mail("Action Required immediately", "boss@co.com"), MailLane::Urgent));
+        assert!(matches!(classify_mail("SECURITY ALERT!", "sec@co.com"), MailLane::Urgent));
+
+        // Noise lane
+        assert!(matches!(classify_mail("Weekly digest newsletter", "news@list.com"), MailLane::Noise));
+        assert!(matches!(classify_mail("Unsubscribe options for offer", "promos@shop.com"), MailLane::Noise));
+        assert!(matches!(classify_mail("Notification of update", "noreply@app.com"), MailLane::Noise));
+
+        // Fyi / Normal lane
+        assert!(matches!(classify_mail("Team sync notes", "colleague@work.com"), MailLane::Fyi));
+        assert!(matches!(classify_mail("Project update", "pm@work.com"), MailLane::Fyi));
+    }
+
+    #[test]
+    fn playbook_tool_bits_multi_tool_body() {
+        let body = "First use email.search, then call search.query. Finally workspace.index and email.send.";
+        let bits = playbook_tool_bits(body);
+        assert!(bits & (1 << 0) != 0, "email.search bit");
+        assert!(bits & (1 << 1) != 0, "search.query bit");
+        assert!(bits & (1 << 2) != 0, "workspace.index bit");
+        assert!(bits & (1 << 10) != 0, "email.send bit");
+    }
+
+    #[test]
+    fn keywords_from_goal_strips_stop_words() {
+        let mut buf = [0u8; 48];
+        let kw = keywords_from_goal("I want to find workspace index docs", &mut buf);
+        assert_eq!(kw, "workspace index docs");
+    }
+
+    #[test]
+    fn goal_looks_like_mail_detection() {
+        assert!(goal_looks_like_mail("check my inbox"));
+        assert!(goal_looks_like_mail("read EMAIL from boss"));
+        assert!(goal_looks_like_mail("find Mail"));
+        assert!(!goal_looks_like_mail("show documentation for kernel"));
+    }
+}
+
+
+
+

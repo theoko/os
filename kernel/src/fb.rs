@@ -889,7 +889,64 @@ mod tests {
         }
         assert_eq!(c.buf.len(), 40 * 40);
     }
+
+    #[test]
+    fn screen_new_validates_mode_parameters() {
+        let mut dummy = vec![0u8; 1024 * 768 * 4];
+        let ptr = dummy.as_mut_ptr();
+        unsafe {
+            // Invalid BPP != 32
+            assert!(Screen::new(ptr, 1024, 768, 1024 * 4, 16, (16, 8, 0)).is_none());
+            // Zero dimensions
+            assert!(Screen::new(ptr, 0, 768, 1024 * 4, 32, (16, 8, 0)).is_none());
+            assert!(Screen::new(ptr, 1024, 0, 1024 * 4, 32, (16, 8, 0)).is_none());
+            // Pitch too small
+            assert!(Screen::new(ptr, 1024, 768, 100, 32, (16, 8, 0)).is_none());
+            // Wrong mask shifts
+            assert!(Screen::new(ptr, 1024, 768, 1024 * 4, 32, (0, 8, 16)).is_none());
+            // Valid mode
+            let scr = Screen::new(ptr, 1024, 768, 1024 * 4, 32, (16, 8, 0));
+            assert!(scr.is_some());
+            assert!(scr.unwrap().is_buffered());
+        }
+    }
+
+    #[test]
+    fn get_pixel_out_of_bounds_returns_zero() {
+        let mut c = Canvas::new(20, 20);
+        let s = c.surface();
+        assert_eq!(s.get_pixel(-1, 0), 0);
+        assert_eq!(s.get_pixel(0, -1), 0);
+        assert_eq!(s.get_pixel(20, 0), 0);
+        assert_eq!(s.get_pixel(0, 20), 0);
+    }
+
+    #[test]
+    fn blend_colors_boundary_checks() {
+        let bg = 0x00FF_0000;
+        let fg = 0x0000_FF00;
+        assert_eq!(blend(bg, fg, 0), bg);
+        assert_eq!(blend(bg, fg, 255), fg);
+    }
+
+    #[test]
+    fn canvas_dirty_rect_accumulation() {
+        let mut c = Canvas::new(100, 100);
+        let s = c.surface();
+        assert!(s.dirty_rect().is_none());
+        assert!(s.dirty_rect2().is_none());
+        s.mark_dirty(10, 20, 1, 1);
+        assert_eq!(s.dirty_rect(), Some((10, 20, 11, 21)));
+        s.mark_dirty(50, 60, 1, 1);
+        assert_eq!(s.dirty_rect(), Some((10, 20, 11, 21)));
+        assert_eq!(s.dirty_rect2(), Some((50, 60, 51, 61)));
+    }
 }
+
+
+
+
+
 
 /// Largest framebuffer we can double-buffer. Lives in `.bss`, so it costs
 /// nothing in the ISO — Limine zeroes it at load.

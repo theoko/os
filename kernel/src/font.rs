@@ -153,4 +153,34 @@ mod tests {
     fn width_grows_with_text() {
         assert!(BODY_FACE.width("Hello world", 0) > BODY_FACE.width("Hello", 0));
     }
+
+    #[test]
+    fn non_ascii_falls_back_to_question_mark() {
+        let q = BODY_FACE.glyph_for(b'?');
+        let out_low = BODY_FACE.glyph_for(0x05);
+        let out_high = BODY_FACE.glyph_for(0x88);
+        assert_eq!(out_low as *const _, q as *const _);
+        assert_eq!(out_high as *const _, q as *const _);
+    }
+
+    #[test]
+    fn width64_empty_string_is_zero() {
+        assert_eq!(BODY_FACE.width64("", 0), 0);
+        assert_eq!(BODY_FACE.width("", 0), 0);
+    }
+
+    #[test]
+    fn width_with_positive_tracking_increases() {
+        let plain = BODY_FACE.width("AB", 0);
+        let tracked = BODY_FACE.width("AB", 64);
+        assert!(tracked > plain);
+    }
+
+    #[test]
+    fn baseline_equals_ascent() {
+        for f in FACES {
+            assert_eq!(f.baseline(), f.ascent);
+        }
+    }
 }
+

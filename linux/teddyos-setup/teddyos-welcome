@@ -309,6 +309,12 @@ class TourWindow(Adw.ApplicationWindow):
         self._show_step(self._step - 1)
 
     def _finish(self, *, open_search: bool) -> None:
+        try:
+            sys.path.insert(0, "/usr/lib/teddyos")
+            import progress as prog  # type: ignore
+            prog.award_tour()
+        except Exception:  # noqa: BLE001
+            pass
         if open_search:
             launch(["teddyos-search-app"])
         self.close()

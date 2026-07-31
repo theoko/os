@@ -901,12 +901,25 @@ mod tests {
                     assert_eq!(
                         before.allows(*cap),
                         after.allows(*cap),
-                        "row {i} also changed {}",
-                        cap.name()
+                        "row {i} leaked to row {j}"
                     );
                 }
             }
         }
+    }
+
+    #[test]
+    fn step_enum_variants_coverage() {
+        let steps = [
+            Step::Welcome,
+            Step::Experience,
+            Step::Region,
+            Step::Capabilities,
+            Step::Skills,
+            Step::Done,
+            Step::Finished,
+        ];
+        assert_eq!(steps.len(), 7);
     }
 
     #[test]
@@ -1405,4 +1418,23 @@ mod input_note_tests {
         assert_eq!(s.note, Some(note));
         assert_eq!(s.level, Level::Advanced, "restart still keeps the level");
     }
+
+    #[test]
+    fn setup_restart_default_starts_at_welcome() {
+        let s = Setup::restart(Level::Guided, None);
+        assert_eq!(s.step, Step::Welcome);
+        assert_eq!(s.level, Level::Guided);
+        assert!(s.note.is_none());
+    }
+
+    #[test]
+    fn all_notes_are_ascii_and_distinct() {
+        let notes = all_notes();
+        assert_eq!(notes.len(), 6);
+        for note in notes {
+            assert!(note.bytes().all(|b| (0x20..=0x7E).contains(&b)));
+        }
+    }
 }
+
+

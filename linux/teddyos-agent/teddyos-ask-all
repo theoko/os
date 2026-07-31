@@ -39,6 +39,43 @@ except Exception:  # noqa: BLE001
     import logging
     log = logging.getLogger("teddyos.ask-all")
 
+try:
+    from audience import (  # type: ignore
+        Audience,
+        audience_chip_hint,
+        audience_chip_label,
+        audience_css_class,
+        audience_header_title,
+        detect_audience,
+        is_code_audience,
+        shape_prompt_for_tool,
+    )
+except Exception:  # noqa: BLE001
+    class Audience:  # type: ignore
+        PLAIN = "plain"
+        CODE = "code"
+
+    def detect_audience(text: str):  # type: ignore
+        return Audience.PLAIN
+
+    def shape_prompt_for_tool(tool_id: str, prompt: str) -> str:  # type: ignore
+        return (prompt or "").strip()
+
+    def audience_chip_label(audience) -> str:  # type: ignore
+        return "Keeping it simple"
+
+    def audience_chip_hint(audience) -> str:  # type: ignore
+        return "Plain language only."
+
+    def audience_header_title(audience) -> str:  # type: ignore
+        return "Here’s your help"
+
+    def audience_css_class(audience) -> str:  # type: ignore
+        return "teddyos-audience-plain"
+
+    def is_code_audience(audience) -> bool:  # type: ignore
+        return getattr(audience, "value", audience) == "code"
+
 APP_ID = "com.teddyos.AskAll"
 
 # How long we wait for one helper before giving up (seconds).
@@ -46,12 +83,19 @@ _TIMEOUT = 180
 # Soft cap so a runaway log dump cannot freeze the UI.
 _MAX_CHARS = 24_000
 
+
+def _model_prompt(tool_id: str, prompt: str) -> str:
+    """User-facing prompt → model-facing string (audience-shaped when useful)."""
+    return shape_prompt_for_tool(tool_id, (prompt or "").strip())
+
+
 # id → (title, build_argv(prompt) -> list[str])
 def _headless_argv(
     tool_id: str, prompt: str, project: str = "",
 ) -> list[str] | None:
     """One-shot CLI that prints an answer and exits. cwd is the project."""
-    text = (prompt or "").strip()
+    # UI still shows the original text; only the model-facing string is shaped.
+    text = _model_prompt(tool_id, prompt)
     if not text:
         return None
     if tool_id == "claude":
@@ -155,6 +199,9 @@ class ToolCard(Gtk.Box):
         self._busy = False
         # Progress counter only for the first finish — re-asks must not re-count.
         self._reported_done = False
+        # Last successful body (for “across all answers” review). Empty on error.
+        self.answer_text = ""
+        self.had_error = False
         self.add_css_class("card")
         self.set_margin_top(4)
         self.set_margin_bottom(8)
@@ -202,6 +249,8 @@ class ToolCard(Gtk.Box):
 
     def set_working(self) -> None:
         self._busy = True
+        self.answer_text = ""
+        self.had_error = False
         self.spinner.set_visible(True)
         self.spinner.start()
         self.status.set_text("Thinking…")
@@ -212,6 +261,7 @@ class ToolCard(Gtk.Box):
 
     def set_answer(self, text: str) -> None:
         self._busy = False
+        self.had_error = False
         self.spinner.stop()
         self.spinner.set_visible(False)
         self.status.set_text("Done")
@@ -219,12 +269,15 @@ class ToolCard(Gtk.Box):
         cleaned = (text or "").strip() or "No answer came back."
         if len(cleaned) > _MAX_CHARS:
             cleaned = cleaned[:_MAX_CHARS] + "\n\n… (cut short here)"
+        self.answer_text = cleaned
         self.body.set_text(cleaned)
         self._add_continue(failed=False)
         self._notify_done_once()
 
     def set_error(self, message: str) -> None:
         self._busy = False
+        self.had_error = True
+        self.answer_text = ""
         self.spinner.stop()
         self.spinner.set_visible(False)
         self.status.set_text("Couldn’t finish")
@@ -351,15 +404,94 @@ class AskAllWindow(Adw.ApplicationWindow):
         self.set_default_size(760, 720)
         self._project = project
         self._prompt = prompt
+        self._tool_ids = list(tool_ids)
         self._cards: dict[str, ToolCard] = {}
         self._total = 0
         self._finished = 0
+        self._synth_started = False
+        self._ultracode_anims: list = []
+        self._last_was_ultracode = False
+        self._last_audience_value = ""
+        try:
+            self._audience = detect_audience(prompt)
+            self._last_audience_value = getattr(
+                self._audience, "value", str(self._audience),
+            )
+        except Exception:  # noqa: BLE001
+            self._audience = Audience.PLAIN
+            self._last_audience_value = "plain"
+
+        # Soft chip + Ultracode burst styles (libadwaita-friendly).
+        css = Gtk.CssProvider()
+        css.load_from_data(b"""
+            .teddyos-audience-chip {
+                font-size: 12px;
+                font-weight: 600;
+                padding: 4px 10px;
+                border-radius: 999px;
+                transition: all 200ms ease;
+            }
+            .teddyos-audience-code {
+                background-color: alpha(@accent_bg_color, 0.22);
+                color: @accent_fg_color;
+                letter-spacing: 0.6px;
+            }
+            .teddyos-audience-academic { background-color: alpha(@blue_1, 0.35); }
+            .teddyos-audience-student { background-color: alpha(@green_1, 0.35); }
+            .teddyos-audience-writer { background-color: alpha(@purple_1, 0.35); }
+            .teddyos-audience-business { background-color: alpha(@orange_1, 0.35); }
+            .teddyos-audience-design { background-color: alpha(@pink_1, 0.30); }
+            .teddyos-audience-job { background-color: alpha(@teal_1, 0.35); }
+            .teddyos-audience-teacher { background-color: alpha(@green_2, 0.30); }
+            .teddyos-audience-data { background-color: alpha(@blue_2, 0.30); }
+            .teddyos-audience-founder { background-color: alpha(@yellow_1, 0.40); }
+            .teddyos-audience-legal { background-color: alpha(@dark_2, 0.18); }
+            .teddyos-audience-parent { background-color: alpha(@red_1, 0.22); }
+            .teddyos-audience-marketing { background-color: alpha(@orange_2, 0.30); }
+            .teddyos-audience-sales { background-color: alpha(@yellow_2, 0.35); }
+            .teddyos-audience-finance { background-color: alpha(@green_3, 0.28); }
+            .teddyos-audience-product { background-color: alpha(@blue_3, 0.28); }
+            .teddyos-audience-support { background-color: alpha(@teal_2, 0.30); }
+            .teddyos-audience-science { background-color: alpha(@blue_4, 0.25); }
+            .teddyos-audience-language { background-color: alpha(@purple_2, 0.28); }
+            .teddyos-audience-creative { background-color: alpha(@pink_2, 0.28); }
+            .teddyos-audience-health { background-color: alpha(@red_2, 0.20); }
+            .teddyos-audience-nonprofit { background-color: alpha(@green_4, 0.25); }
+            .teddyos-audience-policy { background-color: alpha(@dark_3, 0.15); }
+            .teddyos-audience-plain {
+                background-color: alpha(@window_fg_color, 0.08);
+            }
+            .teddyos-ultracode-burst {
+                font-size: 28px;
+                font-weight: 800;
+                letter-spacing: 2px;
+            }
+            .teddyos-ultracode-burst-sub {
+                font-size: 13px;
+                font-weight: 500;
+            }
+            .teddyos-ultracode-flash {
+                background-color: alpha(@accent_bg_color, 0.12);
+            }
+            .teddyos-mode-flash {
+                background-color: alpha(@accent_bg_color, 0.08);
+            }
+            .teddyos-level-chip {
+                font-size: 11px;
+                opacity: 0.85;
+            }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
 
         header = Adw.HeaderBar()
-        header.set_title_widget(Adw.WindowTitle(
+        self._header_title = Adw.WindowTitle(
             title="Here’s your help",
             subtitle=f"For “{project_name}”",
-        ))
+        )
+        header.set_title_widget(self._header_title)
+        self._project_name = project_name
 
         you_asked = Gtk.Label(label="You asked", xalign=0.0)
         you_asked.add_css_class("caption")
@@ -376,9 +508,32 @@ class AskAllWindow(Adw.ApplicationWindow):
         )
         self._prompt_label.add_css_class("title-4")
         self._prompt_label.set_margin_top(2)
-        self._prompt_label.set_margin_bottom(8)
+        self._prompt_label.set_margin_bottom(4)
         self._prompt_label.set_margin_start(4)
         self._prompt_label.set_margin_end(4)
+
+        # Visible “how we’ll help” chip — Ultracode when code-familiar.
+        chip_row = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        chip_row.set_margin_start(4)
+        chip_row.set_margin_end(4)
+        chip_row.set_margin_bottom(10)
+        self._chip = Gtk.Label(xalign=0.0)
+        self._chip.set_halign(Gtk.Align.START)
+        self._chip.add_css_class("teddyos-audience-chip")
+        self._level_chip = Gtk.Label(xalign=0.0)
+        self._level_chip.set_halign(Gtk.Align.START)
+        self._level_chip.add_css_class("caption")
+        self._level_chip.add_css_class("teddyos-level-chip")
+        self._level_chip.add_css_class("dim-label")
+        self._chip_hint = Gtk.Label(
+            wrap=True, xalign=0.0,
+        )
+        self._chip_hint.add_css_class("caption")
+        self._chip_hint.add_css_class("dim-label")
+        chip_row.append(self._chip)
+        chip_row.append(self._level_chip)
+        chip_row.append(self._chip_hint)
+        self._chip_row = chip_row
 
         self._progress = Gtk.Label(
             label="Getting answers… sit tight.",
@@ -391,6 +546,11 @@ class AskAllWindow(Adw.ApplicationWindow):
         self._progress.set_margin_end(4)
 
         cards_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+
+        # Combined review sits above the individual cards once everyone finishes.
+        self._synth_card = self._build_synth_card()
+        cards_box.append(self._synth_card)
+
         runnable: list[str] = []
         for tid in tool_ids:
             card = ToolCard(
@@ -407,10 +567,15 @@ class AskAllWindow(Adw.ApplicationWindow):
                 runnable.append(tid)
                 self._total += 1
             else:
+                # Don’t count toward the finished total — this tool never started.
+                card._on_done = None
                 card.set_error(
                     f"{card.title} can’t do a quick answer on this computer. "
                     f"Close this window and open {card.title} from Search instead."
                 )
+
+        # Synthesis needs at least two successful answers — hide until then.
+        self._synth_card.set_visible(self._total >= 2)
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         outer.set_margin_top(8)
@@ -419,6 +584,7 @@ class AskAllWindow(Adw.ApplicationWindow):
         outer.set_margin_end(18)
         outer.append(you_asked)
         outer.append(self._prompt_label)
+        outer.append(self._chip_row)
         outer.append(self._progress)
         outer.append(cards_box)
 
@@ -428,19 +594,80 @@ class AskAllWindow(Adw.ApplicationWindow):
         toolbar = Adw.ToolbarView()
         toolbar.add_top_bar(header)
         toolbar.set_content(scroller)
-        self.set_content(toolbar)
 
-        if self._total:
+        # Ultracode burst overlay — short “switch to Ultracode” moment.
+        overlay = Gtk.Overlay()
+        overlay.set_child(toolbar)
+        burst = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=6,
+            valign=Gtk.Align.CENTER,
+            halign=Gtk.Align.CENTER,
+        )
+        burst.set_can_target(False)
+        self._ultracode_title = Gtk.Label(label="ULTRACODE")
+        self._ultracode_title.add_css_class("teddyos-ultracode-burst")
+        self._ultracode_title.add_css_class("accent")
+        self._ultracode_sub = Gtk.Label(label="Switching to code mode…")
+        self._ultracode_sub.add_css_class("teddyos-ultracode-burst-sub")
+        self._ultracode_sub.add_css_class("dim-label")
+        burst.append(self._ultracode_title)
+        burst.append(self._ultracode_sub)
+        burst.set_opacity(0.0)
+        burst.set_visible(False)
+        self._ultracode_burst = burst
+        overlay.add_overlay(burst)
+        self._content_overlay = overlay
+        self.set_content(overlay)
+
+        # Apply chip + optional Ultracode intro after the window is up.
+        self._refresh_audience_chip(self._audience, animate=True)
+
+        if self._total >= 2:
             self._progress.set_text(
-                f"Getting answers from {self._total} "
-                f"{'place' if self._total == 1 else 'places'}… "
-                "they appear below as they finish."
+                f"Asking {self._total} AIs… "
+                "when they finish, we’ll read every answer and pull them together."
+            )
+        elif self._total == 1:
+            self._progress.set_text(
+                "Getting your answer… it appears below when ready."
             )
         else:
             self._progress.set_text(
                 "Nothing could start. Close this, go back to Search, "
                 "and tap Continue to finish sign-in."
             )
+
+        log.info(
+            "ask-all start project=%s tools=%s audience=%s prompt_len=%d",
+            project,
+            tool_ids,
+            getattr(self._audience, "value", self._audience),
+            len(prompt or ""),
+        )
+
+        # Fluency XP from audience detection (debounced if Search already awarded).
+        try:
+            import progress as prog  # type: ignore
+            if not getattr(self, "_progress_awarded", False):
+                self._progress_awarded = True
+                if hasattr(prog, "award_from_prompt"):
+                    snap = prog.award_from_prompt(
+                        prompt, multi_ai=len(runnable) >= 2,
+                    )
+                else:
+                    snap = prog.award_ask(
+                        ultracode=is_code_audience(self._audience),
+                        multi_ai=len(runnable) >= 2,
+                    )
+                line = prog.format_toast(snap.events)
+                if line:
+                    GLib.timeout_add(
+                        600,
+                        lambda l=line: (self._toast_progress(l), False)[1],
+                    )
+        except Exception:  # noqa: BLE001
+            pass
 
         for tid in runnable:
             threading.Thread(
@@ -449,25 +676,486 @@ class AskAllWindow(Adw.ApplicationWindow):
                 daemon=True,
             ).start()
 
+    def _refresh_audience_chip(self, audience, *, animate: bool = False) -> None:
+        """Update mode chip; switch animation when persona changes."""
+        prev_code = self._last_was_ultracode
+        prev_val = getattr(self, "_last_audience_value", "") or ""
+        self._audience = audience
+        is_code = is_code_audience(audience)
+        try:
+            new_val = getattr(audience, "value", str(audience))
+        except Exception:  # noqa: BLE001
+            new_val = "code" if is_code else "plain"
+        try:
+            label = audience_chip_label(audience)
+            hint = audience_chip_hint(audience)
+            header = audience_header_title(audience)
+        except Exception:  # noqa: BLE001
+            label = "Ultracode" if is_code else "Keeping it simple"
+            hint = (
+                "You sound like you know code — we’ll help make the change."
+                if is_code
+                else "Plain language only — no terminal steps or code jargon."
+            )
+            header = "Ultracode" if is_code else "Here’s your help"
+        self._chip.set_text(label)
+        # Level line: “Level 2 · LinkedIn”
+        try:
+            import progress as prog  # type: ignore
+            if hasattr(prog, "persona_level_line"):
+                self._level_chip.set_text(prog.persona_level_line(audience))
+                self._level_chip.set_visible(True)
+            else:
+                self._level_chip.set_visible(False)
+        except Exception:  # noqa: BLE001
+            try:
+                self._level_chip.set_visible(False)
+            except Exception:  # noqa: BLE001
+                pass
+        self._chip_hint.set_text(hint)
+        # Drop any prior persona class (teddyos-audience-*).
+        try:
+            for cls in list(getattr(self._chip, "get_css_classes", lambda: [])() or []):
+                if isinstance(cls, str) and cls.startswith("teddyos-audience-"):
+                    self._chip.remove_css_class(cls)
+        except Exception:  # noqa: BLE001
+            for cls in (
+                "teddyos-audience-code", "teddyos-audience-plain",
+                "teddyos-audience-academic", "teddyos-audience-student",
+                "teddyos-audience-writer", "teddyos-audience-business",
+            ):
+                self._chip.remove_css_class(cls)
+        try:
+            self._chip.add_css_class(audience_css_class(audience))
+        except Exception:  # noqa: BLE001
+            self._chip.add_css_class(
+                "teddyos-audience-code" if is_code else "teddyos-audience-plain"
+            )
+        try:
+            self._header_title.set_title(header)
+            if is_code:
+                self._header_title.set_subtitle(
+                    f"Coding help for “{self._project_name}”"
+                )
+            else:
+                self._header_title.set_subtitle(
+                    f"For “{self._project_name}”"
+                )
+        except Exception:  # noqa: BLE001
+            pass
+
+        switched = bool(prev_val and prev_val != new_val)
+        entering_ultra = is_code and (animate or not prev_code or switched)
+        if entering_ultra:
+            self._play_ultracode_switch()
+        elif switched and animate:
+            self._play_persona_switch(prev_val, new_val, label)
+        elif not is_code:
+            self._clear_ultracode_flash()
+        self._last_was_ultracode = is_code
+        self._last_audience_value = new_val
+
+    def _toast_progress(self, message: str) -> None:
+        """Best-effort toast for XP / badge celebrations."""
+        try:
+            # Prefer a transient toast if Adw.ToastOverlay is parented later;
+            # for now log + update chip subtitle-style progress.
+            log.info("progress: %s", message)
+            if getattr(self, "_chip_hint", None) is not None:
+                prev = self._chip_hint.get_text() or ""
+                self._chip_hint.set_text(f"{message}  ·  {prev}"[:160])
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _play_persona_switch(self, prev: str, new: str, label: str) -> None:
+        """Lighter burst when switching between non-code personas (or out of code)."""
+        log.info("persona switch %s -> %s", prev, new)
+        try:
+            self.add_css_class("teddyos-mode-flash")
+            GLib.timeout_add(
+                500,
+                lambda: (self.remove_css_class("teddyos-mode-flash"), False)[1],
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        burst = getattr(self, "_ultracode_burst", None)
+        if burst is None:
+            return
+        burst.set_visible(True)
+        burst.set_opacity(0.0)
+        title = (label or new or "MODE").upper()[:22]
+        self._ultracode_title.set_text(title)
+        self._ultracode_sub.set_text("Mode switched — help matches this ask")
+
+        def fade(widget: Gtk.Widget, start: float, end: float, ms: int) -> None:
+            try:
+                target = Adw.PropertyAnimationTarget.new(widget, "opacity")
+                anim = Adw.TimedAnimation.new(widget, start, end, ms, target)
+                anim.set_easing(Adw.Easing.EASE_OUT_CUBIC)
+                self._ultracode_anims.append(anim)
+                anim.play()
+            except Exception:  # noqa: BLE001
+                widget.set_opacity(end)
+
+        fade(self._chip, 0.35, 1.0, 200)
+        fade(burst, 0.0, 1.0, 240)
+
+        def fade_out() -> bool:
+            fade(burst, 1.0, 0.0, 320)
+            return False
+
+        def hide() -> bool:
+            try:
+                burst.set_visible(False)
+            except Exception:  # noqa: BLE001
+                pass
+            return False
+
+        GLib.timeout_add(700, fade_out)
+        GLib.timeout_add(1100, hide)
+
+    def _play_ultracode_switch(self) -> None:
+        """Short burst + pulse when we flip into Ultracode."""
+        log.info("ultracode switch on")
+        try:
+            self.add_css_class("teddyos-ultracode-flash")
+        except Exception:  # noqa: BLE001
+            pass
+        # Badge: first Ultracode unlock
+        try:
+            import progress as prog  # type: ignore
+            snap = prog.award(badge="ultracode")
+            line = prog.format_toast(snap.events)
+            if line:
+                GLib.timeout_add(
+                    400, lambda l=line: (self._toast_progress(l), False)[1],
+                )
+        except Exception:  # noqa: BLE001
+            pass
+        burst = getattr(self, "_ultracode_burst", None)
+        if burst is None:
+            return
+        burst.set_visible(True)
+        burst.set_opacity(0.0)
+        self._ultracode_title.set_text("ULTRACODE")
+        self._ultracode_sub.set_text("You know code — let’s make the change")
+
+        def fade(widget: Gtk.Widget, start: float, end: float, ms: int) -> None:
+            try:
+                target = Adw.PropertyAnimationTarget.new(widget, "opacity")
+                anim = Adw.TimedAnimation.new(widget, start, end, ms, target)
+                anim.set_easing(Adw.Easing.EASE_OUT_CUBIC)
+                self._ultracode_anims.append(anim)
+                anim.play()
+            except Exception:  # noqa: BLE001
+                widget.set_opacity(end)
+
+        # Chip pulse: dim → bright twice.
+        fade(self._chip, 0.35, 1.0, 220)
+
+        fade(burst, 0.0, 1.0, 280)
+
+        def mid_pulse() -> bool:
+            fade(self._chip, 0.45, 1.0, 200)
+            return False
+
+        def fade_out_burst() -> bool:
+            fade(burst, 1.0, 0.0, 360)
+            return False
+
+        def hide_burst() -> bool:
+            burst.set_visible(False)
+            burst.set_opacity(0.0)
+            self._clear_ultracode_flash()
+            return False
+
+        GLib.timeout_add(320, mid_pulse)
+        GLib.timeout_add(720, fade_out_burst)
+        GLib.timeout_add(1100, hide_burst)
+
+    def _clear_ultracode_flash(self) -> None:
+        try:
+            self.remove_css_class("teddyos-ultracode-flash")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _build_synth_card(self) -> Gtk.Box:
+        """Card that examines every AI’s answer and writes one combined take."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        box.add_css_class("card")
+        box.set_margin_top(4)
+        box.set_margin_bottom(12)
+        box.set_margin_start(2)
+        box.set_margin_end(2)
+
+        head = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        head.set_margin_top(12)
+        head.set_margin_start(14)
+        head.set_margin_end(14)
+        name = Gtk.Label(label="Across all answers", xalign=0.0, hexpand=True)
+        name.add_css_class("heading")
+        head.append(name)
+        self._synth_spinner = Gtk.Spinner()
+        head.append(self._synth_spinner)
+        self._synth_status = Gtk.Label(label="Waiting…", xalign=1.0)
+        self._synth_status.add_css_class("dim-label")
+        self._synth_status.add_css_class("caption")
+        head.append(self._synth_status)
+        box.append(head)
+
+        self._synth_body = Gtk.Label(
+            label="Once every AI finishes, we’ll compare what they said "
+            "and give you one clear takeaway.",
+            wrap=True,
+            xalign=0.0,
+            selectable=True,
+        )
+        self._synth_body.add_css_class("dim-label")
+        self._synth_body.set_margin_start(14)
+        self._synth_body.set_margin_end(14)
+        self._synth_body.set_margin_bottom(14)
+        self._synth_body.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        box.append(self._synth_body)
+        return box
+
     def _mark_done(self) -> None:
         self._finished += 1
         if self._finished >= self._total and self._total:
-            self._progress.set_text(
-                "All done. Read the answers below. "
-                "Tap a button under any answer to ask again or something else."
+            ok_n = sum(
+                1 for c in self._cards.values()
+                if (c.answer_text or "").strip() and not c.had_error
             )
+            if ok_n >= 2:
+                self._progress.set_text(
+                    "Everyone answered. Reading all the answers together…"
+                )
+                self._start_synthesis()
+            elif ok_n == 1:
+                self._progress.set_text(
+                    "All done. Read the answer below. "
+                    "Tap a button under it to ask again or something else."
+                )
+                if getattr(self, "_synth_card", None) is not None:
+                    self._synth_card.set_visible(False)
+            else:
+                self._progress.set_text(
+                    "None of the AIs could answer this time. "
+                    "Try sign-in from Search, or ask again in a moment."
+                )
+                if getattr(self, "_synth_card", None) is not None:
+                    self._synth_card.set_visible(False)
         elif self._total:
             self._progress.set_text(
-                f"{self._finished} of {self._total} finished…"
+                f"{self._finished} of {self._total} finished… "
+                "then we’ll look across every answer."
             )
+
+    def _collect_answers(self) -> dict[str, str]:
+        out: dict[str, str] = {}
+        for tid, card in self._cards.items():
+            text = (card.answer_text or "").strip()
+            if text and not card.had_error:
+                out[tid] = text
+        return out
+
+    def _pick_reviewer(self, answers: dict[str, str]) -> str | None:
+        """Prefer Claude for the combined take, else any helper that answered."""
+        prefer = (
+            "claude", "grok", "copilot", "gemini", "codex", "antigravity",
+        )
+        for tid in prefer:
+            if tid in answers and _headless_argv(tid, "ping", self._project):
+                return tid
+        for tid in answers:
+            if _headless_argv(tid, "ping", self._project):
+                return tid
+        return None
+
+    @staticmethod
+    def _review_prompt(user_q: str, answers: dict[str, str]) -> str:
+        """Build the meta-prompt that examines every AI’s output."""
+        chunks: list[str] = []
+        for tid, text in answers.items():
+            title = _TITLES.get(tid, tid.title())
+            body = text if len(text) <= 5000 else text[:5000] + "\n… (cut)"
+            chunks.append(f"### {title}\n{body}")
+        joined = "\n\n".join(chunks)
+        return (
+            "Several AI helpers each answered the same question about this "
+            "project. Read every answer carefully, then write ONE combined "
+            "take for the person.\n\n"
+            f"## Original question\n{user_q}\n\n"
+            f"## Answers to compare\n{joined}\n\n"
+            "## What you must do\n"
+            "- Open with the best short answer (match how technical the "
+            "question is).\n"
+            "- Say where the helpers agree.\n"
+            "- Flag any important disagreements or risky advice.\n"
+            "- Give exactly one concrete next step.\n"
+            "- Do not invent project facts that none of the answers mention; "
+            "if you add your own check, label it clearly.\n"
+            "- Keep the whole combined take concise (a few short paragraphs)."
+        )
+
+    def _start_synthesis(self) -> None:
+        if self._synth_started:
+            return
+        answers = self._collect_answers()
+        if len(answers) < 2:
+            return
+        reviewer = self._pick_reviewer(answers)
+        if not reviewer:
+            self._synth_card.set_visible(False)
+            self._progress.set_text(
+                "All done. Read the answers below."
+            )
+            return
+        self._synth_started = True
+        self._synth_card.set_visible(True)
+        self._synth_spinner.set_visible(True)
+        self._synth_spinner.start()
+        self._synth_status.set_text("Reading…")
+        self._synth_body.add_css_class("dim-label")
+        self._synth_body.set_text(
+            "Comparing what each AI said and writing one clear takeaway…"
+        )
+        log.info(
+            "synthesis start reviewer=%s n_answers=%d",
+            reviewer, len(answers),
+        )
+        threading.Thread(
+            target=self._run_synthesis,
+            args=(reviewer, dict(answers), self._prompt),
+            daemon=True,
+        ).start()
+
+    def _run_synthesis(
+        self,
+        reviewer: str,
+        answers: dict[str, str],
+        user_q: str,
+    ) -> None:
+        review = self._review_prompt(user_q, answers)
+        argv = _headless_argv(reviewer, review, self._project)
+        if not argv:
+            GLib.idle_add(self._synth_fail, "Couldn’t start the combined review.")
+            return
+        env = os.environ.copy()
+        path = env.get("PATH", "/usr/bin:/bin")
+        for extra in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
+            if extra not in path.split(":"):
+                path = extra + ":" + path
+        env["PATH"] = path
+        env["TERM"] = env.get("TERM") or "xterm-256color"
+        env["CI"] = "1"
+        env["NO_COLOR"] = "1"
+        env["COPILOT_ALLOW_ALL"] = "1"
+        try:
+            proc = subprocess.run(  # noqa: S603
+                argv,
+                cwd=self._project,
+                env=env,
+                capture_output=True,
+                text=True,
+                timeout=_TIMEOUT,
+            )
+            out = (proc.stdout or "").strip()
+            err = (proc.stderr or "").strip()
+            text = out or err
+            if proc.returncode != 0 and not out:
+                GLib.idle_add(
+                    self._synth_fail,
+                    "Couldn’t finish the combined review. "
+                    "Read the individual answers below.",
+                )
+                return
+            if not text:
+                GLib.idle_add(
+                    self._synth_fail,
+                    "The combined review came back empty. "
+                    "Read the individual answers below.",
+                )
+                return
+            if len(text) > _MAX_CHARS:
+                text = text[:_MAX_CHARS] + "\n\n… (cut short here)"
+            GLib.idle_add(self._synth_ok, text, reviewer)
+        except subprocess.TimeoutExpired:
+            GLib.idle_add(
+                self._synth_fail,
+                "The combined review is taking too long. "
+                "Read the individual answers below.",
+            )
+        except OSError:
+            GLib.idle_add(
+                self._synth_fail,
+                "Couldn’t start the combined review.",
+            )
+
+    def _synth_ok(self, text: str, reviewer: str) -> bool:
+        self._synth_spinner.stop()
+        self._synth_spinner.set_visible(False)
+        who = _TITLES.get(reviewer, reviewer)
+        self._synth_status.set_text(f"Done · via {who}")
+        self._synth_body.remove_css_class("dim-label")
+        self._synth_body.set_text(text)
+        self._progress.set_text(
+            "All done. Start with “Across all answers”, "
+            "then open any single AI below if you want more detail."
+        )
+        log.info("synthesis ok reviewer=%s chars=%d", reviewer, len(text))
+        try:
+            import progress as prog  # type: ignore
+            snap = prog.award_synthesis()
+            line = prog.format_toast(snap.events)
+            if line:
+                self._toast_progress(line)
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+    def _synth_fail(self, message: str) -> bool:
+        self._synth_spinner.stop()
+        self._synth_spinner.set_visible(False)
+        self._synth_status.set_text("Skipped")
+        self._synth_body.remove_css_class("dim-label")
+        self._synth_body.set_text(message)
+        self._progress.set_text(
+            "All done. Read the individual answers below."
+        )
+        log.warning("synthesis fail: %s", message)
+        return False
 
     def _rerun_one(self, tool_id: str, prompt: str) -> None:
         """In-window re-ask (same or new prompt) — does not spawn a second app."""
         prompt = (prompt or "").strip()
         self._prompt = prompt
-        # Keep “You asked” in sync so a new question isn’t still titled with the old one.
+        # Keep “You asked” + mode chip in sync with the new question.
         if prompt and getattr(self, "_prompt_label", None) is not None:
             self._prompt_label.set_text(prompt)
+        try:
+            aud = detect_audience(prompt)
+        except Exception:  # noqa: BLE001
+            aud = Audience.PLAIN
+        # Re-detect on every re-ask; animate on any persona switch.
+        self._refresh_audience_chip(aud, animate=True)
+        # Award persona XP / level-ups for the new ask (debounced with Search).
+        try:
+            import progress as prog  # type: ignore
+            if hasattr(prog, "award_from_prompt") and prompt:
+                snap = prog.award_from_prompt(prompt, multi_ai=False)
+                line = prog.format_toast(getattr(snap, "events", []) or [])
+                if line:
+                    GLib.timeout_add(
+                        350,
+                        lambda l=line: (self._toast_progress(l), False)[1],
+                    )
+                # Refresh level chip after award
+                if hasattr(prog, "persona_level_line") and getattr(
+                    self, "_level_chip", None,
+                ) is not None:
+                    self._level_chip.set_text(prog.persona_level_line(aud))
+        except Exception:  # noqa: BLE001
+            pass
         name = _TITLES.get(tool_id, tool_id)
         self._progress.set_text(
             f"Asking {name}…"
@@ -490,7 +1178,15 @@ class AskAllWindow(Adw.ApplicationWindow):
                 f"{title} isn’t available for a quick answer.",
             )
             return
-        log.info("headless start tool=%s argv0=%s", tool_id, argv[0])
+        try:
+            aud = detect_audience(prompt)
+            aud_s = getattr(aud, "value", aud)
+        except Exception:  # noqa: BLE001
+            aud_s = "?"
+        log.info(
+            "headless start tool=%s audience=%s argv0=%s",
+            tool_id, aud_s, argv[0],
+        )
         env = os.environ.copy()
         path = env.get("PATH", "/usr/bin:/bin")
         for extra in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):

@@ -120,9 +120,30 @@ _INTENT_PREFIX = re.compile(
         work\s+on|working\s+on|
         open|find|search\s+for|look\s+(?:up|for)|
         show(?:\s+me)?|go\s+to|take\s+me\s+to|
-        start|continue|resume|help\s+(?:me\s+)?(?:with|on)
+        start|continue|resume|
+        help\s+(?:me\s+)?(?:with|on|to)?|
+        # Everyday action goals (not project folders)
+        respond\s+to|reply\s+to|answer|
+        check(?:\s+my|\s+on)?|catch\s+up\s+on|go\s+through|
+        handle|deal\s+with|clear|
+        draft|write\s+(?:a\s+)?(?:reply|response|message)
     )
     \s+
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# Task-shaped asks that should open Get help even when the intent regex
+# barely matches, or when the "subject" is clearly not a folder name.
+_TASK_GOAL_RE = re.compile(
+    r"""
+    \b(
+        respond\s+to|reply\s+to|answer\s+my|
+        linkedin\s+messages?|linkedin\s+inbox|linkedin\s+dms?|
+        (?:my\s+)?(?:messages?|emails?|inbox)|
+        inmail|connection\s+requests?|
+        draft\s+(?:a\s+)?reply|write\s+(?:a\s+)?reply
+    )\b
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -200,12 +221,44 @@ def is_work_goal(text: str) -> bool:
 
     The Search window uses this to offer AI tools instead of (only) document
     hits — "i wanna work on iakovos-trading" should open a picker, not a
-    Wikipedia list.
+    Wikipedia list. Same for everyday tasks like "respond to my LinkedIn
+    messages" — Get help, not a random corpus hit.
     """
     stripped = (text or "").strip()
     if not stripped:
         return False
-    return bool(_INTENT_PREFIX.match(stripped))
+    if _INTENT_PREFIX.match(stripped):
+        return True
+    return bool(_TASK_GOAL_RE.search(stripped))
+
+
+def is_freeform_help_goal(text: str) -> bool:
+    """True when the goal is a task (messages, email), not a project folder.
+
+    Freeform goals still use Get help, but against the home folder with the
+    full natural-language ask as the prompt — never a GitHub clone dead-end.
+    """
+    stripped = (text or "").strip()
+    if not stripped or not is_work_goal(stripped):
+        return False
+    if _TASK_GOAL_RE.search(stripped):
+        return True
+    subject = focus_query(stripped)
+    low = (subject or "").lower()
+    if not low:
+        return False
+    # Multi-word subjects that look like tasks, not slugs like "my-app"
+    words = low.split()
+    if len(words) >= 2 and any(
+        w in low
+        for w in (
+            "message", "messages", "email", "emails", "inbox", "linkedin",
+            "reply", "replies", "respond", "dm", "dms", "inmail", "slack",
+            "whatsapp", "calendar", "meeting", "meetings", "mail",
+        )
+    ):
+        return True
+    return False
 
 
 def resolve_project_dirs(name: str, roots: list[Path] | None = None) -> list[Path]:

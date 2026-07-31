@@ -252,7 +252,28 @@ mod tests {
         assert!(d.contains("project") || d.contains("folder"), "{d}");
         assert!(d.bytes().all(|b| (0x20..=0x7E).contains(&b)));
     }
+
+    #[test]
+    fn caps_set_method_toggles_grant_bits() {
+        let mut c = Caps::none();
+        assert!(!c.allows(Cap::EmailSend));
+        c.set(Cap::EmailSend, true);
+        assert!(c.allows(Cap::EmailSend));
+        c.set(Cap::EmailSend, false);
+        assert!(!c.allows(Cap::EmailSend));
+    }
+
+    #[test]
+    fn cap_label_and_blurb_are_ascii() {
+        for cap in Cap::ALL {
+            assert!(cap.label().bytes().all(|b| (0x20..=0x7E).contains(&b)));
+            for level in crate::level::Level::ALL {
+                assert!(cap.blurb(level).bytes().all(|b| (0x20..=0x7E).contains(&b)));
+            }
+        }
+    }
 }
+
 
 #[cfg(test)]
 mod order_tests {

@@ -726,4 +726,30 @@ mod tests {
         assert_eq!(HidKind::BootMouse.protocol(), 0);
         assert!(HidKind::BootMouse.is_pointer() && !HidKind::BootKeyboard.is_pointer());
     }
+
+    #[test]
+    fn classify_unknown_class_subclass_returns_none() {
+        assert_eq!(classify(0x00, 0x00, 0x00), None);
+        assert_eq!(classify(0xFF, 0x01, 0x01), None);
+        assert_eq!(classify(0x03, 0xFF, 0x01), None);
+    }
+
+    #[test]
+    fn decode_rel_short_slice_returns_none() {
+        assert!(decode_rel(&[], Pointer::default(), 640, 480).is_none());
+        assert!(decode_rel(&[0, 0], Pointer::default(), 640, 480).is_none());
+    }
+
+    #[test]
+    fn decode_vbox_tablet_short_report_returns_none() {
+        assert!(decode_tablet(
+            &[0u8; 7],
+            TabletFormat::VirtualBox,
+            AbsLayout::QEMU_TABLET,
+            1280,
+            800
+        )
+        .is_none());
+    }
 }
+

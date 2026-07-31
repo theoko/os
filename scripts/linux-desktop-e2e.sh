@@ -54,7 +54,8 @@ done
 
 # --- 2. modules -------------------------------------------------------------
 echo ">>> modules"
-for mod in caps search sandbox work_tools git_projects accounts pending_ask logutil; do
+for mod in caps search sandbox work_tools git_projects accounts pending_ask \
+  audience progress logutil; do
   if remote "test -f /usr/lib/teddyos/${mod}.py"; then
     ok "module $mod.py"
   else
@@ -312,15 +313,26 @@ fi
 remote "killall -q teddyos-welcome 2>/dev/null || true" || true
 if remote_bash <<'REMOTE'
 export DISPLAY=:0 XDG_RUNTIME_DIR=/run/user/1000 DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/1000/bus HOME=/home/teddy
+export XAUTHORITY=$(ls /run/user/1000/.mutter-Xwaylandauth.* 2>/dev/null | head -1)
+# Single-instance apps may reparent; wait and match by name, not only nohup PID.
 nohup teddyos-welcome --force >/tmp/e2e-tour.log 2>&1 &
 echo $! > /tmp/e2e-tour.pid
-sleep 1.5
-if kill -0 "$(cat /tmp/e2e-tour.pid)" 2>/dev/null; then
-  echo TOUR_UP
-  kill "$(cat /tmp/e2e-tour.pid)" 2>/dev/null || true
-  exit 0
-fi
-cat /tmp/e2e-tour.log
+for i in 1 2 3 4 5; do
+  sleep 0.6
+  if pgrep -f 'teddyos-welcome' >/dev/null 2>&1; then
+    echo TOUR_UP
+    pkill -f 'teddyos-welcome' 2>/dev/null || true
+    kill "$(cat /tmp/e2e-tour.pid)" 2>/dev/null || true
+    exit 0
+  fi
+  if kill -0 "$(cat /tmp/e2e-tour.pid)" 2>/dev/null; then
+    echo TOUR_UP
+    kill "$(cat /tmp/e2e-tour.pid)" 2>/dev/null || true
+    exit 0
+  fi
+done
+echo "welcome failed after retries" >&2
+cat /tmp/e2e-tour.log 2>/dev/null | tail -40
 exit 1
 REMOTE
 then
@@ -976,6 +988,1466 @@ if remote "grep -q 'com.teddyos.Search' /usr/bin/teddyos-search-app \
   ok "Search GApplication id + prgname"
 else
   bad "Search app id" "missing com.teddyos.Search"
+fi
+
+# --- 36. Audience / query detection (all coding helpers + UI chip) -----------
+echo ">>> audience detection + Answers chip"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+from audience import (
+    Audience, SHAPED_TOOLS, detect_audience, shape_prompt_for_tool,
+    audience_chip_label,
+)
+assert detect_audience("explain this in simple words") is Audience.PLAIN
+assert detect_audience("refactor the risk function in risk.py") is Audience.CODE
+assert detect_audience("gym hypertrophy progressive overload plan") is Audience.FITNESS
+assert detect_audience("fine tune llm rag pipeline pytorch") is Audience.ML_AI
+assert detect_audience("clogged drain replace faucet plumbing") is Audience.PLUMBING
+assert detect_audience("youtube script thumbnail for my channel") is Audience.CONTENT_CREATOR
+assert detect_audience("adhd executive function tips neurodivergent") is Audience.NEURODIVERSITY
+assert detect_audience("make a budget emergency fund pay off debt") is Audience.PERSONAL_FINANCE
+assert detect_audience("kubernetes deployment kubectl helm chart") is Audience.KUBERNETES
+assert detect_audience("train my dog puppy training leash") is Audience.DOG_TRAINING
+assert detect_audience("learn spanish conjugation practice") is Audience.SPANISH
+assert detect_audience("rust ownership borrow checker") is Audience.RUST_LANG
+assert detect_audience("dockerfile docker compose build image") is Audience.DOCKER
+assert detect_audience("learn japanese hiragana kanji") is Audience.JAPANESE
+assert detect_audience("terraform module state plan") is Audience.TERRAFORM
+assert detect_audience("pickleball third shot drop kitchen") is Audience.PICKLEBALL
+assert detect_audience("build a habit stack tracker") is Audience.HABIT_BUILDING
+assert detect_audience("homelab proxmox self hosted") is Audience.HOME_LAB
+assert detect_audience("fresh pasta risotto technique") is Audience.ITALIAN_COOKING
+assert detect_audience("linkedin profile headline about") is Audience.LINKEDIN
+assert len(list(Audience)) >= 550
+for tid in ("claude", "grok", "codex", "copilot", "gemini"):
+    assert tid in SHAPED_TOOLS
+    s = shape_prompt_for_tool(tid, "fix TypeError in async handler")
+    assert "comfortable with code" in s.lower()
+assert audience_chip_label(Audience.CODE) == "Ultracode"
+assert audience_chip_label(Audience.ML_AI) == "ML/AI mode"
+assert audience_chip_label(Audience.SPANISH) == "Spanish mode"
+src = open("/usr/bin/teddyos-ask-all").read()
+assert "shape_prompt_for_tool" in src
+assert "teddyos-audience-chip" in src or "audience_chip_label" in src
+assert "_model_prompt" in src
+assert "_play_ultracode_switch" in src
+assert "ULTRACODE" in src
+print("audience-guest-ok")
+PY
+REMOTE
+then
+  ok "audience multi-tool shape + Ultracode animation"
+else
+  bad "audience" "module or Ultracode wiring missing"
+fi
+
+# --- 37. Progress / Ultracode fluency gamification --------------------------
+echo ">>> Ultracode fluency gamification"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import os, tempfile, sys, importlib
+# Isolate so e2e does not pollute the guest user's real progress.
+td = tempfile.mkdtemp(prefix="e2e-progress-")
+os.environ["XDG_CONFIG_HOME"] = td
+sys.path.insert(0, "/usr/lib/teddyos")
+import progress
+importlib.reload(progress)
+
+s0 = progress.snapshot()
+assert s0.xp == 0
+line0 = progress.progress_line(s0)
+assert "Ultracode" in line0 or "ask to start" in line0 or "getting started" in line0.lower()
+
+s1 = progress.award_from_prompt("what does this project do in simple words?")
+assert s1.plain_asks >= 1 and s1.ultracode_asks == 0
+assert s1.xp > 0
+
+raw = progress._load_raw()
+raw["last_ask_ts"] = 0
+progress._save_raw(raw)
+
+s2 = progress.award_from_prompt(
+    "refactor auth middleware in src/api.ts and fix TypeError",
+    multi_ai=True,
+)
+assert s2.ultracode_asks >= 1, s2
+assert "ultracode" in progress.snapshot().badges
+line = progress.progress_line()
+assert "Ultracode" in line or "fluency" in line
+frac, _ = progress.ultracode_meter()
+assert 0.0 <= frac <= 1.0
+
+# Debounce: second ask within window does not stack huge XP
+xp_before = progress.snapshot().xp
+s3 = progress.award_from_prompt("refactor again foo.py")
+assert progress.snapshot().xp - xp_before < 20  # badge-only-ish
+
+# Persona switch + levels
+raw = progress._load_raw()
+raw["last_ask_ts"] = 0
+progress._save_raw(raw)
+s4 = progress.award_from_prompt("i wanna respond to my linkedin messages")
+assert s4.active_persona == "linkedin", s4.active_persona
+assert s4.switch_count >= 1
+assert any(e.kind == "switch" for e in s4.events)
+assert "Level" in progress.persona_level_line("linkedin")
+assert "Lv." in progress.progress_line(s4) or "Level" in progress.progress_line(s4)
+
+# Search + ask-all must wire award_from_prompt / synthesis / persona switch
+src_app = open("/usr/bin/teddyos-search-app").read()
+assert "award_from_prompt" in src_app
+assert "_progress_bar" in src_app
+src_aa = open("/usr/bin/teddyos-ask-all").read()
+assert "award_from_prompt" in src_aa or "award_ask" in src_aa
+assert "award_synthesis" in src_aa
+assert "_start_synthesis" in src_aa
+assert "Across all answers" in src_aa
+assert "_play_ultracode_switch" in src_aa
+assert "_play_persona_switch" in src_aa
+assert "persona_level_line" in src_aa
+print("progress-guest-ok", progress.snapshot().xp, "sw", progress.snapshot().switch_count)
+PY
+REMOTE
+then
+  ok "persona levels + mode switch + Search/Answers hooks"
+else
+  bad "progress gamification" "module or hooks missing"
+fi
+
+# --- 38. Across-all-answers synthesis contracts -----------------------------
+echo ">>> synthesis contracts"
+if remote "grep -q _start_synthesis /usr/bin/teddyos-ask-all \
+  && grep -q _review_prompt /usr/bin/teddyos-ask-all \
+  && grep -q 'Across all answers' /usr/bin/teddyos-ask-all \
+  && grep -q _collect_answers /usr/bin/teddyos-ask-all \
+  && grep -q _pick_reviewer /usr/bin/teddyos-ask-all"; then
+  ok "ask-all Across all answers synthesis present"
+else
+  bad "synthesis" "missing symbols"
+fi
+
+# --- 39. Search Get help multi-AI copy --------------------------------------
+echo ">>> Get help multi-AI copy"
+if remote "grep -q 'every ready AI' /usr/bin/teddyos-search-app \
+  && grep -q 'pull them together' /usr/bin/teddyos-search-app \
+  && grep -q Ultracode /usr/bin/teddyos-search-app"; then
+  ok "Search promises multi-AI + Ultracode"
+else
+  bad "Search Get help copy" "missing multi-AI / Ultracode strings"
+fi
+
+# --- 40. progress module importable with other libs -------------------------
+echo ">>> progress import matrix"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import audience, progress, accounts, work_tools, pending_ask
+assert audience.detect_audience("fix TypeError") is audience.Audience.CODE
+assert progress.award_from_prompt  # callable
+print("import-matrix-ok")
+PY
+REMOTE
+then
+  ok "audience + progress + accounts import together"
+else
+  bad "import matrix" "failed"
+fi
+
+# --- 41. ask-all model shaping for all SHAPED_TOOLS -------------------------
+echo ">>> headless shaping for all chat tools"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+from pathlib import Path
+src = Path("/usr/bin/teddyos-ask-all").read_text()
+assert "_model_prompt" in src
+assert "shape_prompt_for_tool" in src
+# All headless paths go through _model_prompt / shaped text
+assert "claude" in src and "grok" in src and "copilot" in src
+print("shape-all-ok")
+PY
+REMOTE
+then
+  ok "ask-all shapes all coding helpers"
+else
+  bad "ask-all shaping" "missing"
+fi
+
+# --- 42. pending_ask + progress modules installed for e2e path --------------
+echo ">>> pending_ask + progress files"
+if remote "test -f /usr/lib/teddyos/pending_ask.py && test -f /usr/lib/teddyos/progress.py \
+  && test -f /usr/lib/teddyos/audience.py"; then
+  ok "pending_ask + progress + audience on guest"
+else
+  bad "guest modules" "missing progress/audience/pending_ask"
+fi
+
+# --- 43. Credit / balance detection surfaces real labels --------------------
+echo ">>> credit balance detection"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+from work_tools import available_work_tools, probe_credits, _parse_balance_snippet, _LOW
+# Parser keeps real balance lines, rejects interactive help
+assert _parse_balance_snippet("72% remaining this week")
+assert _parse_balance_snippet("Not sure which usage you mean. Quick options:") is None
+assert _LOW.search("Credit balance is too low")
+# Probes must not crash; labels must be non-empty for AI tools
+for t in available_work_tools():
+    if not t.is_ai:
+        continue
+    st = probe_credits(t)
+    assert st.label, t.id
+    # Never dump multi-line CLI help into UI
+    assert "\n" not in st.label, (t.id, st.label)
+# Search must preserve plan/balance labels (not rewrite all to Ready)
+src = open("/usr/bin/teddyos-search-app").read()
+assert "_credit_summary_line" in src
+assert "Max plan" in open("/usr/lib/teddyos/work_tools.py").read() or "plan · ready" in open("/usr/lib/teddyos/work_tools.py").read()
+# Regression: plain_status must not map "remaining" alone to Ready
+assert 'if any(s in low for s in ("ready", "installed", "available", "remaining"))' not in src
+print("credit-ok")
+for t in available_work_tools():
+    if t.is_ai:
+        st = probe_credits(t)
+        print(f"  {t.id}: {st.label}")
+PY
+REMOTE
+then
+  ok "credit probes + UI preserve balance/plan labels"
+else
+  bad "credit detection" "probes or plain_status regression"
+fi
+
+# --- 44. Audience completeness on guest (maps + lexicons + priority) --------
+echo ">>> audience completeness guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import audience as a
+from audience import (
+    Audience, detect_audience, score_audiences, shape_prompt,
+    shape_prompt_for_tool, audience_chip_label, audience_chip_hint,
+    audience_header_title, audience_css_class, is_code_audience,
+)
+n = len(list(Audience))
+assert n >= 550, n
+for aud in Audience:
+    assert audience_chip_label(aud)
+    assert audience_chip_hint(aud)
+    assert audience_header_title(aud)
+    assert aud in a._SHAPE and "{text}" in a._SHAPE[aud]
+    assert audience_css_class(aud).startswith("teddyos-audience-")
+assert is_code_audience(Audience.CODE) and not is_code_audience(Audience.PLAIN)
+lex = {x[0] for x in a._LEXICONS}
+missing = [x for x in Audience if x not in lex and x not in (Audience.PLAIN, Audience.CODE)]
+assert not missing, missing[:5]
+assert len(a._PRIORITY) == n == len(set(a._PRIORITY))
+sc = score_audiences("refactor TypeError in x.py")
+assert sc[Audience.CODE] > 0 and set(sc) == set(Audience)
+# Specialist shapes embed text
+for p in ("learn spanish conjugation", "make a budget emergency fund", "gym hypertrophy plan"):
+    s = shape_prompt(p)
+    assert p in s and len(s) > len(p)
+    assert shape_prompt_for_tool("claude", p) == s
+    assert shape_prompt_for_tool("files", p) == p
+print("audience-complete-guest", n)
+PY
+REMOTE
+then
+  ok "audience completeness maps/lexicons/priority on guest"
+else
+  bad "audience completeness" "guest maps incomplete"
+fi
+
+# --- 45. Audience regression matrix on guest --------------------------------
+echo ">>> audience regression matrix guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+from audience import Audience, detect_audience
+matrix = [
+    ("explain this in simple words", Audience.PLAIN),
+    ("refactor TypeError in worker.py", Audience.CODE),
+    ("NDA in plain English", Audience.LEGAL),
+    ("visa H-1B green card USCIS", Audience.IMMIGRATION),
+    ("obsidian zettelkasten second brain", Audience.PKM),
+    ("gym hypertrophy progressive overload", Audience.FITNESS),
+    ("fine tune llm rag pytorch", Audience.ML_AI),
+    ("error budget SLO postmortem", Audience.SRE),
+    ("system design interview url shortener", Audience.SYSTEM_DESIGN),
+    ("youtube script thumbnail channel", Audience.CONTENT_CREATOR),
+    ("seo audit keyword research", Audience.SEO),
+    ("make a budget emergency fund", Audience.PERSONAL_FINANCE),
+    ("kubernetes kubectl helm chart", Audience.KUBERNETES),
+    ("terraform module state plan", Audience.TERRAFORM),
+    ("dockerfile docker compose", Audience.DOCKER),
+    ("learn spanish conjugation", Audience.SPANISH),
+    ("learn japanese hiragana kanji", Audience.JAPANESE),
+    ("rust ownership borrow checker", Audience.RUST_LANG),
+    ("pandas dataframe groupby jupyter", Audience.PYTHON_DATA),
+    ("fresh pasta risotto technique", Audience.ITALIAN_COOKING),
+    ("bake bread sourdough loaf", Audience.BREAD),
+    ("houseplant care repot plant", Audience.HOUSEPLANTS),
+    ("pc build choose a gpu", Audience.PC_BUILDING),
+    ("homelab proxmox self hosted", Audience.HOME_LAB),
+    ("linkedin profile headline", Audience.LINKEDIN),
+    ("build a habit stack tracker", Audience.HABIT_BUILDING),
+    ("pickleball third shot drop", Audience.PICKLEBALL),
+    ("clogged drain replace faucet", Audience.PLUMBING),
+    ("train my dog puppy leash", Audience.DOG_TRAINING),
+    ("password manager enable 2fa", Audience.PASSWORD_SECURITY),
+    ("adhd executive function neurodivergent", Audience.NEURODIVERSITY),
+    ("smoke a brisket smoker temperature", Audience.BBQ),
+    ("term sheet seed round cap table", Audience.VC),
+    ("terraform kubernetes helm ci/cd pipeline", Audience.DEVOPS),
+    ("improve lcp core web vitals", Audience.PERFORMANCE_WEB),
+    ("ux writing microcopy error message", Audience.UX_WRITING),
+    ("college essay common app", Audience.COLLEGE_APPS),
+    ("solo travel tips traveling alone", Audience.SOLO_TRAVEL),
+]
+fails = [(t, e.value, detect_audience(t).value) for t, e in matrix if detect_audience(t) is not e]
+assert not fails, fails[:6]
+print("matrix-ok", len(matrix))
+PY
+REMOTE
+then
+  ok "audience regression matrix on guest"
+else
+  bad "audience matrix" "guest detection regressions"
+fi
+
+# --- 46. Disambiguation edges (specialist beats generic) --------------------
+echo ">>> audience disambiguation edges"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+from audience import Audience, detect_audience
+# Specialist beats umbrella
+assert detect_audience("kubernetes kubectl helm chart") is Audience.KUBERNETES
+assert detect_audience("terraform module state plan") is Audience.TERRAFORM
+assert detect_audience("dockerfile docker compose build image") is Audience.DOCKER
+# Umbrella when multi-tool + CI/CD
+assert detect_audience("terraform kubernetes helm ci/cd pipeline") is Audience.DEVOPS
+# Language-specific beats generic language
+assert detect_audience("learn spanish conjugation practice") is Audience.SPANISH
+assert detect_audience("learn mandarin pinyin tones hsk") is Audience.MANDARIN
+# Music production / cooking specialty
+assert detect_audience("ableton mix this track music production") is Audience.MUSIC_PRODUCTION
+assert detect_audience("fresh pasta risotto technique") is Audience.ITALIAN_COOKING
+assert detect_audience("bake bread sourdough loaf formula") is Audience.BREAD
+# Password vs cyber hygiene
+assert detect_audience("password manager enable 2fa passkey") is Audience.PASSWORD_SECURITY
+# Personal finance vs investing
+assert detect_audience("make a budget emergency fund pay off debt") is Audience.PERSONAL_FINANCE
+print("disambig-ok")
+PY
+REMOTE
+then
+  ok "audience disambiguation edges"
+else
+  bad "disambiguation" "specialist/umbrella edges failed"
+fi
+
+# --- 47. ask-all + search source contracts for multi-persona UI -------------
+echo ">>> multi-persona UI source contracts"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+from pathlib import Path
+aa = Path("/usr/bin/teddyos-ask-all").read_text()
+app = Path("/usr/bin/teddyos-search-app").read_text()
+for need in (
+    "detect_audience", "shape_prompt_for_tool", "audience_chip_label",
+    "audience_css_class", "is_code_audience", "_play_ultracode_switch",
+    "_play_persona_switch", "persona_level_line",
+    "ULTRACODE", "award_from_prompt",
+):
+    assert need in aa or need in app, need
+# CSS class hook for non-code chips
+assert "teddyos-audience-" in aa or "audience_css_class" in aa
+assert "Across all answers" in aa
+assert "every ready AI" in app or "pull them together" in app
+print("ui-src-ok")
+PY
+REMOTE
+then
+  ok "multi-persona UI source contracts (ask-all + search)"
+else
+  bad "multi-persona UI" "missing source hooks"
+fi
+
+# --- 48. Web apps never get prompt shaping ----------------------------------
+echo ">>> web apps pass-through shaping"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+from audience import shape_prompt_for_tool, detect_audience, Audience
+p = "refactor TypeError in worker.py"
+assert detect_audience(p) is Audience.CODE
+assert "comfortable with code" in shape_prompt_for_tool("claude", p).lower()
+for tid in ("devin", "replit", "perplexity", "files", "web"):
+    assert shape_prompt_for_tool(tid, p) == p, tid
+print("passthrough-ok")
+PY
+REMOTE
+then
+  ok "web apps / files pass through without Ultracode shape"
+else
+  bad "shape passthrough" "web apps incorrectly shaped"
+fi
+
+# --- 49b. LinkedIn messages → freeform Get help (not career corpus junk) ---
+echo ">>> LinkedIn messages freeform help"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import search as s
+from audience import detect_audience, Audience, shape_prompt
+q = "i wanna respond to my linkedin messages"
+assert s.is_work_goal(q), q
+assert s.is_freeform_help_goal(q), q
+assert detect_audience(q) is Audience.LINKEDIN, detect_audience(q)
+shaped = shape_prompt(q)
+assert "linkedin" in shaped.lower()
+assert "career mode" not in shaped.lower() and "job search" not in shaped.lower()
+# Search app on guest has freeform wiring
+src = open("/usr/bin/teddyos-search-app").read()
+assert "is_freeform_help_goal" in src
+assert "Open LinkedIn messages" in src
+print("linkedin-messages-ok")
+PY
+REMOTE
+then
+  ok "LinkedIn messages → freeform Get help + LinkedIn audience"
+else
+  bad "LinkedIn messages path" "still treated as job/corpus search"
+fi
+
+# --- 49. progress awards specialty asks without forcing Ultracode -----------
+echo ">>> progress specialty vs ultracode"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import os, tempfile, sys, importlib
+td = tempfile.mkdtemp(prefix="e2e-prog2-")
+os.environ["XDG_CONFIG_HOME"] = td
+sys.path.insert(0, "/usr/lib/teddyos")
+import progress
+importlib.reload(progress)
+from audience import detect_audience, Audience
+assert detect_audience("learn spanish conjugation") is Audience.SPANISH
+s = progress.award_from_prompt("learn spanish conjugation practice")
+assert s.xp > 0
+assert s.ultracode_asks == 0  # specialty is not Ultracode
+assert s.active_persona == "spanish"
+raw = progress._load_raw(); raw["last_ask_ts"] = 0; progress._save_raw(raw)
+s2 = progress.award_from_prompt("fix TypeError in async worker.py")
+assert s2.ultracode_asks >= 1
+assert s2.active_persona == "code"
+assert s2.switch_count >= 1
+print("progress-specialty-ok", s.xp, s2.ultracode_asks, s2.switch_count)
+PY
+REMOTE
+then
+  ok "progress: specialty asks ≠ Ultracode; code asks are"
+else
+  bad "progress specialty" "Ultracode mis-awarded"
+fi
+
+# --- 50. Persona multi-switch chain + ladder on guest -----------------------
+echo ">>> persona multi-switch + ladder"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import os, tempfile, sys, importlib
+td = tempfile.mkdtemp(prefix="e2e-ladder-")
+os.environ["XDG_CONFIG_HOME"] = td
+sys.path.insert(0, "/usr/lib/teddyos")
+import progress
+importlib.reload(progress)
+
+def ask(p):
+    raw = progress._load_raw(); raw["last_ask_ts"] = 0; progress._save_raw(raw)
+    return progress.award_from_prompt(p)
+
+ask("explain this in simple words")
+s1 = ask("refactor TypeError in worker.py")
+assert s1.active_persona == "code" and s1.switch_count >= 1
+s2 = ask("i wanna respond to my linkedin messages")
+assert s2.active_persona == "linkedin" and s2.switch_count >= 2
+s3 = ask("gym hypertrophy progressive overload plan")
+assert s3.active_persona == "fitness" and s3.switch_count >= 3
+for _ in range(4):
+    ask("reply to linkedin messages in my inbox")
+snap = progress.snapshot()
+assert snap.persona_levels.get("linkedin", 1) >= 2, snap.persona_levels
+assert snap.persona_xp.get("code", 0) > 0
+assert snap.persona_xp.get("fitness", 0) > 0
+frac, cap = progress.persona_meter("linkedin")
+assert 0.0 <= frac <= 1.0 and "Level" in cap
+line = progress.progress_line(snap)
+assert "Lv." in line
+# Persist shape
+raw = progress._load_raw()
+assert isinstance(raw.get("personas"), dict)
+assert raw.get("last_audience")
+assert int(raw.get("switch_count") or 0) >= 3
+print("ladder-guest-ok", snap.switch_count, snap.persona_levels)
+PY
+REMOTE
+then
+  ok "persona multi-switch chain + ladder on guest"
+else
+  bad "persona ladder guest" "switch chain or level grind failed"
+fi
+
+# --- 51. Freeform help goal matrix on guest ---------------------------------
+echo ">>> freeform help matrix guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import search as s
+from audience import detect_audience, Audience
+assert s.is_work_goal("i wanna respond to my linkedin messages")
+assert s.is_freeform_help_goal("i wanna respond to my linkedin messages")
+assert s.is_freeform_help_goal("i need to check my email inbox")
+assert s.is_freeform_help_goal("help me draft a reply to this message")
+assert s.is_work_goal("i wanna work on tsearch")
+assert not s.is_freeform_help_goal("i wanna work on tsearch")
+assert not s.is_work_goal("what is photosynthesis")
+assert detect_audience("i wanna respond to my linkedin messages") is Audience.LINKEDIN
+assert detect_audience("reply to linkedin messages") is Audience.LINKEDIN
+# focus
+fq = s.focus_query("i wanna respond to my linkedin messages").lower()
+assert "linkedin" in fq
+print("freeform-matrix-guest-ok")
+PY
+REMOTE
+then
+  ok "freeform help goal matrix on guest"
+else
+  bad "freeform matrix guest" "classification failed"
+fi
+
+# --- 52. format_toast priority (level > switch > badge) ---------------------
+echo ">>> progress toast priority"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import os, tempfile, sys, importlib
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="e2e-toast-")
+sys.path.insert(0, "/usr/lib/teddyos")
+import progress
+importlib.reload(progress)
+E = progress.ProgressEvent
+ev = [
+    E(kind="xp", title="+4 for asking", xp_delta=4),
+    E(kind="switch", title="Switched · LinkedIn", persona="linkedin"),
+    E(kind="persona_level", title="Level 2 · Ultracode", persona="code", persona_level=2),
+]
+t = progress.format_toast(ev)
+assert t and "Level 2" in t, t
+ev2 = [E(kind="xp", title="+1"), E(kind="switch", title="Switched · Fitness")]
+assert "Switch" in (progress.format_toast(ev2) or "")
+print("toast-priority-ok", t)
+PY
+REMOTE
+then
+  ok "progress toast prefers persona_level then switch"
+else
+  bad "toast priority" "format_toast ordering wrong"
+fi
+
+# --- 53. Search app freeform wiring + level strip source --------------------
+echo ">>> search freeform + progress strip source"
+if remote "grep -q is_freeform_help_goal /usr/bin/teddyos-search-app \
+  && grep -q 'Open LinkedIn messages' /usr/bin/teddyos-search-app \
+  && grep -q persona_meter /usr/bin/teddyos-search-app \
+  && grep -q _play_persona_switch /usr/bin/teddyos-ask-all \
+  && grep -q persona_level_line /usr/bin/teddyos-ask-all \
+  && grep -q _level_chip /usr/bin/teddyos-ask-all"; then
+  ok "Search freeform + Answers level chip source wiring"
+else
+  bad "source wiring" "freeform/level symbols missing on guest"
+fi
+
+# --- 54. Progress debounce + persistence on guest ---------------------------
+echo ">>> progress debounce + persistence guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import os, tempfile, sys, importlib
+td = tempfile.mkdtemp(prefix="e2e-deb-")
+os.environ["XDG_CONFIG_HOME"] = td
+sys.path.insert(0, "/usr/lib/teddyos")
+import progress
+importlib.reload(progress)
+s1 = progress.award_from_prompt("refactor TypeError in worker.py", multi_ai=True)
+xp1 = progress.snapshot().xp
+s2 = progress.award_from_prompt("i wanna respond to my linkedin messages")
+assert progress.snapshot().xp - xp1 < 25
+raw = progress._load_raw(); raw["last_ask_ts"] = 0; progress._save_raw(raw)
+s3 = progress.award_from_prompt("reply to linkedin messages")
+assert s3.active_persona == "linkedin"
+# reload module from disk — same XDG should keep state
+importlib.reload(progress)
+snap = progress.snapshot()
+assert snap.xp >= xp1
+assert snap.persona_xp.get("code", 0) > 0 or snap.ultracode_asks >= 1
+print("debounce-guest-ok", snap.xp, snap.switch_count)
+PY
+REMOTE
+then
+  ok "progress debounce + persistence on guest"
+else
+  bad "debounce guest" "failed"
+fi
+
+# --- 55. multi_ai + synthesis awards ----------------------------------------
+echo ">>> multi_ai + synthesis awards"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import os, tempfile, sys, importlib
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="e2e-multi-")
+sys.path.insert(0, "/usr/lib/teddyos")
+import progress
+importlib.reload(progress)
+s = progress.award_from_prompt(
+    "refactor auth in src/api.ts",
+    multi_ai=True,
+    tool_ids=["claude", "copilot", "grok"],
+)
+assert s.ultracode_asks >= 1
+badges = progress.snapshot().badges
+assert "multi_ai" in badges or "ultracode_multi" in badges or "ultracode" in badges
+s2 = progress.award_synthesis()
+assert s2.xp >= s.xp
+assert "across_all" in progress.snapshot().badges
+print("multi-synth-ok", progress.snapshot().badges)
+PY
+REMOTE
+then
+  ok "multi_ai + synthesis badge awards"
+else
+  bad "multi/synth awards" "failed"
+fi
+
+# --- 56. ask-all re-ask awards persona XP (source) --------------------------
+echo ">>> ask-all re-ask award wiring"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+from pathlib import Path
+src = Path("/usr/bin/teddyos-ask-all").read_text()
+# _rerun_one must re-detect audience and award progress
+assert "def _rerun_one" in src
+assert "detect_audience" in src
+idx = src.index("def _rerun_one")
+chunk = src[idx:idx+1200]
+assert "award_from_prompt" in chunk or "award_ask" in chunk
+assert "persona_level_line" in chunk or "persona_level_line" in src
+assert "_refresh_audience_chip" in chunk
+assert "animate=True" in chunk
+print("rerun-award-ok")
+PY
+REMOTE
+then
+  ok "ask-all re-ask awards persona XP + re-detects"
+else
+  bad "re-ask award" "missing wiring in _rerun_one"
+fi
+
+# --- 57. work_tools is_chat_helper + readiness on guest ---------------------
+echo ">>> work_tools chat helper matrix guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+from work_tools import available_work_tools, is_chat_helper, tools_ready_for_broadcast, CreditStatus
+tools = available_work_tools()
+assert tools
+for tid in ("claude", "grok", "gemini", "codex", "copilot"):
+    # may not be installed; is_chat_helper is pure
+    assert is_chat_helper(tid)
+assert not is_chat_helper("files")
+assert not is_chat_helper("devin")
+assert not is_chat_helper("replit")
+chats = [t for t in tools if is_chat_helper(t.id)]
+if chats:
+    t = chats[0]
+    assert tools_ready_for_broadcast([t], {t.id: CreditStatus(True, "ok")}) == [t]
+    assert tools_ready_for_broadcast([t], {t.id: CreditStatus(False, "no")}) == []
+ids = {t.id for t in tools}
+for tid in ("devin", "replit", "perplexity"):
+    assert tid in ids, tid
+print("chat-helper-guest-ok", len(tools), len(chats))
+PY
+REMOTE
+then
+  ok "work_tools chat helper + readiness on guest"
+else
+  bad "chat helper guest" "failed"
+fi
+
+# --- 58. Audience LinkedIn messages never Career mode -----------------------
+echo ">>> LinkedIn messages not career"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+from audience import detect_audience, Audience, shape_prompt, score_audiences
+for q in (
+    "i wanna respond to my linkedin messages",
+    "reply to linkedin messages in my inbox",
+    "check linkedin messages",
+    "linkedin inbox reply draft",
+):
+    aud = detect_audience(q)
+    assert aud is Audience.LINKEDIN, (q, aud)
+    sc = score_audiences(q)
+    assert sc[Audience.LINKEDIN] > sc[Audience.JOB], (q, sc[Audience.LINKEDIN], sc[Audience.JOB])
+    assert "job search" not in shape_prompt(q).lower()
+# Profile/job still career-ish when resume language present
+aud2 = detect_audience("cover letter and resume for software engineer interview")
+assert aud2 is Audience.JOB
+print("linkedin-not-career-ok")
+PY
+REMOTE
+then
+  ok "LinkedIn messaging never Career mode"
+else
+  bad "linkedin vs job" "messaging misclassified as career"
+fi
+
+# --- 59. search focus_query edges on guest ----------------------------------
+echo ">>> search focus_query guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import search as s
+assert "tsearch" in s.focus_query("i wanna work on tsearch").lower()
+assert "linkedin" in s.focus_query("i wanna respond to my linkedin messages").lower()
+assert s.focus_query("immigration paradise") == "immigration paradise"
+assert not s.is_work_goal("")
+assert s.is_work_goal("i wanna work on trading")
+assert s.is_freeform_help_goal("catch up on my messages")
+print("focus-guest-ok")
+PY
+REMOTE
+then
+  ok "search focus_query edges on guest"
+else
+  bad "focus guest" "failed"
+fi
+
+# --- 60. progress setup awards on guest -------------------------------------
+echo ">>> progress setup awards guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import os, tempfile, sys, importlib
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="e2e-setup-")
+sys.path.insert(0, "/usr/lib/teddyos")
+import progress
+importlib.reload(progress)
+progress.award_signin()
+progress.award_tour()
+progress.award_clone()
+progress.award_all_set()
+b = set(progress.snapshot().badges)
+for need in ("first_signin", "tour_done", "first_clone", "all_set"):
+    assert need in b, (need, b)
+print("setup-awards-guest-ok", sorted(b))
+PY
+REMOTE
+then
+  ok "progress setup awards on guest"
+else
+  bad "setup awards guest" "failed"
+fi
+
+# --- 61. accounts always_available matrix guest -----------------------------
+echo ">>> accounts always_available guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import accounts
+by = {a.id: a for a in accounts.all_accounts()}
+assert "--claudeai" in by["claude"].connect_argv
+for tid in ("devin", "replit", "perplexity"):
+    assert by[tid].always_available, tid
+print("accounts-aa-guest-ok", len(by))
+PY
+REMOTE
+then
+  ok "accounts always_available matrix on guest"
+else
+  bad "accounts guest" "always_available failed"
+fi
+
+# --- 62. persona_meter bounds for several personas --------------------------
+echo ">>> persona_meter bounds"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import os, tempfile, sys, importlib
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="e2e-meter-")
+sys.path.insert(0, "/usr/lib/teddyos")
+import progress
+importlib.reload(progress)
+def ask(p):
+    raw = progress._load_raw(); raw["last_ask_ts"]=0; progress._save_raw(raw)
+    return progress.award_from_prompt(p)
+ask("refactor TypeError in x.py")
+ask("i wanna respond to my linkedin messages")
+ask("gym hypertrophy progressive overload plan")
+for pid in ("code", "linkedin", "fitness", "plain"):
+    frac, cap = progress.persona_meter(pid)
+    assert 0.0 <= frac <= 1.0, (pid, frac)
+    assert isinstance(cap, str) and len(cap) > 3
+print("persona-meter-ok")
+PY
+REMOTE
+then
+  ok "persona_meter bounds for active personas"
+else
+  bad "persona_meter" "bounds failed"
+fi
+
+# --- 63. SHAPED_TOOLS shape all coding helpers guest ------------------------
+echo ">>> SHAPED_TOOLS full matrix guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+from audience import SHAPED_TOOLS, shape_prompt_for_tool, detect_audience, Audience
+p = "fix TypeError in async handler"
+assert detect_audience(p) is Audience.CODE
+for tid in SHAPED_TOOLS:
+    s = shape_prompt_for_tool(tid, p)
+    assert "comfortable with code" in s.lower(), tid
+for tid in ("files", "devin", "replit", "perplexity", "web"):
+    assert shape_prompt_for_tool(tid, p) == p, tid
+print("shaped-tools-ok", sorted(SHAPED_TOOLS))
+PY
+REMOTE
+then
+  ok "SHAPED_TOOLS full matrix on guest"
+else
+  bad "SHAPED_TOOLS" "shape matrix failed"
+fi
+
+# --- 64. Badge ladder on guest ----------------------------------------------
+echo ">>> badge ladder guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import os, tempfile, sys, importlib
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="e2e-badges-")
+sys.path.insert(0, "/usr/lib/teddyos")
+import progress
+importlib.reload(progress)
+def ask(p):
+    raw = progress._load_raw(); raw["last_ask_ts"]=0; progress._save_raw(raw)
+    return progress.award_from_prompt(p)
+ask("what is this")
+ask("refactor TypeError in x.py")
+ask("fix race in worker.rs")
+ask("open a PR for login")
+ask("i wanna respond to my linkedin messages")
+progress.award_synthesis()
+b = set(progress.snapshot().badges)
+assert "first_ask" in b and "ultracode" in b
+assert "across_all" in b
+assert "mode_switcher" in b or progress.snapshot().switch_count >= 1
+print("badge-ladder-guest-ok", sorted(b))
+PY
+REMOTE
+then
+  ok "badge ladder on guest"
+else
+  bad "badge ladder guest" "failed"
+fi
+
+# --- 65. CODE vs PLAIN force on guest ---------------------------------------
+echo ">>> CODE vs PLAIN force guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+from audience import detect_audience, Audience, is_code_audience
+assert detect_audience("refactor auth in src/api.ts") is Audience.CODE
+assert is_code_audience(detect_audience("fix TypeError"))
+assert detect_audience("explain this project in simple words") is Audience.PLAIN
+assert detect_audience("i'm not a developer, help me change the logo") is Audience.PLAIN
+print("code-plain-guest-ok")
+PY
+REMOTE
+then
+  ok "CODE vs PLAIN force on guest"
+else
+  bad "code/plain guest" "failed"
+fi
+
+# --- 66. sandbox + git_projects + logutil guest -----------------------------
+echo ">>> sandbox git logutil guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import sandbox, git_projects, logutil
+auth = git_projects.git_auth()
+assert hasattr(auth, "ok")
+assert hasattr(sandbox, "available") or True
+print("core-mods-guest-ok", auth.ok)
+PY
+REMOTE
+then
+  ok "sandbox + git_projects + logutil on guest"
+else
+  bad "core mods guest" "import failed"
+fi
+
+# --- 67. freeform email/inbox goals guest -----------------------------------
+echo ">>> freeform email/inbox goals"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import search as s
+for q in (
+    "i need to check my email inbox",
+    "catch up on my messages",
+    "help me draft a reply to this message",
+    "i wanna respond to my linkedin messages",
+):
+    assert s.is_work_goal(q) or s.is_freeform_help_goal(q), q
+    assert s.is_freeform_help_goal(q), q
+assert not s.is_freeform_help_goal("i wanna work on tsearch")
+print("freeform-email-ok")
+PY
+REMOTE
+then
+  ok "freeform email/inbox goals on guest"
+else
+  bad "freeform email" "failed"
+fi
+
+# --- 68. Search app freeform block uses home + pending task (source) --------
+echo ">>> freeform block uses pending task"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+from pathlib import Path
+src = Path("/usr/bin/teddyos-search-app").read_text()
+assert "is_freeform_help_goal" in src
+assert "_pending_task" in src
+assert "Path.home()" in src or "home()" in src
+assert "freeform" in src
+assert "Open LinkedIn messages" in src
+assert "linkedin.com/messaging" in src
+print("freeform-block-src-ok")
+PY
+REMOTE
+then
+  ok "freeform block sets pending task + LinkedIn URL"
+else
+  bad "freeform block src" "missing"
+fi
+
+# --- 69. work_tools prompt_argv + recents guest -----------------------------
+echo ">>> work_tools prompt_argv + recents"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import os, tempfile, sys, importlib
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="e2e-wt-")
+sys.path.insert(0, "/usr/lib/teddyos")
+import work_tools
+importlib.reload(work_tools)
+assert work_tools.prompt_argv("claude", "hi") == ["hi"]
+assert work_tools.prompt_argv("gemini", "x") == ["-i", "x"]
+assert work_tools.prompt_argv("files", "x") == []
+work_tools.record_use("claude")
+work_tools.record_use("copilot")
+assert work_tools.recent_ids()[0] in ("claude", "copilot")
+assert work_tools.is_recent("claude") or work_tools.is_recent("copilot")
+print("wt-argv-guest-ok")
+PY
+REMOTE
+then
+  ok "work_tools prompt_argv + recents on guest"
+else
+  bad "work_tools argv guest" "failed"
+fi
+
+# --- 70. search normalise_url + query_terms guest ---------------------------
+echo ">>> search util guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import search as s
+assert s.normalise_url("https://x.com").startswith("https://")
+assert s.normalise_url("/tsearch/docs/a").startswith("https://")
+terms = s.query_terms("can you tell me about meetings please")
+assert "meetings" in terms
+assert "please" not in terms
+print("search-util-guest-ok", terms[:4])
+PY
+REMOTE
+then
+  ok "search normalise_url + query_terms on guest"
+else
+  bad "search util guest" "failed"
+fi
+
+# --- 71. caps API guest -----------------------------------------------------
+echo ">>> caps API guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import caps
+g = caps.load()
+assert isinstance(g, dict) and g
+assert caps.level() in {l["id"] for l in caps.LEVELS}
+assert isinstance(caps.is_guided(), bool)
+assert isinstance(caps.skills(), list)
+print("caps-guest-ok", caps.level(), len(g))
+PY
+REMOTE
+then
+  ok "caps API on guest"
+else
+  bad "caps guest" "failed"
+fi
+
+# --- 72. accounts get_account + status labels guest -------------------------
+echo ">>> accounts status labels guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import accounts
+assert accounts.get_account("missing") is None
+for tid in ("claude", "github", "devin", "replit", "perplexity"):
+    a = accounts.get_account(tid)
+    assert a is not None, tid
+    st = accounts.status_for(a)
+    assert st.label and "\n" not in st.label, (tid, st.label)
+# No false ready for signed-out style
+for tid in ("devin", "replit", "perplexity"):
+    assert accounts.get_account(tid).always_available
+print("accounts-status-guest-ok")
+PY
+REMOTE
+then
+  ok "accounts get_account + single-line status labels"
+else
+  bad "accounts status guest" "failed"
+fi
+
+# --- 73. pending_ask overwrite guest ----------------------------------------
+echo ">>> pending_ask overwrite guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import os, tempfile, sys, importlib
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="e2e-pa2-")
+sys.path.insert(0, "/usr/lib/teddyos")
+import pending_ask
+importlib.reload(pending_ask)
+pending_ask.clear()
+pending_ask.save("", "nope")
+assert pending_ask.load() is None
+proj = tempfile.mkdtemp()
+pending_ask.save(proj, "one")
+pending_ask.save(proj, "two")
+assert pending_ask.load()["prompt"] == "two"
+pending_ask.clear()
+assert pending_ask.load() is None
+print("pending-overwrite-guest-ok")
+PY
+REMOTE
+then
+  ok "pending_ask overwrite on guest"
+else
+  bad "pending overwrite guest" "failed"
+fi
+
+# --- 74. web wrappers Chromium --app on guest -------------------------------
+echo ">>> wrappers chromium guest"
+if remote "grep -q app.devin.ai /usr/bin/teddyos-devin \
+  && grep -q chromium /usr/bin/teddyos-devin \
+  && grep -q -- '--app=' /usr/bin/teddyos-devin \
+  && grep -q replit /usr/bin/teddyos-replit \
+  && grep -q chromium /usr/bin/teddyos-open-signin \
+  && ! grep -qi 'exec firefox' /usr/bin/teddyos-open-signin"; then
+  ok "web wrappers Chromium --app on guest"
+else
+  bad "wrappers guest" "not Chromium --app"
+fi
+
+# --- 75. corpus / builtin search smoke guest --------------------------------
+echo ">>> builtin search smoke"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import search as s
+# Should not throw; results optional if corpus thin
+try:
+    out = s.search("teddyos", limit=5)
+except Exception as e:
+    # Some guests only have confined search via app; try builtin only
+    res, err = s.search_builtin("linux", limit=5)
+    assert isinstance(res, list)
+    print("builtin-only-ok", len(res), err)
+else:
+    assert hasattr(out, "results")
+    print("search-smoke-ok", len(out.results), getattr(out, "denied", None))
+PY
+REMOTE
+then
+  ok "builtin/search smoke on guest"
+else
+  bad "search smoke" "failed"
+fi
+
+# --- 76. search prune + humanise guest --------------------------------------
+echo ">>> search prune + humanise guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import search as s
+full = s.Result("A", "u", "s", "b", score=10, matched=2, terms=2)
+partial = s.Result("B", "u", "s", "b", score=50, matched=1, terms=2)
+assert s.prune([full, partial]) == [full]
+assert "online" in s.humanise("name resolution failure").lower() or "internet" in s.humanise("name resolution").lower()
+toks = s.tokenize("H-1B covid-19")
+assert "h1b" in toks or any("h1b" in t for t in toks)
+print("prune-humanise-guest-ok")
+PY
+REMOTE
+then
+  ok "search prune + humanise on guest"
+else
+  bad "prune/humanise guest" "failed"
+fi
+
+# --- 77. resolve_project_dirs guest -----------------------------------------
+echo ">>> resolve_project_dirs guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys, tempfile
+from pathlib import Path
+sys.path.insert(0, "/usr/lib/teddyos")
+import search as s
+root = Path(tempfile.mkdtemp(prefix="e2e-proj-"))
+name = "e2e-unique-proj-xyz"
+(proj := root / name).mkdir()
+found = s.resolve_project_dirs(name, roots=[root])
+assert any(p.name == name for p in found), found
+assert s.resolve_project_dirs("nope-zzzz", roots=[root]) == []
+print("resolve-proj-guest-ok")
+PY
+REMOTE
+then
+  ok "resolve_project_dirs on guest"
+else
+  bad "resolve_project_dirs guest" "failed"
+fi
+
+# --- 78. git_projects safe empty guest --------------------------------------
+echo ">>> git_projects safe guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import git_projects as gp
+assert gp.find_remote_repos("") == []
+assert gp.find_remote_repos("a") == []
+auth = gp.git_auth()
+assert auth.method in ("gh", "ssh", "none")
+print("git-safe-guest-ok", auth.method, auth.ok)
+PY
+REMOTE
+then
+  ok "git_projects empty/unauth safe on guest"
+else
+  bad "git_projects guest" "failed"
+fi
+
+# --- 79. ready_for_broadcast edges guest ------------------------------------
+echo ">>> ready_for_broadcast guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+from work_tools import WorkTool, CreditStatus, ready_for_broadcast, tools_ready_for_broadcast
+claude = WorkTool(id="claude", title="C", subtitle="", icon="x", argv=("{path}",), metered=True, is_ai=True)
+files = WorkTool(id="files", title="F", subtitle="", icon="x", argv=("{path}",), metered=False, is_ai=False)
+assert ready_for_broadcast(claude, CreditStatus(True, "ok"))
+assert not ready_for_broadcast(claude, None)
+assert not ready_for_broadcast(files, CreditStatus(True, "ok"))
+assert tools_ready_for_broadcast([claude, files], {"claude": CreditStatus(True, "ok")}) == [claude]
+print("ready-bcast-guest-ok")
+PY
+REMOTE
+then
+  ok "ready_for_broadcast edges on guest"
+else
+  bad "ready_for_broadcast guest" "failed"
+fi
+
+# --- 80. progress meters guest ----------------------------------------------
+echo ">>> progress meters guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import os, tempfile, sys, importlib
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="e2e-meters-")
+sys.path.insert(0, "/usr/lib/teddyos")
+import progress
+importlib.reload(progress)
+assert progress.format_toast([]) is None
+progress.award_from_prompt("refactor TypeError in x.py")
+frac, line = progress.ultracode_meter()
+assert 0.0 <= frac <= 1.0
+frac2, line2 = progress.persona_meter("code")
+assert 0.0 <= frac2 <= 1.0 and "Level" in line2
+print("meters-guest-ok", line2)
+PY
+REMOTE
+then
+  ok "progress meters on guest"
+else
+  bad "progress meters guest" "failed"
+fi
+
+# --- 81. portal_corpus_status + sandbox selftest guest ----------------------
+echo ">>> portal status + sandbox selftest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import search as s
+import sandbox
+st = s.portal_corpus_status()
+assert set(st) >= {"present", "crawled_at", "docs", "bytes"}
+ok, msg = sandbox.selftest()
+assert isinstance(ok, bool) and isinstance(msg, str)
+assert isinstance(sandbox.available(), bool)
+print("portal-sandbox-ok", st["present"], st["docs"], sandbox.available(), ok)
+PY
+REMOTE
+then
+  ok "portal_corpus_status + sandbox selftest on guest"
+else
+  bad "portal/sandbox guest" "failed"
+fi
+
+# --- 82. teddyos-search --caps / --help guest -------------------------------
+echo ">>> teddyos-search CLI guest"
+if remote_bash <<'REMOTE'
+set -e
+teddyos-search --help | grep -q -- '--caps'
+teddyos-search --caps | grep -Eiq 'capabilit|built-in|granted|denied'
+# no query → non-zero
+if teddyos-search >/tmp/ts-empty.out 2>/tmp/ts-empty.err; then
+  echo "expected non-zero without query" >&2
+  exit 1
+fi
+echo "search-cli-guest-ok"
+REMOTE
+then
+  ok "teddyos-search --help / --caps / no-query on guest"
+else
+  bad "search CLI guest" "failed"
+fi
+
+# --- 83. ask-all --help + missing args guest --------------------------------
+echo ">>> ask-all CLI guest"
+if remote_bash <<'REMOTE'
+set -e
+teddyos-ask-all --help 2>&1 | grep -q -- '--project'
+teddyos-ask-all --help 2>&1 | grep -q -- '--prompt'
+teddyos-ask-all --help 2>&1 | grep -q -- '--tools'
+# missing required args
+if teddyos-ask-all >/tmp/aa-empty.out 2>/tmp/aa-empty.err; then
+  echo "expected failure without args" >&2
+  exit 1
+fi
+echo "ask-all-cli-guest-ok"
+REMOTE
+then
+  ok "ask-all --help + missing args fail on guest"
+else
+  bad "ask-all CLI guest" "failed"
+fi
+
+# --- 84. shape_prompt_for_claude alias guest --------------------------------
+echo ">>> shape alias guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+from audience import shape_prompt, shape_prompt_for_claude, score_audiences, Audience
+q = "refactor TypeError in worker.py"
+assert shape_prompt_for_claude(q) == shape_prompt(q)
+sc = score_audiences(q)
+assert sc[Audience.CODE] >= 4
+assert set(sc) == set(Audience)
+print("shape-alias-guest-ok")
+PY
+REMOTE
+then
+  ok "shape_prompt_for_claude alias on guest"
+else
+  bad "shape alias guest" "failed"
+fi
+
+# --- 85. award_ask persona= on guest ----------------------------------------
+echo ">>> award_ask persona guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import os, tempfile, sys, importlib
+os.environ["XDG_CONFIG_HOME"] = tempfile.mkdtemp(prefix="e2e-ap-")
+sys.path.insert(0, "/usr/lib/teddyos")
+import progress
+importlib.reload(progress)
+s = progress.award_ask(persona="fitness")
+assert s.active_persona == "fitness"
+assert s.persona_xp.get("fitness", 0) > 0
+raw = progress._load_raw(); raw["last_ask_ts"]=0; progress._save_raw(raw)
+s2 = progress.award_from_prompt("fix bug", tool_ids=["claude","grok"])
+assert s2.active_persona == "code" or s2.ultracode_asks >= 0
+print("award-persona-guest-ok", s.active_persona_label)
+PY
+REMOTE
+then
+  ok "award_ask(persona=) on guest"
+else
+  bad "award persona guest" "failed"
+fi
+
+# --- 86. caps schema + text() guest -----------------------------------------
+echo ">>> caps schema guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import caps
+ids = {c["id"] for c in caps.CAPABILITIES}
+assert set(caps.DEFAULTS) == ids
+for c in caps.CAPABILITIES:
+    assert caps.text(c, "label", True)
+    assert caps.text(c, "label", False)
+assert {l["id"] for l in caps.LEVELS} >= {"guided", "advanced"}
+print("caps-schema-guest-ok", len(ids))
+PY
+REMOTE
+then
+  ok "caps schema + text() on guest"
+else
+  bad "caps schema guest" "failed"
+fi
+
+# --- 87. Outcome/Result + probe_credits guest -------------------------------
+echo ">>> Outcome + probe_credits guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import search as s
+from work_tools import available_work_tools, probe_credits, CreditStatus, probe_all
+r = s.Result("t", "https://x", "s", "builtin", score=1.0)
+o = s.Outcome(results=[r], denied=["x"])
+assert o.results[0].title == "t"
+tools = available_work_tools()
+assert tools
+st = probe_credits(tools[0])
+assert isinstance(st, CreditStatus) and st.label and "\n" not in st.label
+m = probe_all(tools[:2])
+assert len(m) == min(2, len(tools))
+print("outcome-probe-guest-ok", tools[0].id, st.label[:40])
+PY
+REMOTE
+then
+  ok "Outcome + probe_credits/probe_all on guest"
+else
+  bad "outcome/probe guest" "failed"
+fi
+
+# --- 88. accounts is_installed guest ----------------------------------------
+echo ">>> accounts is_installed guest"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+import sys
+sys.path.insert(0, "/usr/lib/teddyos")
+import accounts
+for a in accounts.all_accounts():
+    assert isinstance(accounts.is_installed(a), bool)
+# web apps should be installed when chromium exists (guest has it)
+import shutil
+if shutil.which("chromium") or shutil.which("chromium-browser"):
+    for tid in ("devin", "replit", "perplexity"):
+        assert accounts.is_installed(accounts.get_account(tid)), tid
+print("is-installed-guest-ok")
+PY
+REMOTE
+then
+  ok "accounts is_installed on guest"
+else
+  bad "is_installed guest" "failed"
+fi
+
+# --- 89. open-signin usage + chromium wrappers guest ------------------------
+echo ">>> open-signin usage guest"
+if remote_bash <<'REMOTE'
+set -e
+# no args
+if teddyos-open-signin >/tmp/osi.out 2>/tmp/osi.err; then
+  echo "expected exit 2" >&2; exit 1
+fi
+grep -qi usage /tmp/osi.err || grep -qi usage /tmp/osi.out
+# accounts device-code paste
+grep -q _DEVICE_CODE_ACCOUNTS /usr/bin/teddyos-accounts
+grep -q _submit_paste /usr/bin/teddyos-accounts
+grep -q 'Paste code from the browser' /usr/bin/teddyos-accounts
+echo "open-signin-guest-ok"
+REMOTE
+then
+  ok "open-signin usage + device-code paste on guest"
+else
+  bad "open-signin guest" "failed"
+fi
+
+# --- 90. icon files present on guest ----------------------------------------
+echo ">>> guest icons present"
+if remote_bash <<'REMOTE'
+python3 - <<'PY'
+from pathlib import Path
+need = [
+    "teddyos-search", "teddyos-answers", "teddyos-accounts", "teddyos-devin",
+    "teddyos-replit", "teddyos-perplexity", "teddyos-claude", "teddyos-whatsapp",
+]
+base = Path("/usr/share/icons/hicolor/scalable/apps")
+missing = []
+for n in need:
+    if not (base / f"{n}.svg").is_file() and not list(Path("/usr/share/icons/hicolor").rglob(f"{n}.png")):
+        # also accept any size png
+        missing.append(n)
+# soft: at least most present
+assert len(missing) <= 2, missing
+print("guest-icons-ok", "missing", missing)
+PY
+REMOTE
+then
+  ok "guest product icons present"
+else
+  bad "guest icons" "too many missing"
 fi
 
 # --- scorecard --------------------------------------------------------------

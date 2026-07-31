@@ -969,5 +969,25 @@ mod tests {
         assert_eq!(actual_len(0x1000, 0x2000, 8), 8);
         assert_eq!(actual_len(0x1000, 0x0FF0, 8), 0);
     }
+
+    #[test]
+    fn ohci_set_err_null_terminates() {
+        let mut buf = [0u8; 32];
+        set_err(&mut buf, "no OHCI controller found");
+        assert_eq!(
+            core::str::from_utf8(&buf[..24]).unwrap(),
+            "no OHCI controller found"
+        );
+        assert_eq!(buf[24], 0);
+    }
+
+    #[test]
+    fn ed_control_clamps_max_packet_size() {
+        let min_c = ed_control(1, 1, 0, false, ED_DIR_IN);
+        assert_eq!((min_c >> 16) & 0x7FF, 1);
+        let max_c = ed_control(1, 1, 2000, false, ED_DIR_IN);
+        assert_eq!((max_c >> 16) & 0x7FF, 1023);
+    }
 }
+
 

@@ -398,6 +398,10 @@ install -Dm755 "$REPO/linux/teddyos-update/teddyos-update"      config/includes.
 # Account / sign-in helpers used by teddyos-accounts and Search.
 install -Dm644 "$REPO/linux/teddyos-search/accounts.py" \
   config/includes.chroot/usr/lib/teddyos/accounts.py
+install -Dm644 "$REPO/linux/teddyos-search/audience.py" \
+  config/includes.chroot/usr/lib/teddyos/audience.py
+install -Dm644 "$REPO/linux/teddyos-search/progress.py" \
+  config/includes.chroot/usr/lib/teddyos/progress.py
 install -Dm644 "$REPO/linux/teddyos-search/pending_ask.py" \
   config/includes.chroot/usr/lib/teddyos/pending_ask.py
 

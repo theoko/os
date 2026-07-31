@@ -186,4 +186,75 @@ mod tests {
         assert!(arm.usable());
         assert!(arm.note().unwrap().contains("Keyboard only"));
     }
+
+    #[test]
+    fn pointer_only_machine_notes_missing_keyboard() {
+        let ptr_only = Inputs {
+            ps2_controller: true,
+            ps2_keyboard: false,
+            ps2_mouse: true,
+            usb_keyboard: false,
+            usb_tablet: false,
+            usb: UsbSurvey::default(),
+        };
+        assert!(ptr_only.can_point());
+        assert!(!ptr_only.can_type());
+        assert!(ptr_only.usable());
+        let note = ptr_only.note().expect("pointer-only needs note");
+        assert!(note.contains("Pointer only"));
+    }
+
+    #[test]
+    fn dual_usb_input_is_fully_usable() {
+        let dual = Inputs {
+            ps2_controller: false,
+            ps2_keyboard: false,
+            ps2_mouse: false,
+            usb_keyboard: true,
+            usb_tablet: true,
+            usb: UsbSurvey {
+                ohci: 1,
+                ..Default::default()
+            },
+        };
+        assert!(dual.can_point());
+        assert!(dual.can_type());
+        assert!(dual.usable());
+        assert_eq!(dual.note(), None);
+    }
+
+    #[test]
+    fn inputs_both_present_has_no_note() {
+        let full = Inputs {
+            ps2_controller: true,
+            ps2_keyboard: true,
+            ps2_mouse: true,
+            usb_keyboard: false,
+            usb_tablet: false,
+            usb: UsbSurvey::default(),
+        };
+        assert!(full.can_point());
+        assert!(full.can_type());
+        assert!(full.usable());
+        assert_eq!(full.note(), None);
+    }
+
+    #[test]
+    fn inputs_no_devices_usable_check() {
+        let empty = Inputs {
+            ps2_controller: false,
+            ps2_keyboard: false,
+            ps2_mouse: false,
+            usb_keyboard: false,
+            usb_tablet: false,
+            usb: UsbSurvey::default(),
+        };
+        assert!(!empty.can_point());
+        assert!(!empty.can_type());
+        assert!(!empty.usable());
+        let note = empty.note().expect("no input devices needs note");
+        assert!(!note.is_empty());
+    }
 }
+
+

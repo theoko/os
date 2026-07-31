@@ -55,4 +55,28 @@ mod tests {
     fn run_and_reset_bits_do_not_overlap() {
         assert_eq!(USBCMD_RUN & USBCMD_HCRST, 0);
     }
+
+    #[test]
+    fn operational_offset_adds_cap_length_to_mmio() {
+        let c = Controller {
+            mmio: 0xFE00_0000,
+            caps: Capabilities {
+                cap_length: 0x40,
+                max_slots: 32,
+                max_ports: 8,
+            },
+        };
+        assert_eq!(c.operational(), 0xFE00_0040);
+    }
+
+    #[test]
+    fn capabilities_struct_derived_traits() {
+        let caps = Capabilities {
+            cap_length: 0x20,
+            max_slots: 16,
+            max_ports: 4,
+        };
+        assert_eq!(caps, caps.clone());
+    }
 }
+

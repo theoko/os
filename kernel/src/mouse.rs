@@ -653,4 +653,26 @@ mod tests {
             "dirty rect ends at ({x1},{y1}), short of the restored box"
         );
     }
+
+    #[test]
+    fn mouse_new_initialises_at_centre() {
+        let m = Mouse::new(1024, 768);
+        assert_eq!((m.x, m.y), (512, 384));
+        assert!(!m.present);
+        assert_eq!(m.buttons, 0);
+    }
+
+    #[test]
+    fn cursor_hide_when_not_visible_is_noop() {
+        const W: usize = 96;
+        const H: usize = 64;
+        let mut buf = vec![0x00FF_FFFFu32; W * H];
+        let fb = unsafe { Surface::in_memory(buf.as_mut_ptr(), W, H) };
+
+        let mut cursor = Cursor::new();
+        assert!(!cursor.has_saved);
+        cursor.hide(&fb);
+        assert!(fb.dirty_rect().is_none());
+    }
 }
+

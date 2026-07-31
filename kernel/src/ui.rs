@@ -1152,6 +1152,22 @@ mod tests {
     }
 
     #[test]
+    fn rect_contains_point_boundary_checks() {
+        let r = Rect {
+            x: 10,
+            y: 20,
+            w: 30,
+            h: 40,
+        };
+        assert!(r.contains(10, 20), "top-left inside");
+        assert!(r.contains(25, 40), "centre inside");
+        assert!(r.contains(39, 59), "bottom-right pixel inside");
+        assert!(!r.contains(40, 60), "bottom-right corner outside");
+        assert!(!r.contains(9, 20), "left outside");
+        assert!(!r.contains(10, 19), "top outside");
+    }
+
+    #[test]
     fn search_field_is_not_a_cta() {
         // Clicking the query box used to fire CtaId::Ready and restart setup.
         let mail = MailPeek::empty(BridgeStatus::Offline);
@@ -1588,4 +1604,32 @@ mod no_portal_cta_tests {
             );
         }
     }
+
+    #[test]
+    fn rect_empty_and_contains() {
+        let empty_r = Rect {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 10,
+        };
+        assert!(!empty_r.contains(0, 0));
+        let valid_r = Rect {
+            x: 10,
+            y: 10,
+            w: 20,
+            h: 20,
+        };
+        assert!(valid_r.contains(10, 10));
+        assert!(valid_r.contains(29, 29));
+    }
+
+    #[test]
+    fn theme_color_palette_non_zero() {
+        assert_ne!(theme::BG, 0);
+        assert_ne!(theme::INK, 0);
+        assert_ne!(theme::MUTED, 0);
+        assert_ne!(theme::ACCENT, 0);
+    }
 }
+

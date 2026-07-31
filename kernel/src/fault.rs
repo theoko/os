@@ -370,4 +370,48 @@ mod tests {
         let n = report_line(&mut buf, u64::MAX, u64::MAX, u64::MAX, u64::MAX);
         assert!(n <= buf.len());
     }
+
+    #[test]
+    fn vector_names_coverage() {
+        assert_eq!(name(0), "divide by zero");
+        assert_eq!(name(6), "invalid opcode");
+        assert_eq!(name(13), "general protection fault");
+        assert_eq!(name(14), "page fault");
+        assert_eq!(name(99), "exception");
+    }
+
+    #[test]
+    fn put_hex_zero_and_max() {
+        let mut buf = [0u8; 160];
+        let mut n = 0;
+        put_hex(&mut buf, &mut n, 0);
+        assert_eq!(core::str::from_utf8(&buf[..n]).unwrap(), "0x0");
+
+        let mut buf2 = [0u8; 160];
+        let mut n2 = 0;
+        put_hex(&mut buf2, &mut n2, 0x1A2B);
+        assert_eq!(core::str::from_utf8(&buf2[..n2]).unwrap(), "0x1a2b");
+    }
+
+    #[test]
+    fn put_formatting_appends() {
+        let mut buf = [0u8; 160];
+        let mut n = 0;
+        put(&mut buf, &mut n, "fault: ");
+        put(&mut buf, &mut n, "ok");
+        assert_eq!(core::str::from_utf8(&buf[..n]).unwrap(), "fault: ok");
+    }
+
+
+
+    #[test]
+    fn has_error_code_vector_bounds() {
+        assert_eq!(HAS_ERROR_CODE.len(), 32);
+        assert!(HAS_ERROR_CODE[8], "double fault pushes error code");
+        assert!(HAS_ERROR_CODE[10], "invalid TSS pushes error code");
+        assert!(HAS_ERROR_CODE[11], "segment not present pushes error code");
+        assert!(HAS_ERROR_CODE[12], "stack segment fault pushes error code");
+    }
 }
+
+

@@ -590,7 +590,22 @@ mod tests {
             assert!(is_early_serial_byte(b), "unexpected byte {b}");
         }
     }
+
+    #[test]
+    fn early_bytes_rejects_non_printable_control() {
+        assert!(!is_early_serial_byte(0x00));
+        assert!(!is_early_serial_byte(0x07));
+        assert!(!is_early_serial_byte(0x1B));
+        assert!(!is_early_serial_byte(0x7F));
+        assert!(!is_early_serial_byte(0x80));
+    }
+
+    #[test]
+    fn line_ending_is_unix_newline() {
+        assert_eq!(LINE_ENDING, "\n");
+    }
 }
+
 
 /// Read the architecture's monotonic performance counter. Used to measure
 /// frame cost honestly rather than asserting a frame rate.

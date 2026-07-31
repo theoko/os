@@ -124,4 +124,15 @@ mod tests {
         assert!(Level::Guided.is_guided());
         assert!(!Level::Advanced.is_guided());
     }
+
+    #[test]
+    fn level_distinct_labels_and_tags() {
+        assert_ne!(Level::Guided.label(), Level::Advanced.label());
+        assert_ne!(Level::Guided.serial_tag(), Level::Advanced.serial_tag());
+        assert_ne!(
+            Level::Guided.home_search_placeholder(),
+            Level::Advanced.home_search_placeholder()
+        );
+    }
 }
+

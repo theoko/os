@@ -683,6 +683,11 @@ class SignInWindow(Adw.ApplicationWindow):
             self._body.set_text(
                 "You’re all set. Tap I’m done, then go back to Search."
             )
+            try:
+                import progress as prog  # type: ignore
+                prog.award_signin()
+            except Exception:  # noqa: BLE001
+                pass
         else:
             self._title.set_text("Still need a moment?")
             self._body.set_text(
@@ -991,6 +996,12 @@ class AccountsWindow(Adw.ApplicationWindow):
                 )
                 self._setup_all_btn.set_sensitive(False)
                 self._setup_all_btn.set_label("You’re all set")
+                if ready:
+                    try:
+                        import progress as prog  # type: ignore
+                        prog.award_all_set()
+                    except Exception:  # noqa: BLE001
+                        pass
         return False
 
     def _setup_all_needed(self) -> None:

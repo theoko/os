@@ -438,4 +438,58 @@ mod tests {
             assert_eq!(found.word, t.word);
         }
     }
+
+    #[test]
+    fn tokenizer_complex_punctuation_and_spacing() {
+        let mut toks = tokenize("   --hello,   world!!  (123)  test-case...  ");
+        assert_eq!(toks.next(), Some("hello"));
+        assert_eq!(toks.next(), Some("world"));
+        assert_eq!(toks.next(), Some("123"));
+        assert_eq!(toks.next(), Some("test"));
+        assert_eq!(toks.next(), Some("case"));
+        assert_eq!(toks.next(), None);
+    }
+
+    #[test]
+    fn query_search_results_ordering_and_bounds() {
+        let hits = query("skills");
+        assert!(!hits.is_empty());
+        assert!(hits.len() <= MAX_HITS);
+        for i in 1..hits.len() {
+            assert!(hits[i - 1].score >= hits[i].score, "scores must be descending");
+        }
+
+        let empty_hits = query("nonexistentterm12345");
+        assert!(empty_hits.is_empty());
+    }
+
+    #[test]
+    fn doc_table_properties() {
+        assert!(!DOCS.is_empty());
+        for doc in DOCS.iter() {
+            assert!(!doc.title.is_empty());
+            assert!(!doc.url.is_empty());
+            assert!(doc.pr >= 0.0 && doc.pr <= 1.0);
+            assert!(doc.n_tokens > 0);
+        }
+    }
+
+    #[test]
+    fn find_term_first_and_last_vocabulary() {
+        let first = TERMS.first().unwrap();
+        let last = TERMS.last().unwrap();
+        assert_eq!(find_term(first.word).unwrap().word, first.word);
+        assert_eq!(find_term(last.word).unwrap().word, last.word);
+    }
+
+    #[test]
+    fn doc_table_index_bounds() {
+        assert!(DOCS.get(0).is_some());
+        assert!(DOCS.get(DOCS.len()).is_none());
+        assert!(DOCS.get(999).is_none());
+    }
 }
+
+
+
+
