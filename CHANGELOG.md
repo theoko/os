@@ -1,5 +1,5 @@
 ---
-version: v0.15.5
+version: v0.15.6
 project: os
 updated: 2026-07-31
 type: changelog
@@ -10,6 +10,14 @@ type: changelog
 Runtime version is the top-level `VERSION` file (no `v` prefix there).
 This file is newest-first. When behavior ships: bump `VERSION`, add an entry
 here, update this frontmatter `version:` / `updated:`, then conventional-commit.
+
+## [v0.15.6] — 2026-07-31
+
+### Changed — Email setup picks a provider (not Gmail-only)
+
+The mail guide (`teddyos-gmail`) asks **which email you use**: Gmail, Outlook,
+Yahoo, iCloud, Proton, or **Other** (paste any webmail URL). Choice is remembered
+for “open inbox without the guide.” Desktop label is **Email**.
 
 ## [v0.15.5] — 2026-07-31
 
