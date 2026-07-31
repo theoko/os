@@ -1,5 +1,5 @@
 ---
-version: v0.15.0
+version: v0.15.1
 project: os
 updated: 2026-07-31
 type: changelog
@@ -10,6 +10,24 @@ type: changelog
 Runtime version is the top-level `VERSION` file (no `v` prefix there).
 This file is newest-first. When behavior ships: bump `VERSION`, add an entry
 here, update this frontmatter `version:` / `updated:`, then conventional-commit.
+
+## [v0.15.1] — 2026-07-31
+
+### Fixed — UTM Linux launch (ghosts, frozen display, deleted disk)
+
+`make desktop` / UTM was broken in three ways:
+
+1. **Ghost registry rows** — multiple UUIDs pointed at the same `teddyos.utm`
+   package. `utmctl delete` on a ghost **deleted the live disk package** while
+   QEMU still held open FDs (unlinked disk).
+2. **Frozen black screen** — `utmctl start` left QEMU with `-S` and no SPICE
+   window, so the CPU never ran. Start now goes through **AppleScript** so the
+   display window opens.
+3. **Invalid USB enum** — `UsbBusSupport=Usb3_0` made UTM reject the config and
+   drop the VM silently. Correct value is `"3.0"`.
+
+Repair path: `make desktop-force` (recreate VM + re-copy disk + scrub registry
+in Preferences only — never package-delete ghosts that share a path).
 
 ## [v0.15.0] — 2026-07-31
 

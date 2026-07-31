@@ -1,22 +1,19 @@
 #!/usr/bin/env bash
-# Hand the provisioned teddyOS disk to UTM, which is the only host on this Mac
-# with a GPU path.
+# Hand the provisioned teddyOS disk to UTM (GPU path on Apple Silicon).
 #
-# Why not just add -display to teddyos-vm.sh: Homebrew's qemu is built without
-# OpenGL and without virglrenderer —
+# Hard-won UTM 4.7.5 rules:
+#   1. Create via AppleScript, then patch lightly — never invent a full config.
+#   2. Keep UTM's disk ImageName; overwrite that file with our qcow2.
+#   3. Never delete efi_vars.fd from Data/.
+#   4. UsbBusSupport must be "3.0" (not "Usb3_0") or UTM drops the VM silently.
+#   5. Ghost registry rows (extra UUIDs → same .utm path) break start-by-name.
+#      Scrub them from Preferences only — never `utmctl delete` a ghost that
+#      shares the package path (that deletes the live disk package).
+#   6. Start via AppleScript so the SPICE window opens. `utmctl start` alone
+#      leaves QEMU with -S (CPU frozen) until a display attaches → black forever.
 #
-#   $ qemu-system-aarch64 -device help | grep virtio-gpu
-#   virtio-gpu-pci            <- no -gl variant
-#   $ qemu-system-aarch64 -display help
-#   none curses cocoa dbus    <- no gl-capable backend
-#
-# so a desktop on it renders through llvmpipe on the CPU. UTM 4.7.5 ships
-# virglrenderer.1.framework, epoxy.0.framework and GLESv2.framework, and its
-# aarch64 build does have virtio-gpu-gl-pci / virtio-ramfb-gl. Same guest disk,
-# same hypervisor; the difference is entirely who draws.
-#
-# teddyos-vm.sh stays useful: it is the headless/scriptable path (ssh, apt,
-# provisioning, CI). This one is the screen you sit in front of.
+#   TEDDYOS_UTM_START=1 ./scripts/teddyos-utm.sh
+#   make desktop
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -25,100 +22,182 @@ cd "$ROOT"
 WORK="${TEDDYOS_VM_WORK:-$ROOT/.teddyos-vm}"
 SRC_DISK="$WORK/disk.qcow2"
 VM_NAME="${TEDDYOS_UTM_NAME:-teddyos}"
-MEM="${TEDDYOS_VM_MEM:-12288}"
-CPUS="${TEDDYOS_VM_CPUS:-8}"
-SSH_PORT="${TEDDYOS_VM_SSH_PORT:-2222}"
-# virtio-ramfb-gl rather than virtio-gpu-gl-pci: ramfb gives a framebuffer the
-# firmware can draw into, so UEFI and the bootloader are visible. With the pure
-# PCI device the window stays black until the guest's DRM driver loads, which
-# is indistinguishable from a hang on the one boot where something is wrong.
+MEM="${TEDDYOS_VM_MEM:-8192}"
+CPUS="${TEDDYOS_VM_CPUS:-4}"
 DISPLAY_HW="${TEDDYOS_UTM_DISPLAY:-virtio-ramfb-gl}"
 START="${TEDDYOS_UTM_START:-0}"
+FORCE_COPY="${TEDDYOS_UTM_FORCE_COPY:-0}"
 
 UTM_DOCS="$HOME/Library/Containers/com.utmapp.UTM/Data/Documents"
 UTM_DIR="$UTM_DOCS/${VM_NAME}.utm"
-DEST_DISK="$UTM_DIR/Data/teddyos.qcow2"
+UTM_PREF="$HOME/Library/Containers/com.utmapp.UTM/Data/Library/Preferences/com.utmapp.UTM.plist"
 
 if [[ ! "$VM_NAME" =~ ^[A-Za-z0-9._-]+$ ]]; then
-  echo "error: TEDDYOS_UTM_NAME must match [A-Za-z0-9._-]+ (got: $VM_NAME)" >&2
-  exit 1
+  echo "error: bad TEDDYOS_UTM_NAME: $VM_NAME" >&2; exit 1
 fi
-[[ -d /Applications/UTM.app ]] || {
-  echo "error: UTM.app not found — brew install --cask utm" >&2; exit 1; }
+[[ -d /Applications/UTM.app ]] || { echo "error: install UTM (brew install --cask utm)" >&2; exit 1; }
+[[ -f "$SRC_DISK" ]] || {
+  echo "error: $SRC_DISK missing — run: make linux-init && make linux-provision" >&2
+  exit 1
+}
 
 utm_quit() {
   osascript -e 'tell application "UTM" to quit' >/dev/null 2>&1 || true
-  for _ in $(seq 1 40); do
-    pgrep -x UTM >/dev/null 2>&1 || return 0
-    sleep 0.25
-  done
+  for _ in $(seq 1 40); do pgrep -x UTM >/dev/null 2>&1 || return 0; sleep 0.25; done
 }
 utm_open() {
   open -a UTM
-  for _ in $(seq 1 40); do
+  for _ in $(seq 1 60); do
     osascript -e 'tell application "UTM" to count virtual machines' >/dev/null 2>&1 && return 0
     sleep 0.25
   done
+  echo "error: UTM not scriptable" >&2; exit 1
 }
 
-have_bundle() { [[ -d "$UTM_DIR" && -f "$UTM_DIR/config.plist" ]]; }
+bundle_uuid() {
+  plutil -extract Information.UUID raw "$UTM_DIR/config.plist" 2>/dev/null || true
+}
 
-# --- which disk is authoritative -------------------------------------------
-# Once UTM has booted this VM, the copy inside the bundle is the one with the
-# user's work in it. Silently overwriting it from .teddyos-vm/disk.qcow2 —
-# which stops changing the moment they stop using teddyos-vm.sh — would delete
-# a day's work and look like the VM "reset itself".
-COPY_DISK=1
-if [[ -f "$DEST_DISK" ]]; then
-  if [[ ! -f "$SRC_DISK" ]] || [[ "$DEST_DISK" -nt "$SRC_DISK" ]]; then
-    COPY_DISK=0
-    echo ">>> keeping the UTM disk (newer than $SRC_DISK)"
-  else
-    echo "warning: $DEST_DISK exists and is older than the source disk." >&2
-    echo "         Overwriting it discards anything done inside UTM since." >&2
-    printf "         type the VM name (%s) to overwrite, anything else to keep: " "$VM_NAME" >&2
-    read -r confirm
-    [[ "$confirm" == "$VM_NAME" ]] || { COPY_DISK=0; echo ">>> keeping the UTM disk"; }
-  fi
-fi
+have_bundle() { [[ -f "$UTM_DIR/config.plist" ]]; }
 
-if [[ "$COPY_DISK" == 1 && ! -f "$SRC_DISK" ]]; then
-  echo "error: $SRC_DISK missing — create it first:" >&2
-  echo "       ./scripts/teddyos-vm.sh --headless   (then provision, then stop it)" >&2
+# Headless brew-qemu must not hold the source disk.
+headless_holds_disk() {
+  local pid
+  for pid in $(pgrep -f "qemu-system-aarch64" 2>/dev/null || true); do
+    if ps -p "$pid" -o args= 2>/dev/null | grep -qF "$SRC_DISK"; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+if headless_holds_disk; then
+  echo "error: headless qemu still has $SRC_DISK open — power it off first" >&2
   exit 1
 fi
 
-# A qcow2 opened by a running qemu is mid-write; copying it yields a disk that
-# fsck's dirty at best.
-if pgrep -f "qemu-system-aarch64.*$SRC_DISK" >/dev/null 2>&1; then
-  echo "error: teddyos-vm.sh is still running against $SRC_DISK" >&2
-  echo "       shut that guest down before copying its disk" >&2
-  exit 1
-fi
+# ---------------------------------------------------------------------------
+# Registry hygiene: drop UUIDs whose package is missing OR that share our
+# package path but are not the UUID inside config.plist. Preferences only.
+# ---------------------------------------------------------------------------
+scrub_registry() {
+  local keep_uuid="${1:-}"
+  # UTM must be quit so it does not rewrite prefs under us.
+  utm_quit
+  UTM_PREF="$UTM_PREF" UTM_DIR="$UTM_DIR" VM_NAME="$VM_NAME" KEEP_UUID="$keep_uuid" python3 <<'PY'
+import os, plistlib
+from pathlib import Path
 
-if [[ -d "$UTM_DIR" && ! -f "$UTM_DIR/config.plist" ]]; then
-  echo ">>> removing orphan bundle: $UTM_DIR"
-  rm -rf "$UTM_DIR"
-fi
+pref = Path(os.environ["UTM_PREF"])
+utm_dir = Path(os.environ["UTM_DIR"])
+vm_name = os.environ["VM_NAME"]
+keep = os.environ.get("KEEP_UUID") or ""
+if not keep and (utm_dir / "config.plist").is_file():
+    try:
+        cfg0 = plistlib.loads((utm_dir / "config.plist").read_bytes())
+        keep = (cfg0.get("Information") or {}).get("UUID") or ""
+    except Exception:
+        keep = ""
 
-# --- create or refresh ------------------------------------------------------
-if have_bundle; then
-  echo ">>> refreshing existing VM bundle: $UTM_DIR"
+if not pref.is_file():
+    raise SystemExit(0)
+
+cfg = plistlib.loads(pref.read_bytes())
+reg = dict(cfg.get("Registry") or {})
+new_reg = {}
+dropped = []
+for uuid, entry in reg.items():
+    pkg = entry.get("Package") or {}
+    path = pkg.get("Path") or ""
+    exists = Path(path).joinpath("config.plist").is_file() if path else False
+    same_path = path and Path(path).resolve() == utm_dir.resolve() if path and utm_dir.exists() else (
+        path.endswith(f"/{vm_name}.utm") or path.endswith(f"{vm_name}.utm")
+    )
+    name = entry.get("Name") or ""
+    if not exists:
+        dropped.append((uuid, "missing package"))
+        continue
+    if same_path and keep and uuid.upper() != keep.upper():
+        dropped.append((uuid, f"ghost for same path (keep {keep})"))
+        continue
+    if name == vm_name and keep and uuid.upper() != keep.upper() and same_path:
+        dropped.append((uuid, "duplicate name/path"))
+        continue
+    new_reg[uuid] = entry
+
+cfg["Registry"] = new_reg
+cfg["VMEntryList"] = [u for u in (cfg.get("VMEntryList") or []) if u in new_reg]
+if keep and keep in new_reg:
+    rest = [u for u in cfg["VMEntryList"] if u != keep]
+    cfg["VMEntryList"] = [keep] + rest
+pref.write_bytes(plistlib.dumps(cfg, fmt=plistlib.FMT_XML))
+for u, why in dropped:
+    print(f"    scrubbed ghost {u} ({why})")
+if not dropped:
+    print("    registry clean")
+print(f"    keep uuid: {keep or '(none)'}")
+PY
+  utm_open
+}
+
+stop_named() {
+  local id
+  for id in $(utmctl list 2>/dev/null | awk -v n="$VM_NAME" 'NR>1 && $3==n {print $1}'); do
+    utmctl stop "$id" >/dev/null 2>&1 || true
+  done
+  # Also stop via AppleScript in case utmctl misses
   osascript <<EOF >/dev/null 2>&1 || true
 tell application "UTM"
   try
     set vm to virtual machine named "$VM_NAME"
     if status of vm is not stopped then
       stop vm by kill
-      delay 1
+      delay 2
     end if
   end try
 end tell
 EOF
-else
-  # Created with no drives; the disk is bundled and declared by the plist patch
-  # below. AppleScript drive import is the flakiest part of UTM's bridge and
-  # there is no reason to depend on it when we already patch the config.
+  sleep 1
+}
+
+# Full recreate: stop, scrub registry (no utmctl delete), remove package, create.
+recreate_vm() {
+  echo ">>> recreating UTM VM '$VM_NAME'"
+  stop_named
+  utm_quit
+  # Wipe package only after UTM quit and all QEMU gone
+  sleep 1
+  for pid in $(pgrep -f "qemu-aarch64-softmmu" 2>/dev/null || true); do
+    if ps -p "$pid" -o args= 2>/dev/null | grep -qF "$VM_NAME"; then
+      kill "$pid" 2>/dev/null || true
+    fi
+  done
+  sleep 1
+  # Scrub ALL registry rows for this name/path
+  UTM_PREF="$UTM_PREF" UTM_DIR="$UTM_DIR" VM_NAME="$VM_NAME" python3 <<'PY'
+import plistlib
+from pathlib import Path
+import os
+pref = Path(os.environ["UTM_PREF"])
+utm_dir = Path(os.environ["UTM_DIR"])
+vm_name = os.environ["VM_NAME"]
+if not pref.is_file():
+    raise SystemExit(0)
+cfg = plistlib.loads(pref.read_bytes())
+reg = dict(cfg.get("Registry") or {})
+new = {}
+for uuid, entry in reg.items():
+    path = (entry.get("Package") or {}).get("Path") or ""
+    name = entry.get("Name") or ""
+    if name == vm_name or path.endswith(f"/{vm_name}.utm") or path.endswith(f"{vm_name}.utm"):
+        print(f"    drop registry {uuid} ({name})")
+        continue
+    new[uuid] = entry
+cfg["Registry"] = new
+cfg["VMEntryList"] = [u for u in (cfg.get("VMEntryList") or []) if u in new]
+pref.write_bytes(plistlib.dumps(cfg, fmt=plistlib.FMT_XML))
+PY
+  rm -rf "$UTM_DIR"
   utm_open
   osascript <<EOF
 tell application "UTM"
@@ -126,124 +205,208 @@ tell application "UTM"
   make new virtual machine with properties {backend:qemu, configuration:{name:"$VM_NAME", architecture:"aarch64", memory:$MEM, hypervisor:true, uefi:true}}
 end tell
 EOF
+  for _ in $(seq 1 40); do have_bundle && break; sleep 0.25; done
+  have_bundle || { echo "error: UTM create failed — no $UTM_DIR/config.plist" >&2; exit 1; }
+  echo "    created $(bundle_uuid)"
+}
+
+# ---------------------------------------------------------------------------
+utm_open
+
+need_create=0
+if ! have_bundle; then
+  need_create=1
+elif [[ "$FORCE_COPY" == "1" ]]; then
+  need_create=1
 fi
 
-for _ in $(seq 1 20); do [[ -d "$UTM_DIR" ]] && break; sleep 0.25; done
-[[ -d "$UTM_DIR" ]] || { echo "error: VM bundle was not created" >&2; exit 1; }
-
-osascript <<EOF >/dev/null 2>&1 || true
-tell application "UTM"
-  try
-    set vm to virtual machine named "$VM_NAME"
-    if status of vm is not stopped then
-      stop vm by kill
-      delay 1
-    end if
-  end try
-end tell
-EOF
-
-mkdir -p "$UTM_DIR/Data"
-if [[ "$COPY_DISK" == 1 ]]; then
-  echo ">>> copying disk into the bundle ($(du -h "$SRC_DISK" | awk '{print $1}'))"
-  cp -f "$SRC_DISK" "$DEST_DISK"
+if [[ "$need_create" == "1" ]]; then
+  recreate_vm
+else
+  # Heal ghosts before we touch anything
+  scrub_registry "$(bundle_uuid)"
 fi
 
-UTM_DIR="$UTM_DIR" MEM="$MEM" CPUS="$CPUS" SSH_PORT="$SSH_PORT" \
-DISPLAY_HW="$DISPLAY_HW" VM_NAME="$VM_NAME" python3 <<'PY'
-import os, plistlib, uuid, hashlib
+stop_named
+
+# Decide whether to reinstall the guest disk image into the bundle.
+DEST_NAME="$(python3 - "$UTM_DIR" <<'PY'
+import plistlib, sys
+from pathlib import Path
+cfg = plistlib.loads((Path(sys.argv[1]) / "config.plist").read_bytes())
+for d in cfg.get("Drive") or []:
+    if d.get("ImageType") == "Disk" and d.get("ImageName"):
+        print(d["ImageName"]); break
+else:
+    print("")
+PY
+)"
+if [[ -z "$DEST_NAME" ]]; then
+  DEST_NAME="disk.qcow2"
+fi
+DEST_DISK="$UTM_DIR/Data/$DEST_NAME"
+
+COPY_DISK=0
+if [[ ! -f "$DEST_DISK" ]]; then
+  COPY_DISK=1
+elif [[ "$FORCE_COPY" == "1" ]]; then
+  COPY_DISK=1
+elif [[ "$SRC_DISK" -nt "$DEST_DISK" ]]; then
+  COPY_DISK=1
+  echo ">>> source disk newer — refreshing UTM disk"
+else
+  echo ">>> keeping existing UTM disk ($DEST_NAME)"
+fi
+
+# Patch config + optional disk install
+UTM_DIR="$UTM_DIR" SRC_DISK="$SRC_DISK" DEST_NAME="$DEST_NAME" \
+MEM="$MEM" CPUS="$CPUS" DISPLAY_HW="$DISPLAY_HW" COPY_DISK="$COPY_DISK" python3 <<'PY'
+import os, plistlib, shutil, uuid
 from pathlib import Path
 
-p = Path(os.environ["UTM_DIR"]) / "config.plist"
-cfg = plistlib.loads(p.read_bytes())
+utm_dir = Path(os.environ["UTM_DIR"])
+src = Path(os.environ["SRC_DISK"])
+dest_name = os.environ["DEST_NAME"]
+mem, cpus = int(os.environ["MEM"]), int(os.environ["CPUS"])
+display_hw = os.environ["DISPLAY_HW"]
+do_copy = os.environ["COPY_DISK"] == "1"
 
-cfg["Drive"] = [{
+cfg_path = utm_dir / "config.plist"
+data = utm_dir / "Data"
+data.mkdir(exist_ok=True)
+cfg = plistlib.loads(cfg_path.read_bytes())
+
+# Single VirtIO disk; preserve ImageName so we don't orphan efi_vars pairing.
+disk = {
     "Identifier": str(uuid.uuid4()).upper(),
     "ImageType": "Disk",
-    "ImageName": "teddyos.qcow2",
+    "ImageName": dest_name,
     "Interface": "VirtIO",
     "InterfaceVersion": 1,
     "ReadOnly": False,
-}]
+}
+# Prefer existing identifier if same name
+for d in cfg.get("Drive") or []:
+    if d.get("ImageType") == "Disk" and d.get("ImageName") == dest_name and d.get("Identifier"):
+        disk["Identifier"] = d["Identifier"]
+        break
+cfg["Drive"] = [disk]
+
+if do_copy:
+    print(f"    installing disk → Data/{dest_name} ({src.stat().st_size // (1024**2)} MB)")
+    # Remove other qcow2 only (never efi_vars)
+    for f in data.glob("*.qcow2"):
+        if f.name != dest_name:
+            f.unlink()
+    shutil.copy2(src, data / dest_name)
+else:
+    print(f"    disk already present: Data/{dest_name}")
+
+system = cfg.setdefault("System", {})
+system["MemorySize"] = mem
+system["CPUCount"] = cpus
+system["Architecture"] = "aarch64"
+system["Target"] = "virt"
 
 qemu = cfg.setdefault("QEMU", {})
 qemu["UEFIBoot"] = True
-# The whole point. Without HVF this is TCG and the guest is a slideshow.
 qemu["Hypervisor"] = True
 qemu["RNGDevice"] = True
 qemu["BalloonDevice"] = True
 
-system = cfg.setdefault("System", {})
-system["MemorySize"] = int(os.environ["MEM"])
-system["CPUCount"] = int(os.environ["CPUS"])
-system["Architecture"] = "aarch64"
-system["Target"] = "virt"
-
 cfg["Display"] = [{
-    "Hardware": os.environ["DISPLAY_HW"],
-    # Let the guest resize to the window instead of pillarboxing a fixed mode.
-    # GNOME's mutter honours the virtio-gpu hotplug event, so dragging the
-    # window edge changes the desktop resolution rather than scaling it.
+    "Hardware": display_hw,
     "DynamicResolution": True,
     "NativeResolution": True,
     "UpscalingFilter": "Linear",
     "DownscalingFilter": "Linear",
 }]
 
-# MacAddress and IsolateFromHost are REQUIRED, not optional. UTM's decoder
-# rejects a Network entry missing either one, and rejecting the entry means
-# rejecting the whole config: the VM vanishes from the library with no error
-# anywhere — not in `utmctl list`, not in Console, not in a log. The bundle and
-# the registry row both survive, which makes it look like a UTM bug rather than
-# a malformed key. Found by bisecting the patch one block at a time.
-#
-# The MAC is derived from the VM name rather than random so that re-running
-# this script does not hand the guest a new NIC identity every time.
-mac_src = hashlib.sha256(os.environ["VM_NAME"].encode()).digest()
-mac = "02:" + ":".join(f"{b:02X}" for b in mac_src[:5])
+nets = cfg.get("Network") or []
+if nets:
+    nets[0].setdefault("IsolateFromHost", False)
+    nets[0].setdefault("Mode", "Shared")
+    nets[0].setdefault("Hardware", "virtio-net-pci")
+    cfg["Network"] = nets
 
-# NOTE ON "Shared": UTM implements it with `-netdev vmnet-shared`, not QEMU
-# user-mode networking, and vmnet gives the guest its own address on a host
-# bridge — so PortForward is silently ignored. ssh to the guest's own IP
-# instead; the entry below is kept only for the modes that do honour it.
-#   $ cat /var/db/dhcpd_leases        # name=teddyos -> ip_address=...
-cfg["Network"] = [{
-    "Mode": "Shared",
-    "Hardware": "virtio-net-pci",
-    "IsolateFromHost": False,
-    "MacAddress": mac,
-    "PortForward": [{
-        "Protocol": "TCP",
-        "HostAddress": "127.0.0.1",
-        "HostPort": int(os.environ["SSH_PORT"]),
-        "GuestPort": 22,
-    }],
-}]
+cfg.setdefault("Input", {})["UsbBusSupport"] = "3.0"
+if not cfg.get("Sound"):
+    cfg["Sound"] = [{"Hardware": "intel-hda"}]
+if not cfg.get("Serial"):
+    cfg["Serial"] = [{"Mode": "Ptty", "Target": "Auto"}]
 
-cfg["Sound"] = [{"Hardware": "intel-hda"}]
-cfg["Serial"] = [{"Mode": "Ptty", "Target": "Auto"}]
-
-# USB tablet, so the pointer is absolute and the cursor does not need grabbing.
-cfg.setdefault("Input", {})["UsbBusSupport"] = "Usb3_0"
-
-p.write_bytes(plistlib.dumps(cfg, fmt=plistlib.FMT_XML))
-print(f"    display  {os.environ['DISPLAY_HW']} (GL)")
-print(f"    cpu/mem  {os.environ['CPUS']} / {int(os.environ['MEM'])//1024}G, hypervisor on")
-print(f"    ssh      127.0.0.1:{os.environ['SSH_PORT']} -> guest:22")
+cfg_path.write_bytes(plistlib.dumps(cfg, fmt=plistlib.FMT_XML))
+info = cfg.get("Information") or {}
+print(f"    name     {info.get('Name')}")
+print(f"    uuid     {info.get('UUID')}")
+print(f"    display  {display_hw}")
+print(f"    cpu/mem  {cpus} / {mem // 1024}G HVF")
+print("    Data/:")
+for f in sorted(data.iterdir()):
+    print(f"      {f.name}  {f.stat().st_size}")
+# Fail closed if efi_vars missing (UEFI will not boot)
+if not any(p.name.startswith("efi") or "vars" in p.name for p in data.iterdir()):
+    raise SystemExit("error: efi_vars.fd missing from Data/ — recreate the VM")
+if not (data / dest_name).is_file():
+    raise SystemExit(f"error: disk {dest_name} missing after install")
 PY
 
-# Reload so UTM reads the patched plist rather than its in-memory copy.
-utm_quit
-utm_open
+# Reload so UTM reads patched plist; scrub ghosts to this UUID only.
+UUID="$(bundle_uuid)"
+scrub_registry "$UUID"
+UUID="$(bundle_uuid)"
+[[ -n "$UUID" ]] || { echo "error: no UUID in config.plist" >&2; exit 1; }
 
-[[ "$START" == "1" ]] && \
-  osascript -e "tell application \"UTM\" to start virtual machine named \"$VM_NAME\"" >/dev/null
+if ! utmctl list 2>/dev/null | awk -v u="$UUID" 'NR>1 && toupper($1)==toupper(u) {found=1} END{exit !found}'; then
+  echo "error: UTM does not list $UUID after reload — config rejected" >&2
+  utmctl list 2>&1 || true
+  ls -la "$UTM_DIR" "$UTM_DIR/Data" 2>&1 || true
+  exit 1
+fi
+
+if [[ "$START" == "1" ]]; then
+  echo ">>> starting $VM_NAME ($UUID) with display window"
+  # AppleScript start opens the SPICE window (unfreezes QEMU -S).
+  # utmctl start alone often leaves the guest frozen with no window.
+  osascript <<EOF
+tell application "UTM"
+  activate
+  set vm to virtual machine named "$VM_NAME"
+  if status of vm is stopped then
+    start vm
+  end if
+end tell
+EOF
+  sleep 4
+  status="$(utmctl list 2>/dev/null | awk -v u="$UUID" 'NR>1 && toupper($1)==toupper(u) {print $2; exit}')"
+  echo ">>> status: ${status:-unknown}"
+  if [[ "$status" != "started" ]]; then
+    # One more try via utmctl then AppleScript name
+    utmctl start "$UUID" 2>/dev/null || true
+    sleep 2
+    osascript -e "tell application \"UTM\" to start virtual machine named \"$VM_NAME\"" 2>/dev/null || true
+    sleep 3
+    status="$(utmctl list 2>/dev/null | awk -v u="$UUID" 'NR>1 && toupper($1)==toupper(u) {print $2; exit}')"
+  fi
+  if [[ "$status" != "started" ]]; then
+    echo "error: VM did not stay running (status=${status:-none})" >&2
+    utmctl list 2>&1 || true
+    exit 1
+  fi
+  # Package must still exist after start (detect unlinked-disk failure early)
+  if [[ ! -f "$DEST_DISK" ]]; then
+    echo "error: disk package vanished after start — abort" >&2
+    exit 1
+  fi
+fi
+
+osascript -e 'tell application "UTM" to activate' >/dev/null 2>&1 || true
 
 cat <<DONE
 
->>> '$VM_NAME' is in UTM. Double-click it to open the guest display.
-    The thumbnail in the library list is a still, not the running screen.
-
-    Full screen is what makes this a daily driver rather than a window:
-    UTM window -> green button, or ctrl-cmd-F.
+>>> '$VM_NAME' ready (uuid $UUID).
+    Login:  teddy / teddyos
+    Open the guest window if you only see the library list (double-click teddyos).
+    Full screen: green button or ctrl-cmd-F
+    First GNOME boot can take 30–90 seconds.
 DONE

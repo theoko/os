@@ -5,7 +5,7 @@
 MAKEFLAGS += --no-builtin-rules
 .SUFFIXES:
 
-.PHONY: all help desktop linux-init linux-provision linux-iso linux-vm \
+.PHONY: all help desktop desktop-force linux-init linux-provision linux-iso linux-vm \
 	test test-host publish-os update-os update-check \
 	check-published check-published-install check-published-uninstall clean
 
@@ -16,17 +16,21 @@ help:
 	@echo "teddyOS — Linux daily driver"
 	@echo ""
 	@echo "  make desktop           open Linux guest in UTM (VM: teddyos)"
+	@echo "  make desktop-force     recreate UTM VM + re-copy disk (repair)"
 	@echo "  make linux-init        first-time Debian disk + cloud-init"
 	@echo "  make linux-provision   GNOME + Chromium (headless QEMU + ssh :2222)"
 	@echo "  make linux-iso         build live ISO via guest (dist/)"
 	@echo "  make test              Linux contract unit tests on the host"
 	@echo "  make publish-os        publish live images + update payload"
-	@echo ""
-	@echo "There is no freestanding kernel path in this tree."
 
 desktop:
 	chmod +x scripts/teddyos-desktop.sh scripts/teddyos-utm.sh scripts/teddyos-vm.sh
 	./scripts/teddyos-desktop.sh --desktop
+
+# Recreate the UTM VM + re-copy disk (fixes ghosts / frozen black display).
+desktop-force:
+	chmod +x scripts/teddyos-desktop.sh scripts/teddyos-utm.sh scripts/teddyos-vm.sh
+	./scripts/teddyos-desktop.sh --desktop --force
 
 linux-init:
 	chmod +x scripts/teddyos-desktop.sh scripts/teddyos-vm.sh
