@@ -708,7 +708,7 @@ fi
 echo ">>> whatsapp desktop"
 if remote "test -f /usr/share/applications/teddyos-whatsapp.desktop \
   && grep -q 'Icon=teddyos-whatsapp' /usr/share/applications/teddyos-whatsapp.desktop \
-  && grep -q 'web.whatsapp.com' /usr/share/applications/teddyos-whatsapp.desktop"; then
+  && grep -q 'Exec=teddyos-whatsapp' /usr/share/applications/teddyos-whatsapp.desktop"; then
   ok "whatsapp desktop: icon + URL"
 else
   bad "whatsapp desktop" "missing or wrong"
@@ -1511,6 +1511,8 @@ wrap = shutil.which("teddyos-whatsapp")
 if wrap:
     body = Path(wrap).read_text()
     assert "web.whatsapp.com" in body
+    # Dock path is a setup guide first; still opens chats after.
+    assert "GUIDE" in body or "setup" in body.lower()
 print("whatsapp-do-it-guest-ok", "wrapper=" + ("yes" if wrap else "fallback"))
 PY
 REMOTE

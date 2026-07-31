@@ -40,10 +40,9 @@ run 'command -v chromium >/dev/null' || {
   exit 1
 }
 
-# Web Chromium apps (own profile, app window). Gmail is *not* here — it opens
-# teddyos-gmail, a calm setup guide, instead of dumping people on mail.google.com.
-APPS='whatsapp|WhatsApp|https://web.whatsapp.com|Network;InstantMessaging;|teddyos-whatsapp
-teddysearch|teddysearch|https://teddysearch.com|Network;|teddyos-search'
+# Web Chromium apps (own profile, app window). WhatsApp and Gmail open calm
+# setup guides (teddyos-whatsapp / teddyos-gmail), not naked vendor URLs.
+APPS='teddysearch|teddysearch|https://teddysearch.com|Network;|teddyos-search'
 
 echo ">>> installing web apps"
 while IFS='|' read -r id name url cats icon; do
@@ -63,9 +62,19 @@ StartupWMClass=teddyos-$id
 EOF"
 done <<< "$APPS"
 
-# Gmail: setup guide first (sign-in explained, then optional inbox window).
-echo "    Gmail  ->  teddyos-gmail (setup guide)"
+echo ">>> messaging setup guides (not raw vendor pages)"
 run 'mkdir -p ~/.local/share/applications
+cat > ~/.local/share/applications/teddyos-whatsapp.desktop <<EOF
+[Desktop Entry]
+Type=Application
+Name=WhatsApp
+Comment=Set up WhatsApp on teddyOS
+Exec=teddyos-whatsapp
+Icon=teddyos-whatsapp
+Terminal=false
+Categories=Network;InstantMessaging;
+StartupNotify=true
+EOF
 cat > ~/.local/share/applications/teddyos-gmail.desktop <<EOF
 [Desktop Entry]
 Type=Application
@@ -77,8 +86,6 @@ Terminal=false
 Categories=Network;Email;
 StartupNotify=true
 EOF'
-# Prefer system binary when install-product / ISO placed it; else leave Exec as is.
-run 'command -v teddyos-gmail >/dev/null && true'
 
 echo ">>> verifying each icon actually resolves"
 # A .desktop pointing at a missing icon falls back to a generic tile silently.

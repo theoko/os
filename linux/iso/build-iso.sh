@@ -526,16 +526,17 @@ DESKTOP
 # and the dock has been showing three icons where four were intended. A
 # favourite pointing at a launcher that does not exist fails quietly — nothing
 # logs it, the icon simply is not there.
+# WhatsApp opens a setup guide first (QR + control), then its own app window.
 install -Dm644 /dev/stdin config/includes.chroot/usr/share/applications/teddyos-whatsapp.desktop <<'DESKTOP'
 [Desktop Entry]
 Type=Application
 Name=WhatsApp
-Comment=Messages
+Comment=Set up WhatsApp on teddyOS
 Exec=teddyos-whatsapp
 Icon=teddyos-whatsapp
 Terminal=false
 Categories=Network;InstantMessaging;
-StartupWMClass=teddyos-whatsapp
+StartupNotify=true
 DESKTOP
 
 # Gmail opens a setup guide first — not a naked mail.google.com tab.

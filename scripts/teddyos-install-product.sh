@@ -161,12 +161,11 @@ cat > "$STAGE/usr/share/applications/teddyos-whatsapp.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
 Name=WhatsApp
-Comment=WhatsApp Web
-Exec=chromium --ozone-platform-hint=auto --password-store=basic --app=https://web.whatsapp.com --user-data-dir=%h/.local/share/teddyos-apps/whatsapp --class=teddyos-whatsapp
+Comment=Set up WhatsApp on teddyOS
+Exec=teddyos-whatsapp
 Icon=teddyos-whatsapp
 Terminal=false
 Categories=Network;InstantMessaging;
-StartupWMClass=teddyos-whatsapp
 StartupNotify=true
 EOF
 

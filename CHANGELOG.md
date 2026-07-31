@@ -1,5 +1,5 @@
 ---
-version: v0.15.3
+version: v0.15.4
 project: os
 updated: 2026-07-31
 type: changelog
@@ -10,6 +10,14 @@ type: changelog
 Runtime version is the top-level `VERSION` file (no `v` prefix there).
 This file is newest-first. When behavior ships: bump `VERSION`, add an entry
 here, update this frontmatter `version:` / `updated:`, then conventional-commit.
+
+## [v0.15.4] — 2026-07-31
+
+### Changed — WhatsApp opens a setup guide, not a naked Web page
+
+Dock **WhatsApp** now matches Gmail: QR link once, you’re in control (AI only
+drafts), then open chats in a private Chromium app window. Desktop entry runs
+`teddyos-whatsapp` (guide), not `chromium --app=web.whatsapp.com`.
 
 ## [v0.15.3] — 2026-07-31
 

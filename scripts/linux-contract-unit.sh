@@ -581,6 +581,7 @@ assert "AI help" in p or "co-pilot" in p
 
 wrap = Path("linux/teddyos-agent/teddyos-whatsapp").read_text()
 assert "web.whatsapp.com" in wrap
+assert "setup" in wrap.lower() or "GUIDE" in wrap
 assert "--app=" in wrap or "app=" in wrap
 
 app = Path("linux/teddyos-search/teddyos-search-app").read_text()
@@ -1481,12 +1482,15 @@ for name, url in (
     ("teddyos-perplexity", "perplexity"),
     ("teddyos-linkedin", "linkedin.com/messaging"),
     ("teddyos-whatsapp", "web.whatsapp.com"),
+    ("teddyos-gmail", "mail.google.com"),
 ):
     p = Path(f"linux/teddyos-agent/{name}")
     assert p.is_file(), name
     text = p.read_text()
     assert url in text.lower() or url in text
     assert "chromium" in text or "google-chrome" in text
+    # Guides still open a Chromium --app= window after setup; WhatsApp/Gmail
+    # launchers are no longer a one-liner that dumps the vendor URL immediately.
     assert "--app=" in text or "--app" in text
 oi = Path("linux/teddyos-agent/teddyos-open-signin").read_text()
 assert "chromium" in oi
@@ -2193,6 +2197,425 @@ then
   ok "progress snapshot field completeness"
 else
   bad "snapshot fields" "failed"
+fi
+
+# --- intent classify: LinkedIn / WhatsApp / lookup / ambiguous --------------
+if python3 - <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path("linux/teddyos-search").resolve()))
+import intent as I
+
+# Plain lookup
+r = I.classify("best python libraries 2024")
+assert r.kind is I.IntentKind.LOOKUP, r.kind
+assert r.confidence >= 0.8
+
+# Empty → lookup
+r0 = I.classify("")
+assert r0.kind is I.IntentKind.LOOKUP
+
+# LinkedIn explicit → MESSAGE_REPLY
+r_li = I.classify("reply to my linkedin messages")
+assert r_li.kind is I.IntentKind.MESSAGE_REPLY
+assert r_li.channel is I.Channel.LINKEDIN
+assert r_li.confidence >= I.CONFIDENT
+assert r_li.auto_start_ok is True
+
+# WhatsApp explicit → MESSAGE_REPLY
+r_wa = I.classify("whatsapp messages reply with ai help")
+assert r_wa.kind is I.IntentKind.MESSAGE_REPLY
+assert r_wa.channel is I.Channel.WHATSAPP
+assert r_wa.confidence >= I.CONFIDENT
+assert r_wa.auto_start_ok is True
+
+# Generic reply (no channel) → AMBIGUOUS
+r_gen = I.classify("help me reply to my messages")
+assert r_gen.kind is I.IntentKind.AMBIGUOUS, r_gen.kind
+assert r_gen.channel is I.Channel.UNKNOWN
+assert len(r_gen.alternatives) >= 2
+assert r_gen.auto_start_ok is False
+
+# Both channels named → AMBIGUOUS
+r_both = I.classify("reply to my linkedin and whatsapp messages")
+assert r_both.kind is I.IntentKind.AMBIGUOUS, r_both.kind
+
+# Project slug → PROJECT_HELP
+r_proj = I.classify("work on iakovos/trading")
+assert r_proj.kind is I.IntentKind.PROJECT_HELP, r_proj.kind
+assert r_proj.confidence >= 0.8
+
+# Freeform everyday task
+r_free = I.classify("respond to my linkedin inbox")
+# Must be messaging-related, not PROJECT_HELP
+assert r_free.kind in (I.IntentKind.MESSAGE_REPLY, I.IntentKind.FREEFORM_HELP, I.IntentKind.AMBIGUOUS)
+
+print("intent-classify-ok")
+PY
+then
+  ok "intent.classify: LinkedIn/WhatsApp/generic/ambiguous/project/lookup"
+else
+  bad "intent.classify" "failed"
+fi
+
+# --- intent force_* + choice helpers ----------------------------------------
+if python3 - <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path("linux/teddyos-search").resolve()))
+import intent as I
+
+# force_message_reply
+fi = I.force_message_reply("check my linkedin", I.Channel.LINKEDIN)
+assert fi.kind is I.IntentKind.MESSAGE_REPLY
+assert fi.confidence == 1.0
+assert fi.source == "user_pick"
+assert fi.channel is I.Channel.LINKEDIN
+assert fi.auto_start_ok is True
+
+# force_kind project
+fk = I.force_kind("work on tsearch", I.IntentKind.PROJECT_HELP)
+assert fk.kind is I.IntentKind.PROJECT_HELP
+assert fk.confidence == 1.0
+assert fk.source == "user_pick"
+
+# force_kind freeform
+ff = I.force_kind("manage my emails", I.IntentKind.FREEFORM_HELP)
+assert ff.kind is I.IntentKind.FREEFORM_HELP
+
+# choice_label covers all kinds
+assert "LinkedIn" in I.choice_label(fi)
+assert "WhatsApp" in I.choice_label(I.force_message_reply("wa", I.Channel.WHATSAPP))
+assert "project" in I.choice_label(fk).lower() or "tsearch" in I.choice_label(fk).lower()
+assert I.choice_label(ff)  # non-empty
+
+# choice_subtitle non-empty for all kinds
+for it in (fi, fk, ff):
+    assert I.choice_subtitle(it)  # non-empty string
+
+# intents_equal_job
+assert I.intents_equal_job(fi, fi)
+assert not I.intents_equal_job(fi, fk)
+
+# all_choice_intents on AMBIGUOUS yields alternatives; on concrete yields itself
+r_both = I.classify("reply to my linkedin and whatsapp messages")
+choices = list(I.all_choice_intents(r_both))
+assert len(choices) >= 2
+
+concrete = list(I.all_choice_intents(fi))
+assert len(concrete) == 1 and concrete[0] is fi
+
+print("intent-force-choice-ok")
+PY
+then
+  ok "intent force_* / choice_label / choice_subtitle / all_choice_intents"
+else
+  bad "intent force/choice" "failed"
+fi
+
+# --- pending_ask save / load / clear ----------------------------------------
+if python3 - <<'PY'
+import os, tempfile, importlib, sys
+from pathlib import Path
+td = tempfile.mkdtemp(prefix="teddyos-pending-")
+os.environ["XDG_CONFIG_HOME"] = td
+sys.path.insert(0, str(Path("linux/teddyos-search").resolve()))
+import pending_ask
+importlib.reload(pending_ask)
+
+# Nothing stored → load returns None
+assert pending_ask.load() is None
+
+# save + load round-trip
+pending_ask.save("tsearch", "fix the bug", query="work on tsearch", kind="work")
+d = pending_ask.load()
+assert d is not None
+assert d["project"] == "tsearch"
+assert d["prompt"] == "fix the bug"
+assert d["query"] == "work on tsearch"
+assert d["kind"] == "work"
+
+# Invalid kind normalises to "work"
+pending_ask.save("foo", kind="invalid_kind")
+d2 = pending_ask.load()
+assert d2["kind"] == "work"
+
+# clear → load returns None
+pending_ask.clear()
+assert pending_ask.load() is None
+
+# save with empty project AND empty query → no file written
+pending_ask.save("", "", query="")
+assert pending_ask.load() is None
+
+# Messaging kind preserved
+pending_ask.save("", query="reply to my linkedin messages", kind="linkedin")
+d3 = pending_ask.load()
+assert d3["kind"] == "linkedin"
+
+print("pending-ask-ok")
+PY
+then
+  ok "pending_ask save/load/clear cycle + kind normalisation"
+else
+  bad "pending_ask" "failed"
+fi
+
+# --- sandbox module-level contracts (no systemd required) -------------------
+if python3 - <<'PY'
+import os, sys, importlib
+from pathlib import Path
+sys.path.insert(0, str(Path("linux/teddyos-search").resolve()))
+
+# Must NOT have the guard set coming in
+os.environ.pop("TEDDYOS_SANDBOXED", None)
+import sandbox
+importlib.reload(sandbox)
+
+# sandboxed() is False unless guard is set
+assert not sandbox.sandboxed(), "should not be sandboxed in test runner"
+
+# Setting the guard makes sandboxed() return True
+os.environ["TEDDYOS_SANDBOXED"] = "1"
+importlib.reload(sandbox)
+assert sandbox.sandboxed()
+os.environ.pop("TEDDYOS_SANDBOXED")
+importlib.reload(sandbox)
+
+# properties() always includes the unconditional hardening props
+props = sandbox.properties()
+assert any("NoNewPrivileges" in p for p in props)
+assert any("ProtectKernelTunables" in p for p in props)
+assert any("RestrictSUIDSGID" in p for p in props)
+# TemporaryFileSystem always present
+assert any("TemporaryFileSystem" in p for p in props)
+
+# available() returns a bool and does not raise
+result = sandbox.available()
+assert isinstance(result, bool)
+
+print("sandbox-contracts-ok", "available=", result)
+PY
+then
+  ok "sandbox sandboxed() / properties() / available() contracts"
+else
+  bad "sandbox" "module contracts failed"
+fi
+
+# --- logutil get_logger idempotency + Logger type ---------------------------
+if python3 - <<'PY'
+import logging, sys, tempfile, os
+from pathlib import Path
+
+# Run from repo root so relative imports work
+td = tempfile.mkdtemp(prefix="teddyos-log-")
+os.environ["XDG_STATE_HOME"] = td
+
+# logutil lives under linux/logging/
+sys.path.insert(0, str(Path("linux/logging").resolve()))
+import logutil
+
+log1 = logutil.get_logger("search")
+log2 = logutil.get_logger("search")
+assert log1 is log2, "same logger must be returned (idempotent)"
+assert isinstance(log1, logging.Logger)
+assert log1.name == "teddyos.search"
+
+# Different name → different logger
+log3 = logutil.get_logger("agent")
+assert log3 is not log1
+assert log3.name == "teddyos.agent"
+
+# Logging a line must not raise
+log1.info("test line from contract suite")
+log1.warning("warning line")
+log1.error("error line")
+
+# _log_path: returns a Path or None without raising
+p = logutil._log_path("contracttest")
+assert p is None or isinstance(p, Path)
+
+print("logutil-ok")
+PY
+then
+  ok "logutil get_logger idempotency, Logger type, _log_path"
+else
+  bad "logutil" "failed"
+fi
+
+# --- search.py helper functions ---------------------------------------------
+if python3 - <<'PY'
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path("linux/teddyos-search").resolve()))
+import search as s
+
+# normalise_url
+assert s.normalise_url("https://example.com/x") == "https://example.com/x"
+assert s.normalise_url("en.wikipedia.org/wiki/Foo") == "https://en.wikipedia.org/wiki/Foo"
+assert s.normalise_url("/tsearch/docs/notes/x") == f"https://{s.PORTAL_HOST}/tsearch/docs/notes/x"
+assert s.normalise_url("//cdn.example.com/img") == "https://cdn.example.com/img"
+assert s.normalise_url("") == ""
+
+# focus_query strips leading intent
+q1 = s.focus_query("i wanna work on iakovos/trading")
+assert "/" in q1 or "trading" in q1, q1
+q2 = s.focus_query("immigration paradise")
+assert q2 == "immigration paradise"  # no intent prefix to strip
+assert s.focus_query("") == ""
+
+# is_work_goal
+assert s.is_work_goal("work on iakovos-trading")
+assert s.is_work_goal("wanna work on my project")
+assert s.is_work_goal("respond to my linkedin messages")
+assert not s.is_work_goal("best python libraries")
+assert not s.is_work_goal("")
+
+# is_freeform_help_goal
+assert s.is_freeform_help_goal("reply to my linkedin messages")
+assert s.is_freeform_help_goal("check my email inbox")
+assert not s.is_freeform_help_goal("best python libraries")
+
+# is_linkedin_messages_goal
+assert s.is_linkedin_messages_goal("reply to my linkedin messages")
+assert s.is_linkedin_messages_goal("linkedin inbox")
+assert not s.is_linkedin_messages_goal("whatsapp messages")
+assert not s.is_linkedin_messages_goal("python tutorial")
+
+# is_whatsapp_messages_goal
+assert s.is_whatsapp_messages_goal("whatsapp messages help")
+assert s.is_whatsapp_messages_goal("reply to my whatsapp")
+assert not s.is_whatsapp_messages_goal("linkedin messages")
+
+# query_terms strips stopwords when enough signal remains
+terms = s.query_terms("fix the TypeError in async handler")
+assert "typeerror" in [t.lower() for t in terms] or "TypeError" in terms or any("type" in t.lower() for t in terms)
+
+# tokenize returns a non-empty list for non-empty input
+toks = s.tokenize("immigration status check USCIS")
+assert len(toks) >= 2
+
+# prune: deduplicates by URL, keeps highest score
+r1 = s.Result(title="A", url="https://x/a", snippet="", source="builtin", score=2.0, matched=1, terms=1)
+r2 = s.Result(title="A dup", url="https://x/a", snippet="", source="portal", score=1.0, matched=1, terms=1)
+r3 = s.Result(title="B", url="https://x/b", snippet="", source="builtin", score=1.5, matched=1, terms=1)
+pruned = s.prune([r1, r2, r3])
+urls = [r.url for r in pruned]
+assert urls.count("https://x/a") == 1   # deduped
+assert len(pruned) == 2
+# Higher-scored duplicate wins
+assert next(r for r in pruned if r.url == "https://x/a").score == 2.0
+
+print("search-helpers-ok")
+PY
+then
+  ok "search.py helpers: normalise_url / focus_query / is_*_goal / query_terms / prune"
+else
+  bad "search helpers" "failed"
+fi
+
+# --- teddyos-claude _cwd_from_argv (pure, no GTK) ---------------------------
+if python3 - <<'PY'
+import importlib.machinery, importlib.util, sys, os, tempfile
+from pathlib import Path
+
+p = Path("linux/teddyos-claude/teddyos-claude")
+assert p.is_file()
+
+# Patch gi so the GTK import does not break on the host
+import types
+gi_mod = types.ModuleType("gi")
+gi_mod.require_version = lambda *a, **kw: None
+sys.modules.setdefault("gi", gi_mod)
+for sub in ("gi.repository", "gi.repository.Adw", "gi.repository.Gdk",
+            "gi.repository.GLib", "gi.repository.Gtk", "gi.repository.Pango",
+            "gi.repository.Vte"):
+    sys.modules.setdefault(sub, types.ModuleType(sub))
+# Stub out Adw.ApplicationWindow so class body doesn't fail
+adw = sys.modules["gi.repository.Adw"]
+if not hasattr(adw, "ApplicationWindow"):
+    adw.ApplicationWindow = object
+if not hasattr(adw, "Application"):
+    adw.Application = object
+
+loader = importlib.machinery.SourceFileLoader("teddyos_claude", str(p))
+spec = importlib.util.spec_from_loader(loader.name, loader)
+assert spec and spec.loader
+mod = importlib.util.module_from_spec(spec)
+sys.modules[loader.name] = mod
+loader.exec_module(mod)
+
+home = os.path.expanduser("~")
+
+# No args → home
+assert mod._cwd_from_argv(["teddyos-claude"]) == home
+
+# With a valid dir → that dir
+td = tempfile.mkdtemp()
+argv_with_dir = ["teddyos-claude", td]
+assert mod._cwd_from_argv(argv_with_dir) == os.path.abspath(td)
+
+# Flag arg is skipped; non-dir string falls back to home
+assert mod._cwd_from_argv(["teddyos-claude", "--no-such"]) == home
+
+# Non-existent path → home
+assert mod._cwd_from_argv(["teddyos-claude", "/no/such/path/xyz"]) == home
+
+print("claude-cwd-ok")
+PY
+then
+  ok "teddyos-claude _cwd_from_argv (no GTK)"
+else
+  bad "teddyos-claude _cwd_from_argv" "failed"
+fi
+
+# --- progress format_toast / progress_line / ultracode_meter ----------------
+if python3 - <<'PY'
+import os, tempfile, importlib, sys
+from pathlib import Path
+td = tempfile.mkdtemp(prefix="teddyos-toast-")
+os.environ["XDG_CONFIG_HOME"] = td
+sys.path.insert(0, str(Path("linux/teddyos-search").resolve()))
+import progress
+importlib.reload(progress)
+
+# format_toast with no events → None
+assert progress.format_toast([]) is None
+
+# format_toast picks the highest-priority event
+ev_xp = progress.ProgressEvent(kind="xp", title="+ 3 XP", xp_delta=3)
+ev_level = progress.ProgressEvent(kind="level", title="Level Up!")
+ev_badge = progress.ProgressEvent(kind="badge", title="First ask", xp_delta=10)
+toast = progress.format_toast([ev_xp, ev_level, ev_badge])
+assert toast is not None
+# level outranks badge outranks xp
+assert "Level Up" in toast or "⬆" in toast
+
+# A badge-only list
+t2 = progress.format_toast([ev_badge])
+assert t2 is not None
+assert "First ask" in t2
+
+# progress_line returns a non-empty string
+line = progress.progress_line()
+assert isinstance(line, str) and line
+
+# ultracode_meter returns (float, str)
+frac, caption = progress.ultracode_meter()
+assert 0.0 <= frac <= 1.0
+assert isinstance(caption, str) and caption
+
+# award_signin / award_clone / award_tour return ProgressSnapshot
+for fn_name in ("award_signin", "award_clone", "award_tour"):
+    snap = getattr(progress, fn_name)()
+    assert hasattr(snap, "xp") and hasattr(snap, "level"), fn_name
+
+print("toast-progress-ok")
+PY
+then
+  ok "progress format_toast / progress_line / ultracode_meter / award helpers"
+else
+  bad "progress toast/line/meter" "failed"
 fi
 
 echo
