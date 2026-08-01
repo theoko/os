@@ -960,11 +960,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path("linux/teddyos-search").resolve()))
 from work_tools import (
     available_work_tools, tools_ready_for_broadcast, CreditStatus, is_chat_helper,
+    WorkTool,
 )
 tools = available_work_tools()
-assert tools
-ids = {t.id for t in tools}
-# On host some CLIs may be missing; catalog source still has web apps
+# Catalog source must list product tools even when CLIs are missing on CI.
 src = Path("linux/teddyos-search/work_tools.py").read_text()
 for tid in ("claude", "devin", "replit", "perplexity", "files"):
     assert f'"{tid}"' in src or f"'{tid}'" in src, tid
@@ -973,12 +972,20 @@ for tid in ("claude", "grok", "gemini", "codex", "copilot"):
     assert is_chat_helper(tid), tid
 assert not is_chat_helper("files")
 assert not is_chat_helper("devin")
-# Readiness gates
-if tools:
-    t = next((x for x in tools if is_chat_helper(x.id)), tools[0])
-    assert tools_ready_for_broadcast([t], {t.id: CreditStatus(None, "u")}) == []
-    assert tools_ready_for_broadcast([t], {t.id: CreditStatus(False, "Needs sign-in")}) == []
-    assert tools_ready_for_broadcast([t], {t.id: CreditStatus(True, "Connected")}) == [t]
+# Readiness gates — use a synthetic chat tool so CI without claude/gh still
+# exercises the broadcast predicate (available_work_tools may be Files-only).
+t = WorkTool(
+    id="claude",
+    title="Claude",
+    subtitle="test",
+    icon="teddyos-claude",
+    argv=("/bin/true", "{path}"),
+    metered=True,
+    is_ai=True,
+)
+assert tools_ready_for_broadcast([t], {t.id: CreditStatus(None, "u")}) == []
+assert tools_ready_for_broadcast([t], {t.id: CreditStatus(False, "Needs sign-in")}) == []
+assert tools_ready_for_broadcast([t], {t.id: CreditStatus(True, "Connected")}) == [t]
 print("work-tools-ready-ok", len(tools))
 PY
 then
@@ -2092,19 +2099,34 @@ if python3 - <<'PY'
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path("linux/teddyos-search").resolve()))
-from work_tools import available_work_tools, probe_credits, CreditStatus, probe_all
+from work_tools import (
+    available_work_tools, probe_credits, CreditStatus, probe_all, WorkTool,
+)
 tools = available_work_tools()
-assert tools
-st = probe_credits(tools[0])
+# Prefer a metered AI so label is non-empty; Files returns ok=True label="".
+sample = next((t for t in tools if t.is_ai and t.metered), None)
+if sample is None:
+    sample = WorkTool(
+        id="claude",
+        title="Claude",
+        subtitle="t",
+        icon="teddyos-claude",
+        argv=("/bin/true",),
+        metered=True,
+        is_ai=True,
+    )
+st = probe_credits(sample)
 assert isinstance(st, CreditStatus)
-assert st.label and "\n" not in st.label
-# probe_all limited subset
-subset = tools[:3]
+assert st.label is not None and "\n" not in st.label
+assert st.label  # metered AI always has a status string
+# probe_all limited subset — only when tools exist
+subset = [t for t in tools if t.is_ai][:3] or [sample]
 all_st = probe_all(subset)
 assert set(all_st.keys()) == {t.id for t in subset}
 for tid, s in all_st.items():
-    assert isinstance(s, CreditStatus) and s.label
-print("probe-credits-ok", tools[0].id, st.label[:40], len(all_st))
+    assert isinstance(s, CreditStatus)
+    assert s.label is not None and "\n" not in s.label
+print("probe-credits-ok", sample.id, (st.label or "")[:40], len(all_st))
 PY
 then
   ok "work_tools probe_credits + probe_all"
