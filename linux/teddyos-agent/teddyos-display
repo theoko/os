@@ -1,0 +1,378 @@
+#!/usr/bin/env python3
+"""Set the display to the highest *sensible* resolution by default.
+
+VMs and live images often boot at a middling mode (1280×800 / 1920×1200).
+Non-technical people never open Display Settings, so the desktop looks soft
+on a big host window forever.
+
+We pick the highest mode that keeps an **appropriate aspect ratio** — same
+family as the current mode when possible (16:9 / 16:10 / …), never jumping
+to an ultrawide 21:9 “max pixels” mode just because the virtual GPU lists it.
+Then apply persistently with Mutter’s preferred scale so UI stays readable.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+import sys
+from dataclasses import dataclass
+
+try:
+    sys.path.insert(0, "/usr/lib/teddyos")
+    from logutil import get_logger
+    log = get_logger("display")
+except Exception:  # noqa: BLE001
+    import logging
+    log = logging.getLogger("teddyos.display")
+
+
+@dataclass(frozen=True)
+class Mode:
+    width: int
+    height: int
+    rate: float
+    preferred_scale: float | None = None
+
+    @property
+    def pixels(self) -> int:
+        return self.width * self.height
+
+    @property
+    def label(self) -> str:
+        # gdctl wants e.g. 3840x2160@60.000
+        return f"{self.width}x{self.height}@{self.rate:.3f}"
+
+    @property
+    def aspect(self) -> float:
+        return (self.width / self.height) if self.height else 0.0
+
+
+# Wider than this ≈ 21:9 ultrawide — only keep if already on ultrawide.
+_ULTRAWIDE_ASPECT = 2.0
+# Match aspect ratios within 3%.
+_ASPECT_TOL = 0.03
+
+
+_MODE_RE = re.compile(
+    r"(?P<w>\d+)x(?P<h>\d+)@(?P<r>\d+(?:\.\d+)?)",
+)
+_SCALE_RE = re.compile(
+    r"Preferred scale:\s*(?P<s>\d+(?:\.\d+)?)",
+)
+_CONNECTOR_RE = re.compile(
+    r"Monitor\s+(?P<name>\S+)\s+\(",
+)
+_CURRENT_RE = re.compile(
+    r"is-current\s*⇒\s*yes|Current mode",
+)
+
+
+def _run(argv: list[str], timeout: float = 15.0) -> tuple[int, str]:
+    try:
+        completed = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return 1, str(exc)
+    out = (completed.stdout or "") + (completed.stderr or "")
+    return completed.returncode, out
+
+
+def _parse_gdctl_show(text: str) -> tuple[str | None, list[Mode], Mode | None]:
+    """Return (connector, modes, current) from `gdctl show -v`."""
+    connector: str | None = None
+    modes: list[Mode] = []
+    current: Mode | None = None
+    pending: Mode | None = None
+    pending_scale: float | None = None
+
+    def flush() -> None:
+        nonlocal pending, pending_scale
+        if pending is None:
+            return
+        modes.append(Mode(
+            pending.width, pending.height, pending.rate,
+            preferred_scale=pending_scale if pending_scale is not None else pending.preferred_scale,
+        ))
+        pending = None
+        pending_scale = None
+
+    for line in text.splitlines():
+        cm = _CONNECTOR_RE.search(line)
+        if cm and connector is None:
+            connector = cm.group("name")
+            continue
+        mm = _MODE_RE.search(line.strip().lstrip("├│└─ ").strip())
+        # Mode lines look like: ├──3840x2160@60.000
+        if "x" in line and "@" in line and _MODE_RE.search(line):
+            flush()
+            m = _MODE_RE.search(line)
+            if m:
+                pending = Mode(
+                    int(m.group("w")),
+                    int(m.group("h")),
+                    float(m.group("r")),
+                )
+            continue
+        if pending is not None:
+            sm = _SCALE_RE.search(line)
+            if sm:
+                pending_scale = float(sm.group("s"))
+            if "is-current" in line and "yes" in line:
+                current = Mode(
+                    pending.width, pending.height, pending.rate,
+                    preferred_scale=pending_scale,
+                )
+    flush()
+    # If current was only marked via "Current mode" block without is-current:
+    if current is None:
+        for i, line in enumerate(text.splitlines()):
+            if "Current mode" in line:
+                # next lines may have 1920x1200@…
+                for nxt in text.splitlines()[i : i + 6]:
+                    m = _MODE_RE.search(nxt)
+                    if m:
+                        current = Mode(int(m.group("w")), int(m.group("h")), float(m.group("r")))
+                        break
+                break
+    return connector, modes, current
+
+
+def _aspect_close(a: float, b: float, tol: float = _ASPECT_TOL) -> bool:
+    if a <= 0 or b <= 0:
+        return False
+    return abs(a - b) / b <= tol
+
+
+def _ranked_by_pixels(modes: list[Mode]) -> list[Mode]:
+    return sorted(modes, key=lambda m: (m.pixels, m.rate), reverse=True)
+
+
+def _best_mode(
+    modes: list[Mode],
+    current: Mode | None = None,
+) -> Mode | None:
+    """Highest resolution that keeps a sane aspect ratio.
+
+    Priority:
+      1) Same aspect family as the *current* mode (preserves window shape)
+      2) Classic desktop ratios: 16:9, then 16:10, then 3:2 / 4:3
+      3) Any non-ultrawide mode
+      4) Absolute max pixels (last resort)
+
+    Ultrawide modes (aspect ≥ 2.0) are only considered if the display is
+    already ultrawide — otherwise “max res” wrongly picks 5120×2160.
+    """
+    if not modes:
+        return None
+
+    cur_a = current.aspect if current else 0.0
+    already_ultra = cur_a >= _ULTRAWIDE_ASPECT
+    # Allow forcing ultrawide via env for rare hosts that truly are 21:9.
+    force_ultra = os.environ.get("TEDDYOS_ALLOW_ULTRAWIDE", "").strip() in (
+        "1", "true", "yes",
+    )
+
+    def pool_for(target: float | None, *, allow_ultra: bool) -> list[Mode]:
+        out: list[Mode] = []
+        for m in modes:
+            a = m.aspect
+            if not allow_ultra and a >= _ULTRAWIDE_ASPECT:
+                continue
+            if target is None or _aspect_close(a, target):
+                out.append(m)
+        return out
+
+    # Recover from a mistaken ultrawide (e.g. old “max pixels” picker): if a
+    # solid 16:9/16:10 mode exists, prefer that unless explicitly allowed.
+    if already_ultra and not force_ultra:
+        for target in (16 / 9, 16 / 10):
+            matched = pool_for(target, allow_ultra=False)
+            if matched and _ranked_by_pixels(matched)[0].pixels >= 1280 * 720:
+                return _ranked_by_pixels(matched)[0]
+
+    # 1) Stick to current aspect when we know it (and it is not ultrawide).
+    if cur_a > 0 and (not already_ultra or force_ultra):
+        matched = pool_for(cur_a, allow_ultra=force_ultra or already_ultra)
+        if matched:
+            return _ranked_by_pixels(matched)[0]
+
+    # 2) Prefer common desktop shapes (16:9 first — most host screens).
+    for target in (16 / 9, 16 / 10, 3 / 2, 4 / 3, 5 / 4):
+        matched = pool_for(target, allow_ultra=False)
+        if matched:
+            return _ranked_by_pixels(matched)[0]
+
+    # 3) Any non-ultrawide
+    normal = pool_for(None, allow_ultra=False)
+    if normal:
+        return _ranked_by_pixels(normal)[0]
+
+    # 4) Fallback: absolute max
+    return _ranked_by_pixels(modes)[0]
+
+
+def _candidate_modes(
+    modes: list[Mode],
+    current: Mode | None,
+    *,
+    limit: int = 6,
+) -> list[Mode]:
+    """Best mode first, then other high modes in the same aspect family."""
+    best = _best_mode(modes, current)
+    if not best:
+        return []
+    target = best.aspect
+    same = [m for m in modes if _aspect_close(m.aspect, target)]
+    ranked = _ranked_by_pixels(same)
+    # De-dupe by pixel count so we try distinct sizes.
+    out: list[Mode] = []
+    seen: set[int] = set()
+    for m in ranked:
+        if m.pixels in seen:
+            continue
+        seen.add(m.pixels)
+        out.append(m)
+        if len(out) >= limit:
+            break
+    return out
+
+
+def _scale_for(mode: Mode) -> float:
+    """Readable scale: prefer Mutter’s suggestion, clamp to [1, 3]."""
+    if mode.preferred_scale and mode.preferred_scale >= 1.0:
+        s = float(mode.preferred_scale)
+    elif mode.width >= 3840:
+        s = 2.0
+    elif mode.width >= 2560:
+        s = 1.5
+    else:
+        s = 1.0
+    # Snap to common scales when close (GNOME is happier).
+    for cand in (1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 3.0):
+        if abs(s - cand) < 0.12:
+            return cand
+    return round(s, 2)
+
+
+def apply_max_gdctl() -> int:
+    gdctl = shutil.which("gdctl")
+    if not gdctl:
+        log.info("gdctl missing — cannot set Wayland mode")
+        return 2
+    code, text = _run([gdctl, "show", "-v"])
+    if code != 0 and not text.strip():
+        log.warning("gdctl show failed: %s", text[:200])
+        return 2
+    connector, modes, current = _parse_gdctl_show(text)
+    if not connector:
+        # Fallback common VM connector names.
+        for guess in ("Virtual-1", "Virtual-2", "HDMI-1", "eDP-1", "DP-1"):
+            if guess in text:
+                connector = guess
+                break
+    best = _best_mode(modes, current)
+    if not connector or not best:
+        log.warning("no monitor modes found (modes=%d)", len(modes))
+        return 2
+    if (
+        current
+        and current.pixels >= best.pixels
+        and abs(current.rate - best.rate) < 0.5
+        and _aspect_close(current.aspect, best.aspect)
+    ):
+        log.info(
+            "already at best mode for aspect %.3f: %s",
+            best.aspect, best.label,
+        )
+        return 0
+    try_list = _candidate_modes(modes, current, limit=6)
+    last_err = ""
+    for cand in try_list:
+        scale = _scale_for(cand)
+        for mode_arg in (cand.label, f"{cand.width}x{cand.height}"):
+            argv = [
+                gdctl, "set", "--persistent",
+                "--logical-monitor",
+                "--primary",
+                "--monitor", connector,
+                "--mode", mode_arg,
+                "--scale", str(scale),
+            ]
+            log.info("applying %s scale=%s connector=%s", mode_arg, scale, connector)
+            code, out = _run(argv, timeout=20)
+            if code == 0:
+                log.info("display set to %s @ scale %s", mode_arg, scale)
+                return 0
+            last_err = out[:300]
+            log.warning("gdctl set failed for %s: %s", mode_arg, last_err)
+    log.warning("could not apply any high mode: %s", last_err)
+    return 1
+
+
+def apply_max_xrandr() -> int:
+    xrandr = shutil.which("xrandr")
+    if not xrandr:
+        return 2
+    code, text = _run([xrandr])
+    if code != 0:
+        return 2
+    connector = None
+    modes: list[Mode] = []
+    for line in text.splitlines():
+        if " connected" in line:
+            connector = line.split()[0]
+            continue
+        if connector and line.startswith(" "):
+            m = re.match(r"\s+(\d+)x(\d+)\s+([\d.]+)", line)
+            if m:
+                modes.append(Mode(int(m.group(1)), int(m.group(2)), float(m.group(3))))
+    # Infer "current" from the line with *
+    current = None
+    for line in text.splitlines():
+        if "*" in line:
+            m = re.search(r"(\d+)x(\d+)\s+([\d.]+)", line)
+            if m:
+                current = Mode(int(m.group(1)), int(m.group(2)), float(m.group(3)))
+                break
+    best = _best_mode(modes, current)
+    if not connector or not best:
+        return 2
+    code, out = _run([xrandr, "--output", connector, "--mode", f"{best.width}x{best.height}"])
+    if code != 0:
+        log.warning("xrandr failed: %s", out[:200])
+        return 1
+    log.info("xrandr set %sx%s", best.width, best.height)
+    return 0
+
+
+def main() -> int:
+    # Prefer GNOME Wayland path; fall back to X11.
+    # Session start can race Mutter — retry a few times.
+    delays = (0, 2, 5) if "--once" not in sys.argv else (0,)
+    last = 2
+    for i, wait in enumerate(delays):
+        if wait:
+            import time
+            time.sleep(wait)
+        if os.environ.get("WAYLAND_DISPLAY") or shutil.which("gdctl"):
+            last = apply_max_gdctl()
+            if last == 0:
+                return 0
+        if os.environ.get("DISPLAY"):
+            last = apply_max_xrandr()
+            if last == 0:
+                return 0
+    log.info("display max-res: nothing applied (last=%s)", last)
+    return 0  # never block session start
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,444 @@
+#!/usr/bin/env python3
+"""Open an AI helper as an app window — not a Terminal.
+
+Claude, Grok, Gemini, and Codex are terminal programs underneath. Spawning
+them with Gio.Subprocess gives them no TTY, so they exit instantly. Dropping
+someone into gnome-terminal is worse for non-technical people: they see a
+console, a path, and no idea what to type.
+
+This is a thin VTE host dressed as a normal app: friendly title, project name
+(not a full path), a short plain-language hint, one program, no shell prompt.
+Same idea as teddyos-claude, shared for every AI helper.
+
+Usage:
+  teddyos-agent gemini
+  teddyos-agent gemini /path/to/project
+  teddyos-agent grok ~/Projects/tsearch-revival
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+from pathlib import Path
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+gi.require_version("Vte", "3.91")
+from gi.repository import Adw, Gdk, GLib, Gtk, Pango, Vte  # noqa: E402
+
+try:
+    sys.path.insert(0, "/usr/lib/teddyos")
+    from logutil import get_logger
+    log = get_logger("agent")
+except Exception:  # noqa: BLE001
+    import logging
+    log = logging.getLogger("teddyos.agent")
+
+# id → (binary, window title, missing copy, first-open hint)
+TOOLS: dict[str, tuple[str, str, str, str]] = {
+    "claude": (
+        "claude",
+        "Claude",
+        "Claude isn’t installed on this copy of teddyOS.",
+        "Type what you want help with. If Claude asks you to sign in, a "
+        "browser will open — finish there, then come back here.",
+    ),
+    "grok": (
+        "grok",
+        "Grok",
+        "Grok isn’t installed on this copy of teddyOS.",
+        "Type what you want help with. If Grok asks you to sign in, a "
+        "browser will open — finish there, then come back here.",
+    ),
+    "gemini": (
+        "gemini",
+        "Gemini",
+        "Gemini isn’t installed on this copy of teddyOS.",
+        "Type what you want help with. If Gemini asks you to sign in, a "
+        "browser will open — finish there, then come back here.",
+    ),
+    "codex": (
+        "codex",
+        "Codex",
+        "Codex isn’t installed on this copy of teddyOS.",
+        "Type what you want help with. If Codex asks you to sign in, a "
+        "browser will open — finish there, then come back here.",
+    ),
+    "copilot": (
+        "copilot",
+        "Copilot",
+        "Copilot isn’t installed on this copy of teddyOS.",
+        "Type what you want help with. If Copilot asks you to sign in, a "
+        "browser will open — finish there, then come back here.",
+    ),
+    "antigravity": (
+        "agy",
+        "Antigravity",
+        "Antigravity isn’t installed on this copy of teddyOS.",
+        "Type what you want help with. If Antigravity asks you to sign in, a "
+        "browser will open — finish there, then come back here.",
+    ),
+    "aider": (
+        "aider",
+        "Aider",
+        "Aider isn’t installed on this copy of teddyOS.",
+        "Type what you want help with. Aider works in this project folder.",
+    ),
+    "ollama": (
+        "ollama",
+        "Ollama",
+        "Ollama isn’t installed on this copy of teddyOS.",
+        "Chat with a model that runs on this computer. No account needed.",
+    ),
+}
+
+
+def _parse_argv(argv: list[str]) -> tuple[str, str, list[str]]:
+    """Return (tool_id, cwd, extra_args for the tool)."""
+    home = os.path.expanduser("~")
+    if len(argv) < 2 or argv[1] in ("-h", "--help"):
+        names = ", ".join(sorted(TOOLS))
+        print(f"usage: teddyos-agent <tool> [project-dir]\n  tools: {names}",
+              file=sys.stderr)
+        sys.exit(0 if len(argv) > 1 else 2)
+    tool = argv[1].lower().strip()
+    cwd = home
+    extra: list[str] = []
+    for arg in argv[2:]:
+        if arg.startswith("-"):
+            extra.append(arg)
+            continue
+        path = os.path.expanduser(arg)
+        if os.path.isdir(path) and cwd == home:
+            cwd = os.path.abspath(path)
+        else:
+            extra.append(arg)
+    return tool, cwd, extra
+
+
+def _project_label(cwd: str) -> str:
+    """Folder name only — full paths look like system junk to non-tech users."""
+    home = os.path.expanduser("~")
+    if cwd == home:
+        return ""
+    return os.path.basename(cwd.rstrip("/")) or "this project"
+
+
+class AgentWindow(Adw.ApplicationWindow):
+    def __init__(
+        self,
+        app: Adw.Application,
+        tool_id: str,
+        cwd: str,
+        extra: list[str],
+    ):
+        meta = TOOLS.get(tool_id)
+        title = meta[1] if meta else tool_id.title()
+        project = _project_label(cwd)
+        win_title = f"{title} — {project}" if project else title
+        super().__init__(application=app, title=win_title)
+        self.set_default_size(920, 640)
+        self._cwd = cwd
+        self._tool_id = tool_id
+        self._extra = extra
+        self._title = title
+        self._project = project
+        self._hint = meta[3] if meta else ""
+        self._term: Vte.Terminal | None = None
+        self._body: Adw.ToolbarView | None = None
+
+        header = Adw.HeaderBar()
+        # Project name only in the subtitle — never dump /home/teddy/…
+        header.set_title_widget(Adw.WindowTitle(
+            title=title,
+            subtitle=f"Working on {project}" if project else "Ready when you are",
+        ))
+
+        if not meta:
+            content = Adw.StatusPage(
+                icon_name="dialog-information-symbolic",
+                title="Unknown helper",
+                description=f"teddyOS doesn’t know how to open “{tool_id}”.",
+            )
+        else:
+            binary, _title, missing, _hint = meta
+            exe = (
+                shutil.which(binary)
+                or self._find_binary(binary)
+            )
+            content = (
+                self._workspace(exe, binary)
+                if exe
+                else Adw.StatusPage(
+                    icon_name="dialog-information-symbolic",
+                    title=f"{_title} isn’t available",
+                    description=(
+                        missing
+                        + " Reinstalling teddyOS usually brings it back."
+                    ),
+                )
+            )
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(content)
+        self._body = toolbar
+        self.set_content(toolbar)
+
+    @staticmethod
+    def _find_binary(name: str) -> str | None:
+        for prefix in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
+            candidate = Path(prefix) / name
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
+        return None
+
+    def _workspace(self, exe: str, binary: str) -> Gtk.Widget:
+        """Hint strip + the tool. Reads as an app, not a console."""
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        # Plain-language strip — the single thing a non-technical person
+        # needs when this window appears. When a starting prompt was injected
+        # (Ask all ready AIs), say so in plain English.
+        hint_text = self._hint
+        if self._extra:
+            hint_text = (
+                f"{self._title} already has your request and is working on it. "
+                "You can keep chatting here when it finishes a step. "
+                "If it asks you to sign in, a browser will open."
+            )
+        hint = Gtk.Label(
+            label=hint_text,
+            wrap=True,
+            xalign=0.0,
+            justify=Gtk.Justification.LEFT,
+        )
+        hint.add_css_class("dim-label")
+        hint.set_margin_top(10)
+        hint.set_margin_bottom(6)
+        hint.set_margin_start(16)
+        hint.set_margin_end(16)
+        box.append(hint)
+
+        if self._project:
+            where = Gtk.Label(
+                label=f"You’re in the “{self._project}” folder.",
+                wrap=True,
+                xalign=0.0,
+            )
+            where.add_css_class("caption")
+            where.add_css_class("dim-label")
+            where.set_margin_bottom(8)
+            where.set_margin_start(16)
+            where.set_margin_end(16)
+            box.append(where)
+
+        term_host = self._terminal(exe, binary)
+        term_host.set_vexpand(True)
+        box.append(term_host)
+        return box
+
+    def _terminal(self, exe: str, binary: str) -> Gtk.Widget:
+        term = Vte.Terminal()
+        term.set_scrollback_lines(10000)
+        # Slightly larger than a shell default — this is a chat surface.
+        term.set_font(Pango.FontDescription("monospace 12"))
+        term.set_cursor_blink_mode(Vte.CursorBlinkMode.ON)
+        term.set_margin_top(4)
+        term.set_margin_bottom(12)
+        term.set_margin_start(12)
+        term.set_margin_end(12)
+
+        fg, bg = Gdk.RGBA(), Gdk.RGBA()
+        fg.parse("#2c2c2a")
+        bg.parse("#fbfbfa")
+        term.set_colors(fg, bg, None)
+
+        # Keep the window open on exit so sign-in text stays readable, then
+        # offer a friendly next step instead of a dead prompt.
+        term.connect("child-exited", self._on_child_exited)
+
+        # Do NOT pass the project path as a CLI argument. Gemini and Codex
+        # treat a bare argument as a prompt. cwd is the project folder.
+        cmd = self._cmd_for(exe, binary)
+        if binary == "ollama" and not self._extra:
+            cmd = [exe, "run", "llama3.2"]
+
+        log.info("spawn tool=%s cwd=%s cmd=%s", self._tool_id, self._cwd, cmd)
+
+        path_env = os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin")
+        for extra in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
+            if extra not in path_env.split(":"):
+                path_env = extra + ":" + path_env
+
+        env = [
+            "TERM=xterm-256color",
+            f"HOME={os.path.expanduser('~')}",
+            f"PATH={path_env}",
+            f"PWD={self._cwd}",
+            "COLORTERM=truecolor",
+            f"USER={os.environ.get('USER', '')}",
+            f"LANG={os.environ.get('LANG', 'C.UTF-8')}",
+        ]
+        for key in (
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "OPENAI_API_KEY",
+            "XAI_API_KEY",
+            "GOOGLE_GENAI_USE_VERTEXAI",
+            "GOOGLE_GENAI_USE_GCA",
+            "DBUS_SESSION_BUS_ADDRESS",
+            "XDG_RUNTIME_DIR",
+            "DISPLAY",
+            "WAYLAND_DISPLAY",
+        ):
+            val = os.environ.get(key)
+            if val:
+                env.append(f"{key}={val}")
+
+        term.spawn_async(
+            Vte.PtyFlags.DEFAULT,
+            self._cwd,
+            cmd,
+            env,
+            GLib.SpawnFlags.DEFAULT,
+            None, None,
+            -1, None, self._on_spawn_finished, None,
+        )
+
+        self._term = term
+        scroller = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+        scroller.set_child(term)
+        return scroller
+
+    def _cmd_for(self, exe: str, binary: str) -> list[str]:
+        """Prefer `node script.js` for npm shims so spawn never depends on #!."""
+        try:
+            real = os.path.realpath(exe)
+        except OSError:
+            real = exe
+        if not real.endswith((".js", ".cjs", ".mjs")):
+            try:
+                with open(exe, "rb") as fh:
+                    head = fh.read(120)
+                if b"node" in head and b".js" in head:
+                    real = os.path.realpath(exe)
+            except OSError:
+                pass
+        if real.endswith((".js", ".cjs", ".mjs")):
+            node = (
+                shutil.which("node")
+                or (
+                    "/usr/local/bin/node"
+                    if os.path.isfile("/usr/local/bin/node")
+                    else None
+                )
+                or "/usr/bin/node"
+            )
+            return [node, real, *self._extra]
+        return [exe, *self._extra]
+
+    def _on_spawn_finished(self, _terminal, pid: int, error=None, *_rest) -> None:
+        if error is not None:
+            msg = error.message if hasattr(error, "message") else str(error)
+            log.error("spawn failed tool=%s: %s", self._tool_id, msg)
+            self._show_status(
+                "Couldn’t start",
+                f"{self._title} didn’t open. Close this window and try again "
+                f"from Search.",
+                icon="dialog-warning-symbolic",
+                retry=True,
+            )
+
+    def _on_child_exited(self, _terminal, status: int) -> None:
+        log.info("child exited tool=%s status=%s", self._tool_id, status)
+        # Exit 0 after a normal quit: leave whatever text is on screen.
+        # Non-zero / early exit is usually "sign in" or a missing key — help.
+        if status not in (0, None):
+            self._show_status(
+                f"Sign in to {self._title}",
+                f"{self._title} stopped before it was ready. That usually means "
+                f"you need to sign in. Close this window, click {self._title} "
+                f"again in Search, and follow any browser link it shows.",
+                icon="dialog-information-symbolic",
+                retry=True,
+            )
+
+    def _show_status(
+        self,
+        title: str,
+        description: str,
+        *,
+        icon: str,
+        retry: bool = False,
+    ) -> None:
+        page = Adw.StatusPage(
+            icon_name=icon,
+            title=title,
+            description=description,
+        )
+        if retry:
+            btn = Gtk.Button(label=f"Open {self._title} again")
+            btn.add_css_class("suggested-action")
+            btn.set_halign(Gtk.Align.CENTER)
+            btn.connect("clicked", self._retry)
+            page.set_child(btn)
+        try:
+            if self._body is not None:
+                self._body.set_content(page)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _retry(self, *_args) -> None:
+        """Relaunch ourselves so a fresh sign-in flow can run."""
+        agent = shutil.which("teddyos-agent") or sys.argv[0]
+        argv = [agent, self._tool_id]
+        if self._cwd != os.path.expanduser("~"):
+            argv.append(self._cwd)
+        try:
+            import subprocess
+            env = os.environ.copy()
+            subprocess.Popen(  # noqa: S603
+                argv,
+                cwd=self._cwd,
+                env=env,
+                start_new_session=True,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except OSError as exc:
+            log.error("retry failed: %s", exc)
+        self.close()
+
+
+class AgentApp(Adw.Application):
+    def __init__(self, tool_id: str, cwd: str, extra: list[str]):
+        # Unique id per tool so Claude and Grok can stay open together.
+        super().__init__(application_id=f"com.teddyos.Agent.{tool_id}")
+        self._tool_id = tool_id
+        self._cwd = cwd
+        self._extra = extra
+
+    def do_activate(self):
+        win = self.props.active_window
+        if win is None:
+            win = AgentWindow(
+                self, self._tool_id, self._cwd, self._extra,
+            )
+        win.set_visible(True)
+        win.present()
+        GLib.idle_add(lambda: (win.present(), False)[1])
+
+
+if __name__ == "__main__":
+    tool_id, cwd, extra = _parse_argv(sys.argv)
+    GLib.set_prgname(f"com.teddyos.Agent.{tool_id}")
+    log.info("start tool=%s cwd=%s", tool_id, cwd)
+    app = AgentApp(tool_id, cwd, extra)
+    sys.exit(app.run([sys.argv[0]]))

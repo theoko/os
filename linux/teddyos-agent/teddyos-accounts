@@ -1,0 +1,1310 @@
+#!/usr/bin/env python3
+"""Getting you ready — calm setup, browser sign-in, never a terminal.
+
+Flow for one helper:
+  1. Soft “Let’s set you up” animation (skip anytime)
+  2. Plain status while OAuth runs in the background
+  3. Chromium sign-in window if the vendor needs the browser
+  4. “I’m done” → back to the list
+
+No VTE, no CLI, no random Firefox.
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, GLib, Gtk  # noqa: E402
+
+sys.path.insert(0, "/usr/lib/teddyos")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "teddyos-search"))
+try:
+    import accounts as acc
+    import phone_auth
+    from logutil import get_logger
+    log = get_logger("accounts")
+except Exception:  # noqa: BLE001
+    import logging
+    log = logging.getLogger("teddyos.accounts")
+    acc = None  # type: ignore
+    phone_auth = None  # type: ignore
+
+APP_ID = "com.teddyos.Accounts"
+
+_URL_RE = re.compile(r"https?://[^\s\"'<>]+", re.I)
+# Device-style codes only (e.g. AB12-CD34). Never match inside URLs — Claude’s
+# OAuth client_id is a UUID and used to false-match as e61b-44d9.
+_CODE_RE = re.compile(
+    r"\b([A-Z0-9]{4,5}-[A-Z0-9]{4,5})\b"
+    r"|\bone-time code[:\s]+([A-Z0-9-]{6,})\b"
+    r"|\benter code[:\s]+([A-Z0-9-]{6,})\b"
+    r"|\buser code[:\s]+([A-Z0-9-]{6,})\b",
+    re.I,
+)
+_PASTE_PROMPT_RE = re.compile(
+    r"paste code here|paste the code|paste (your |the )?authorization"
+    r"|enter (the )?code (here|below|above)?"
+    r"|if prompted",
+    re.I,
+)
+# OAuth tools open the browser themselves via $BROWSER. We must not also open
+# the “fallback” authorize URL from stdout — Claude’s printed fallback uses a
+# different redirect_uri (platform.claude.com) than the live $BROWSER open
+# (localhost callback), which strands people with a code and no way to finish.
+_DEVICE_CODE_ACCOUNTS = frozenset({"github", "copilot"})
+
+# Vendor device pages where we can pre-fill the code in the URL.
+_DEVICE_URL_FOR_ACCOUNT = {
+    "github": "https://github.com/login/device",
+    "copilot": "https://github.com/login/device",
+}
+
+
+def animations_enabled() -> bool:
+    settings = Gtk.Settings.get_default()
+    if settings is None:
+        return True
+    return bool(settings.get_property("gtk-enable-animations"))
+
+
+def _open_signin_url(url: str) -> None:
+    """Chromium app window — never a random Firefox tab."""
+    opener = shutil.which("teddyos-open-signin")
+    if opener:
+        argv = [opener, url]
+    else:
+        chromium = (
+            shutil.which("chromium")
+            or shutil.which("chromium-browser")
+        )
+        if chromium:
+            data = os.path.expanduser("~/.config/teddyos-signin")
+            os.makedirs(data, exist_ok=True)
+            argv = [
+                chromium,
+                f"--app={url}",
+                f"--user-data-dir={data}",
+                "--class=teddyos-signin",
+                "--new-window",
+            ]
+        else:
+            argv = ["xdg-open", url]
+    try:
+        subprocess.Popen(  # noqa: S603
+            argv,
+            start_new_session=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    except OSError as exc:
+        log.error("open sign-in url failed: %s", exc)
+
+
+class SignInWindow(Adw.ApplicationWindow):
+    """Let’s set you up → then quiet status while the browser does the work."""
+
+    BEAT_IN, BEAT_HOLD, BEAT_OUT, BEAT_REST = 480, 1100, 380, 160
+
+    def __init__(
+        self,
+        app: Adw.Application,
+        account: "acc.Account",
+        argv: list[str],
+        *,
+        skip_intro: bool = False,
+    ):
+        super().__init__(
+            application=app,
+            title=f"Set up {account.title}",
+        )
+        self.set_default_size(520, 480)
+        self._account = account
+        self._argv = argv
+        self._skip_intro = skip_intro
+        self._proc: subprocess.Popen | None = None
+        self._opened_urls: set[str] = set()
+        self._last_url = ""
+        self._last_code = ""
+        self._intro_over = False
+        self._login_started = False
+        self._anims: list[Adw.TimedAnimation] = []
+        self._device_opened = False
+        self._browser_opened = False  # $BROWSER / teddyos-open-signin already fired
+        self._paste_ready = False
+
+        # Soft look
+        css = Gtk.CssProvider()
+        css.load_from_data(b"""
+            .teddyos-setup-title { font-size: 28px; font-weight: 600; }
+            .teddyos-setup-line { font-size: 22px; font-weight: 500; }
+            .teddyos-setup-code { font-size: 36px; font-weight: 700; letter-spacing: 3px; }
+            .teddyos-phone-caption { font-size: 14px; font-weight: 600; }
+            window { background: #fbfbfa; }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
+        self._header = Adw.HeaderBar(show_title=False)
+        self._header.set_opacity(0.0)
+
+        # --- main status page (revealed after intro) ---
+        self._title = Gtk.Label(
+            label=f"Setting up {account.title}",
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+        )
+        self._title.add_css_class("teddyos-setup-title")
+
+        self._body = Gtk.Label(
+            label="Just a moment…",
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+        )
+        self._body.add_css_class("dim-label")
+        self._body.set_max_width_chars(40)
+
+        self._spinner = Gtk.Spinner()
+        self._spinner.set_size_request(36, 36)
+        self._spinner.set_halign(Gtk.Align.CENTER)
+
+        # Phone-friendly card: QR (when we can) + big code.
+        self._code_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        self._code_box.set_halign(Gtk.Align.CENTER)
+        self._code_box.set_visible(False)
+        phone_cap = Gtk.Label(label="On your phone")
+        phone_cap.add_css_class("teddyos-phone-caption")
+        phone_cap.set_halign(Gtk.Align.CENTER)
+        self._qr_image = Gtk.Image()
+        self._qr_image.set_pixel_size(180)
+        self._qr_image.set_halign(Gtk.Align.CENTER)
+        self._qr_image.set_visible(False)
+        self._qr_hint = Gtk.Label(
+            label="Scan with your camera — or use the code below",
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+        )
+        self._qr_hint.add_css_class("dim-label")
+        self._qr_hint.add_css_class("caption")
+        self._qr_hint.set_visible(False)
+        code_cap = Gtk.Label(label="Your code (already copied):")
+        code_cap.add_css_class("dim-label")
+        self._code_label = Gtk.Label(label="")
+        self._code_label.add_css_class("teddyos-setup-code")
+        self._code_label.set_selectable(True)
+        self._code_box.append(phone_cap)
+        self._code_box.append(self._qr_image)
+        self._code_box.append(self._qr_hint)
+        self._code_box.append(code_cap)
+        self._code_box.append(self._code_label)
+        self._qr_path: Path | None = None
+
+        # Claude / OAuth: browser may show a one-shot code to paste back here.
+        self._paste_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self._paste_box.set_halign(Gtk.Align.CENTER)
+        self._paste_box.set_visible(False)
+        paste_cap = Gtk.Label(
+            label="If the browser shows a code, paste it here:",
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+        )
+        paste_cap.add_css_class("dim-label")
+        self._paste_entry = Gtk.Entry()
+        self._paste_entry.set_placeholder_text("Paste code from the browser")
+        self._paste_entry.set_width_chars(36)
+        self._paste_entry.set_max_width_chars(48)
+        self._paste_entry.connect("activate", self._submit_paste)
+        paste_btn = Gtk.Button(label="Send code")
+        paste_btn.add_css_class("suggested-action")
+        paste_btn.add_css_class("pill")
+        paste_btn.set_halign(Gtk.Align.CENTER)
+        paste_btn.connect("clicked", self._submit_paste)
+        self._paste_box.append(paste_cap)
+        self._paste_box.append(self._paste_entry)
+        self._paste_box.append(paste_btn)
+
+        self._link_btn = Gtk.Button(label="Open sign-in page again")
+        self._link_btn.add_css_class("flat")
+        self._link_btn.set_halign(Gtk.Align.CENTER)
+        self._link_btn.set_visible(False)
+        self._link_btn.connect("clicked", self._reopen_link)
+
+        self._done = Gtk.Button(label="I’m done")
+        self._done.add_css_class("suggested-action")
+        self._done.add_css_class("pill")
+        self._done.set_halign(Gtk.Align.CENTER)
+        self._done.set_sensitive(False)
+        self._done.connect("clicked", self._finish)
+
+        page_col = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=18,
+            valign=Gtk.Align.CENTER,
+            halign=Gtk.Align.CENTER,
+            margin_start=40,
+            margin_end=40,
+        )
+        page_col.append(self._title)
+        page_col.append(self._body)
+        page_col.append(self._spinner)
+        page_col.append(self._code_box)
+        page_col.append(self._paste_box)
+        page_col.append(self._link_btn)
+        page_col.append(self._done)
+        page_col.set_opacity(0.0)
+        self._page = page_col
+
+        # --- intro layer ---
+        self._intro_icon = Gtk.Image()
+        self._intro_icon.set_pixel_size(56)
+        # Prefer on-disk teddyOS artwork so Connect never shows a generic badge.
+        loaded = False
+        for base in (
+            Path("/usr/share/icons/hicolor/scalable/apps"),
+            Path("/usr/share/icons/hicolor/48x48/apps"),
+            Path(__file__).resolve().parent.parent / "icons",
+        ):
+            for ext in (".svg", ".png"):
+                icon_path = base / f"{account.icon}{ext}"
+                if icon_path.is_file():
+                    try:
+                        self._intro_icon.set_from_file(str(icon_path))
+                        loaded = True
+                        break
+                    except GLib.Error:
+                        continue
+            if loaded:
+                break
+        if not loaded:
+            theme = Gtk.IconTheme.get_for_display(self.get_display())
+            if theme and theme.has_icon(account.icon):
+                self._intro_icon.set_from_icon_name(account.icon)
+            else:
+                self._intro_icon.set_from_icon_name("emblem-ok-symbolic")
+        self._intro_icon.set_opacity(0.0)
+
+        self._intro_line = Gtk.Label(
+            wrap=True, justify=Gtk.Justification.CENTER,
+        )
+        self._intro_line.add_css_class("teddyos-setup-line")
+        self._intro_line.set_max_width_chars(32)
+        self._intro_line.set_opacity(0.0)
+
+        intro_col = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=28,
+            valign=Gtk.Align.CENTER,
+            halign=Gtk.Align.CENTER,
+            margin_start=40,
+            margin_end=40,
+        )
+        intro_col.append(self._intro_icon)
+        intro_col.append(self._intro_line)
+        self._intro_col = intro_col
+
+        skip = Gtk.Button(label="Skip")
+        skip.add_css_class("flat")
+        skip.set_halign(Gtk.Align.END)
+        skip.set_valign(Gtk.Align.END)
+        skip.set_margin_end(16)
+        skip.set_margin_bottom(16)
+        skip.set_opacity(0.0)
+        skip.connect("clicked", lambda *_: self._intro_finish())
+        self._skip = skip
+
+        stack = Gtk.Overlay()
+        stack.set_child(self._page)
+        stack.add_overlay(intro_col)
+        stack.add_overlay(skip)
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(self._header)
+        toolbar.set_content(stack)
+        self.set_content(toolbar)
+
+        log.info(
+            "connect start id=%s argv=%s skip_intro=%s",
+            account.id, argv, skip_intro,
+        )
+
+        # From Search Continue / --connect: skip the ~7s "Let’s set you up"
+        # animation — people already waited; start the browser path now.
+        if skip_intro or not animations_enabled():
+            self._intro_col.set_opacity(0.0)
+            self._intro_col.set_visible(False)
+            self._skip.set_visible(False)
+            self._page.set_opacity(1.0)
+            self._header.set_opacity(1.0)
+            self._intro_over = True
+            GLib.idle_add(self._begin_login_ui)
+        else:
+            self._start_intro()
+
+    # --- intro --------------------------------------------------------------
+
+    def _beats(self) -> list[str]:
+        name = self._account.title
+        if self._account.id in _DEVICE_CODE_ACCOUNTS:
+            return [
+                "Let’s set you up.",
+                f"We’ll connect {name} in a moment.",
+                "Prefer your phone? We’ll show a code or QR when we can.",
+            ]
+        return [
+            "Let’s set you up.",
+            f"We’ll connect {name} in a moment.",
+            "A browser window will open on this computer.",
+        ]
+
+    def _start_intro(self) -> None:
+        self._fade(self._intro_icon, 1.0, 700, Adw.Easing.EASE_OUT_CUBIC)
+        self._later(800, lambda: self._fade(self._skip, 0.55, 400))
+        self._later(500, lambda: self._beat(0))
+
+    def _beat(self, i: int) -> None:
+        if self._intro_over:
+            return
+        beats = self._beats()
+        if i >= len(beats):
+            self._intro_finish()
+            return
+        self._intro_line.set_text(beats[i])
+        self._fade(self._intro_line, 1.0, self.BEAT_IN, Adw.Easing.EASE_OUT_CUBIC)
+        out_at = self.BEAT_IN + self.BEAT_HOLD
+        if i == len(beats) - 1:
+            self._later(out_at, lambda: self._beat(i + 1))
+        else:
+            self._later(
+                out_at,
+                lambda: self._fade(
+                    self._intro_line, 0.0, self.BEAT_OUT, Adw.Easing.EASE_IN_CUBIC,
+                ),
+            )
+            self._later(
+                out_at + self.BEAT_OUT + self.BEAT_REST,
+                lambda: self._beat(i + 1),
+            )
+
+    def _intro_finish(self) -> None:
+        if self._intro_over:
+            return
+        self._intro_over = True
+        self._fade(self._intro_col, 0.0, 360, Adw.Easing.EASE_IN_CUBIC)
+        self._fade(self._skip, 0.0, 240, Adw.Easing.EASE_IN_CUBIC)
+        self._later(280, lambda: self._fade(self._page, 1.0, 480, Adw.Easing.EASE_OUT_CUBIC))
+        self._later(280, lambda: self._fade(self._header, 1.0, 400, Adw.Easing.EASE_OUT_CUBIC))
+        self._later(700, self._begin_login_ui)
+        self._later(720, lambda: (
+            self._intro_col.set_visible(False),
+            self._skip.set_visible(False),
+        ))
+
+    def _begin_login_ui(self) -> bool:
+        self._spinner.start()
+        if self._account.id in _DEVICE_CODE_ACCOUNTS:
+            body = (
+                f"Getting {self._account.title} ready…\n"
+                "A sign-in page may open next. We’ll handle any codes."
+            )
+        else:
+            # Claude / Grok / Codex: browser OAuth. In VMs the page often ends
+            # with a code to paste — treat that as normal, not failure.
+            if self._account.id == "claude":
+                body = (
+                    f"A sign-in page is opening for {self._account.title}.\n"
+                    "Sign in and approve there. If the page shows a code at the "
+                    "end, paste it in the box below — that is normal on this OS."
+                )
+            else:
+                body = (
+                    f"A sign-in page is opening for {self._account.title}.\n"
+                    "Sign in and approve there. If the page shows a code, "
+                    "paste it in the box below — no terminal needed."
+                )
+            # Offer paste early so people aren’t stuck staring at a code.
+            self._paste_box.set_visible(True)
+        self._body.set_text(body)
+        self._done.set_sensitive(True)
+        self._start_login_process()
+        return False
+
+    def _fade(
+        self,
+        widget: Gtk.Widget,
+        to: float,
+        ms: int,
+        easing: Adw.Easing = Adw.Easing.EASE_IN_OUT_CUBIC,
+    ) -> None:
+        target = Adw.PropertyAnimationTarget.new(widget, "opacity")
+        anim = Adw.TimedAnimation.new(
+            widget, widget.get_opacity(), to, ms, target,
+        )
+        anim.set_easing(easing)
+        self._anims.append(anim)
+        anim.play()
+
+    def _later(self, ms: int, fn) -> None:
+        def once() -> bool:
+            fn()
+            return False
+        GLib.timeout_add(ms, once)
+
+    # --- login process (background, no terminal) ----------------------------
+
+    def _start_login_process(self) -> None:
+        if self._login_started:
+            return
+        self._login_started = True
+        threading.Thread(
+            target=self._run_login, args=(self._argv,), daemon=True,
+        ).start()
+
+    def _run_login(self, argv: list[str]) -> None:
+        env = os.environ.copy()
+        path = env.get("PATH", "/usr/bin:/bin")
+        for extra in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
+            if extra not in path.split(":"):
+                path = extra + ":" + path
+        env["PATH"] = path
+        env["TERM"] = "dumb"
+        env["NO_COLOR"] = "1"
+        signin = shutil.which("teddyos-open-signin")
+        env["BROWSER"] = signin or (
+            shutil.which("chromium")
+            or shutil.which("chromium-browser")
+            or "xdg-open"
+        )
+        env["CHROME_PATH"] = (
+            shutil.which("chromium")
+            or shutil.which("chromium-browser")
+            or ""
+        )
+        # gh also honours GH_BROWSER for the web step.
+        env["GH_BROWSER"] = env["BROWSER"]
+        try:
+            # Pseudo-TTY so tools that refuse "non-interactive" still run the
+            # browser flow instead of hanging on a prompt nobody can see.
+            self._proc = subprocess.Popen(  # noqa: S603
+                argv,
+                cwd=os.path.expanduser("~"),
+                env=env,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                bufsize=1,
+            )
+            # Nudge past "Press Enter to open …" style gates.
+            try:
+                if self._proc.stdin:
+                    self._proc.stdin.write("\n")
+                    self._proc.stdin.flush()
+            except OSError:
+                pass
+        except OSError as exc:
+            log.error("connect spawn failed: %s", exc)
+            GLib.idle_add(
+                self._set_status,
+                "Couldn’t start",
+                f"Something went wrong starting {self._account.title}. Try again.",
+                False,
+            )
+            return
+
+        assert self._proc.stdout is not None
+        try:
+            for line in self._proc.stdout:
+                self._handle_line(line)
+        except Exception as exc:  # noqa: BLE001
+            log.error("connect read: %s", exc)
+        code = self._proc.wait()
+        log.info("connect exit id=%s code=%s", self._account.id, code)
+        GLib.idle_add(self._login_process_finished, code)
+
+    def _handle_line(self, line: str) -> None:
+        # Strip URLs first so UUID fragments inside OAuth links are never
+        # mistaken for device codes (Claude client_id → fake “e61b-44d9”).
+        scrubbed = _URL_RE.sub(" ", line)
+        code = None
+        if self._account.id in _DEVICE_CODE_ACCOUNTS:
+            for m in _CODE_RE.finditer(scrubbed):
+                code = next((g for g in m.groups() if g), None)
+                if code:
+                    break
+
+        urls = [
+            m.group(0).rstrip(").,;]")
+            for m in _URL_RE.finditer(line)
+            if "localhost" not in m.group(0)
+        ]
+        if code:
+            GLib.idle_add(self._on_code, code, urls[0] if urls else "")
+
+        if re.search(r"opening browser|opened? (the )?browser", line, re.I):
+            self._browser_opened = True
+
+        browser_failed = bool(
+            re.search(r"didn.?t open|could not open|failed to open", line, re.I)
+        )
+        if _PASTE_PROMPT_RE.search(scrubbed):
+            GLib.idle_add(self._show_paste_prompt)
+
+        for url in urls:
+            if url in self._opened_urls:
+                continue
+            self._opened_urls.add(url)
+            GLib.idle_add(self._on_url, url)
+
+            # Device-code vendors: we open (and pre-fill) the page ourselves.
+            if self._account.id in _DEVICE_CODE_ACCOUNTS:
+                if code and self._account.id in _DEVICE_URL_FOR_ACCOUNT:
+                    # _on_code will open the pre-filled URL.
+                    continue
+                _open_signin_url(url)
+                self._browser_opened = True
+                continue
+
+            # OAuth tools (Claude, …): $BROWSER already opened the correct URL
+            # (with localhost callback). Only re-open the printed fallback if
+            # the tool says the browser failed — otherwise people land on the
+            # wrong redirect and get stuck with a code they cannot finish.
+            if browser_failed:
+                _open_signin_url(url)
+                self._browser_opened = True
+
+    def _copy_text(self, text: str) -> None:
+        try:
+            clip = self.get_clipboard()
+            clip.set(text)
+        except Exception:  # noqa: BLE001
+            try:
+                subprocess.run(
+                    ["wl-copy"],
+                    input=text,
+                    text=True,
+                    check=False,
+                    timeout=2,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+
+    def _device_url(self, code: str, base: str = "") -> str:
+        """URL that should not require typing the code by hand."""
+        known = _DEVICE_URL_FOR_ACCOUNT.get(self._account.id, "")
+        base = (base or known or "").rstrip("/")
+        if not base:
+            return ""
+        # GitHub accepts user_code on the device page.
+        if "github.com/login/device" in base and "user_code=" not in base:
+            return f"https://github.com/login/device?user_code={code}"
+        if "user_code=" in base:
+            return base
+        sep = "&" if "?" in base else "?"
+        return f"{base}{sep}user_code={code}"
+
+    def _on_url(self, url: str) -> bool:
+        self._last_url = url
+        self._link_btn.set_visible(True)
+        if self._last_code and not self._device_opened:
+            # Upgrade to pre-filled device URL when code arrived first.
+            filled = self._device_url(self._last_code, url)
+            if filled:
+                self._last_url = filled
+                self._show_phone_qr(filled)
+                _open_signin_url(filled)
+                self._device_opened = True
+                self._browser_opened = True
+        elif self._account.id not in _DEVICE_CODE_ACCOUNTS:
+            # Do not QR Claude/browser OAuth: phone cannot finish localhost
+            # callback. Keep QR only for device-code tools (GitHub/Copilot).
+            pass
+        if self._account.id in _DEVICE_CODE_ACCOUNTS:
+            body = (
+                f"Scan the QR with your phone, or finish in the window for "
+                f"{self._account.title}. Then tap I’m done."
+            )
+        else:
+            body = (
+                f"Sign in to {self._account.title} in the browser window on "
+                "this computer. If it shows a code at the end, paste it below "
+                "and tap Send code."
+            )
+            self._paste_box.set_visible(True)
+        self._set_status("On your phone or this screen", body, spinning=True)
+        return False
+
+    def _show_paste_prompt(self) -> bool:
+        self._paste_ready = True
+        self._paste_box.set_visible(True)
+        self._set_status(
+            "Almost done — paste the code",
+            f"The {self._account.title} page should show a code. "
+            "Copy it, paste it in the box below, and tap Send code.",
+            spinning=True,
+        )
+        try:
+            self._paste_entry.grab_focus()
+        except Exception:  # noqa: BLE001
+            pass
+        return False
+
+    def _submit_paste(self, *_a) -> None:
+        text = (self._paste_entry.get_text() or "").strip()
+        if not text:
+            self._set_status(
+                "Paste the code first",
+                "Copy the code from the browser window, paste it here, "
+                "then tap Send code.",
+                spinning=False,
+            )
+            return
+        if not self._proc or self._proc.poll() is not None:
+            self._set_status(
+                "Sign-in already finished",
+                "Tap I’m done, or close this and try Connect again.",
+                spinning=False,
+            )
+            return
+        try:
+            assert self._proc.stdin is not None
+            self._proc.stdin.write(text + "\n")
+            self._proc.stdin.flush()
+        except OSError as exc:
+            log.error("paste code write failed: %s", exc)
+            self._set_status(
+                "Couldn’t send the code",
+                "Try Open sign-in page again, or close and Connect once more.",
+                spinning=False,
+            )
+            return
+        self._paste_entry.set_text("")
+        self._set_status(
+            "Code sent — finishing up",
+            f"Hang on while we finish connecting {self._account.title}…",
+            spinning=True,
+        )
+
+    def _show_phone_qr(self, data: str) -> None:
+        """Show a QR for phone camera when generation works."""
+        if not data or phone_auth is None:
+            self._qr_image.set_visible(False)
+            self._qr_hint.set_visible(False)
+            return
+        path = phone_auth.qr_temp_png(data)
+        if path is None:
+            self._qr_image.set_visible(False)
+            self._qr_hint.set_text(
+                "Open the sign-in page on your phone and enter the code below."
+            )
+            self._qr_hint.set_visible(True)
+            return
+        # Drop previous temp file
+        if self._qr_path and self._qr_path != path:
+            try:
+                self._qr_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+        self._qr_path = path
+        try:
+            self._qr_image.set_from_file(str(path))
+            self._qr_image.set_visible(True)
+            self._qr_hint.set_text("Scan with your phone camera")
+            self._qr_hint.set_visible(True)
+        except GLib.Error:
+            self._qr_image.set_visible(False)
+            self._qr_hint.set_visible(False)
+
+    def _on_code(self, code: str, url_hint: str = "") -> bool:
+        self._last_code = code
+        self._code_box.set_visible(True)
+        self._code_label.set_text(code)
+        self._copy_text(code)
+
+        filled = self._device_url(code, url_hint or self._last_url)
+        # Phone card: QR of the complete device URL when we have it.
+        qr_target = filled or url_hint or self._last_url
+        if qr_target:
+            self._show_phone_qr(qr_target)
+        elif code and phone_auth is not None:
+            # Fall back to GitHub-style device page with code.
+            self._show_phone_qr(phone_auth.github_device_url(code))
+
+        if filled and not self._device_opened:
+            self._last_url = filled
+            self._opened_urls.add(filled)
+            # Still open on this computer for people without a phone handy.
+            _open_signin_url(filled)
+            self._device_opened = True
+            self._link_btn.set_visible(True)
+            self._set_status(
+                "On your phone or this screen",
+                f"Scan the code with your phone, or use the window we opened "
+                f"for {self._account.title}. Approve there, then tap I’m done.",
+                spinning=True,
+            )
+        else:
+            self._link_btn.set_visible(True)
+            self._set_status(
+                "Code ready",
+                "Scan the QR with your phone, or open the sign-in page on this "
+                "computer. The code is already copied.",
+                spinning=True,
+            )
+        return False
+
+    def _set_status(self, title: str, body: str, spinning: bool = True) -> bool:
+        self._title.set_text(title)
+        self._body.set_text(body)
+        if spinning:
+            self._spinner.start()
+            self._spinner.set_visible(True)
+        else:
+            self._spinner.stop()
+            self._spinner.set_visible(False)
+        return False
+
+    def _login_process_finished(self, code: int) -> bool:
+        self._spinner.stop()
+        self._spinner.set_visible(False)
+        if code == 0 or self._opened_urls:
+            # So later `git clone` HTTPS works without a password prompt.
+            if self._account.id == "github" and shutil.which("gh"):
+                try:
+                    subprocess.run(
+                        ["gh", "auth", "setup-git"],
+                        capture_output=True,
+                        timeout=15,
+                        check=False,
+                    )
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+            self._title.set_text(f"{self._account.title} is ready")
+            self._body.set_text(
+                "You’re all set. Tap I’m done — we’ll take you back to Search."
+            )
+            # Unlock Get help even when credit probes stay soft/unknown.
+            try:
+                import work_tools as wt  # type: ignore
+                if hasattr(wt, "mark_session_ready"):
+                    wt.mark_session_ready(self._account.id)
+            except Exception:  # noqa: BLE001
+                pass
+            try:
+                import progress as prog  # type: ignore
+                prog.award_signin()
+            except Exception:  # noqa: BLE001
+                pass
+        else:
+            self._title.set_text("Still need a moment?")
+            self._body.set_text(
+                f"If nothing opened, tap “Open sign-in page again”. "
+                f"Or close this and try signing in to {self._account.title} once more."
+            )
+            self._link_btn.set_visible(True)
+        self._done.set_sensitive(True)
+        self._done.add_css_class("suggested-action")
+        return False
+
+    def _reopen_link(self, *_a) -> None:
+        if self._last_code:
+            filled = self._device_url(self._last_code, self._last_url)
+            if filled:
+                self._copy_text(self._last_code)
+                _open_signin_url(filled)
+                return
+        if self._last_url:
+            _open_signin_url(self._last_url)
+            return
+        self._login_started = False
+        self._start_login_process()
+
+    def _finish(self, *_a) -> None:
+        if self._proc and self._proc.poll() is None:
+            try:
+                self._proc.terminate()
+            except OSError:
+                pass
+        self.close()
+
+
+class AccountsWindow(Adw.ApplicationWindow):
+    def __init__(self, app: Adw.Application, focus_id: str | None = None):
+        super().__init__(application=app, title="Getting you ready")
+        self.set_default_size(560, 640)
+        self._rows: dict[str, Adw.ActionRow] = {}
+        self._focus_id = focus_id
+        self._anims: list[Adw.TimedAnimation] = []
+        self._welcome_done = False
+
+        css = Gtk.CssProvider()
+        css.load_from_data(b"""
+            .teddyos-setup-line { font-size: 22px; font-weight: 500; }
+            window { background: #fbfbfa; }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
+        header = Adw.HeaderBar()
+        header.set_title_widget(Adw.WindowTitle(
+            title="Getting you ready",
+            subtitle="Short sign-ins · you only do this once",
+        ))
+        refresh = Gtk.Button(icon_name="view-refresh-symbolic")
+        refresh.set_tooltip_text("Check again")
+        refresh.connect("clicked", lambda *_: self._reload_statuses())
+        header.pack_end(refresh)
+        self._header = header
+
+        intro = Gtk.Label(
+            label=(
+                "To answer questions and download projects, teddyOS needs a short "
+                "sign-in (usually Claude). Tap Continue for that one step. "
+                "Other apps stay optional — connect them later only if you want."
+            ),
+            wrap=True,
+            xalign=0.0,
+        )
+        intro.add_css_class("dim-label")
+        intro.set_margin_top(8)
+        intro.set_margin_bottom(8)
+        intro.set_margin_start(4)
+        intro.set_margin_end(4)
+
+        self._setup_all_btn = Gtk.Button(label="Continue")
+        self._setup_all_btn.add_css_class("suggested-action")
+        self._setup_all_btn.add_css_class("pill")
+        self._setup_all_btn.set_halign(Gtk.Align.FILL)
+        self._setup_all_btn.set_margin_bottom(12)
+        self._setup_all_btn.connect("clicked", lambda *_: self._setup_all_needed())
+        self._setup_hint = Gtk.Label(
+            label="One moment…",
+            wrap=True,
+            xalign=0.0,
+        )
+        self._setup_hint.add_css_class("caption")
+        self._setup_hint.add_css_class("dim-label")
+        self._setup_hint.set_margin_bottom(10)
+
+        self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.list.add_css_class("boxed-list")
+
+        if acc is None:
+            self.list.append(Adw.ActionRow(
+                title="Couldn’t load account list",
+                subtitle="Try reinstalling teddyOS",
+            ))
+        else:
+            for account in acc.all_accounts():
+                self.list.append(self._row(account))
+
+        clamp = Adw.Clamp(maximum_size=520)
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        inner.set_margin_top(8)
+        inner.set_margin_bottom(24)
+        inner.set_margin_start(18)
+        inner.set_margin_end(18)
+        inner.append(intro)
+        inner.append(self._setup_all_btn)
+        inner.append(self._setup_hint)
+        inner.append(self.list)
+        clamp.set_child(inner)
+
+        self._setup_queue: list = []
+        self._status_cache: dict = {}
+
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        scroller.set_child(clamp)
+
+        self._toasts = Adw.ToastOverlay()
+        self._toasts.set_child(scroller)
+
+        self._main = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(self._toasts)
+        self._main.append(toolbar)
+
+        # Optional welcome wash when opening the list (not a deep-link connect).
+        if focus_id is None and animations_enabled():
+            self._main.set_opacity(0.0)
+            overlay = Gtk.Overlay()
+            overlay.set_child(self._main)
+            welcome = self._welcome_layer()
+            overlay.add_overlay(welcome)
+            self.set_content(overlay)
+            self._run_welcome(welcome)
+        else:
+            self.set_content(self._main)
+            self._welcome_done = True
+
+        self._reload_statuses()
+        if focus_id and acc and acc.get_account(focus_id):
+            # Deep-link: go straight into that helper’s setup after a tick.
+            GLib.timeout_add(200, lambda: (self._connect(acc.get_account(focus_id)), False)[1])
+
+    def _welcome_layer(self) -> Gtk.Widget:
+        line = Gtk.Label(
+            label="Let’s set you up.",
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+        )
+        line.add_css_class("teddyos-setup-line")
+        line.set_opacity(0.0)
+        self._welcome_line = line
+
+        icon = Gtk.Image.new_from_icon_name("system-users-symbolic")
+        icon.set_pixel_size(48)
+        icon.add_css_class("dim-label")
+        icon.set_opacity(0.0)
+        self._welcome_icon = icon
+
+        col = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=24,
+            valign=Gtk.Align.CENTER,
+            halign=Gtk.Align.CENTER,
+        )
+        col.append(icon)
+        col.append(line)
+        self._welcome_col = col
+        return col
+
+    def _run_welcome(self, layer: Gtk.Widget) -> None:
+        def fade(w, to, ms, easing=Adw.Easing.EASE_OUT_CUBIC):
+            t = Adw.PropertyAnimationTarget.new(w, "opacity")
+            a = Adw.TimedAnimation.new(w, w.get_opacity(), to, ms, t)
+            a.set_easing(easing)
+            self._anims.append(a)
+            a.play()
+
+        def later(ms, fn):
+            GLib.timeout_add(ms, lambda: (fn(), False)[1])
+
+        fade(self._welcome_icon, 1.0, 600)
+        later(500, lambda: (
+            self._welcome_line.set_text("Let’s set you up."),
+            fade(self._welcome_line, 1.0, 450),
+        ))
+        later(500 + 450 + 1000, lambda: fade(self._welcome_line, 0.0, 350, Adw.Easing.EASE_IN_CUBIC))
+        later(500 + 450 + 1000 + 400, lambda: (
+            self._welcome_line.set_text("A few short sign-ins, then you’re ready."),
+            fade(self._welcome_line, 1.0, 450),
+        ))
+        later(500 + 450 + 1000 + 400 + 450 + 1100, lambda: (
+            fade(self._welcome_col, 0.0, 380, Adw.Easing.EASE_IN_CUBIC),
+            fade(self._main, 1.0, 500),
+        ))
+        later(500 + 450 + 1000 + 400 + 450 + 1100 + 500, lambda: (
+            self._welcome_col.set_visible(False),
+            setattr(self, "_welcome_done", True),
+        ))
+
+    def _row(self, account: "acc.Account") -> Gtk.Widget:
+        row = Adw.ActionRow(title=account.title)
+        row.set_subtitle(account.blurb)
+        row.set_subtitle_lines(2)
+        row.add_prefix(self._account_icon(account.icon))
+
+        btn = Gtk.Button(label="Connect")
+        btn.add_css_class("suggested-action")
+        btn.set_valign(Gtk.Align.CENTER)
+        btn.connect("clicked", lambda *_a, a=account: self._connect(a))
+        row.add_suffix(btn)
+        self._rows[account.id] = row
+        row._connect_btn = btn  # type: ignore[attr-defined]
+        return row
+
+    def _account_icon(self, name: str) -> Gtk.Image:
+        """Theme icon with on-disk SVG/PNG fallback (never a blank square)."""
+        img = Gtk.Image()
+        img.set_pixel_size(28)
+        theme = Gtk.IconTheme.get_for_display(self.get_display())
+        if theme and theme.has_icon(name):
+            img.set_from_icon_name(name)
+            return img
+        for base in (
+            Path("/usr/share/icons/hicolor/scalable/apps"),
+            Path("/usr/share/icons/hicolor/48x48/apps"),
+            Path(__file__).resolve().parent.parent / "icons",
+        ):
+            for ext in (".svg", ".png"):
+                path = base / f"{name}{ext}"
+                if path.is_file():
+                    try:
+                        img.set_from_file(str(path))
+                        return img
+                    except GLib.Error:
+                        continue
+        img.set_from_icon_name("system-users-symbolic")
+        return img
+
+    def _reload_statuses(self) -> None:
+        if acc is None:
+            return
+
+        def work() -> None:
+            results = {}
+            for account in acc.all_accounts():
+                results[account.id] = (
+                    acc.is_installed(account),
+                    acc.status_for(account),
+                )
+            GLib.idle_add(self._apply_statuses, results)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_statuses(self, results: dict) -> bool:
+        self._status_cache = results
+        need = []
+        ready = []
+        for account_id, (installed, status) in results.items():
+            row = self._rows.get(account_id)
+            if row is None:
+                continue
+            account = acc.get_account(account_id)
+            blurb = account.blurb if account else ""
+            if not installed:
+                line = "Not on this computer"
+                btn_label = "Unavailable"
+                sensitive = False
+                row.add_css_class("dim-label")
+            else:
+                line = status.label
+                # Only "Connected" when we know for sure. Unknown → still Connect.
+                if status.ok is True:
+                    btn_label = "Connected"
+                    ready.append(account.title if account else account_id)
+                else:
+                    btn_label = "Connect"
+                    # Web apps (Perplexity / Devin / Replit) are optional —
+                    # never block Continue on them.
+                    if account and not getattr(account, "always_available", False):
+                        need.append(account)
+                sensitive = True
+                row.remove_css_class("dim-label")
+            row.set_subtitle(f"{line}\n{blurb}")
+            btn = getattr(row, "_connect_btn", None)
+            if btn is not None:
+                btn.set_label(btn_label)
+                btn.set_sensitive(sensitive)
+                if status.ok is True:
+                    btn.remove_css_class("suggested-action")
+                else:
+                    btn.add_css_class("suggested-action")
+        if hasattr(self, "_setup_hint") and self._setup_hint is not None:
+            if need:
+                # Prefer friendly names, not “N helpers.”
+                names = ", ".join(a.title for a in need[:4])
+                more = f" and {len(need) - 4} more" if len(need) > 4 else ""
+                self._setup_hint.set_text(
+                    f"We’ll set up: {names}{more}. "
+                    "Each opens a short browser sign-in."
+                )
+                self._setup_all_btn.set_sensitive(True)
+                self._setup_all_btn.set_label("Continue")
+            else:
+                self._setup_hint.set_text(
+                    "You’re all set. Close this window and go back to Search "
+                    "to ask for help."
+                    if ready else
+                    "Nothing to set up was found on this computer."
+                )
+                self._setup_all_btn.set_sensitive(False)
+                self._setup_all_btn.set_label("You’re all set")
+                if ready:
+                    try:
+                        import progress as prog  # type: ignore
+                        prog.award_all_set()
+                    except Exception:  # noqa: BLE001
+                        pass
+        return False
+
+    def _setup_all_needed(self) -> None:
+        """One calm first sign-in (Claude), not an OAuth marathon.
+
+        Extra AIs stay on the list for later; Get help only needs one ready
+        chat tool. GitHub is offered only when nothing AI-like is available.
+        """
+        need = []
+        # Prefer a single reliable AI first — seamless for new users.
+        preferred = ("claude", "grok", "copilot", "codex", "gemini", "antigravity")
+        by_id = {}
+        for account_id, (installed, status) in (self._status_cache or {}).items():
+            if not installed or status.ok is True:
+                continue
+            # Session-ready from a prior Connect this boot counts as done.
+            try:
+                import work_tools as wt  # type: ignore
+                if hasattr(wt, "is_session_ready") and wt.is_session_ready(account_id):
+                    continue
+            except Exception:  # noqa: BLE001
+                pass
+            account = acc.get_account(account_id) if acc else None
+            # Optional web apps: skip the forced multi-sign-in queue.
+            if account is None or getattr(account, "always_available", False):
+                continue
+            by_id[account.id] = account
+        for pid in preferred:
+            if pid in by_id:
+                need.append(by_id.pop(pid))
+                break  # one AI is enough to unlock Get help
+        # GitHub only if we found no AI to connect (clone path).
+        if not need and "github" in by_id:
+            need.append(by_id["github"])
+        if not need:
+            self._toast("You’re already set up — taking you back…")
+            GLib.timeout_add(700, self._return_to_search)
+            return
+        self._setup_queue = list(need)
+        self._toast(f"Next up: {need[0].title} — one short sign-in")
+        self._connect(need[0])
+
+    def _advance_setup_queue(self) -> None:
+        if not self._setup_queue:
+            return
+        # After any successful first AI, stop the queue — seamless return.
+        finished_id = self._setup_queue[0].id if self._setup_queue else ""
+        try:
+            import work_tools as wt  # type: ignore
+            if finished_id and hasattr(wt, "is_session_ready") and wt.is_session_ready(finished_id):
+                self._setup_queue = []
+                self._reload_statuses()
+                self._toast("You’re set up — taking you back to Search…")
+                GLib.timeout_add(700, self._return_to_search)
+                return
+        except Exception:  # noqa: BLE001
+            pass
+        self._setup_queue = self._setup_queue[1:]
+        if not self._setup_queue:
+            self._reload_statuses()
+            self._toast("You’re set up — taking you back…")
+            # Return to Search with their saved question if any.
+            GLib.timeout_add(700, self._return_to_search)
+            return
+        nxt = self._setup_queue[0]
+        self._toast(f"Next up: {nxt.title}")
+        GLib.timeout_add(400, lambda: (self._connect(nxt), False)[1])
+
+    def _return_to_search(self) -> bool:
+        search = shutil.which("teddyos-search-app")
+        if search:
+            try:
+                subprocess.Popen(  # noqa: S603
+                    [search],
+                    start_new_session=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+            except OSError:
+                pass
+        self.close()
+        return False
+
+    def _connect(self, account: "acc.Account | None") -> None:
+        if account is None:
+            return
+        argv = acc.resolve_connect_argv(account)
+        if not argv:
+            self._toast(f"{account.title} isn’t available on this computer.")
+            return
+        # Web app wrappers: open browser, no device-code SignInWindow.
+        if getattr(account, "always_available", False):
+            try:
+                subprocess.Popen(  # noqa: S603
+                    argv,
+                    start_new_session=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                self._toast(f"{account.title} opened — sign in there if you want.")
+            except OSError:
+                self._toast(f"Couldn’t open {account.title}.")
+            return
+
+
+        log.info("open sign-in id=%s argv=%s", account.id, argv)
+        # Always skip cinematic intro when opened from Search Continue / --connect.
+        app = self.get_application()
+        skip = bool(
+            getattr(app, "_setup_all_on_start", False)
+            or getattr(app, "_focus_id", None)
+            or self._focus_id
+        )
+        win = SignInWindow(app, account, argv, skip_intro=skip)
+        win.present()
+        win.connect("close-request", self._after_sign_in)
+
+    def _after_sign_in(self, *_a) -> bool:
+        GLib.timeout_add(800, self._reload_after_delay)
+        return False
+
+    def _reload_after_delay(self) -> bool:
+        self._reload_statuses()
+        self._toast("Checked your connections.")
+        # Continue guided multi-setup if the person used “Set up everything”.
+        if self._setup_queue:
+            GLib.timeout_add(600, lambda: (self._advance_setup_queue(), False)[1])
+        return False
+
+    def _toast(self, message: str) -> None:
+        log.info("ui: %s", message)
+        try:
+            toast = Adw.Toast.new(message)
+            toast.set_timeout(4)
+            self._toasts.add_toast(toast)
+        except Exception:  # noqa: BLE001
+            pass
+
+
+class AccountsApp(Adw.Application):
+    def __init__(self, focus_id: str | None = None):
+        super().__init__(application_id=APP_ID)
+        self._focus_id = focus_id
+        self._setup_all_on_start = False
+
+    def do_activate(self):
+        win = self.props.active_window
+        if win is None:
+            win = AccountsWindow(self, focus_id=self._focus_id)
+            if self._setup_all_on_start:
+                # After statuses load, start the queue.
+                GLib.timeout_add(1200, lambda: (win._setup_all_needed(), False)[1])
+        win.present()
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(argv if argv is not None else sys.argv)
+    focus = None
+    setup_all = False
+    if len(argv) >= 2 and argv[1] in ("--setup-all", "setup-all"):
+        setup_all = True
+        argv = [argv[0]]
+    elif len(argv) >= 3 and argv[1] in ("--connect", "connect"):
+        focus = argv[2].lower().strip()
+        argv = [argv[0]]
+    elif len(argv) >= 2 and not argv[1].startswith("-"):
+        focus = argv[1].lower().strip()
+        argv = [argv[0]]
+    GLib.set_prgname(APP_ID)
+    log.info("start focus=%s setup_all=%s", focus, setup_all)
+    app = AccountsApp(focus_id=focus)
+    app._setup_all_on_start = setup_all  # type: ignore[attr-defined]
+    return app.run(argv)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

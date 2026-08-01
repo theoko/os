@@ -1,8 +1,768 @@
 ---
-version: 0.10.0
+version: v0.16.2
+project: os
+updated: 2026-08-01
+type: changelog
 ---
 
 # Changelog
+
+Runtime version is the top-level VERSION file (no v prefix there).
+This file is newest-first. When behavior ships: bump VERSION, add an entry
+here, update this frontmatter version / updated, then conventional-commit.
+
+## [v0.16.2] — 2026-08-01
+
+### Fixed — product polish on daily-driver Linux
+
+- **Debian watermark** — `teddyos-brand.sh` clears GDM login logo, rewrites
+  os-release / issue / lsb, points vendor-logos at teddyOS; wired into
+  provision + product install.
+- **Dock vanished** — Just Perfection `dash=true` when using Dash to Dock
+  (hiding overview dash was zeroing the dock actor).
+- **Answers cards** — strip Markdown for display; plain persona asks the
+  model not to emit `##` / `**`.
+- **GitHub work-on** — install `gh` on provision/product paths (ISO already
+  had it); public `owner/repo` clones without sign-in; clearer private-repo
+  Connect copy.
+- **Connect friction** — skip the long intro when launched from Search;
+  no OAuth phone QR for Claude (localhost callback); honest one-AI copy.
+
+## [v0.16.1] — 2026-07-31
+
+### Fixed — Search back on the dock
+
+teddyos-look.sh had been writing dock favorites as Chromium / WhatsApp /
+Gmail / Files / Terminal — **no Search**. Restored product order: Search,
+Web, WhatsApp, Email, Files. User + dash-to-dock keys set after look so a
+stale list does not stick.
+
+## [v0.16.0] — 2026-07-31
+
+### Added — phone-friendly Connect + Email “link from phone”
+
+- **Connect** shows a unified phone card: large code, **QR** of the device/sign-in
+  URL when `qrencode` (or Python `qrcode`) is available, copy-to-clipboard still
+  works. GitHub/Copilot pre-filled device URLs preferred. Browser OAuth also
+  gets a QR of the authorize URL so a phone can open it.
+- **Email** setup adds **Link from phone (QR)** on the last step: a tiny LAN
+  server serves a calm mobile page that opens the chosen webmail; desktop can
+  still open the same inbox. Same Wi‑Fi required for the QR URL.
+- New `phone_auth.py` helper (QR + `PhonePairServer`); ISO/provision install
+  `qrencode`.
+
+Honest limit: true single-session Google OAuth completed only on the phone
+and mirrored to the desktop still needs a registered OAuth app / public
+callback — not required for this ship.
+
+## [v0.15.6] — 2026-07-31
+
+### Changed — Email setup picks a provider (not Gmail-only)
+
+The mail guide (`teddyos-gmail`) asks **which email you use**: Gmail, Outlook,
+Yahoo, iCloud, Proton, or **Other** (paste any webmail URL). Choice is remembered
+for “open inbox without the guide.” Desktop label is **Email**.
+
+## [v0.15.5] — 2026-07-31
+
+### Added — expanded host-side contract test suite (71 → 79 tests)
+
+Added 8 new contract tests covering previously-untested modules:
+
+- **`intent.py`** — `classify()` for all paths (LinkedIn, WhatsApp, both,
+  generic reply, project slug, lookup, empty); `force_message_reply()`,
+  `force_kind()`, `choice_label()`, `choice_subtitle()`,
+  `all_choice_intents()`, `intents_equal_job()`
+- **`pending_ask.py`** — save/load/clear round-trip; invalid kind normalises
+  to `"work"`; empty project+query skips write; messaging kinds preserved
+- **`sandbox.py`** — `sandboxed()` false outside guard; `properties()` always
+  includes unconditional hardening props; `available()` returns bool
+- **`logutil.py`** — `get_logger()` idempotent; returns correct `Logger`;
+  `_log_path()` doesn't raise
+- **`search.py` helpers** — `normalise_url()` for all three URL shapes;
+  `focus_query()`; `is_work_goal()` / `is_freeform_help_goal()` /
+  `is_linkedin_messages_goal()` / `is_whatsapp_messages_goal()`; `prune()`
+  score-floor and full-match cases
+- **`teddyos-claude`** — `_cwd_from_argv()` for valid dir, no-args, flag
+  skip, and non-existent path (no GTK required)
+- **`progress.py`** — `format_toast()` priority ordering and empty-list
+  guard; `progress_line()` non-empty; `ultracode_meter()` fraction bounds;
+  `award_signin()` / `award_clone()` / `award_tour()` return `ProgressSnapshot`
+
+## [v0.15.4] — 2026-07-31
+
+### Changed — WhatsApp opens a setup guide, not a naked Web page
+
+Dock **WhatsApp** now matches Gmail: QR link once, you’re in control (AI only
+drafts), then open chats in a private Chromium app window. Desktop entry runs
+`teddyos-whatsapp` (guide), not `chromium --app=web.whatsapp.com`.
+
+## [v0.15.3] — 2026-07-31
+
+### Changed — Gmail opens a setup guide, not a naked Google page
+
+Dock **Gmail** now launches `teddyos-gmail`: a short plain-language guide
+(control, sign-in once, then inbox). Signing in still opens Gmail in its own
+Chromium app window at the end — not as the first thing you see. Wired through
+apps install, product install, update payload, and live ISO.
+
+## [v0.15.2] — 2026-07-31
+
+### Fixed — disable the Debian/GNOME “Welcome / Tour” popup
+
+`gnome-core` pulls **gnome-tour**, which greets first login with “Welcome to
+Debian” / Take the Tour. Removed on provision and live ISO build, autostart
+overridden, and `org.gnome.shell welcome-dialog-last-shown-version` set so the
+shell does not re-open it. Applied on the running UTM guest as well.
+
+## [v0.15.1] — 2026-07-31
+
+### Fixed — UTM Linux launch (ghosts, frozen display, deleted disk)
+
+`make desktop` / UTM was broken in three ways:
+
+1. **Ghost registry rows** — multiple UUIDs pointed at the same `teddyos.utm`
+   package. `utmctl delete` on a ghost **deleted the live disk package** while
+   QEMU still held open FDs (unlinked disk).
+2. **Frozen black screen** — `utmctl start` left QEMU with `-S` and no SPICE
+   window, so the CPU never ran. Start now goes through **AppleScript** so the
+   display window opens.
+3. **Invalid USB enum** — `UsbBusSupport=Usb3_0` made UTM reject the config and
+   drop the VM silently. Correct value is `"3.0"`.
+
+Repair path: `make desktop-force` (recreate VM + re-copy disk + scrub registry
+in Preferences only — never package-delete ghosts that share a path).
+
+## [v0.15.0] — 2026-07-31
+
+### Removed — freestanding kernel and everything that only served it
+
+This repo is **Linux-only**. Deleted from the tree:
+
+- `kernel/`, `core/`, Cargo workspace, Limine submodule, freestanding fonts
+- Freestanding scripts: `make-utm`, `make-virtualbox-arm64`, `make-usb`, QEMU
+  smoke, drive-ui / e2e kernel suite, bake-corpus, health-check (kernel), …
+- Kernel-era docs (architecture, boot, UI, UTM freestanding, VirtualBox
+  freestanding kernel, skills/search freestanding notes, …)
+- Default skills playbooks and portals catalog for the freestanding guest
+
+### Changed — product surface is Linux only
+
+- `make` / `make desktop` → UTM Linux guest (`teddyos`)
+- `make test` → `scripts/linux-contract-unit.sh` (no Rust/QEMU ISO)
+- `publish-os` ships live images + update payload only (no `os.iso` / `os-arm64.iso`)
+- CI runs Linux contracts only
+- Identity cards and STATUS describe Linux-only
+
+What remains: `linux/`, Linux scripts, optional `search/seed.json` for live ISO
+bake, docs for daily-driver / install / intent / UX audit / live VirtualBox.
+
+## [v0.14.1] — 2026-07-31
+
+### Changed — Linux is the only product path; freestanding is noise
+
+Operators kept launching freestanding `os.iso` / UTM `os` / VirtualBox ARM
+kernel and seeing “hello” instead of the desktop. Defaults now point at Linux:
+
+- **`make desktop`** (also `make`, `make run`, `make utm`) opens the Linux guest
+  in UTM via `scripts/teddyos-desktop.sh` + `teddyos-utm.sh`.
+- **`make linux-init`** / **`make linux-provision`** for first-time disk + GNOME.
+- Freestanding renamed to explicit lab targets: `kernel-iso`, `kernel-utm`,
+  `virtualbox-kernel-arm64`. Old `make virtualbox-arm64` errors with a pointer.
+- Identity cards and `linux/README.md` state Linux-first; freestanding is CI/lab.
+
+## [v0.14.0] — 2026-07-31
+
+### Added — trading-style version control (so we know what we are shipping)
+
+`VERSION` + `CHANGELOG.md` now follow the same discipline as
+`~/Desktop/iakovos/trading`: YAML frontmatter carries the current version,
+entries are newest-first with `## [vX.Y.Z] — date` headers, and identity cards
+require a bump on real work. Linux live images still bake `VERSION` into
+`/etc/teddyos-software` and the ISO filename — freestanding kernel ISOs do not
+surface it on the “hello” screen (that product line is separate).
+
+### Added — Search intent router (agent decides, product executes)
+
+Search classifies free text into structured intents (`message_reply`,
+`project_help`, `freeform_help`, `lookup`, `ambiguous`) via
+`linux/teddyos-search/intent.py`, then runs known playbooks. Ambiguous input
+offers plain choice rows. Never free-roams; never auto-sends. Design record:
+`docs/intent-router-os-doc-v01.md`.
+
+### Added — LinkedIn / WhatsApp “do it” = open + AI draft
+
+`teddyos-linkedin` and `teddyos-whatsapp` open the messaging surface and drive
+an AI draft playbook. Reply paths are draft-only — no auto-send. Wired through
+Search when the intent is a message reply.
+
+### Added — aspect-aware display lift + auto-update opt-in
+
+`teddyos-display` picks the densest mode that **matches the current aspect**
+(blocks ultrawide by default; `TEDDYOS_ALLOW_ULTRAWIDE` escape hatch). Setup
+gains an optional software auto-update grant (`software.auto_update`), off by
+default. VirtualBox ARM default resolution preference is 1920×1080.
+
+### Fixed — backpacking false positive and project audience
+
+“look at results” no longer scores as backpacking (stopword “at” removed from
+lexicon matching). Work-on goals like `tsearch-revival` resolve to CODE-style
+project audience more reliably. Session-ready after Connect unblocks “get help”
+stuck states; multi-OAuth prefers Claude-first when several are pending.
+
+### Changed — nontechnical UX depth (post-0.13 catch-up)
+
+Multi-persona help, freeform goals, levels, Connect helpers, Ask-all / AI
+picker polish, and contract/e2e coverage for the Linux desktop path landed
+after 0.13.0 without a version bump — they are part of this tree as of 0.14.0.
+Audit: `docs/nontechnical-ux-audit-os-doc-v02.md`.
+
+**Note for operators:** `make virtualbox-arm64` boots the **freestanding
+kernel** (“hello” setup). The Linux daily-driver UX above is on
+`make linux-iso` / the `teddyos-*-*.iso` live image — not `os-arm64.iso`.
+
+## 0.13.0 — 2026-07-28
+
+### “Work on …” can clone from GitHub
+
+When there is no local folder for a goal (e.g. `i wanna work on tsearch`),
+Search checks GitHub if `gh` is signed in or SSH keys work, lists matching
+repos, and clones the one you pick into `~/Projects/` before offering AI tools.
+
+### Logs land in one place
+
+Guest keeps a durable trail under `/var/log/teddyos/`: persistent journald
+(14 days / 512 MB), rotating per-app files, and daily (plus post-boot) snapshots
+via `teddyos-log-collect`. Apps tag the journal as `teddyos-*`. From the Mac,
+`./scripts/collect-os-logs.sh` pulls the guest tree plus host serial crumbs into
+`logs/os/`.
+
+Snapshots require an explicit setup grant — **Help improve teddyOS**
+(`diagnostics.share`), off by default. Without it the collector no-ops;
+`--force` is the operator escape hatch only.
+
+### “Work on …” opens an AI tool picker
+
+Typing a goal into Search (for example `i wanna work on iakovos-trading`) no
+longer only ranks web hits. The window finds the project folder on the machine
+and offers Claude (and Files / Terminal when present). `teddyos-claude` accepts
+the project path so Claude starts in that directory.
+
+Each tool row then checks remaining capacity: Claude via `claude auth status`
+and `claude usage` (so “Credit balance is too low” or “Not signed in” shows
+before you click). Files and Terminal report that they need no credits; Cursor
+admits when only “installed” is knowable.
+
+The catalog is every AI tool we know how to launch (Claude, Cursor, Windsurf,
+Codex, Gemini, Aider, Amp, Crush, Goose, Ollama, VS Code, VSCodium, Zed) —
+only installed binaries appear. Choosing a tool records it for 30 days under
+**Recently used**, sorted above the rest with a badge on the row.
+
+
+
+### Live ISO records the host commit
+
+`linux/iso/build-iso.sh` runs on a guest that receives the tree without
+`.git`, so `/etc/teddyos-software` used to say `commit=unknown` and every
+fresh install offered an update. `scripts/build-linux-iso.sh` (and
+`make linux-iso`) resolves the commit on the Mac, passes `TEDDYOS_COMMIT`,
+and pulls the ISO into `dist/`.
+
+### Standalone cleanup — no more dead bridge surface
+
+The host bridge is gone; this pass removes what still pretended it was not.
+
+- Identity cards (`AGENTS.md`, `CLAUDE.md`) match standalone only: no COM2
+  connector, no `bridge-run`, no `host/bridge/`.
+- Deleted dead stubs: `refresh-index.sh`, `make-portal.sh`, `substrate-proof.sh`,
+  the refresh LaunchAgent, and the MCP connectors design doc.
+- UTM and VirtualBox launchers no longer wire or start a host bridge.
+- Skill playbooks and the health workflow describe offline reality; email and
+  live portals stay catalogued as offline until a guest network path exists.
+- Tracked `__pycache__` bytecode removed (already gitignored).
+
+### amd64 boots, and the BIOS menu is teddyOS
+
+The first amd64 image. Verified by booting it, not by reading the build tree:
+isolinux -> kernel -> GNOME -> the setup journey, on SeaBIOS, which is the
+firmware VirtualBox on x86 defaults to and therefore the path most people who
+download this will actually take.
+
+Getting there needed two fixes the build's own assertion caught before either
+could ship.
+
+- syslinux writes its keyboard accelerator as a caret INSIDE the label —
+  `Start ^installer`, `with ^speech synthesis`. Patterns written against the
+  plain words matched some labels and not others, which is worse than matching
+  none: the speech entry failed while the generic one succeeded, leaving
+  "Install teddyOS with ^speech synthesis" on the menu. And `Advanced install
+  options` and `Utilities` had no BIOS rename at all.
+- The staleness assertion grepped the whole isolinux directory, and syslinux
+  ships `libgpl.c32` — a binary containing the string "Utilities". It could
+  never have passed on amd64 no matter what the menus said. It reads
+  `*.cfg` now.
+
+### Nothing in the desktop says Debian any more
+
+- The installer opened as "Welcome to the Calamares installer for Debian 13"
+  with a Debian swirl, at the moment somebody commits their disk. It carries
+  teddyOS branding, and a slideshow — which is not optional: a branding
+  component declaring `slideshowAPI` without a `slideshow` is rejected whole,
+  and Calamares then exits before drawing anything. That presented as the
+  Install button doing nothing at all.
+- The login banner read "Debian GNU/Linux 13 teddyos" on every text console and
+  serial session. Found on the amd64 serial console, which is the one place
+  nobody thought to look.
+- The Web tile wears Chromium's own icon, copied at all seven sizes into our
+  own icon name so the theme cannot substitute Chrome's four-colour mark —
+  which would put Google's trademark exactly where Safari's compass was.
+
+### Errors read as sentences
+
+`<urlopen error [Errno -3] Temporary failure in name resolution>` was being
+rendered in the Search window. Accurate, useless, and alarming: it looks like
+damage when the news is "you are not online". Network failures are translated
+at the point they are produced, so the window and the terminal agree.
+
+- Names under the dock icons. Six tiles and no words is a guessing game for
+  the people this is for, and Dash to Dock's labels only appear on hover —
+  something you do only if you already suspect a tooltip exists.
+
+
+### teddyOS runs on VirtualBox
+
+The live image booted to a black screen on VirtualBox's Apple Silicon build and
+stayed there. Five images shipped before the cause was found, because every
+symptom pointed one layer too low: a frozen boot menu, then a hypervisor
+assertion, then a missing DRM device. All three were real; none was it.
+
+The cause was a missing package. GNOME's session is Wayland, which needs a
+DRM/KMS device. VirtualBox's ARM machine exposes its framebuffer only through
+EFI GOP, so the kernel registers `efi-framebuffer.0`, `simpledrm` has nothing
+to bind to and `/dev/dri` never appears. GDM turns Wayland off by itself,
+looks for an X session, finds `/usr/share/xsessions` empty, and dies with
+`no session desktop files installed` — restarting forever behind a black
+screen while the text console works perfectly.
+
+`gnome-session-xsession` is only a *Recommends* of `gnome-core`, so
+`--apt-recommends false` had silently removed it. The same flag removed
+`user-setup` once before.
+
+- `gnome-session-xsession`, `xserver-xorg-core`, `xserver-xorg-video-fbdev`
+  and `xserver-xorg-input-libinput` ship now. fbdev draws on `/dev/fb0` and
+  needs no GPU at all, and GNOME Shell keeps its X11 backend in 48, so this is
+  the real desktop — dock, theme and extensions — not a reduced one.
+- The build asserts a Wayland session, an X session and the fbdev driver are
+  all present. Losing any of them now fails the build instead of shipping a
+  black screen.
+- A machine with genuinely no graphics device explains itself on the console
+  instead of showing nothing.
+
+### Search no longer needs a terminal
+
+Making the search box return anything took four commands and two error
+messages: `teddyos-search`, `teddyos-setup`, search again, then
+`teddyos-search --sync`. Granting "Search the web" was permission, not an
+index — nothing ever downloaded the 68 MB corpus, so the machine could only
+say so in a note under an empty result list.
+
+- Setup downloads the index itself, on its last screen, with a progress bar.
+  Detached, so clicking through does not cancel it.
+- Every command name is gone from the GUI. The window said
+  `run teddyos-search --sync` to people who have never opened a terminal.
+- The Search window renders `notes` and `errors`. It computed the reason a
+  search came back empty and discarded it, so "nothing found" and "the index
+  is still downloading" looked identical.
+
+### Search stopped eating the machine
+
+Moving the dock's Search through the capability sandbox — which it had never
+entered, making the setup screen's central promise false — turned a
+once-per-session 67 MB corpus parse into a per-keystroke one. The cache is a
+module global and cannot outlive a process, so every query allocated 475 MB
+and threw it away. On a live system whose cache directory is in RAM, that
+OOM-killed the desktop.
+
+- `teddyos-search --serve` enters the sandbox once, parses once and answers
+  queries over a pipe. 475 MB once; requeries in 0.08 s.
+- It still refuses rather than falling back to an unconfined search.
+
+### The desktop stops advertising Debian
+
+- The installer said "Welcome to the Calamares installer for Debian 13" with a
+  Debian swirl — at the moment someone commits their disk to an OS they have
+  never heard of. It carries teddyOS branding now.
+- **Install teddyOS** is in the dock. The live image had no way to keep
+  itself short of rebooting into a different menu entry.
+- The bookmark bar was Debian.org, Latest News and Help. It is now six links
+  named for what they are for.
+- The browser icon was **Safari's compass on Chromium** — misleading, and
+  someone else's trademark. Search, Web, Claude and Install are drawn.
+- On amd64 the BIOS boot menu was stock Debian with `timeout 0`, which in
+  syslinux means wait forever. Both menus are branded and timed now.
+
+### Claude is an application
+
+It was installed, symlinked to `/usr/local/bin/claude`, and reachable only by
+opening a terminal and typing a name you had to already know — on a desktop
+whose stated audience does not know what a terminal is.
+
+- A window: a terminal with one job, no shell prompt, no tabs, nothing left
+  running when it closes.
+- `teddyos-whatsapp.desktop` was listed as a dock favourite and never created
+  by anything, so GNOME silently dropped it and the dock showed three icons
+  where four were intended.
+- Apps set `prgname` to their application id. GNOME matches a window to its
+  launcher by WM_CLASS, which under X11 comes from the program name — so on
+  exactly the machines the X11 fix rescued, a running app appeared twice.
+
+### Builds say which build they are
+
+- Images are named `teddyos-VERSION-ARCH-BUILDID.iso` and the id is on the
+  boot splash and in `/etc/teddyos-build`. Three fixes were reported as "still
+  broken" while an older image was being booted.
+- Both live entries carry a serial console, `tty0` named last so `/dev/console`
+  stays the screen. A VM that boots to a black rectangle can now be handed a
+  log instead of guessed at.
+
+## 0.13.0 — 2026-07-27
+
+### The mouse works again after setup
+
+Every click outside the setup wizard had stopped registering. `prev_buttons`
+— the previous frame's button state, which is what a press is measured
+against — was being advanced at the top of the input loop, before any handler
+ran, so `was_down` always equalled `left_down` and no press ever read as a new
+press. Back, the home tiles, Brief `Doc` rows, Search results and the
+capability switches all went dead together, while the pointer still moved and
+still painted its hover rails, so the machine looked alive and answered
+nothing. Setup kept working because it reads the button state rather than its
+edge — which is exactly why the failure began the moment setup ended.
+
+The assignment at the bottom of the loop, which is the correct one, was always
+there. Removing the early one restores every click.
+
+- `make e2e` — the only suite here that clicks — has been unrunnable since the
+  standalone conversion: it defaulted to starting a bridge through a script
+  that commit deleted, and died in argument handling before booting anything.
+  It defaults to offline now, the way every shipped image runs.
+
+### Documents found offline can be opened
+
+The corpus already carried a 320-character extract per document; `build.rs`
+read it for tokens and threw it away. So the machine could find a document and
+never show one, and every row on a device that is never anything but offline
+dead-ended at "cannot open documents".
+
+- The extract is baked into the kernel alongside the title and URL, and
+  `mcp::fetch_doc` reads it when there is no bridge — one place, so a Search
+  row, a Brief `Doc` row and anything added later all open the same document.
+  The reader wraps it at word boundaries and ends with a line saying it is an
+  extract, so a stored opening is never mistaken for a whole document.
+  The ISO grows 70 KB.
+- A row is drawn openable exactly when the image stores its text. Offline rows
+  used to carry a URL whatever was behind it, which is what made every one of
+  them invite a tap and then refuse. `search.rs::body_for` is the single
+  answer to "does this open?", and the Search screen, the offline query and
+  `Brief::push_result` all ask it.
+- The knowledge and playbook lanes push through `Brief::push_result` like
+  every other lane, instead of tagging their rows `Hit` and discarding the
+  URL — the same query used to answer openable rows on Search and dead titles
+  on the Brief.
+- Copy follows: "Titles only - no text stored for these." replaces "the local
+  index cannot open documents", and the note under the search field no longer
+  says "Bridge offline" on a machine with no bridge to start.
+
+### A finished answer stops looking like a stuck one
+
+Asking the machine for "nvda" left a screen titled **Working on it** above four
+cards, the last of which said nothing was found. Nothing draws a Brief until the
+run has returned, so that title was false every time anyone read it — the words
+in the largest type on the screen said the machine was still thinking.
+
+- The Brief title now reports the outcome: `2 to open`, `3 found`,
+  `Nothing found`, `Needs a grant`, `Draft ready`. Openable rows lead the count,
+  because tapping one is the next thing to do; a missing grant outranks any
+  count, because it is the thing to fix.
+- A one-word goal no longer prints itself twice. `Goal: nvda` and `Query: nvda`
+  are one fact on two cards; the Query card now appears only when the machine
+  searched for something other than what was typed.
+- An empty answer says what to try, not only what failed. "Nothing on this
+  device matches that." is followed by a `Next` row, and the old "Bridge
+  offline - local keywords only." caption is gone from standalone builds — it
+  printed on every run this build can do, so it was a caption, not news,
+  costing a row on a screen whose whole answer was four cards.
+
+Four cards became three, and the card that ends the screen now points somewhere.
+
+### The machine can find your own work
+
+Every question about the owner's own files came back "No offline hits for that
+query." Search was not broken — the shelf was empty. The kernel could only
+answer from `search/corpus.json`, and that held sixteen documents, all about
+the OS itself.
+
+- `scripts/bake-corpus.py` merges the workspace index into the baked corpus:
+  275 documents now, 259 of them the owner's. `search/seed.json` keeps the
+  curated OS documents that were there before.
+- Non-ASCII is folded on the way in, Greek transliterated rather than dropped.
+  The font atlas covers 0x20..=0x7E and the tokenizer emits ASCII runs only, so
+  140 of the 320 titles would otherwise have drawn as holes and indexed as
+  nothing — baked in and unreachable. `build.rs` now fails the build on a
+  character the atlas cannot draw instead of shipping it.
+- Generated files are left out: `.egg-info`, lockfiles, `requirements.txt`, and
+  anything under twelve tokens. The scorer divides term frequency by document
+  length, so a four-word `top_level.txt` outranks a real document that discusses
+  the term at length. 54 such entries were dropped.
+- Result-row URL slots hold 128 bytes, up from 72, and `search.rs` const-asserts
+  that every baked title and URL fits. Truncation here is not cosmetic: 38 of
+  the owner's paths were over the old slot, `copy_into` cuts in silence, and two
+  paths agreeing for 72 bytes collapse into one row — a document silently erased
+  from every answer it belongs in.
+- `make publish-os` refuses to upload an image built from a personal corpus. The
+  index is compiled into the ISO, so publishing one baked from the workspace
+  would put the owner's titles and 320-character snippets on a public download.
+
+### The status dot stops reporting a fault that cannot happen
+
+Since the standalone conversion `ping_bridge` answers Offline for every caller
+forever — there is no bridge to answer otherwise. The nav dot went red on first
+boot and stayed red on a machine with nothing wrong with it, which reads as
+"your search is disconnected" and sends people looking for a host this image
+deliberately does not ship.
+
+- A standalone build draws the word `status` where the dot was. It opens the
+  same screen and claims no fault. Hit-testing follows what was drawn.
+- `make test-host` now runs the suite twice, the second time with
+  `--features standalone`. Every shipped ISO is built that way, and until now no
+  test ever compiled those branches — which is how a dot that could only be red
+  reached first boot.
+
+### Two ranking tests measured the corpus, not the scorer
+
+Both asserted a specific document title. Re-baking the index broke them, and one
+was not testing what it claimed: term frequency is divided by document length,
+so a four-word file beats a long one on any shared term whatever the weights are.
+
+- `rare_terms_outweigh_common_ones` checks the score `query` delivers against the
+  whole formula, on a term in exactly one document — the case where the answer is
+  knowable.
+- `pagerank_outranks_a_stronger_tf_idf_match` watches a real ranking for a
+  document delivered above one with strictly higher term frequency, which nothing
+  but the blend can do. It recomputed the blend before, which only proved the test
+  could multiply — it passed with the blend deleted.
+
+## 0.12.0 — 2026-07-27
+
+### A machine can fetch the update it was told about
+
+`update.check` could say a newer build existed. Nothing could go and get it, so
+the answer ended at "there is one" — and against the live site it did not even
+manage that: the URL it read answered with the homepage.
+
+- `CALL update.download [arch=…] [wait=1]` downloads the published image for an
+  architecture, verifies it against the published checksum, and stages it in
+  `~/Library/Application Support/os/updates/`. `update.status` reports progress
+  without touching the network; `update.forget` deletes staged images *and*
+  partials, because "off means gone" applies to megabytes fetched on somebody's
+  behalf.
+- Downloads use `?v=<commit>`, the URL `os.html` links. A CDN fronts the origin
+  and the bare URL serves the previous release for hours; fetched that way, a
+  good release arrives as a checksum mismatch, which reads to anyone verifying
+  a download as tampering. The commit comes from `BUILD-INFO.txt`, and a
+  download refuses when it is unreadable rather than falling back to the stale
+  URL.
+- Verification happens before staging, never after. A mismatched download is
+  deleted rather than left at the final path — an unbootable ISO on a USB stick
+  explains nothing about why.
+- Nothing is applied. These are boot media, and what a machine boots from is a
+  thing a person changes on purpose, not a side effect of a status check.
+- Runs in the background by default and reports through `update.status`. The
+  guest declares the bridge offline after about ten seconds, which is well
+  short of a 16 MB download; `wait=1` is for shell callers, which have no such
+  timeout.
+
+### The updater stops reading a web page as a release
+
+`/tsearch/` serves a catch-all: a missing path answers **HTTP 200 with the
+homepage**. `manifest.json` was never published, so every installed machine
+read 88 KB of HTML and reported `manifest_is_not_json` forever.
+
+- `SHA256SUMS` is now the checksum authority — the file `publish-os.sh`
+  actually uploads and re-verifies on the server and over HTTPS. A manifest is
+  optional and adds the version.
+- Every parser judges the body, never the status code: checksum lines must be
+  64 hex digits, a commit must look like one (`commit: unknown` is refused —
+  "unknown" in a URL fetches the stale cached image).
+- `update.check` names a version when a manifest is published and a commit
+  otherwise, and says which in `ROW source=`. With only a commit it reports
+  `state=undetermined` instead of comparing a commit to a version and calling
+  the result "behind".
+- `publish-os.sh` now builds and uploads `manifest.json`, and verifies it by
+  *body* — a 200 here would prove it published and prove it missing equally
+  well. `check-published.sh` watches for it and warns, since a visitor's
+  download works without one but no machine can tell whether it is behind.
+
+### Entry points
+
+- `make update-check` / `make update-os [ARCH=…]`, and `scripts/update-os.sh`.
+  It refuses to run against a bridge that predates the feature rather than
+  reporting the confusing failure that causes — a shared long-lived bridge
+  serving an older build has cost this repo an afternoon before — and does not
+  kill it, since QEMU/UTM sessions may be mid-boot on the same port.
+- `make-usb.sh` accepts `ISO=/path/to/image`, so a staged download can be
+  written without first being copied over the build output. That copy step is
+  where the wrong image gets flashed.
+
+## 0.11.0 — 2026-07-25
+
+### Native ARM64 VirtualBox desktop
+
+- Added an ARM64 low-device page-table window for VirtualBox's PCI ECAM and
+  MMIO BARs, while keeping RAM and framebuffer access in Limine's higher-half
+  map.
+- Added a polled OHCI host driver with USB enumeration and HID keyboard,
+  relative mouse, and absolute tablet report handling. VirtualBox's optional
+  `SET_PROTOCOL` stall is tolerated when the descriptor-defined report format
+  is already usable.
+- Fixed VirtualBox's eight-byte absolute-tablet report layout and completed
+  the OHCI done-queue/WDH handshake, so pointer reports are delivered
+  continuously instead of the controller stopping after an unpublished TD.
+- ARM device MMIO is mapped before the first PL011 probe, and OHCI accesses
+  use plain non-writeback AArch64 loads/stores to avoid VirtualBox pinning an
+  optimized guest on valid pre/post-indexed MMIO instructions.
+- ARM animation and wait timing use the architectural counter. Input polling
+  runs at a bounded 1 ms cadence; rendering continues to use cached
+  composition and dirty-rectangle presentation.
+- ARM64 images now use the optimized release kernel by default. Cursor moves
+  restore their saved background on every architecture, eliminating the
+  initial center ghost and pointer trails.
+- First-run controls now respond before activation: Continue gains a calm
+  intent halo, selectable rows tint on hover, and Back underlines. A seven-dot
+  journey rail makes progress through setup visible without adding more copy.
+- Pointer reports are coalesced into one 60 Hz visual path. Precise movement
+  settles over a few frames, fast flicks land on the next frame, and clicks
+  still snap exactly to their hit target.
+- VirtualBox's post-firmware PL011 output is muted so a full debug FIFO can
+  never stall PCI/input initialization.
+- `make virtualbox-arm64` now builds the ARM ISO, creates or refreshes the VM
+  with QemuRamFB plus OHCI USB keyboard/tablet, reattaches the rebuilt ISO, and
+  launches it. Its VM-creation command uses VirtualBox's supported `--ostype`
+  spelling.
+- Verified in the real VirtualBox VM: first-boot setup advances via the
+  emulated USB keyboard, the home search field receives `nvda`, and injected
+  absolute-tablet positions move one clean cursor across the desktop. The
+  live welcome screen also shows hover feedback and advances once into the
+  visible setup journey.
+
+### The agent only promises what it can open
+
+- A Brief row is tagged by what it can deliver, decided once at the sink:
+  `Doc` rows open when tapped, `Hit` rows are findings the guest cannot open.
+  Lanes could previously draw a `Doc` they never armed, which is how the
+  offline guest listed three `Doc` rows above "No openable hits - refine the
+  ask." Arming now also requires the push to have appended, so a title
+  deduplicated against an earlier row can no longer record its URL against
+  the next line.
+- The offline search ranks the question that was asked. It had discarded the
+  query for a hardcoded showcase phrase, so a brief on `nvda` answered with
+  corpus documents about capabilities while claiming "local keywords only".
+- A URL too long for its 72-byte slot is no longer stored cut. A truncated
+  URL still reads as present, so the row was drawn openable and the tap
+  resolved to a path the bridge cannot find; deep workspace roots reach this
+  routinely, and two documents sharing a 72-byte prefix also collapsed into
+  one. Rows that cannot be stored whole are `Hit`s.
+- An empty offline answer is explained once. The guest had stacked three
+  sentences — bridge offline, no hits, refine the ask — under a single empty
+  result. Offline findings now close with "Titles only - reading needs the
+  bridge." because no rewording of the goal can open a baked-index title;
+  "refine the ask" is kept for when the bridge is up and the advice works.
+- The duplicate-row assertion compares findings, not metadata. A one-word goal
+  draws "Goal: opportunistic" above "Query: opportunistic" — two facts about
+  one word, which the kernel deliberately allows and the harness read as one
+  document listed twice. Its can-it-fail proof was seeding that same shape, so
+  correcting the assertion alone would have left it unable to fail; the proof
+  now seeds one document tagged both Doc and Hit, the defect it describes.
+
+### A standalone image stops waiting for a host that will never come
+
+- `make standalone-iso` (and `standalone-arm64-iso`) build a bare-metal image
+  under the new `standalone` kernel feature. The guest skips the COM2 probe
+  outright instead of spending `TIMEOUT_PING` before every bridge-touching
+  action to learn what the image already knows. Capabilities are unchanged:
+  `BridgeStatus::Offline` was always a modeled state, so this changes when the
+  guest asks, not what it can do. The ISO is named separately because the two
+  images are not interchangeable.
+- Offline copy no longer names a bridge on machines that cannot have one.
+  "Bridge offline for mail." describes something the user can fix by starting
+  the host; on standalone hardware it points at a remedy that does not exist,
+  so that image says "Mail is unavailable on this device." instead. The worst
+  offenders were the ones naming a command: the status note read "Bridge
+  offline - run: make utm-bridged", and first-run setup had a whole "Connect
+  the Bridge" step telling the reader to run `make bridge-run`. All 21 lines
+  now live in `kernel/src/copy.rs` and switch together.
+- The wording is pinned from both sides — the standalone build must name
+  neither "bridge" nor a `make` command, and the hosted build must keep saying
+  "bridge" — so the copy cannot pass by going vague in both. Search-source
+  lines deliberately keep the word "offline", which stays true on a machine
+  with no network and promises no remedy.
+- The arm64 e2e harness learned the standalone spelling of the setup step.
+  Renaming the screen made it fall through to the catch-all "any screen with a
+  Back button" signature, which sent the wrong key and looped the journey for
+  12 steps instead of reporting an unknown screen.
+
+### A busy port names the process holding it
+
+- A bridge that cannot bind its TCP port now reports which process owns it and
+  exits, instead of panicking. Under the `com.os.mcp-bridge` LaunchAgent the
+  bare panic was near-unreadable: `KeepAlive` restarted the bridge every
+  `ThrottleInterval` and the log filled with identical aborts, saying nothing
+  about the stale `make bridge-run` actually sitting on 7420.
+
+### The morning brief explains itself
+
+- Corpus rows say where they came from. The brief that opens after setup listed
+  three bare titles — "Agent skills", "Architecture capability IPC", "os
+  identity" — directly under "Bridge offline for mail" and "Bridge offline for
+  calendar", with nothing on screen connecting them to anything. Read in order
+  it said the bridge was unreachable and then produced documents from nowhere.
+  One row of provenance now precedes them, and says why they do not open when
+  the bridge is down.
+- Corpus rows open when there is something to open. The lane pushed the
+  unopenable `Hit` tag unconditionally, so a document could never be tapped even
+  with the bridge up and a URL in hand — against the playbook's own step 5,
+  "arm Doc / Event rows the user can open". Offline the rows still read `Hit`,
+  correctly: `search_offline` carries titles and no URLs.
+- The plan lists only the steps this lane performs. It opened with "Restate:
+  what matters right now" and then never restated anything, because the morning
+  brief and the skills list both reach it with nothing typed. A four-step
+  checklist that delivers three reads as a step that silently failed.
+- Dropped the `Plan`-tagged row from the report. It put the word Plan on screen
+  as both the checklist heading and a row tag meaning something else, and its
+  text only restated the two plan steps above it. `Brief::lines` holds eight
+  rows and this lane can fill all eight, so that slot is what the provenance
+  line spends — adding a row instead would have silently evicted "Recordings
+  on" off the bottom of the screen being fixed.
+
+### Setup owns the screen until it is finished
+
+- Boot no longer paints Home before setup has run. Three `draw_home` calls sat
+  on the way to the main loop, and Home is a lie before consent: it offers a
+  query box and capability cards under an empty grant set. On x86-64 the window
+  was milliseconds; on ARM64 the USB probe sits inside it, so the guest showed a
+  complete Home screen for over a second and then replaced it with Welcome.
+  That is what made the ARM64 end-to-end run report that Enter on Home went back
+  to the welcome screen — it never left setup, and the harness had photographed
+  and typed into the pre-setup Home paint.
+- The "which input is missing" note is drawn on the Welcome screen. It was
+  painted onto Home during boot, where setup overdrew it moments later, so on a
+  machine with no driveable keyboard or pointer the one sentence explaining why
+  nothing responds was never actually readable. Welcome is the screen such a
+  machine is stuck on, and a deliberate setup restart keeps the note.
+- `scripts/e2e/arm64.py` asserts that the screen a fresh boot lands on is the
+  screen it stays on. Nothing has been typed at that point, so a screen that
+  changes by itself is the guest overpainting, and the run now says so instead
+  of blaming the input path for the keystrokes it aimed at a dead frame.
 
 ## 0.10.0 — 2026-07-25
 

@@ -2,10 +2,14 @@
 title: Moving to a Linux substrate
 version: v01
 date: 2026-07-25
-status: superseded by linux-os-doc-v02.md — its performance diagnosis is wrong
+status: superseded by linux-os-doc-v02.md — historical; performance diagnosis wrong
 ---
 
 # Moving to a Linux substrate
+
+> **Tip note.** Superseded proposal. Assumptions that `host/bridge` stays
+> "untouched" and connectors stay on the host over a socket are **obsolete on
+> this tip** (standalone; no Live COM2 bridge). See `STATUS.md` / `AGENTS.md`.
 
 ## The decisive argument: real applications
 
@@ -164,7 +168,9 @@ restrictions nothing applies.
 
 ## Suggested sequence
 
-Nothing here is started. In order:
+Nothing here is started **in the historical proposal**. On this tip, Linux live
+already exists under `linux/` and the host MCP bridge was removed rather than
+kept over a socket — see tip note on `linux-os-doc-v02.md`. Original order:
 
 1. **Settle the enforcement question** above. Everything else follows from it.
 2. **Prove the substrate**: minimal Linux image, our shell, bridge over vsock
@@ -174,8 +180,8 @@ Nothing here is started. In order:
 4. **Rebuild the UI** against a real toolkit, reusing layouts and copy.
 5. **Delete the drivers** last, once the replacement demonstrably works.
 
-Keep `main` bootable throughout. The current kernel is a working artifact and
-should stay that way until the replacement is better, not merely newer.
+Keep a bootable freestanding artifact throughout until the Linux path is better,
+not merely newer.
 
 ## Recommendation
 

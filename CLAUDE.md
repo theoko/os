@@ -2,49 +2,54 @@
 project: os
 purpose: identity card for agents and humans
 status: active
+updated: 2026-08-01
+version_note: Ship version is the top-level VERSION file.
 ---
 
-# os
+# os (teddyOS)
 
-Agent-centric hobby operating system in Rust (`no_std` kernel), targeting **x86_64**,
-booted with **Limine**. Headless runs use **QEMU**; the desktop GUI front-end is **UTM**
-(Parallels cannot run x86_64 guests on Apple Silicon).
+**Linux daily driver only.** Debian + teddyOS desktop apps under `linux/`,
+opened with `make desktop` (UTM on Apple Silicon).
+
+There is **no freestanding Rust kernel** in this tree.
+
+When you land here: read this file, then `VERSION` + newest `CHANGELOG.md`
+entry, then work under `linux/`.
 
 ## Shape
 
 ```
-kernel/          freestanding Rust kernel (Limine + framebuffer UI + COM2 MCP client)
-host/bridge/     host MCP connector bridge (email, skills, search)
-search/          curated knowledge corpus ({t,u,c,b,pr} — tSearch-style)
-skills/defaults/ agent skill playbooks
-docs/            versioned design notes
-scripts/         QEMU / bridge smoke
-Makefile
+linux/           product (setup, search, agents, update, live ISO)
+scripts/         desktop / UTM / provision / live-ISO / publish
+docs/            Linux design notes
+search/          seed corpus optional for live ISO bake
+Makefile         default = make desktop
 ```
 
-North star: **capability-based agents**. MCP connectors (email, search, …) run on the **host bridge**,
-not in the kernel. Guest holds caps and calls tools over COM2 until a guest network stack exists.
+## Commands
+
+```sh
+make help
+make linux-init          # once: Debian disk + cloud-init
+make linux-provision     # once: GNOME + Chromium (headless QEMU, ssh :2222)
+make linux-product       # Search/dock/theme product install into guest
+make desktop             # open Linux in UTM (VM: teddyos)
+make linux-iso           # live ISO → dist/
+make test                # scripts/linux-contract-unit.sh
+```
 
 ## NON-NEGOTIABLES
 
-1. **QEMU first for CI.** `make test` = host unit tests + QEMU serial smoke + MCP bridge smoke.
-2. **No secrets in the tree.** Gmail OAuth lives in the `gog` keyring. Saved skills live in
-   `~/Library/Application Support/os/skills/` — never bake tokens into the ISO.
-3. **Capability model.** Personal-data and write CALLs need Caps / wire bits —
-   no ambient root on those paths. Catalog peeks (`skills.list` / `skills.get`)
-   are ungated. `email.send` needs the Send mail Cap **and** Brief Confirm
-   (`confirm=1`); never auto-CALL send.
-4. **Inference and HTTP stay out of the kernel.** Bridge + future userspace only. Skills are markdown playbooks, not privileged code.
-5. **Tests gate commits.** Run `make test` before committing.
+1. **Linux is the only product.** No freestanding kernel / “hello” ISO.
+2. **Non-technical first.** Plain language on every user-facing surface.
+3. **Capability model.** Tools denied until granted. Messaging = open + draft only (never auto-send).
+4. **No secrets in the tree.**
+5. **Tests gate commits.** `make test` (Linux contracts) when touching `linux/`.
+6. **Version + changelog on real work.** Bump `VERSION` + newest-first `CHANGELOG.md`.
 
-## Common commands
+## Ship a change
 
-```sh
-make build           # ISO
-make run             # QEMU (MCP offline unless COM2 wired)
-make bridge-run      # host bridge on :7420 (EMAIL_BACKEND=mock|gog)
-make run-bridged     # QEMU COM2 → bridge
-make test
-```
-
-Skills: defaults in `skills/defaults/`; save via bridge `CALL skills.save name=…` → Application Support.
+1. Implement under `linux/` + `make test`
+2. Bump `VERSION` + `CHANGELOG.md`
+3. Conventional commit
+4. Interactive check: `make desktop`

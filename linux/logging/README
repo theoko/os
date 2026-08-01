@@ -1,0 +1,31 @@
+teddyOS logs
+============
+
+Where to look when something goes wrong.
+
+  /var/log/teddyos/app/           per-app rotating files (search, setup, …)
+  /var/log/teddyos/snapshots/     frozen copies of journal + system state
+  /var/log/teddyos/snapshots/latest  → most recent snapshot
+  journalctl -b                   this boot
+  journalctl -t 'teddyos-*'       only teddyOS apps
+  journalctl -b -1                previous boot (the one people reboot away from)
+
+Consent
+-------
+
+Snapshots and the daily collector require the setup grant
+
+  “Help improve teddyOS”  (diagnostics.share)
+
+Off by default. Without it, `teddyos-log-collect` exits without writing.
+Operators on a machine they own can pass --force.
+
+Take a fresh snapshot (if granted):
+
+  sudo teddyos-log-collect
+
+From the Mac (host), pull everything off a running guest:
+
+  ./scripts/collect-os-logs.sh
+
+Snapshots keep about 20 newest. Journal keeps ~14 days / 512 MB.

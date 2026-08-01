@@ -1,0 +1,18 @@
+[Unit]
+Description=Snapshot teddyOS logs to /var/log/teddyos/snapshots
+Documentation=file:///var/log/teddyos/README
+# After the journal is available and the network is not required — this must
+# work offline, which is exactly when you need the logs most.
+After=local-fs.target systemd-journald.service
+Wants=systemd-journald.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/teddyos-log-collect
+# Nice + ionice so a daily snapshot never steals the desktop.
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+
+[Install]
+WantedBy=multi-user.target

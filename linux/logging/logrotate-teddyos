@@ -1,0 +1,10 @@
+/var/log/teddyos/app/*.log {
+    weekly
+    rotate 8
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    maxsize 5M
+}

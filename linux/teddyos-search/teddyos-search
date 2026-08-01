@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""teddyos-search — ask the machine, and say honestly what it could not ask.
+
+    teddyos-search wheel strategy
+    teddyos-search --json nvda
+    teddyos-search --caps
+
+Exit codes are the contract, and there are more than two: a search that was
+blocked must never be mistaken for a search that found nothing.
+
+    0  at least one result
+    1  no results, everything the user granted was actually consulted
+    2  usage
+    3  no results, and a granted source failed (network, missing corpus)
+    4  no results, and every source is denied — nothing was searched at all
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import caps  # noqa: E402
+import sandbox  # noqa: E402
+import search as engine  # noqa: E402
+
+try:
+    from logutil import get_logger  # noqa: E402
+    log = get_logger("search")
+except Exception:  # noqa: BLE001 — logging must never block search
+    import logging
+    log = logging.getLogger("teddyos.search")
+
+BOLD = "\033[1m"
+DIM = "\033[2m"
+RESET = "\033[0m"
+
+
+def _plain() -> bool:
+    return not sys.stdout.isatty()
+
+
+def print_caps(verify: bool = False) -> int:
+    grants = caps.load()
+    print(f"{BOLD}Capabilities{RESET}" if not _plain() else "Capabilities")
+    for cap in caps.CAPABILITIES:
+        state = "granted" if grants.get(cap["id"]) else "denied"
+        mark = "+" if grants.get(cap["id"]) else "-"
+        # Only claim enforcement if the mechanism that would enforce it is
+        # actually present. On a box with no systemd user manager these are
+        # preferences, and saying so is the whole point of the module.
+        if cap["enforced"]:
+            enforced = "enforced" if sandbox.available() else "NOT enforced here (no systemd sandbox)"
+        else:
+            enforced = "not a restriction"
+        print(f"  {mark} {cap['label']:<16} {state:<8} ({enforced})")
+        print(f"    {DIM if not _plain() else ''}{cap['why']}{RESET if not _plain() else ''}")
+    if not caps.is_configured():
+        print("\n  Setup has not run yet; these are defaults.")
+        print("  Run: teddyos-setup")
+    paths = caps.workspace_paths()
+    if paths:
+        print("\n  Indexed folders:")
+        for p in paths:
+            print(f"    {p}")
+
+    if grants.get("portal.sync"):
+        status = engine.portal_corpus_status()
+        if status["present"]:
+            print(f"\n  Portal corpus: {status['bytes'] // 1_000_000} MB, "
+                  f"crawled {status['crawled_at']}")
+        else:
+            print("\n  Portal corpus: not downloaded (teddyos-search --sync)")
+
+    if verify:
+        ok, message = sandbox.selftest()
+        print(f"\n  {'PASS' if ok else 'FAIL'}: {message}")
+        return 0 if ok else 3
+    return 0
+
+
+def payload(query: str, outcome) -> dict:
+    """The one shape both --json and --serve emit.
+
+    Written once because it is a wire format now: the desktop Search window
+    rebuilds an Outcome from exactly these keys, so a field added to one path
+    and not the other goes silently missing in the GUI.
+    """
+    return {
+        "query": query,
+        "results": [r.__dict__ for r in outcome.results],
+        "denied": outcome.denied,
+        "errors": outcome.errors,
+        "notes": outcome.notes,
+        "portal_age_seconds": outcome.portal_age,
+    }
+
+
+def serve() -> int:
+    """One sandboxed process, many queries.
+
+    The desktop Search window has to run its queries inside the capability
+    sandbox — that is the whole promise the setup screen makes. The obvious way
+    is to shell out to this command per keystroke, and that is what it did
+    first. It is also what started OOM-killing the desktop.
+
+    The reason is `_load_portal_corpus`: 67 MB of JSON parsed and then tokenised
+    into per-document term counts, comfortably half a gigabyte of Python
+    objects. It is cached in a module global, so ONE process pays it once — but
+    a process per query can never reuse that cache, so every search paid it
+    again, on a live system whose cache directory is itself in RAM.
+
+    So: enter the sandbox once, parse once, then answer queries forever. Same
+    enforcement, one parse. Requests are lines of text on stdin; replies are one
+    line of compact JSON each, in order.
+    """
+    sandbox.reexec()
+
+    # Warm the corpus before announcing readiness, so the first thing anyone
+    # types is not also the query that waits for a 67 MB parse.
+    try:
+        engine.search("teddyos", limit=1)
+    except Exception:  # noqa: BLE001 - a cold-start failure must not stop serving
+        pass
+    print(json.dumps({"ready": True}), flush=True)
+
+    for line in sys.stdin:
+        query = line.strip()
+        if not query:
+            continue
+        try:
+            outcome = engine.search(query, limit=25)
+        except Exception as exc:  # noqa: BLE001 - one bad query must not end the session
+            print(json.dumps({"query": query, "results": [], "denied": [],
+                              "errors": [str(exc)], "notes": [],
+                              "portal_age_seconds": None}), flush=True)
+            continue
+        # separators= keeps it to a single line; the reader is line-oriented.
+        print(json.dumps(payload(query, outcome), separators=(",", ":")), flush=True)
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(add_help=True, description=__doc__.split("\n")[0])
+    ap.add_argument("query", nargs="*", help="what to search for")
+    ap.add_argument("-n", "--limit", type=int, default=10)
+    ap.add_argument("--json", action="store_true", help="machine-readable output")
+    ap.add_argument("--caps", action="store_true", help="show capability state and exit")
+    ap.add_argument("--verify", action="store_true", help="with --caps: prove the sandbox actually blocks")
+    ap.add_argument("--refresh", action="store_true", help="force a portal index refetch")
+    ap.add_argument("--sync", action="store_true",
+                    help="download/update the teddysearch portal corpus (~68 MB)")
+    ap.add_argument("--serve", action="store_true",
+                    help="answer queries from stdin, one per line, JSON per line")
+    args = ap.parse_args()
+
+    if args.caps:
+        return print_caps(verify=args.verify)
+
+    if args.serve:
+        return serve()
+
+    if args.sync:
+        # Explicit, never implicit. 68 MB behind someone's first search is a
+        # search that appears to hang, and on a tethered connection it is their
+        # data allowance spent without being asked.
+        ok, message = engine.sync_portal_corpus(force=args.refresh,
+                                                progress=lambda m: print(m, flush=True))
+        print(message)
+        return 0 if ok else 3
+
+    query = " ".join(args.query).strip()
+    if not query:
+        ap.print_usage(sys.stderr)
+        return 2
+
+    # Before any source is touched. From here on the denied capabilities are
+    # absent from the process rather than skipped by it.
+    sandbox.reexec()
+
+    if args.refresh and caps.load().get("portal.sync"):
+        engine.fetch_portal_index(force=True)
+
+    log.info("query=%r limit=%s", query, args.limit)
+    outcome = engine.search(query, limit=args.limit)
+    log.info(
+        "results=%d denied=%s errors=%d notes=%d",
+        len(outcome.results), outcome.denied, len(outcome.errors), len(outcome.notes),
+    )
+
+    if args.json:
+        json.dump(payload(query, outcome), sys.stdout, indent=2)
+        sys.stdout.write("\n")
+    else:
+        b, d, r = ("", "", "") if _plain() else (BOLD, DIM, RESET)
+        for i, res in enumerate(outcome.results, 1):
+            print(f"{i:2}. {b}{res.title}{r}")
+            if res.snippet:
+                print(f"    {res.snippet[:110]}")
+            print(f"    {d}{res.url}  [{res.source}]{r}")
+        if not outcome.results:
+            print("Nothing on this machine matches that.")
+        # Denials go to stderr so a piped `--json`-less run stays parseable,
+        # and so `teddyos-search x > out` still tells the user what was skipped.
+        if outcome.denied:
+            print(f"\nNot searched: {', '.join(outcome.denied)}"
+                  f"  (turn on with teddyos-setup)", file=sys.stderr)
+        for note in outcome.notes:
+            print(note, file=sys.stderr)
+        for err in outcome.errors:
+            print(f"warning: {err}", file=sys.stderr)
+
+    if outcome.results:
+        return 0
+    if len(outcome.denied) == len(caps.CAPABILITIES):
+        return 4
+    if outcome.errors:
+        return 3
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,44 @@
+{
+  "_comment": [
+    "Chromium managed policy for teddyOS. Installed to",
+    "/etc/chromium/policies/managed/teddyos.json.",
+    "",
+    "A managed policy rather than a first-run preferences seed, for two reasons.",
+    "It applies to EVERY profile on the machine, which matters here because each",
+    "web app in the dock runs with its own --user-data-dir and a seeded default",
+    "would have to be copied into each one. And it survives a profile reset,",
+    "so 'clear browsing data' does not quietly put DuckDuckGo back.",
+    "",
+    "Debian's Chromium ships DuckDuckGo as the default. Nothing wrong with it,",
+    "but on this machine the search box should reach the same index the rest of",
+    "the OS searches - teddyos-search and the address bar answering from two",
+    "different corpora is the kind of split that makes a system feel assembled",
+    "rather than designed.",
+    "",
+    "DefaultSearchProviderEnabled is deliberately NOT paired with a policy that",
+    "removes the others: the provider list stays editable, so this is a default",
+    "and not a lock-in. Someone who wants Google should get it in two clicks."
+  ],
+
+  "DefaultSearchProviderEnabled": true,
+  "DefaultSearchProviderName": "teddysearch",
+  "DefaultSearchProviderKeyword": "ts",
+  "DefaultSearchProviderSearchURL": "https://teddysearch.com/tsearch/?q={searchTerms}",
+  "DefaultSearchProviderSuggestURL": "",
+  "DefaultSearchProviderIconURL": "https://teddysearch.com/favicon.ico",
+
+  "HomepageLocation": "https://teddysearch.com/tsearch/",
+  "HomepageIsNewTabPage": false,
+  "ShowHomeButton": true,
+  "NewTabPageLocation": "https://teddysearch.com/tsearch/",
+
+  "RestoreOnStartup": 1,
+
+  "MetricsReportingEnabled": false,
+  "SearchSuggestEnabled": false,
+  "BrowserSignin": 0,
+  "SyncDisabled": true,
+  "PasswordManagerEnabled": true,
+  "PromotionalTabsEnabled": false,
+  "DefaultBrowserSettingEnabled": false
+}

@@ -1,0 +1,406 @@
+#!/usr/bin/env python3
+"""teddyos-update — install software updates without reinstalling the machine.
+
+The image had no update path. Everything teddyOS adds to Debian is baked into
+the squashfs, so a fixed search bug reached an existing machine only by
+downloading 2.6 GB and installing the computer again. Nobody does that, which
+means in practice a shipped machine was frozen at the day it was made.
+
+What actually changes between releases is small — the programs, the shell
+extension, the icons, the desktop defaults — so that is what this moves. Boot
+media still gets replaced by a new ISO; software does not need to be.
+
+Three properties, in the order they matter:
+
+  It verifies before it touches anything. The payload's checksum is compared
+  against the published manifest before a single file is unpacked, and a
+  mismatch is deleted rather than installed.
+
+  It is atomic per file, and it keeps what it replaced. Every file it
+  overwrites is copied to a rollback directory first, so a bad update is
+  undoable without network access — which is the only kind of undo worth
+  having when the thing you broke might be the network.
+
+  It never applies on its own *unless the person opted in*. --check reports;
+  --apply installs; --auto installs only when setup granted
+  “Keep teddyOS up to date” (software.auto_update). Default is off — a
+  machine that rewrites its own programs without consent is exactly what
+  this OS tells people it is not. With consent, a daily root timer keeps
+  small software updates current without a 2.6 GB reinstall.
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import urllib.error
+import urllib.request
+from pathlib import Path
+
+try:
+    sys.path.insert(0, "/usr/lib/teddyos")
+    from logutil import get_logger
+    log = get_logger("update")
+except Exception:  # noqa: BLE001
+    import logging
+    log = logging.getLogger("teddyos.update")
+
+MANIFEST_URL = os.environ.get(
+    "TEDDYOS_UPDATE_MANIFEST", "https://teddysearch.com/tsearch/os/manifest.json")
+# Every write goes through ROOT. It is "/" on a real machine; the point of it
+# being a variable is that the install path can be exercised against a throwaway
+# directory. An updater whose apply path has never been run is not an updater,
+# and running it for the first time on somebody's computer is not a test.
+ROOT = Path(os.environ.get("TEDDYOS_UPDATE_ROOT", "/"))
+STATE = Path(os.environ.get("TEDDYOS_UPDATE_STATE", str(ROOT / "etc/teddyos-software")))
+ROLLBACK = ROOT / "var/lib/teddyos/rollback"
+TIMEOUT = 30
+
+# Only these trees may be written. A payload is a tar from the network, and
+# tarfile will happily unpack ../../etc/shadow if the archive says so; checking
+# the prefix of every member before extraction is what makes that impossible.
+ALLOWED = ("usr/bin/", "usr/lib/teddyos/", "usr/share/gnome-shell/extensions/",
+           "usr/share/icons/hicolor/", "etc/dconf/db/local.d/",
+           "etc/chromium/policies/managed/", "etc/calamares/branding/teddyos/")
+
+
+def installed() -> dict:
+    """What this machine is running. Absent on an image built before updates."""
+    out = {}
+    try:
+        for line in STATE.read_text().splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                out[k.strip()] = v.strip()
+    except OSError:
+        pass
+    return out
+
+
+def fetch(url: str) -> bytes:
+    req = urllib.request.Request(url, headers={"User-Agent": "teddyOS-update/1"})
+    with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        return resp.read()
+
+
+def remote() -> tuple[dict | None, str | None]:
+    try:
+        return json.loads(fetch(MANIFEST_URL)), None
+    except (urllib.error.URLError, OSError, ValueError) as exc:
+        text = str(exc).lower()
+        if "name resolution" in text or "temporary failure" in text:
+            return None, "This computer isn't online, so updates couldn't be checked."
+        return None, "Couldn't reach the update server. Nothing was changed."
+
+
+def available(local: dict, mani: dict) -> bool:
+    """Is the published software different from what is installed?
+
+    Compared by COMMIT, not by version number. Two builds of 0.13.0 are
+    routinely different software — that is most of what a day's work produces —
+    and a version-only check would call them identical and never update.
+    """
+    have, want = local.get("commit"), mani.get("software_commit")
+    return bool(want) and have != want
+
+
+def cmd_check(args) -> int:
+    local = installed()
+    mani, err = remote()
+    if err:
+        print(err, file=sys.stderr)
+        return 2
+    if not mani.get("software_sha256"):
+        print("The update server is not publishing software updates yet.")
+        return 0
+    if not available(local, mani):
+        print(f"teddyOS is up to date ({local.get('commit', 'unknown')}).")
+        return 0
+    print(f"An update is available: {local.get('commit','unknown')} -> {mani['software_commit']}")
+    if args.notify:
+        notify_available(mani)
+    return 1
+
+
+def cmd_auto(args) -> int:
+    """Daily path: install only when the person opted in at setup.
+
+    Exit codes match other subcommands where useful; 0 means “nothing to do
+    or successfully applied / correctly refused without consent.”
+    """
+    if not auto_update_allowed() and not getattr(args, "force_consent", False):
+        log.info("software.auto_update off — not checking or installing")
+        print("Automatic updates are off. Nothing was checked or changed.")
+        return 0
+
+    local = installed()
+    mani, err = remote()
+    if err:
+        log.warning("auto check failed: %s", err)
+        print(err, file=sys.stderr)
+        return 2
+    if not mani.get("software_sha256"):
+        print("The update server is not publishing software updates yet.")
+        return 0
+    if not available(local, mani) and not args.force:
+        print(f"teddyOS is up to date ({local.get('commit', 'unknown')}).")
+        return 0
+
+    # Reuse apply with the same argv shape.
+    class _A:
+        force = bool(args.force)
+
+    code = cmd_apply(_A())
+    if code == 0:
+        stamp = mani.get("software_commit", "new version")
+        notify(
+            "teddyOS was updated",
+            f"Installed {stamp}. Log out and back in if the desktop looks the same.",
+            icon="software-update-available",
+        )
+    elif code not in (0,):
+        notify(
+            "teddyOS update didn’t finish",
+            "Nothing unsafe was left half-installed. Try Software Update later.",
+            icon="dialog-warning",
+        )
+    return code
+
+
+def notify(title: str, body: str, *, icon: str = "software-update-available") -> None:
+    # A notification, not a dialog. Someone mid-sentence should not have their
+    # window stolen by a machine with news that can wait.
+    # When run as root (system timer), fan out to each logged-in session bus.
+    try:
+        subprocess.run(
+            ["notify-send", f"--app-name=teddyOS", f"--icon={icon}", title, body],
+            check=False, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        pass
+    runtime = Path("/run/user")
+    if not runtime.is_dir():
+        return
+    for entry in runtime.iterdir():
+        if not entry.name.isdigit():
+            continue
+        bus = entry / "bus"
+        if not bus.exists():
+            continue
+        uid = int(entry.name)
+        try:
+            import pwd
+            user = pwd.getpwuid(uid).pw_name
+        except (KeyError, ImportError, OSError):
+            continue
+        env = os.environ.copy()
+        env["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path={bus}"
+        env["DISPLAY"] = env.get("DISPLAY") or ":0"
+        try:
+            subprocess.run(
+                ["sudo", "-u", user, "env",
+                 f"DBUS_SESSION_BUS_ADDRESS=unix:path={bus}",
+                 "DISPLAY=:0",
+                 "notify-send", f"--app-name=teddyOS", f"--icon={icon}",
+                 title, body],
+                check=False, timeout=10, env=env,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (OSError, subprocess.SubprocessError):
+            continue
+
+
+def notify_available(mani: dict) -> None:
+    notify(
+        "teddyOS update available",
+        "A newer version of teddyOS is ready to install.",
+    )
+
+
+def auto_update_allowed() -> bool:
+    """True only when setup granted software.auto_update (default off)."""
+    try:
+        import caps  # type: ignore
+        if hasattr(caps, "auto_update_allowed"):
+            return bool(caps.auto_update_allowed())
+        return bool(caps.load().get("software.auto_update"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def safe_members(tar: tarfile.TarFile):
+    """Yield only regular files landing inside the allowed trees."""
+    for m in tar.getmembers():
+        name = m.name.lstrip("./")
+        if name == "PAYLOAD":
+            continue
+        if not m.isfile():
+            continue                      # no symlinks, no devices, no dirs
+        if ".." in Path(name).parts or name.startswith("/"):
+            continue                      # path traversal
+        if Path(name).name.startswith("._"):
+            continue                      # macOS AppleDouble companion, not content
+        if not name.startswith(ALLOWED):
+            print(f"  refusing {name} — outside the paths an update may write",
+                  file=sys.stderr)
+            continue
+        yield m, name
+
+
+def cmd_apply(args) -> int:
+    if os.geteuid() != 0 and ROOT == Path("/"):
+        print("Installing an update needs administrator access.", file=sys.stderr)
+        return 3
+
+    local = installed()
+    mani, err = remote()
+    if err:
+        print(err, file=sys.stderr)
+        return 2
+    if not available(local, mani) and not args.force:
+        print(f"teddyOS is already up to date ({local.get('commit','unknown')}).")
+        return 0
+
+    url = mani.get("software_url")
+    want_sum = mani.get("software_sha256")
+    if not url or not want_sum:
+        print("The update server is not publishing software updates yet.", file=sys.stderr)
+        return 2
+
+    print(f"Downloading the update ({mani.get('software_commit','?')})...")
+    try:
+        blob = fetch(url)
+    except (urllib.error.URLError, OSError) as exc:
+        print(f"The download didn't finish. Nothing was changed. ({exc})", file=sys.stderr)
+        return 2
+
+    got = hashlib.sha256(blob).hexdigest()
+    if got != want_sum:
+        # Deleted, not quarantined. Bytes that fail their checksum have no
+        # good use, and keeping them invites someone installing them by hand.
+        print("The update did not match its checksum and was discarded. "
+              "Nothing was changed.", file=sys.stderr)
+        return 4
+
+    stamp = mani.get("software_commit", "unknown")
+    back = ROLLBACK / stamp
+    back.mkdir(parents=True, exist_ok=True)
+
+    written = 0
+    with tempfile.TemporaryDirectory() as tmp:
+        blob_path = Path(tmp) / "payload.tar.gz"
+        blob_path.write_bytes(blob)
+        with tarfile.open(blob_path, "r:gz") as tar:
+            for member, name in safe_members(tar):
+                dest = ROOT / name
+                if dest.exists():
+                    keep = back / name
+                    keep.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(dest, keep)
+                src = tar.extractfile(member)
+                if src is None:
+                    continue
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                # Write beside, then rename. A file half-written is a program
+                # that will not start, and the one being replaced here might be
+                # the search everything else hangs off.
+                tmp_dest = dest.with_suffix(dest.suffix + ".teddyos-new")
+                tmp_dest.write_bytes(src.read())
+                os.chmod(tmp_dest, member.mode & 0o755)
+                os.replace(tmp_dest, dest)
+                written += 1
+
+    STATE.write_text(
+        f"version={mani.get('version','?')}\ncommit={stamp}\n"
+        f"applied={mani.get('built','?')}\n")
+
+    # dconf defaults are compiled, not read from the file we just wrote.
+    #
+    # try/except, because check=False does not cover a missing binary: on a
+    # system without dconf this raised FileNotFoundError after every file had
+    # already been written, so a completely successful update reported failure
+    # and printed no summary.
+    try:
+        subprocess.run(["dconf", "update"], check=False, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    print(f"Updated to {stamp}. {written} files installed; "
+          f"the previous versions are in {back}.")
+    print("Log out and back in for the desktop changes to take effect.")
+    return 0
+
+
+def cmd_rollback(args) -> int:
+    if os.geteuid() != 0 and ROOT == Path("/"):
+        print("Rolling back needs administrator access.", file=sys.stderr)
+        return 3
+    stamps = sorted(ROLLBACK.glob("*"), key=lambda p: p.stat().st_mtime, reverse=True)
+    if not stamps:
+        print("There is nothing to roll back to.", file=sys.stderr)
+        return 2
+    src = stamps[0]
+    n = 0
+    for f in src.rglob("*"):
+        if f.is_file():
+            dest = ROOT / f.relative_to(src)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(f, dest)
+            n += 1
+    # Same guard as apply: a missing dconf must not turn a completed rollback
+    # into a traceback. Fixing it in one place and not the other is how the
+    # rarely-run path stays broken.
+    try:
+        subprocess.run(["dconf", "update"], check=False, timeout=30)
+    except (OSError, subprocess.SubprocessError):
+        pass
+    print(f"Restored {n} files from {src.name}.")
+    return 0
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd")
+
+    c = sub.add_parser("check", help="report whether an update exists")
+    c.add_argument("--notify", action="store_true", help="also post a desktop notification")
+    c.set_defaults(fn=cmd_check)
+
+    a = sub.add_parser("apply", help="download, verify and install")
+    a.add_argument("--force", action="store_true", help="reinstall even if current")
+    a.set_defaults(fn=cmd_apply)
+
+    auto = sub.add_parser(
+        "auto",
+        help="install if setup granted “Keep teddyOS up to date” (for the daily timer)",
+    )
+    auto.add_argument("--force", action="store_true", help="reinstall even if current")
+    auto.add_argument(
+        "--force-consent",
+        action="store_true",
+        help=argparse.SUPPRESS,  # operator/test escape hatch — not in --help
+    )
+    auto.set_defaults(fn=cmd_auto)
+
+    r = sub.add_parser("rollback", help="restore the files the last update replaced")
+    r.set_defaults(fn=cmd_rollback)
+
+    args = ap.parse_args()
+    if not getattr(args, "fn", None):
+        ap.print_help()
+        return 2
+    log.info("cmd=%s", args.cmd)
+    return args.fn(args)
+
+
+if __name__ == "__main__":
+    sys.exit(main())

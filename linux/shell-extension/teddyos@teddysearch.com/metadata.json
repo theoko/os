@@ -1,0 +1,7 @@
+{
+  "uuid": "teddyos@teddysearch.com",
+  "name": "teddyOS shell",
+  "description": "Removes quick-settings toggles that teddyOS does not ship a reason for.",
+  "shell-version": ["47", "48", "49"],
+  "settings-schema": ""
+}

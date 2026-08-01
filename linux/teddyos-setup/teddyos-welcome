@@ -1,0 +1,364 @@
+#!/usr/bin/env python3
+"""A short tour for someone who just sat down at teddyOS.
+
+After setup, the wallpaper and dock appear with no explanation. Technical
+people treat that as “ready.” Everyone else thinks “now what?” This window is
+the answer: a few calm screens, one idea each, no jargon, no terminal, no
+homework.
+
+It is not a manual. Every important step either does something (opens Search)
+or points at something already on screen (the bottom bar). Documentation is
+where you send people when you have run out of product — we have not.
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, "/usr/lib/teddyos")
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "teddyos-search"))
+
+import gi  # noqa: E402
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gio, GLib, Gtk  # noqa: E402
+
+import caps  # noqa: E402
+
+APP_ID = "com.teddyos.Welcome"
+SEEN = Path(
+    __import__("os").environ.get("XDG_CONFIG_HOME", Path.home() / ".config")
+) / "teddyos" / "welcome-seen"
+
+
+def launch(argv: list[str]) -> None:
+    try:
+        Gio.Subprocess.new(argv, Gio.SubprocessFlags.NONE)
+    except GLib.Error:
+        pass
+
+
+# One idea per page. Keep every sentence something a non-technical person
+# would say out loud. No “helper”, “CLI”, “capability”, “OAuth”.
+TOUR: list[dict] = [
+    {
+        "icon": "teddyos-search",
+        "fallback": "system-search-symbolic",
+        "title": "Welcome to teddyOS",
+        "body": (
+            "You don’t need to know how any of this works.\n\n"
+            "This short tour shows the few things that matter. "
+            "You can skip it any time."
+        ),
+        "primary": "Show me around",
+        "secondary": "Skip for now",
+    },
+    {
+        "icon": "view-grid-symbolic",
+        "fallback": "view-grid-symbolic",
+        "title": "The bar at the bottom",
+        "body": (
+            "Those icons stay on the screen.\n\n"
+            "Tap one to open it. Tap it again to come back. "
+            "You don’t need keyboard shortcuts."
+        ),
+        "primary": "Next",
+        "secondary": "Back",
+    },
+    {
+        "icon": "teddyos-search",
+        "fallback": "system-search-symbolic",
+        "title": "Start with Search",
+        "body": (
+            "The magnifying glass is the main way to do things.\n\n"
+            "Click it, then type what you want — a project name, "
+            "a question, or “work on …” and something you care about."
+        ),
+        "primary": "Next",
+        "secondary": "Back",
+        "hint": "Tip: you can also open Search from this tour at the end.",
+    },
+    {
+        "icon": "teddyos-search",
+        "fallback": "system-search-symbolic",
+        "title": "Working on a project",
+        "body": (
+            "Type “work on” and the name of a project or folder.\n\n"
+            "If you need to sign in (for example to Claude or GitHub), "
+            "teddyOS walks you through it — one short step at a time. "
+            "You only do that once."
+        ),
+        "primary": "Next",
+        "secondary": "Back",
+    },
+    {
+        "icon": "teddyos-web",
+        "fallback": "web-browser-symbolic",
+        "title": "Web and messages",
+        "body": (
+            "Web opens the internet — same idea as Chrome or Safari.\n\n"
+            "WhatsApp is for messages. Files shows the folders on this computer.\n\n"
+            "Want AI to help you reply? In Search type "
+            "“reply to my WhatsApp messages” or “reply to my LinkedIn messages” — "
+            "AI drafts; you always send."
+        ),
+        "primary": "Next",
+        "secondary": "Back",
+    },
+    {
+        "icon": "preferences-system-symbolic",
+        "fallback": "preferences-system-symbolic",
+        "title": "You’re in control",
+        "body": (
+            "teddyOS only uses what you allow — your files, the network, and so on.\n\n"
+            "You can change that any time from Get Started, or by searching "
+            "for settings. Nothing here is permanent or hidden."
+        ),
+        "primary": "Next",
+        "secondary": "Back",
+    },
+    {
+        "icon": "emblem-ok-symbolic",
+        "fallback": "emblem-ok-symbolic",
+        "title": "You’re ready",
+        "body": (
+            "That’s everything you need to know.\n\n"
+            "Open Search and try “work on” with a project name — "
+            "or just ask a question in plain words."
+        ),
+        "primary": "Open Search",
+        "secondary": "Close tour",
+        "finish": True,
+    },
+]
+
+
+class TourWindow(Adw.ApplicationWindow):
+    def __init__(self, app: Adw.Application):
+        super().__init__(application=app, title="Welcome to teddyOS")
+        self.set_default_size(560, 520)
+        self.set_resizable(False)
+        self._step = 0
+
+        css = Gtk.CssProvider()
+        css.load_from_data(b"""
+            .teddyos-tour-title { font-size: 26px; font-weight: 700; }
+            .teddyos-tour-body { font-size: 15px; line-height: 1.45; }
+            .teddyos-tour-dots { letter-spacing: 4px; }
+            window { background: #fbfbfa; }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+        )
+
+        self._icon = Gtk.Image()
+        self._icon.set_pixel_size(80)
+        self._icon.set_halign(Gtk.Align.CENTER)
+        self._icon.set_margin_top(8)
+
+        self._title = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
+        self._title.add_css_class("teddyos-tour-title")
+        self._title.set_margin_top(16)
+        self._title.set_margin_start(8)
+        self._title.set_margin_end(8)
+
+        self._body = Gtk.Label(
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+            max_width_chars=42,
+        )
+        self._body.add_css_class("teddyos-tour-body")
+        self._body.add_css_class("dim-label")
+        self._body.set_margin_top(12)
+        self._body.set_margin_start(12)
+        self._body.set_margin_end(12)
+
+        self._hint = Gtk.Label(
+            wrap=True,
+            justify=Gtk.Justification.CENTER,
+            max_width_chars=42,
+        )
+        self._hint.add_css_class("caption")
+        self._hint.add_css_class("dim-label")
+        self._hint.set_margin_top(10)
+        self._hint.set_visible(False)
+
+        self._dots = Gtk.Label(halign=Gtk.Align.CENTER)
+        self._dots.add_css_class("teddyos-tour-dots")
+        self._dots.add_css_class("dim-label")
+        self._dots.set_margin_top(20)
+
+        self._primary = Gtk.Button(halign=Gtk.Align.CENTER)
+        self._primary.add_css_class("suggested-action")
+        self._primary.add_css_class("pill")
+        self._primary.set_size_request(220, -1)
+        self._primary.connect("clicked", self._on_primary)
+
+        self._secondary = Gtk.Button(halign=Gtk.Align.CENTER)
+        self._secondary.add_css_class("flat")
+        self._secondary.connect("clicked", self._on_secondary)
+
+        buttons = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=8,
+            halign=Gtk.Align.CENTER,
+        )
+        buttons.set_margin_top(22)
+        buttons.append(self._primary)
+        buttons.append(self._secondary)
+
+        col = Gtk.Box(
+            orientation=Gtk.Orientation.VERTICAL,
+            spacing=0,
+            valign=Gtk.Align.CENTER,
+            halign=Gtk.Align.CENTER,
+        )
+        col.set_margin_top(28)
+        col.set_margin_bottom(28)
+        col.set_margin_start(36)
+        col.set_margin_end(36)
+        col.append(self._icon)
+        col.append(self._title)
+        col.append(self._body)
+        col.append(self._hint)
+        col.append(self._dots)
+        col.append(buttons)
+
+        clamp = Adw.Clamp(maximum_size=480, child=col)
+
+        toolbar = Adw.ToolbarView()
+        header = Adw.HeaderBar(show_title=False)
+        # Quiet escape hatch — never trap someone in a tour.
+        skip = Gtk.Button(label="Skip")
+        skip.add_css_class("flat")
+        skip.connect("clicked", lambda *_: self._finish(open_search=False))
+        header.pack_end(skip)
+        toolbar.add_top_bar(header)
+        toolbar.set_content(clamp)
+        self.set_content(toolbar)
+
+        esc = Gtk.EventControllerKey()
+        esc.connect("key-pressed", self._on_key)
+        self.add_controller(esc)
+
+        self._show_step(0)
+        self._mark_seen()
+
+    def _on_key(self, _c, keyval, _code, _state) -> bool:
+        from gi.repository import Gdk
+        if keyval == Gdk.KEY_Escape:
+            self._finish(open_search=False)
+            return True
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter, Gdk.KEY_Right):
+            self._on_primary()
+            return True
+        if keyval == Gdk.KEY_Left and self._step > 0:
+            self._show_step(self._step - 1)
+            return True
+        return False
+
+    def _show_step(self, index: int) -> None:
+        index = max(0, min(index, len(TOUR) - 1))
+        self._step = index
+        page = TOUR[index]
+
+        # Icon: custom tile when we have one, else symbolic.
+        name = page["icon"]
+        theme = Gtk.IconTheme.get_for_display(self.get_display())
+        if theme and theme.has_icon(name):
+            self._icon.set_from_icon_name(name)
+        else:
+            path = Path("/usr/share/icons/hicolor/scalable/apps") / f"{name}.svg"
+            if path.is_file():
+                try:
+                    self._icon.set_from_file(str(path))
+                except GLib.Error:
+                    self._icon.set_from_icon_name(page.get("fallback", "dialog-information-symbolic"))
+            else:
+                self._icon.set_from_icon_name(page.get("fallback", "dialog-information-symbolic"))
+
+        self._title.set_text(page["title"])
+        self._body.set_text(page["body"])
+        hint = page.get("hint") or ""
+        self._hint.set_visible(bool(hint))
+        if hint:
+            self._hint.set_text(hint)
+
+        # Progress dots: ● ○ ○
+        dots = []
+        for i in range(len(TOUR)):
+            dots.append("●" if i == index else "○")
+        self._dots.set_text(" ".join(dots))
+
+        self._primary.set_label(page["primary"])
+        self._secondary.set_label(page["secondary"])
+        # First page secondary = skip; later = back; last = close without search.
+        self._secondary.set_visible(True)
+
+    def _on_primary(self, *_a) -> None:
+        page = TOUR[self._step]
+        if page.get("finish"):
+            self._finish(open_search=True)
+            return
+        self._show_step(self._step + 1)
+
+    def _on_secondary(self, *_a) -> None:
+        page = TOUR[self._step]
+        if self._step == 0 or page.get("finish"):
+            self._finish(open_search=False)
+            return
+        self._show_step(self._step - 1)
+
+    def _finish(self, *, open_search: bool) -> None:
+        try:
+            sys.path.insert(0, "/usr/lib/teddyos")
+            import progress as prog  # type: ignore
+            prog.award_tour()
+        except Exception:  # noqa: BLE001
+            pass
+        if open_search:
+            launch(["teddyos-search-app"])
+        self.close()
+
+    def _mark_seen(self) -> None:
+        # Mark on open so a crash or force-quit does not trap them in the tour
+        # every login. They can still open “Get Started” from the app menu.
+        try:
+            SEEN.parent.mkdir(parents=True, exist_ok=True)
+            SEEN.touch()
+        except OSError:
+            pass
+
+
+class WelcomeApp(Adw.Application):
+    def __init__(self):
+        super().__init__(
+            application_id=APP_ID,
+            flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE,
+        )
+
+    def do_command_line(self, command_line):
+        args = command_line.get_arguments()
+        # --if-needed: once, after setup is done.
+        # --force / --tour: always show (for testing or “show tour again”).
+        force = "--force" in args or "--tour" in args
+        if "--if-needed" in args and not force:
+            if SEEN.exists() or not caps.is_configured():
+                return 0
+        self.activate()
+        return 0
+
+    def do_activate(self):
+        (self.props.active_window or TourWindow(self)).present()
+
+
+if __name__ == "__main__":
+    # X11 needs prgname = application id so the dock matches StartupWMClass.
+    GLib.set_prgname(APP_ID)
+    try:
+        GLib.set_application_name("Get Started")
+    except Exception:  # noqa: BLE001
+        pass
+    sys.exit(WelcomeApp().run(sys.argv))

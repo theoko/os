@@ -1,0 +1,211 @@
+#!/usr/bin/env python3
+"""Claude — an app you click, not a command you remember.
+
+teddyOS installs Claude Code and symlinks it to /usr/local/bin/claude, and that
+was the whole of it: no icon, no window, no entry in the app grid. The only way
+in was to open a terminal and type a name you had to already know.
+
+That is the largest gap in this image between what it ships and how anyone
+actually uses it. On the machine this was built on, Claude is the most-used
+application of the day — ahead of every browser and every editor — and here it
+was the one thing with no way to launch it. "People won't know what a terminal
+is" was said out loud about this desktop; this is the app that most needed
+hearing it.
+
+So: a window. It is a terminal underneath, because Claude Code is a terminal
+program and pretending otherwise would mean reimplementing it. But it is a
+terminal with one job, no shell prompt, no tabs and no profile menus — the
+distinction that matters is that nobody has to know what a terminal is to use
+it. Close the window and it is gone; there is no shell left behind to confuse
+anyone.
+
+Usage:
+  teddyos-claude                  # starts in the home folder
+  teddyos-claude /path/to/project # starts Claude in that project
+"""
+
+from __future__ import annotations
+
+import os
+import shutil
+import sys
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+gi.require_version("Vte", "3.91")
+from gi.repository import Adw, Gdk, GLib, Gtk, Pango, Vte  # noqa: E402
+
+try:
+    sys.path.insert(0, "/usr/lib/teddyos")
+    from logutil import get_logger
+    log = get_logger("claude")
+except Exception:  # noqa: BLE001
+    import logging
+    log = logging.getLogger("teddyos.claude")
+
+APP_ID = "com.teddyos.Claude"
+CLAUDE = "claude"
+
+
+def _cwd_from_argv(argv: list[str]) -> str:
+    """Optional project directory from the command line.
+
+    Search hands us a folder when someone says "work on …". Without this,
+    Claude always started in ~ and the person had to cd by hand — the whole
+    point of picking the project in Search was lost.
+    """
+    home = os.path.expanduser("~")
+    for arg in argv[1:]:
+        if arg.startswith("-"):
+            continue
+        path = os.path.expanduser(arg)
+        if os.path.isdir(path):
+            return os.path.abspath(path)
+    return home
+
+
+class ClaudeWindow(Adw.ApplicationWindow):
+    def __init__(self, app: Adw.Application, cwd: str | None = None):
+        self._cwd = cwd or os.path.expanduser("~")
+        title = "Claude"
+        base = os.path.basename(self._cwd.rstrip("/")) or "Claude"
+        if self._cwd != os.path.expanduser("~"):
+            title = f"Claude — {base}"
+        super().__init__(application=app, title=title)
+        self.set_default_size(900, 620)
+
+        project = os.path.basename(self._cwd.rstrip("/")) if (
+            self._cwd != os.path.expanduser("~")
+        ) else ""
+        header = Adw.HeaderBar()
+        header.set_title_widget(Adw.WindowTitle(
+            title="Claude",
+            subtitle=(
+                f"Working on {project}" if project else "Ready when you are"
+            ),
+        ))
+
+        exe = shutil.which(CLAUDE)
+        if exe:
+            body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            hint = Gtk.Label(
+                label=(
+                    "Type what you want help with. If Claude asks you to sign "
+                    "in, a browser will open — finish there, then come back here."
+                ),
+                wrap=True,
+                xalign=0.0,
+            )
+            hint.add_css_class("dim-label")
+            hint.set_margin_top(10)
+            hint.set_margin_bottom(6)
+            hint.set_margin_start(16)
+            hint.set_margin_end(16)
+            body.append(hint)
+            if project:
+                where = Gtk.Label(
+                    label=f"You’re in the “{project}” folder.",
+                    wrap=True,
+                    xalign=0.0,
+                )
+                where.add_css_class("caption")
+                where.add_css_class("dim-label")
+                where.set_margin_bottom(8)
+                where.set_margin_start(16)
+                where.set_margin_end(16)
+                body.append(where)
+            term = self._terminal(exe)
+            term.set_vexpand(True)
+            body.append(term)
+            content = body
+        else:
+            content = self._missing()
+
+        toolbar = Adw.ToolbarView()
+        toolbar.add_top_bar(header)
+        toolbar.set_content(content)
+        self.set_content(toolbar)
+
+    def _missing(self) -> Gtk.Widget:
+        # Says what is wrong without naming a command to run, because someone
+        # who cannot find Claude cannot fix it by being told to type `claude`.
+        return Adw.StatusPage(
+            icon_name="dialog-information-symbolic",
+            title="Claude isn't installed",
+            description="This copy of teddyOS did not come with Claude. "
+                        "Reinstalling teddyOS will bring it back.")
+
+    def _terminal(self, exe: str) -> Gtk.Widget:
+        term = Vte.Terminal()
+        # Generous scrollback: Claude Code prints long plans and diffs, and a
+        # window that silently forgets the top of an answer is worse than one
+        # that scrolls.
+        term.set_scrollback_lines(10000)
+        term.set_font(Pango.FontDescription("monospace 11"))
+        term.set_cursor_blink_mode(Vte.CursorBlinkMode.OFF)
+        # Padding, so text does not start hard against the window edge the way
+        # a terminal emulator does. Small thing; most of why this reads as an
+        # app rather than a console.
+        term.set_margin_top(10)
+        term.set_margin_bottom(10)
+        term.set_margin_start(12)
+        term.set_margin_end(12)
+
+        fg, bg = Gdk.RGBA(), Gdk.RGBA()
+        fg.parse("#2c2c2a")
+        bg.parse("#fbfbfa")
+        term.set_colors(fg, bg, None)
+
+        # Keep the window open if Claude exits on "please sign in" so the
+        # person can still read the message (and the header hint).
+        term.connect("child-exited", lambda *_: None)
+
+        term.spawn_async(
+            Vte.PtyFlags.DEFAULT,
+            self._cwd,
+            [exe],
+            # TERM matters: Claude Code draws boxes and colour, and inherits
+            # whatever the desktop session had — which is often nothing at all
+            # when launched from an icon rather than a shell.
+            [f"TERM=xterm-256color", f"HOME={os.path.expanduser('~')}",
+             f"PATH={os.environ.get('PATH', '/usr/local/bin:/usr/bin:/bin')}",
+             f"PWD={self._cwd}"],
+            GLib.SpawnFlags.DEFAULT,
+            None, None,
+            -1, None, None, None)
+
+        scroller = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
+        scroller.set_child(term)
+        return scroller
+
+
+class ClaudeApp(Adw.Application):
+    def __init__(self, cwd: str):
+        super().__init__(application_id=APP_ID)
+        self._cwd = cwd
+
+    def do_activate(self):
+        win = self.props.active_window
+        if win is None:
+            win = ClaudeWindow(self, cwd=self._cwd)
+        win.present()
+
+
+if __name__ == "__main__":
+    # X11 needs this, and X11 is exactly where this image ends up.
+    #
+    # GNOME binds a window to its launcher by WM_CLASS. Under Wayland that is the
+    # GApplication id, which is what StartupWMClass in the .desktop already says.
+    # Under X11 it comes from the program name instead — "teddyos-search-app" — so
+    # the match fails, the running window does not light up its pinned dock tile,
+    # and it appears a second time as a stray entry with a fallback icon.
+    #
+    # That was visible the moment the desktop came up on a machine with no GPU,
+    # because a machine with no GPU is one running the X11 session. Setting prgname
+    # to the application id makes both worlds agree.
+    GLib.set_prgname(APP_ID)
+    cwd = _cwd_from_argv(sys.argv)
+    log.info("start cwd=%s", cwd)
+    sys.exit(ClaudeApp(cwd).run([sys.argv[0]]))

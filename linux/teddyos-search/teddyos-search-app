@@ -1,0 +1,2488 @@
+#!/usr/bin/env python3
+"""Search — the window teddyOS was missing.
+
+The engine has been reachable only as `teddyos-search` on a command line. On a
+machine whose entire premise is "ask it things", that means the premise is
+invisible: someone finishes the setup journey, grants what they are willing to
+grant, lands on a desktop, and has no way to use the thing they just decided
+about. A terminal is not an answer for most people, and "the feature exists,
+you just have to type" is the same defect as a permission screen that is
+technically accurate and unreadable.
+
+Three things this does that the CLI cannot:
+
+  It runs the search off the main thread. The portal corpus is 67 MB; parsing
+  it blocks for seconds, and a frozen window reads as a crash.
+
+  It shows denials as an offer rather than an error. "Search the web is off"
+  with a button that opens the setup screen is useful; a silent absence of
+  results is not, and is indistinguishable from finding nothing.
+
+  It opens things. A result you cannot click is a lookup, not a search.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import shlex
+import shutil
+import subprocess
+import sys
+import threading
+from pathlib import Path
+
+sys.path.insert(0, "/usr/lib/teddyos")
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+import gi  # noqa: E402
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
+
+import caps  # noqa: E402
+import git_projects  # noqa: E402
+import intent as intent_mod  # noqa: E402
+import search as engine  # noqa: E402
+import work_tools  # noqa: E402
+from intent import Channel, Intent, IntentKind  # noqa: E402
+from work_tools import CreditStatus, WorkTool  # noqa: E402
+
+# Pending question after sign-in. Optional so a partial deploy cannot make the
+# dock Search tile a silent no-op (ModuleNotFoundError on launch).
+try:
+    import pending_ask  # noqa: E402
+except ImportError:  # pragma: no cover
+    class _PendingAskStub:  # noqa: D101
+        @staticmethod
+        def save(*_a, **_k) -> None:
+            return None
+
+        @staticmethod
+        def load() -> None:
+            return None
+
+        @staticmethod
+        def clear() -> None:
+            return None
+
+    pending_ask = _PendingAskStub()  # type: ignore[assignment]
+
+try:
+    from logutil import get_logger
+    log = get_logger("search-app")
+except Exception:  # noqa: BLE001
+    import logging
+    log = logging.getLogger("teddyos.search-app")
+
+APP_ID = "com.teddyos.Search"
+
+# Queries run in `teddyos-search`, not in this process.
+#
+# This window is the only search anyone actually uses — it is the first icon in
+# the dock — and the setup screen tells the user, in as many words, that a
+# capability left off means "the computer stopping it, not teddyOS promising to
+# behave". That sentence was false here. The CLI calls sandbox.reexec() before
+# it touches a single source, so denied capabilities are absent from the
+# process; this window called search.search() in-process, where a grant is only
+# an `if` statement. One missed branch and a capability the user switched off is
+# quietly on, which is precisely the failure the copy promises cannot happen.
+#
+# The window cannot simply sandbox itself: the namespace masks /home and cuts
+# the network, and a GTK application that loses its home directory mid-flight
+# loses its settings, its theme and its dconf. So the split is by job — the UI
+# stays out here where it can draw, and everything that reads a file or opens a
+# socket happens over there, inside the namespace.
+SEARCH_CLI = "teddyos-search"
+
+# Where a query goes when this machine cannot answer it.
+#
+# The corpus is a general crawl, so anything institution-specific — a college's
+# Canvas, a company intranet, a bank — is not in it and never will be. A
+# student typing "canvas" gets needlepoint, and that is not a ranking bug to
+# fix; it is the corpus not containing their school. Better ranking would only
+# return better needlepoint.
+#
+# So every search ends with a way out. It is always present, never a fallback
+# that appears only on failure: "no results" is not the only case where what
+# you wanted was on the open web, and a row that appears sometimes is a row
+# nobody learns to look for.
+WEB_SEARCH = "https://teddysearch.com/tsearch/?q="
+
+SOURCE_LABEL = {
+    "teddysearch": "Web",
+    "portal": "Guide",
+    "your files": "Your files",
+    "built-in": "Help",
+}
+
+
+_worker: subprocess.Popen | None = None
+_worker_lock = threading.Lock()
+
+
+def _start_worker() -> subprocess.Popen | None:
+    """Spawn the sandboxed worker and wait for it to say it is ready."""
+    exe = shutil.which(SEARCH_CLI)
+    if not exe:
+        return None
+    proc = subprocess.Popen(
+        [exe, "--serve"],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+        text=True, bufsize=1)
+    # It prints {"ready":true} after entering the sandbox and warming the
+    # corpus. Waiting for that here means the readiness cost is paid once, at
+    # startup, instead of landing on whoever types first.
+    line = proc.stdout.readline()
+    if not line:
+        proc.kill()
+        return None
+    return proc
+
+
+def _decode(data: dict) -> engine.Outcome:
+    # Tolerate a payload from a newer or older teddyos-search than this window:
+    # take the fields Result declares and ignore the rest, rather than throwing
+    # a TypeError into the worker thread and showing the user a traceback.
+    fields = set(engine.Result.__dataclass_fields__)
+    results = [
+        engine.Result(**{k: v for k, v in row.items() if k in fields})
+        for row in data.get("results", []) if isinstance(row, dict)
+    ]
+    return engine.Outcome(
+        results=results,
+        denied=data.get("denied", []),
+        errors=data.get("errors", []),
+        notes=data.get("notes", []),
+        portal_age=data.get("portal_age_seconds"),
+    )
+
+
+def _confined_search(query: str) -> engine.Outcome:
+    """Ask the sandboxed worker, starting or restarting it if needed.
+
+    Everything that could read a file or open a socket happens over there, so a
+    bug on this side cannot widen what the search was allowed to reach.
+
+    One worker, not one per query. Spawning a process per keystroke meant the
+    67 MB portal corpus was parsed and tokenised every single time — its cache
+    is a module global and cannot outlive the process — which is what began
+    OOM-killing the desktop on a live system.
+    """
+    global _worker
+    with _worker_lock:
+        for attempt in (1, 2):
+            if _worker is None or _worker.poll() is not None:
+                _worker = _start_worker()
+            if _worker is None:
+                # Refuse rather than degrade. Falling back to an in-process
+                # search would work, look identical, and silently drop the
+                # enforcement the setup screen promised — the one failure mode
+                # worth being loud about.
+                return engine.Outcome(errors=[
+                    "Search could not be confined to what you allowed, so "
+                    "nothing was searched."])
+            try:
+                _worker.stdin.write(query + "\n")
+                _worker.stdin.flush()
+                line = _worker.stdout.readline()
+            except (BrokenPipeError, OSError):
+                line = ""
+            if line:
+                try:
+                    return _decode(json.loads(line))
+                except json.JSONDecodeError:
+                    return engine.Outcome(
+                        errors=["The search returned nothing readable."])
+            # Worker died mid-query. Reap it and try once more; a crash on one
+            # query should not take search out for the rest of the session.
+            if _worker is not None:
+                _worker.kill()
+                _worker = None
+            if attempt == 2:
+                return engine.Outcome(errors=[
+                    "Search stopped unexpectedly and could not be restarted."])
+    return engine.Outcome(errors=["Search did not answer."])
+
+
+class SearchWindow(Adw.ApplicationWindow):
+    def __init__(self, app: Adw.Application):
+        super().__init__(application=app, title="Search")
+        self.set_default_size(720, 480)
+        # No title bar. There is exactly one control in this window and it is
+        # the search field; a chrome bar above it holding three buttons and a
+        # word is furniture around a thing that needs none. Escape closes,
+        # because an undecorated window with no way out is a trap.
+        self.set_decorated(False)
+        # Spotlight behaviour: click anywhere else (or switch apps) and Search
+        # goes away. Without this, an undecorated floating window sits forever
+        # over the desktop and a non-technical person has no idea how to dismiss
+        # it short of discovering Escape.
+        #
+        # Only after Search has been active at least once. Launch from the dock
+        # (or e2e over ssh) can present the window while is-active is still
+        # false — closing then made the Search tile look dead.
+        self._blur_close_armed = False
+        self._ever_active = False
+        self._blur_close_source = 0
+        self._hold_for_dialog = False
+        esc = Gtk.EventControllerKey()
+        esc.connect("key-pressed", self._on_key)
+        self.add_controller(esc)
+        self.connect("notify::is-active", self._on_is_active_changed)
+        # Arm after first present so the initial focus dance does not close us.
+        GLib.timeout_add(400, self._arm_blur_close)
+        # When returning from Getting you ready, re-check which AIs are ready.
+        self._reprobe_on_focus = False
+
+        # Bumped on every keystroke. A slow search that finishes after a newer
+        # one must not overwrite it — without this, typing "nolan" can end up
+        # showing results for "nol" because the bigger corpus answered later.
+        self._generation = 0
+        self._pending: str | None = None
+        self._busy_timer: int | None = None
+        # tool_id -> ActionRow, so a credit probe can update the subtitle after
+        # the list is already on screen without rebuilding the whole stack.
+        self._tool_rows: dict[str, Adw.ActionRow] = {}
+        self._credit_generation = 0
+        # tool_id -> base credit subtitle (without the "Recently used" tag), so
+        # a late credit probe does not wipe the recency badge.
+        self._credit_labels: dict[str, str] = {}
+        # Latest credit probe results — used by "Ask all ready AIs".
+        self._credit_statuses: dict[str, work_tools.CreditStatus] = {}
+        self._broadcast_tools: list[WorkTool] = []
+        self._broadcast_project: Path | None = None
+        self._broadcast_entry: Gtk.Entry | None = None
+        self._broadcast_btn: Gtk.Button | None = None
+        self._broadcast_hint: Gtk.Label | None = None
+
+        self.entry = Gtk.SearchEntry(
+            placeholder_text="What do you want to work on?",
+            hexpand=True,
+        )
+        self.entry.add_css_class("teddyos-ask")
+        self.entry.connect("search-changed", self._on_typed)
+        self.entry.connect("activate", lambda *_: self._run(self.entry.get_text()))
+
+        # The field IS the window's top edge. Not inside a header bar — that
+        # was a title widget in a bar whose only other job was drawing buttons
+        # we no longer have.
+        # A spinner beside the field, not replacing the results. Searching the
+        # 67 MB corpus takes a second or two, and with no feedback the window
+        # looks frozen — the same keystroke either did nothing or is still
+        # working, and you cannot tell which. Beside the field rather than in
+        # place of the list so that refining a query does not blank out the
+        # results you are reading.
+        self.spinner = Gtk.Spinner()
+        self.spinner.set_valign(Gtk.Align.CENTER)
+        self.spinner.set_margin_start(10)
+        self.spinner.set_visible(False)
+
+        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        top.append(self.entry)
+        top.append(self.spinner)
+        top.set_margin_top(14)
+        top.set_margin_bottom(8)
+        top.set_margin_start(16)
+        top.set_margin_end(16)
+
+        # Progress strip — fluency bar + daily mission (productivity loop).
+        self._progress_bar = Gtk.ProgressBar()
+        self._progress_bar.set_hexpand(True)
+        self._progress_bar.set_margin_start(16)
+        self._progress_bar.set_margin_end(16)
+        self._progress_label = Gtk.Label(xalign=0.0)
+        self._progress_label.add_css_class("caption")
+        self._progress_label.add_css_class("dim-label")
+        self._progress_label.set_margin_start(16)
+        self._progress_label.set_margin_end(16)
+        self._mission_label = Gtk.Label(xalign=0.0)
+        self._mission_label.add_css_class("caption")
+        self._mission_label.set_margin_start(16)
+        self._mission_label.set_margin_end(16)
+        self._mission_label.set_margin_bottom(8)
+        prog_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+        prog_box.append(self._progress_bar)
+        prog_box.append(self._progress_label)
+        prog_box.append(self._mission_label)
+        self._progress_box = prog_box
+        self._refresh_progress_ui()
+
+        self.banner = Adw.Banner(button_label="Change permissions")
+        self.banner.connect("button-clicked", self._open_setup)
+
+        self.results = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        self.results.add_css_class("boxed-list")
+        self.results.set_margin_top(12)
+        self.results.set_margin_bottom(24)
+        self.results.set_margin_start(18)
+        self.results.set_margin_end(18)
+
+        scroller = Gtk.ScrolledWindow(vexpand=True)
+        scroller.set_child(Adw.Clamp(maximum_size=760, child=self.results))
+
+        # Empty state: one quiet line, no illustration. A 180px magnifier above
+        # the words "Ask anything" next to a field that already says "Ask
+        # anything" is the same instruction three times, and it fills the window
+        # with something to look at instead of leaving it calm.
+        self.status = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
+        self.status.add_css_class("dim-label")
+        self.status.set_vexpand(True)
+        self.status.set_valign(Gtk.Align.CENTER)
+        self.status.set_text(self._idle_description())
+
+        self.stack = Gtk.Stack()
+        self.stack.add_named(self.status, "idle")
+        self.stack.add_named(scroller, "results")
+        self.stack.set_visible_child_name("idle")
+
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        body.append(self.banner)
+        body.append(self.stack)
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        outer.append(top)
+        outer.append(self._progress_box)
+        outer.append(body)
+        # Toast overlay so "Opening Gemini…" is visible when a click works —
+        # without it, a slow window or a Terminal that opens behind Search
+        # looks exactly like a dead button.
+        self._toasts = Adw.ToastOverlay()
+        self._toasts.set_child(outer)
+        self.set_content(self._toasts)
+
+        css = Gtk.CssProvider()
+        css.load_from_data(b"""
+            .teddyos-ask { font-size: 20px; padding: 10px 8px; }
+            window { border-radius: 14px; }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+        self._refresh_banner()
+        self.entry.grab_focus()
+        log.info("search-app ready (launch=app-window for AI tools)")
+        # After first-time sign-in, restore the project + question they typed.
+        GLib.timeout_add(400, self._restore_pending_ask)
+
+    def _on_key(self, _c, keyval, _code, _state) -> bool:
+        if keyval == Gdk.KEY_Escape:
+            self.close()
+            return True
+        return False
+
+    def _arm_blur_close(self) -> bool:
+        self._blur_close_armed = True
+        return GLib.SOURCE_REMOVE
+
+    def _on_is_active_changed(self, *_a) -> None:
+        """Close when the person clicks outside Search (focus leaves)."""
+        if self.is_active():
+            self._ever_active = True
+            # Cancel a pending close if focus came back (e.g. dock re-activate).
+            if self._blur_close_source:
+                GLib.source_remove(self._blur_close_source)
+                self._blur_close_source = 0
+            # Back from Getting you ready — refresh which AIs can answer.
+            if getattr(self, "_reprobe_on_focus", False):
+                self._reprobe_on_focus = False
+                self._hold_for_dialog = False
+                self._reprobe_credits_after_signin()
+            return
+        if not self._blur_close_armed or not self._ever_active or self._hold_for_dialog:
+            return
+        if self._has_transient_dialog():
+            return
+        # Short debounce: focus can flicker when a child dialog or launcher
+        # steals it for a few frames. If still inactive after that, go away.
+        if self._blur_close_source:
+            GLib.source_remove(self._blur_close_source)
+        self._blur_close_source = GLib.timeout_add(150, self._close_if_still_blurred)
+
+    def _reprobe_credits_after_signin(self) -> None:
+        """Seamless unlock of Get help / Draft my replies after Connect."""
+        tools = getattr(self, "_broadcast_tools", None) or []
+        if not tools:
+            tools = work_tools.available_work_tools()
+        if not tools:
+            return
+        log.info("re-probe credits after sign-in tools=%s", [t.id for t in tools if t.is_ai])
+        self._begin_credit_probes(list(tools))
+        # Nudge UI even if probes are slow — session-ready may already unlock.
+        self._refresh_broadcast_ui()
+
+    def _close_if_still_blurred(self) -> bool:
+        self._blur_close_source = 0
+        if self.is_active() or self._hold_for_dialog or not self._ever_active:
+            return GLib.SOURCE_REMOVE
+        if self._has_transient_dialog():
+            return GLib.SOURCE_REMOVE
+        log.info("search closed: click away / lost focus")
+        self.close()
+        return GLib.SOURCE_REMOVE
+
+    def _has_transient_dialog(self) -> bool:
+        """True while a modal/dialog we own is open (don’t close under it)."""
+        app = self.get_application()
+        if app is None:
+            return False
+        try:
+            for win in app.get_windows():
+                if win is self or not win.get_visible():
+                    continue
+                try:
+                    if win.get_transient_for() is self:
+                        return True
+                except Exception:  # noqa: BLE001
+                    continue
+        except Exception:  # noqa: BLE001
+            return False
+        return False
+
+    # --- what the machine is currently allowed to do ------------------------
+
+    def _idle_description(self) -> str:
+        grants = caps.load()
+        on = [caps.text(c, "label", True) for c in caps.CAPABILITIES
+              if grants.get(c["id"])]
+        if not on:
+            return (
+                "Try “work on my project name”, “reply to my LinkedIn messages”, "
+                "or open Settings to turn on what teddyOS may search."
+            )
+        return (
+            "Try “work on …” for a project, “reply to my WhatsApp messages”, "
+            "or type any question. "
+            f"Looking in: {', '.join(on).lower()}."
+        )
+
+    def _refresh_banner(self) -> None:
+        grants = caps.load()
+        off = [caps.text(c, "label", True) for c in caps.CAPABILITIES
+               if not grants.get(c["id"])]
+        if off:
+            # An offer, not a warning. These are choices the user made, and the
+            # only reason to mention them is that "no results" and "no results
+            # because I was not allowed to look" are indistinguishable.
+            self.banner.set_title(
+                f"Turned off: {', '.join(off).lower()} — open settings to change")
+            self.banner.set_revealed(True)
+        else:
+            self.banner.set_revealed(False)
+
+    def _open_setup(self, *_a) -> None:
+        try:
+            Gio.Subprocess.new(["teddyos-setup"], Gio.SubprocessFlags.NONE)
+        except GLib.Error:
+            pass
+
+    # --- searching ----------------------------------------------------------
+
+    def _on_typed(self, entry: Gtk.SearchEntry) -> None:
+        text = entry.get_text().strip()
+        if not text:
+            self._generation += 1          # cancel anything in flight
+            self._cancel_busy()
+            self.status.set_text(self._idle_description())
+            self.stack.set_visible_child_name("idle")
+            return
+        self._run(text)
+
+    def _run(self, query: str) -> None:
+        query = query.strip()
+        if not query:
+            return
+        self._generation += 1
+        generation = self._generation
+        self._begin_busy(generation)
+        log.info("query=%r", query)
+
+        def work() -> None:
+            try:
+                outcome = _confined_search(query)
+                log.info(
+                    "results=%d denied=%s errors=%d work_goal=%s",
+                    len(outcome.results), outcome.denied, len(outcome.errors),
+                    engine.is_work_goal(query),
+                )
+            except Exception as exc:  # noqa: BLE001 - never kill the UI thread
+                log.exception("search failed for %r", query)
+                outcome = engine.Outcome(errors=[str(exc)])
+            GLib.idle_add(self._show, generation, query, outcome)
+
+        # Daemon: a 67 MB parse in flight must not keep the app alive after the
+        # window is closed.
+        threading.Thread(target=work, daemon=True).start()
+
+    def _begin_busy(self, generation: int) -> None:
+        """Show the spinner, but only if the search is slow enough to notice.
+
+        A spinner that appears and vanishes inside 100ms is a flicker, not
+        feedback — and searches that hit only the small index do finish that
+        fast. The delay means the indicator appears exactly when there is
+        something to wait for.
+        """
+        self._cancel_busy()
+        self._busy_timer = GLib.timeout_add(120, self._enter_busy, generation)
+
+    def _enter_busy(self, generation: int) -> bool:
+        self._busy_timer = None
+        if generation == self._generation:
+            self.spinner.set_visible(True)
+            self.spinner.start()
+            if self.stack.get_visible_child_name() == "idle":
+                self.status.set_text("Searching…")
+        return False  # one-shot
+
+    def _cancel_busy(self) -> None:
+        if self._busy_timer is not None:
+            GLib.source_remove(self._busy_timer)
+            self._busy_timer = None
+        self.spinner.stop()
+        self.spinner.set_visible(False)
+
+    def _show(self, generation: int, query: str, outcome) -> bool:
+        if generation != self._generation:
+            return False  # a newer query already answered
+        self._cancel_busy()
+
+        child = self.results.get_first_child()
+        while child:
+            self.results.remove(child)
+            child = self.results.get_first_child()
+
+        # "i wanna work on iakovos-trading" is a goal, not a document lookup.
+        # Offer AI tools (and Files) first; document hits stay below as backup.
+        work = self._work_goal_block(query)
+        if work:
+            for row in work:
+                self.results.append(row)
+
+        if not outcome.results and not work:
+            # Not an empty screen. "Nothing found" with no next step is where
+            # someone gives up; the same screen with one obvious action is not.
+            #
+            # And the reason comes FIRST when there is nothing else. An empty
+            # list reads as "this is broken"; an empty list under a sentence
+            # saying the index is still downloading reads as "wait a minute".
+            self._append_notices(outcome)
+            self.results.append(self._web_row(query))
+            self.stack.set_visible_child_name("results")
+            self._refresh_banner()
+            return False
+
+        if outcome.results:
+            if work:
+                # A quiet divider so "open with Claude" is not mistaken for a
+                # search hit about Claude.
+                self.results.append(self._section_label("Also found"))
+            for res in outcome.results:
+                self.results.append(self._row(res))
+        self._append_notices(outcome)
+        if not work:
+            self.results.append(self._web_row(query))
+        self.stack.set_visible_child_name("results")
+        self._refresh_banner()
+        return False
+
+    def _section_label(self, text: str) -> Gtk.Widget:
+        row = Adw.ActionRow(title=GLib.markup_escape_text(text))
+        row.add_css_class("dim-label")
+        row.set_activatable(False)
+        return row
+
+    def _work_goal_block(self, query: str) -> list[Gtk.Widget]:
+        """Route Search text through the intent router, then run a playbook.
+
+        Returns an empty list for ordinary lookup — the rest of _show ranks
+        documents as before. Forced intents (choice rows) live on
+        ``self._forced_intent`` until the next free-typed query.
+        """
+        forced = getattr(self, "_forced_intent", None)
+        if forced is not None and (forced.raw_query or "").strip() == (query or "").strip():
+            decided = forced
+        else:
+            self._forced_intent = None
+            decided = intent_mod.classify(query)
+
+        self._last_intent = decided
+        log.info(
+            "intent kind=%s channel=%s conf=%.2f source=%s",
+            decided.kind.value,
+            decided.channel.value,
+            decided.confidence,
+            decided.source,
+        )
+
+        if decided.kind is IntentKind.LOOKUP:
+            return []
+
+        tools = work_tools.available_work_tools()
+        rows: list[Gtk.Widget] = []
+        self._tool_rows = {}
+        self._credit_labels = {}
+        self._credit_statuses = {}
+        self._freeform_help = False
+        self._linkedin_action = False
+        self._whatsapp_action = False
+        self._messaging_auto_started = False
+        self._user_query = (query or "").strip()
+
+        if decided.kind is IntentKind.AMBIGUOUS:
+            return self._intent_ambiguous_rows(decided)
+
+        if decided.kind is IntentKind.MESSAGE_REPLY:
+            return self._intent_message_reply_rows(decided, tools)
+
+        if decided.kind is IntentKind.FREEFORM_HELP:
+            return self._intent_freeform_rows(decided, tools)
+
+        if decided.kind is IntentKind.PROJECT_HELP:
+            return self._intent_project_rows(decided, tools, query)
+
+        if decided.kind is IntentKind.SETUP:
+            rows.append(self._plain_notice(
+                decided.summary or "Let’s get you set up."
+            ))
+            rows.append(self._github_connect_row())
+            return rows
+
+        return []
+
+    def _intent_ambiguous_rows(self, decided: Intent) -> list[Gtk.Widget]:
+        """Plain choices when the router is not sure — never silent guess."""
+        rows: list[Gtk.Widget] = []
+        rows.append(self._plain_notice(
+            decided.summary or "What do you want to do?"
+        ))
+        rows.append(self._section_label("Choose one"))
+        for alt in intent_mod.all_choice_intents(decided):
+            rows.append(self._intent_choice_row(alt))
+        return rows
+
+    def _intent_choice_row(self, choice: Intent) -> Gtk.Widget:
+        title = intent_mod.choice_label(choice)
+        sub = intent_mod.choice_subtitle(choice)
+        row = Adw.ActionRow(title=title)
+        if sub:
+            row.set_subtitle(sub)
+        icon = "mail-unread-symbolic"
+        if choice.kind is IntentKind.MESSAGE_REPLY:
+            if choice.channel is Channel.WHATSAPP:
+                icon = "user-available-symbolic"
+            else:
+                icon = "mail-unread-symbolic"
+        elif choice.kind is IntentKind.PROJECT_HELP:
+            icon = "folder-symbolic"
+        elif choice.kind is IntentKind.LOOKUP:
+            icon = "system-search-symbolic"
+        elif choice.kind is IntentKind.FREEFORM_HELP:
+            icon = "help-about-symbolic"
+        row.add_prefix(Gtk.Image.new_from_icon_name(icon))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect("activated", lambda *_a, c=choice: self._on_intent_choice(c))
+        return row
+
+    def _on_intent_choice(self, choice: Intent) -> None:
+        """User picked a path — re-run Search with a forced intent."""
+        picked = choice.with_user_pick()
+        q = (picked.raw_query or getattr(self, "_user_query", "") or "").strip()
+        if not q:
+            if picked.kind is IntentKind.MESSAGE_REPLY:
+                if picked.channel is Channel.WHATSAPP:
+                    q = "i wanna reply to my whatsapp messages"
+                else:
+                    q = "i wanna reply to my linkedin messages"
+            else:
+                q = picked.subject or "help"
+            picked = intent_mod.force_kind(q, picked.kind, subject=picked.subject)
+            if picked.kind is IntentKind.MESSAGE_REPLY:
+                picked = intent_mod.force_message_reply(q, choice.channel)
+        elif picked.kind is IntentKind.MESSAGE_REPLY:
+            picked = intent_mod.force_message_reply(q, choice.channel)
+        self._forced_intent = picked
+        self.entry.set_text(q)
+        self._run(q)
+
+    def _intent_message_reply_rows(
+        self, decided: Intent, tools: list[WorkTool],
+    ) -> list[Gtk.Widget]:
+        """Open the channel + AI draft playbook (never auto-send)."""
+        rows: list[Gtk.Widget] = []
+        self._freeform_help = True
+        query = decided.raw_query
+        self._user_query = query
+        self._messaging_auto_started = False
+
+        if decided.channel is Channel.WHATSAPP:
+            self._whatsapp_action = True
+            self._linkedin_action = False
+            self._pending_task = engine.whatsapp_reply_action_prompt(query)
+            self._open_whatsapp()
+            notice = (
+                decided.summary
+                or "Looks like you want AI help with WhatsApp messages. "
+                "AI drafts; you always send."
+            )
+            if "square code" not in notice.lower():
+                notice = (
+                    f"{notice} Opening WhatsApp — if you see a square code, "
+                    "scan it with WhatsApp on your phone once."
+                )
+            rows.append(self._plain_notice(notice))
+            rows.append(self._whatsapp_action_row())
+        elif decided.channel is Channel.LINKEDIN:
+            self._linkedin_action = True
+            self._whatsapp_action = False
+            self._pending_task = engine.linkedin_reply_action_prompt(query)
+            self._open_linkedin_messaging()
+            notice = (
+                decided.summary
+                or "Looks like you want AI help with LinkedIn messages. "
+                "AI drafts; you always send."
+            )
+            if "opening linkedin" not in notice.lower():
+                notice = f"{notice} Opening LinkedIn messaging now."
+            rows.append(self._plain_notice(notice))
+            rows.append(self._linkedin_action_row())
+        else:
+            rows.append(self._plain_notice(
+                decided.summary
+                or "AI can draft replies. Pick LinkedIn or WhatsApp — you always send."
+            ))
+            rows.append(self._linkedin_action_row())
+            rows.append(self._whatsapp_action_row())
+            self._pending_task = (query or "").strip()
+
+        self._append_project_tools(
+            rows, [Path.home()], tools, freeform=True,
+        )
+        self._begin_credit_probes(tools)
+        return rows
+
+    def _intent_freeform_rows(
+        self, decided: Intent, tools: list[WorkTool],
+    ) -> list[Gtk.Widget]:
+        rows: list[Gtk.Widget] = []
+        self._freeform_help = True
+        query = decided.raw_query
+        self._user_query = query
+        self._pending_task = (query or "").strip()
+        if decided.summary:
+            rows.append(self._plain_notice(decided.summary))
+        self._append_project_tools(
+            rows, [Path.home()], tools, freeform=True,
+        )
+        self._begin_credit_probes(tools)
+        return rows
+
+    def _intent_project_rows(
+        self,
+        decided: Intent,
+        tools: list[WorkTool],
+        query: str,
+    ) -> list[Gtk.Widget]:
+        subject = (decided.subject or engine.focus_query(query) or "").strip()
+        if not subject:
+            return []
+        rows: list[Gtk.Widget] = []
+        self._pending_task = self._task_from_query(query, subject)
+        projects = engine.resolve_project_dirs(subject)
+        if projects:
+            self._append_project_tools(rows, projects, tools)
+            self._begin_credit_probes(tools)
+            return rows
+
+        # No local folder — resolve from GitHub.
+        # owner/name (e.g. iakovos/trading) can be a *public* clone with no
+        # sign-in; private repos and bare names still need GitHub connected.
+        auth = git_projects.git_auth()
+        owner_name = bool(
+            re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", subject or "")
+        )
+        if not auth.ok and not owner_name:
+            rows.append(self._notice_row(
+                f"There isn’t a folder called “{subject}” on this computer yet. "
+                "If it lives in your GitHub account, connect GitHub once, then "
+                "try again. Or copy the project folder into your home folder.",
+                "dialog-information-symbolic",
+            ))
+            rows.append(self._github_connect_row())
+            return rows
+
+        if auth.ok:
+            who = f" as {auth.login}" if auth.login else ""
+            rows.append(self._notice_row(
+                f"There isn’t a folder called “{subject}” here. "
+                f"Checking your GitHub projects{who}…",
+                "emblem-synchronizing-symbolic",
+            ))
+        else:
+            rows.append(self._notice_row(
+                f"There isn’t a folder called “{subject}” here. "
+                "Looking for a public GitHub project with that name…",
+                "emblem-synchronizing-symbolic",
+            ))
+        self._begin_git_lookup(subject, generation=self._generation)
+        return rows
+
+    def _task_from_query(self, query: str, subject: str) -> str:
+        """Leftover words after the project name — optional starting prompt.
+
+        "i wanna work on trading fix the risk model" → "fix the risk model"
+        when subject resolved to trading. Best-effort; empty is fine.
+        """
+        text = (query or "").strip()
+        if not text or not subject:
+            return getattr(self, "_pending_task", "") or ""
+        lower = text.lower()
+        sub = subject.lower().strip()
+        idx = lower.find(sub)
+        if idx < 0:
+            # try last path segment
+            tail = sub.split("/")[-1].split("-")[-1]
+            idx = lower.rfind(tail) if len(tail) >= 3 else -1
+            if idx >= 0:
+                rest = text[idx + len(tail):].strip(" \t:-–—|,.")
+                return rest
+            return ""
+        rest = text[idx + len(sub):].strip(" \t:-–—|,.")
+        return rest
+
+    def _append_project_tools(
+        self,
+        rows: list[Gtk.Widget],
+        projects: list[Path],
+        tools: list[WorkTool],
+        *,
+        freeform: bool = False,
+    ) -> None:
+        """Layout a non-technical person can scan top-to-bottom.
+
+        1) Big obvious ask box (recommended)
+        2) Or open just one app (only after sign-in)
+        3) Folder / other options last
+        """
+        recent = set(work_tools.recent_ids())
+        for project in projects[:5]:
+            if freeform:
+                if getattr(self, "_linkedin_action", False):
+                    rows.append(self._section_label("AI LinkedIn replies"))
+                    intro = self._plain_notice(
+                        "Messaging is open. When you’re signed in to an AI, we "
+                        "start drafting paste-ready replies — or tap “Draft my replies”."
+                    )
+                elif getattr(self, "_whatsapp_action", False):
+                    rows.append(self._section_label("AI WhatsApp replies"))
+                    intro = self._plain_notice(
+                        "WhatsApp is open. When you’re signed in to an AI, we "
+                        "start drafting paste-ready replies — or tap “Draft my replies”."
+                    )
+                else:
+                    rows.append(self._section_label("Here’s help with that"))
+                    intro = self._plain_notice(
+                        "Your question is ready below. Tap Get help when you’re signed in, "
+                        "or edit it first."
+                    )
+            else:
+                label = project.name
+                rows.append(self._section_label(f"Found “{label}”"))
+                # First-timers only see the Continue card; this line is refined
+                # after the readiness probe. Keep it calm and free of jargon.
+                intro = self._plain_notice(
+                    f"You’re looking at “{label}”. Start with the box below."
+                )
+            rows.append(intro)
+
+            # First project owns the primary ask box.
+            if project == projects[0]:
+                rows.append(self._broadcast_block(project, tools, freeform=freeform))
+
+            chat_tools = [
+                t for t in tools
+                if t.is_ai and work_tools.is_chat_helper(t.id)
+            ]
+            other_ai = [
+                t for t in tools
+                if t.is_ai and not work_tools.is_chat_helper(t.id)
+            ]
+            open_with = [t for t in tools if not t.is_ai]
+
+            # Prefer recents first within "open one".
+            chat_tools.sort(
+                key=lambda t: (0 if t.id in recent else 1, t.title.lower()),
+            )
+
+            # Extra options — filled after credit probe so first-timers only
+            # see the big "Continue" card until someone is signed in.
+            self._advanced_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            self._advanced_tools = (chat_tools, other_ai, open_with, project, recent)
+            adv_host = Gtk.ListBoxRow()
+            adv_host.set_activatable(False)
+            adv_host.set_selectable(False)
+            adv_host.set_child(self._advanced_box)
+            rows.append(adv_host)
+            # Placeholder until probe finishes; _refresh_broadcast_ui rebuilds.
+            self._rebuild_advanced_options(ready=False, probing=True)
+
+    def _plain_notice(self, text: str) -> Gtk.Widget:
+        lab = Gtk.Label(label=text, wrap=True, xalign=0.0)
+        lab.add_css_class("dim-label")
+        lab.set_margin_top(2)
+        lab.set_margin_bottom(6)
+        lab.set_margin_start(4)
+        lab.set_margin_end(4)
+        row = Gtk.ListBoxRow()
+        row.set_activatable(False)
+        row.set_selectable(False)
+        row.set_child(lab)
+        return row
+
+    def _broadcast_block(
+        self, project: Path, tools: list[WorkTool], *, freeform: bool = False,
+    ) -> Gtk.Widget:
+        """The only path a new user should notice.
+
+        First time: one story — “Let’s get you ready” → Continue.
+        After sign-in: type a need → Get help. Never “open helpers.”
+        """
+        self._broadcast_project = project
+        self._broadcast_tools = [t for t in tools if t.is_ai]
+        self._freeform_help = freeform
+        name = project.name
+
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        box.set_margin_top(8)
+        box.set_margin_bottom(12)
+        box.set_margin_start(4)
+        box.set_margin_end(4)
+        box.add_css_class("card")
+
+        self._broadcast_step = Gtk.Label(label="Start here", xalign=0.0)
+        self._broadcast_step.add_css_class("caption")
+        self._broadcast_step.add_css_class("accent")
+        self._broadcast_step.set_margin_top(12)
+        self._broadcast_step.set_margin_start(14)
+        self._broadcast_step.set_margin_end(14)
+        box.append(self._broadcast_step)
+
+        title = (
+            "Let’s get you ready to help with that"
+            if freeform
+            else f"Let’s get you ready to work on “{name}”"
+        )
+        self._broadcast_title = Gtk.Label(
+            label=title,
+            xalign=0.0,
+            wrap=True,
+        )
+        self._broadcast_title.add_css_class("title-3")
+        self._broadcast_title.set_margin_start(14)
+        self._broadcast_title.set_margin_end(14)
+        box.append(self._broadcast_title)
+
+        self._broadcast_hint = Gtk.Label(
+            label="One moment…",
+            wrap=True,
+            xalign=0.0,
+        )
+        self._broadcast_hint.add_css_class("dim-label")
+        self._broadcast_hint.set_margin_start(14)
+        self._broadcast_hint.set_margin_end(14)
+        box.append(self._broadcast_hint)
+
+        self._broadcast_entry = Gtk.Entry()
+        self._broadcast_entry.set_placeholder_text(
+            "e.g. Explain this project in simple words"
+        )
+        self._broadcast_entry.set_margin_start(14)
+        self._broadcast_entry.set_margin_end(14)
+        pending = (getattr(self, "_pending_task", None) or "").strip()
+        if pending:
+            self._broadcast_entry.set_text(pending)
+        self._broadcast_entry.connect(
+            "activate", lambda *_: self._on_broadcast_clicked(),
+        )
+        box.append(self._broadcast_entry)
+
+        self._broadcast_btn = Gtk.Button(label="Continue")
+        self._broadcast_btn.add_css_class("suggested-action")
+        self._broadcast_btn.add_css_class("pill")
+        self._broadcast_btn.set_halign(Gtk.Align.FILL)
+        self._broadcast_btn.set_margin_start(14)
+        self._broadcast_btn.set_margin_end(14)
+        self._broadcast_btn.set_margin_bottom(14)
+        self._broadcast_btn.connect(
+            "clicked", lambda *_: self._on_broadcast_clicked(),
+        )
+        box.append(self._broadcast_btn)
+
+        self._refresh_broadcast_ui()
+
+        row = Gtk.ListBoxRow()
+        row.set_activatable(False)
+        row.set_selectable(False)
+        row.set_child(box)
+        return row
+
+    def _rebuild_advanced_options(self, *, ready: bool, probing: bool) -> None:
+        """First-timers only see the big Continue card — no jargon list."""
+        box = getattr(self, "_advanced_box", None)
+        tools_pack = getattr(self, "_advanced_tools", None)
+        if box is None or tools_pack is None:
+            return
+        # Clear
+        child = box.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            box.remove(child)
+            child = nxt
+
+        if probing or not ready:
+            # Keep the screen calm. Advanced picks appear only after setup.
+            note = Gtk.Label(
+                label=(
+                    "You can open the project folder anytime from Files "
+                    "in the bar at the bottom."
+                ),
+                wrap=True,
+                xalign=0.0,
+            )
+            note.add_css_class("dim-label")
+            note.add_css_class("caption")
+            note.set_margin_top(8)
+            note.set_margin_start(4)
+            note.set_margin_end(4)
+            box.append(note)
+            return
+
+        chat_tools, other_ai, open_with, project, recent = tools_pack
+
+        def _section(title: str, tools: list) -> None:
+            if not tools:
+                return
+            lab = Gtk.Label(label=title, xalign=0.0)
+            lab.add_css_class("heading")
+            lab.set_margin_top(12)
+            lab.set_margin_bottom(4)
+            box.append(lab)
+            lb = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+            lb.add_css_class("boxed-list")
+            for tool in tools:
+                lb.append(self._tool_row(
+                    tool, project, recent=tool.id in recent and tool.is_ai,
+                ))
+            box.append(lb)
+
+        # Subtle extras only after someone is signed in — not the first path.
+        _section("Or pick one by name", chat_tools)
+        _section("Apps", other_ai)
+        _section("Also", open_with)
+
+    def _refresh_broadcast_ui(self) -> None:
+        # Wait for the first credit probe so we do not blast tools that are
+        # already known empty. Empty statuses = still checking.
+        probing = bool(self._broadcast_tools) and not self._credit_statuses
+        ready = (
+            []
+            if probing
+            else work_tools.tools_ready_for_broadcast(
+                self._broadcast_tools, self._credit_statuses,
+            )
+        )
+        names = ", ".join(t.title for t in ready) if ready else ""
+        project = self._broadcast_project
+        freeform = bool(getattr(self, "_freeform_help", False))
+        pname = project.name if project else "this project"
+
+        linkedin = bool(getattr(self, "_linkedin_action", False))
+        whatsapp = bool(getattr(self, "_whatsapp_action", False))
+        messaging = linkedin or whatsapp
+        msg_name = "WhatsApp" if whatsapp else ("LinkedIn" if linkedin else "")
+
+        if self._broadcast_title is not None:
+            if freeform and messaging:
+                if probing:
+                    self._broadcast_title.set_text(f"Getting {msg_name} replies ready…")
+                elif not ready:
+                    self._broadcast_title.set_text(
+                        f"One sign-in, then we draft {msg_name} replies"
+                    )
+                else:
+                    self._broadcast_title.set_text(f"Draft replies for {msg_name}")
+            elif freeform:
+                if probing:
+                    self._broadcast_title.set_text("Getting help ready…")
+                elif not ready:
+                    self._broadcast_title.set_text(
+                        "Let’s get you ready to help with that"
+                    )
+                else:
+                    self._broadcast_title.set_text("What do you need help with?")
+            elif probing:
+                self._broadcast_title.set_text(f"Working on “{pname}”")
+            elif not ready:
+                self._broadcast_title.set_text(
+                    f"Let’s get you ready to work on “{pname}”"
+                )
+            else:
+                self._broadcast_title.set_text("What do you need help with?")
+
+        if self._broadcast_step is not None:
+            if freeform and messaging and ready:
+                self._broadcast_step.set_text("Doing it for you")
+            else:
+                self._broadcast_step.set_text(
+                    "Almost ready" if not ready and not probing else "Start here"
+                )
+
+        if self._broadcast_hint is not None:
+            if not self._broadcast_tools:
+                self._broadcast_hint.set_text(
+                    "This computer doesn’t have any AI set up yet. "
+                    "Reinstall teddyOS, or ask whoever set up the machine."
+                )
+            elif probing:
+                self._broadcast_hint.set_text("One moment…")
+            elif not ready:
+                if freeform and messaging:
+                    where = (
+                        "WhatsApp stays open"
+                        if whatsapp
+                        else "LinkedIn Messaging stays open"
+                    )
+                    self._broadcast_hint.set_text(
+                        f"Sign in once. Then we open Answers and draft paste-ready "
+                        f"replies while {where}. You always send."
+                    )
+                elif freeform:
+                    self._broadcast_hint.set_text(
+                        "Next we’ll open a short sign-in in your browser. "
+                        "You only do this once. Then you can get help with "
+                        "messages, drafts, and everyday tasks."
+                    )
+                else:
+                    self._broadcast_hint.set_text(
+                        "Next we’ll open a short sign-in in your browser. "
+                        "You only do this once. Then you can ask anything about "
+                        f"“{pname}”."
+                    )
+            elif freeform and messaging:
+                summary = self._credit_summary_line(ready) if len(ready) > 1 else ""
+                base = (
+                    f"{msg_name} is open. We’ll start drafting replies — paste each "
+                    "message into Answers when asked. Nothing is sent without you."
+                )
+                self._broadcast_hint.set_text(
+                    f"{base}\n{summary}" if summary else base
+                )
+            elif len(ready) == 1:
+                st = self._credit_statuses.get(ready[0].id)
+                bal = self._plain_status(st.label) if st else "ready"
+                self._broadcast_hint.set_text(
+                    f"Type what you need. {ready[0].title}: {bal}."
+                )
+            else:
+                summary = self._credit_summary_line(ready)
+                base = (
+                    "Type what you need. We’ll ask every ready AI, then "
+                    "read all their answers and pull them together for you."
+                )
+                self._broadcast_hint.set_text(
+                    f"{base}\n{summary}" if summary else base
+                )
+
+        if self._broadcast_entry is not None:
+            # Don’t force a question before the person is signed in.
+            # Messaging actions: hide the entry — the action prompt is fixed.
+            if freeform and messaging:
+                self._broadcast_entry.set_visible(False)
+            else:
+                self._broadcast_entry.set_visible(bool(ready) or probing)
+                if ready:
+                    self._broadcast_entry.set_placeholder_text(
+                        "e.g. Explain this project in simple words"
+                    )
+
+        if self._broadcast_btn is not None:
+            if probing:
+                self._broadcast_btn.set_sensitive(False)
+                self._broadcast_btn.set_label("One moment…")
+            elif not ready:
+                self._broadcast_btn.set_sensitive(True)
+                self._broadcast_btn.set_label("Continue")
+            else:
+                self._broadcast_btn.set_sensitive(True)
+                self._broadcast_btn.set_label(
+                    "Draft my replies" if freeform and messaging else "Get help"
+                )
+
+        self._rebuild_advanced_options(ready=bool(ready), probing=probing)
+
+        # Messaging: when signed in, auto-start drafting (once per query).
+        if (
+            freeform
+            and messaging
+            and ready
+            and not probing
+            and not getattr(self, "_messaging_auto_started", False)
+        ):
+            self._messaging_auto_started = True
+            GLib.timeout_add(500, self._auto_start_messaging_replies)
+
+    def _on_broadcast_clicked(self) -> None:
+        """Continue = setup if needed, else ask. One story for new users."""
+        project = self._broadcast_project
+        if project is None:
+            return
+        ready = work_tools.tools_ready_for_broadcast(
+            self._broadcast_tools, self._credit_statuses,
+        )
+        entry = self._broadcast_entry
+        prompt = (entry.get_text() if entry else "").strip()
+        # Messaging actions: fixed draft prompt, not free-typed box.
+        if getattr(self, "_linkedin_action", False):
+            prompt = (
+                getattr(self, "_pending_task", None)
+                or engine.linkedin_reply_action_prompt()
+            ).strip()
+        elif getattr(self, "_whatsapp_action", False):
+            prompt = (
+                getattr(self, "_pending_task", None)
+                or engine.whatsapp_reply_action_prompt()
+            ).strip()
+
+        if not ready:
+            # Natural next step — no jargon, no separate app to invent.
+            # Remember kind + original Search words so freeform/messaging
+            # comes back after sign-in (not “work on home-folder-name”).
+            if getattr(self, "_linkedin_action", False):
+                kind = "linkedin"
+            elif getattr(self, "_whatsapp_action", False):
+                kind = "whatsapp"
+            elif getattr(self, "_freeform_help", False):
+                kind = "freeform"
+            else:
+                kind = "work"
+            user_q = (getattr(self, "_user_query", None) or "").strip()
+            if not user_q and entry is not None:
+                # Project path: keep typed need as prompt, not as Search query.
+                user_q = ""
+            # Never persist the long internal playbook as the only restore key.
+            store_prompt = prompt if kind == "work" else ""
+            if kind == "freeform" and not store_prompt:
+                store_prompt = (getattr(self, "_pending_task", None) or prompt or "").strip()
+                # If freeform pending was already a long playbook, drop it.
+                if len(store_prompt) > 280:
+                    store_prompt = user_q or ""
+            if kind in ("linkedin", "whatsapp"):
+                store_prompt = ""
+            if prompt and kind == "work":
+                self._pending_task = prompt
+            pending_ask.save(
+                str(project),
+                store_prompt,
+                query=user_q or (prompt if kind == "freeform" else ""),
+                kind=kind,
+            )
+            self._notify("Opening a short sign-in…", timeout=3)
+            self._open_accounts(setup_all=True)
+            return
+
+        if not prompt:
+            self._notify("Type what you need help with first.", timeout=3)
+            if entry:
+                entry.grab_focus()
+            return
+        log.info(
+            "ask-all project=%s tools=%s prompt_len=%d linkedin=%s whatsapp=%s",
+            project, [t.id for t in ready], len(prompt),
+            bool(getattr(self, "_linkedin_action", False)),
+            bool(getattr(self, "_whatsapp_action", False)),
+        )
+        if getattr(self, "_linkedin_action", False):
+            self._open_linkedin_messaging()
+            self._notify("Drafting LinkedIn replies… paste messages when asked.", timeout=4)
+        elif getattr(self, "_whatsapp_action", False):
+            self._open_whatsapp()
+            self._notify("Drafting WhatsApp replies… paste messages when asked.", timeout=4)
+        self._open_ask_all(project, prompt, [t.id for t in ready])
+
+    def _auto_start_messaging_replies(self) -> bool:
+        """One-shot: open Answers with the inbox draft playbook when ready."""
+        linkedin = bool(getattr(self, "_linkedin_action", False))
+        whatsapp = bool(getattr(self, "_whatsapp_action", False))
+        if not (linkedin or whatsapp):
+            return False
+        project = self._broadcast_project
+        if project is None:
+            return False
+        ready = work_tools.tools_ready_for_broadcast(
+            self._broadcast_tools, self._credit_statuses,
+        )
+        if not ready:
+            return False
+        if linkedin:
+            prompt = (
+                getattr(self, "_pending_task", None)
+                or engine.linkedin_reply_action_prompt()
+            ).strip()
+            self._open_linkedin_messaging()
+            label = "LinkedIn"
+        else:
+            prompt = (
+                getattr(self, "_pending_task", None)
+                or engine.whatsapp_reply_action_prompt()
+            ).strip()
+            self._open_whatsapp()
+            label = "WhatsApp"
+        if not prompt:
+            return False
+        log.info(
+            "%s auto-start tools=%s prompt_len=%d",
+            label.lower(), [t.id for t in ready], len(prompt),
+        )
+        self._notify(
+            f"Drafting replies — paste each {label} message when asked.",
+            timeout=4,
+        )
+        self._open_ask_all(project, prompt, [t.id for t in ready])
+        return False  # one-shot GLib timeout
+
+    def _auto_start_linkedin_replies(self) -> bool:
+        """Back-compat alias for LinkedIn auto-start."""
+        return self._auto_start_messaging_replies()
+
+    def _open_linkedin_messaging(self) -> None:
+        """Launch LinkedIn Messaging (wrapper or browser)."""
+        exe = shutil.which("teddyos-linkedin")
+        if exe:
+            if self._spawn([exe], cwd=str(Path.home())):
+                log.info("linkedin messaging opened via teddyos-linkedin")
+                return
+        # Fallback: Chromium --app or UriLauncher
+        chromium = (
+            shutil.which("chromium")
+            or shutil.which("chromium-browser")
+            or shutil.which("google-chrome")
+            or shutil.which("google-chrome-stable")
+        )
+        url = "https://www.linkedin.com/messaging/"
+        if chromium:
+            data = str(Path.home() / ".config" / "teddyos-linkedin")
+            Path(data).mkdir(parents=True, exist_ok=True)
+            argv = [
+                chromium,
+                f"--app={url}",
+                "--class=teddyos-linkedin",
+                f"--user-data-dir={data}",
+            ]
+            if self._spawn(argv, cwd=str(Path.home())):
+                log.info("linkedin messaging opened via chromium --app")
+                return
+        try:
+            Gtk.UriLauncher.new(url).launch(self, None, None, None)
+            log.info("linkedin messaging opened via UriLauncher")
+        except GLib.Error as exc:
+            log.warning("linkedin open failed: %s", exc)
+
+    def _open_whatsapp(self) -> None:
+        """Launch WhatsApp Web (wrapper, desktop app, or browser)."""
+        exe = shutil.which("teddyos-whatsapp")
+        if exe:
+            if self._spawn([exe], cwd=str(Path.home())):
+                log.info("whatsapp opened via teddyos-whatsapp")
+                return
+        # gtk-launch desktop entry if present
+        gtk_launch = shutil.which("gtk-launch")
+        if gtk_launch:
+            if self._spawn([gtk_launch, "teddyos-whatsapp.desktop"], cwd=str(Path.home())):
+                log.info("whatsapp opened via gtk-launch")
+                return
+        chromium = (
+            shutil.which("chromium")
+            or shutil.which("chromium-browser")
+            or shutil.which("google-chrome")
+            or shutil.which("google-chrome-stable")
+        )
+        url = "https://web.whatsapp.com/"
+        if chromium:
+            data = str(Path.home() / ".config" / "teddyos-whatsapp")
+            Path(data).mkdir(parents=True, exist_ok=True)
+            argv = [
+                chromium,
+                f"--app={url}",
+                "--class=teddyos-whatsapp",
+                f"--user-data-dir={data}",
+            ]
+            if self._spawn(argv, cwd=str(Path.home())):
+                log.info("whatsapp opened via chromium --app")
+                return
+        try:
+            Gtk.UriLauncher.new(url).launch(self, None, None, None)
+            log.info("whatsapp opened via UriLauncher")
+        except GLib.Error as exc:
+            log.warning("whatsapp open failed: %s", exc)
+
+    def _linkedin_action_row(self) -> Gtk.Widget:
+        """Re-open LinkedIn messaging without leaving Search."""
+        row = Adw.ActionRow(title="Open LinkedIn messages again")
+        row.set_subtitle("Inbox window — you paste messages; we only draft")
+        # No dedicated LinkedIn tile in hicolor yet — mail icon is clear enough.
+        row.add_prefix(Gtk.Image.new_from_icon_name("mail-unread-symbolic"))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect(
+            "activated",
+            lambda *_: self._open_linkedin_messaging(),
+        )
+        return row
+
+    def _whatsapp_action_row(self) -> Gtk.Widget:
+        """Re-open WhatsApp without leaving Search."""
+        row = Adw.ActionRow(title="Open WhatsApp again")
+        row.set_subtitle("Chat window — you paste messages; we only draft")
+        row.add_prefix(self._tool_icon("teddyos-whatsapp"))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect(
+            "activated",
+            lambda *_: self._open_whatsapp(),
+        )
+        return row
+
+    def _begin_git_lookup(self, subject: str, generation: int) -> None:
+        def work() -> None:
+            try:
+                repos = git_projects.find_remote_repos(subject)
+                log.info("git lookup subject=%r hits=%d", subject, len(repos))
+            except Exception as exc:  # noqa: BLE001
+                log.exception("git lookup failed")
+                repos = []
+                err = str(exc)
+            else:
+                err = ""
+            GLib.idle_add(
+                self._show_git_repos, generation, subject, repos, err,
+            )
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _show_git_repos(
+        self,
+        generation: int,
+        subject: str,
+        repos: list,
+        err: str,
+    ) -> bool:
+        if generation != self._generation:
+            return False
+        # Drop the "looking…" notice; rebuild the work-goal block in place.
+        child = self.results.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            self.results.remove(child)
+            child = nxt
+
+        if err:
+            self.results.append(self._notice_row(
+                "Something went wrong while looking for that project online. "
+                "Check your internet connection and try again.",
+                "dialog-warning-symbolic",
+            ))
+            log.warning("git lookup error for %r: %s", subject, err)
+        if not repos:
+            auth = git_projects.git_auth()
+            if auth.ok:
+                self.results.append(self._notice_row(
+                    f"Couldn’t find a project named “{subject}” on this computer "
+                    "or in your GitHub account. Check the name, or put the folder "
+                    "in your home folder and try again.",
+                    "dialog-information-symbolic",
+                ))
+            else:
+                # Public owner/name miss, or private without sign-in.
+                self.results.append(self._notice_row(
+                    f"Couldn’t download “{subject}” without GitHub sign-in "
+                    "(private project, or the name isn’t public). "
+                    "Connect GitHub once, then try again — or copy the folder "
+                    "into your home folder.",
+                    "dialog-information-symbolic",
+                ))
+                self.results.append(self._github_connect_row())
+            self.stack.set_visible_child_name("results")
+            return False
+
+        public = any(getattr(r, "source", "") == "public-https" for r in repos)
+        label = (
+            "On GitHub — tap to download"
+            if public
+            else "On your GitHub — tap to download"
+        )
+        self.results.append(self._section_label(label))
+        for repo in repos:
+            self.results.append(self._clone_row(repo))
+        self.stack.set_visible_child_name("results")
+        return False
+
+    def _github_connect_row(self) -> Gtk.Widget:
+        """One-tap path to connect GitHub without memorizing a command."""
+        row = Adw.ActionRow(title="Connect GitHub")
+        row.set_subtitle("Opens a short sign-in so teddyOS can download your projects")
+        row.set_subtitle_lines(2)
+        row.add_prefix(self._tool_icon("teddyos-github"))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect("activated", lambda *_: self._start_github_connect())
+        return row
+
+    def _start_github_connect(self) -> None:
+        """Launch GitHub sign-in in a window the person can follow."""
+        log.info("start github connect")
+        # gh is required for Connect — ISO ships it; thin product installs
+        # sometimes omit it. Offer a plain next step instead of "Not on this computer."
+        if not shutil.which("gh"):
+            self.results.append(self._notice_row(
+                "GitHub tools aren’t on this computer yet. "
+                "Ask Search: “install GitHub CLI” or open Terminal and run: "
+                "sudo apt install -y gh — then tap Connect GitHub again.",
+                "dialog-information-symbolic",
+            ))
+            self.stack.set_visible_child_name("results")
+            return
+        if self._open_accounts("github"):
+            return
+        self.results.append(self._notice_row(
+            "Couldn’t open sign-in. "
+            "Copy the project folder into your home folder, or try again.",
+            "dialog-information-symbolic",
+        ))
+
+    def _clone_row(self, repo: git_projects.RemoteRepo) -> Gtk.Widget:
+        # Human title: "tsearch-revival" is enough; owner/name is secondary.
+        title = f"Download “{repo.name}”"
+        sub = repo.description.strip() if repo.description else f"From {repo.full_name}"
+        if repo.description:
+            sub = f"{sub} · {repo.full_name}"
+        row = Adw.ActionRow(title=GLib.markup_escape_text(title))
+        row.set_subtitle(GLib.markup_escape_text(sub[:160]))
+        row.set_subtitle_lines(2)
+        row.add_prefix(Gtk.Image.new_from_icon_name("folder-download-symbolic"))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect("activated", lambda *_a, r=repo: self._clone_and_open(r))
+        return row
+
+    @staticmethod
+    def _clone_error_plain(name: str, technical: str) -> str:
+        """Turn git/gh noise into something a non-technical person can use."""
+        low = (technical or "").lower()
+        if "could not read username" in low or "authentication failed" in low:
+            return (
+                f"Couldn’t download “{name}” — GitHub needs you signed in first. "
+                "Tap Sign in below, connect GitHub, then try again."
+            )
+        if "permission denied" in low or "403" in low or "not found" in low:
+            return (
+                f"Couldn’t download “{name}”. You may not have access to that "
+                "project, or the name may be wrong. Check the name and try again."
+            )
+        if "timed out" in low or "network" in low or "could not resolve" in low:
+            return (
+                f"Couldn’t download “{name}”. Check your internet connection "
+                "and try again."
+            )
+        if "exists and is not a git" in low:
+            return (
+                f"A folder named “{name}” is already on this computer, but it "
+                "isn’t a project we can open. Rename or move that folder, then try again."
+            )
+        return (
+            f"Couldn’t download “{name}”. Check your internet connection and "
+            "that you still have access to the project, then try again."
+        )
+
+    def _clone_and_open(self, repo: git_projects.RemoteRepo) -> None:
+        log.info("clone %s", repo.full_name)
+        # Replace the list with a single status row while git runs.
+        child = self.results.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            self.results.remove(child)
+            child = nxt
+        self.results.append(self._notice_row(
+            f"Downloading “{repo.name}” to this computer…",
+            "emblem-synchronizing-symbolic",
+        ))
+        self.stack.set_visible_child_name("results")
+        generation = self._generation
+
+        def work() -> None:
+            path, message = git_projects.clone_repo(repo)
+            GLib.idle_add(
+                self._after_clone, generation, repo, path, message,
+            )
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _after_clone(
+        self,
+        generation: int,
+        repo: git_projects.RemoteRepo,
+        path: Path | None,
+        message: str,
+    ) -> bool:
+        if generation != self._generation:
+            return False
+        child = self.results.get_first_child()
+        while child:
+            nxt = child.get_next_sibling()
+            self.results.remove(child)
+            child = nxt
+        if path is None:
+            log.warning("clone failed: %s", message)
+            self.results.append(self._notice_row(
+                self._clone_error_plain(repo.name, message),
+                "dialog-warning-symbolic",
+            ))
+            # Offer Connect GitHub when the failure looks like missing auth.
+            low = (message or "").lower()
+            if any(
+                s in low
+                for s in (
+                    "username", "authentication", "permission denied",
+                    "could not read", "403", "401", "auth",
+                )
+            ):
+                self.results.append(self._accounts_row())
+            self.stack.set_visible_child_name("results")
+            return False
+
+        log.info("cloned %s → %s (%s)", repo.full_name, path, message)
+        prog = self._progress_mod()
+        if prog is not None:
+            try:
+                self._celebrate(prog.award_clone())
+            except Exception:  # noqa: BLE001
+                pass
+        tools = work_tools.available_work_tools()
+        rows: list[Gtk.Widget] = []
+        self._tool_rows = {}
+        self._credit_labels = {}
+        self._credit_statuses = {}
+        where = str(path).replace(str(Path.home()), "~")
+        self.results.append(self._notice_row(
+            f"“{repo.name}” is ready on this computer ({where}). "
+            "Choose how you want to open it.",
+            "emblem-ok-symbolic",
+        ))
+        self._append_project_tools(rows, [path], tools)
+        for row in rows:
+            self.results.append(row)
+        self._begin_credit_probes(tools)
+        self.stack.set_visible_child_name("results")
+        return False
+
+    def _tool_row(
+        self, tool: WorkTool, project: Path, *, recent: bool = False
+    ) -> Gtk.Widget:
+        row = Adw.ActionRow(title=GLib.markup_escape_text(tool.title))
+        # Plain-language subtitles. Credit probe may refine "Ready" later.
+        if tool.metered:
+            base = "Checking…"
+        elif tool.is_ai:
+            base = "Ready · tap to open"
+        else:
+            base = tool.subtitle
+        self._credit_labels[tool.id] = base
+        row.set_subtitle(GLib.markup_escape_text(
+            self._format_tool_subtitle(tool.id, base, recent)))
+        row.set_subtitle_lines(2)
+        row.add_prefix(self._tool_icon(tool.icon))
+        if recent:
+            badge = Gtk.Label(label="You used this before")
+            badge.add_css_class("caption")
+            badge.add_css_class("dim-label")
+            badge.set_valign(Gtk.Align.CENTER)
+            row.add_suffix(badge)
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect(
+            "activated",
+            lambda *_a, t=tool, p=project: self._on_tool_activated(t, p),
+        )
+        self._tool_rows[tool.id] = row
+        return row
+
+    def _on_tool_activated(self, tool: WorkTool, project: Path) -> None:
+        """Open the app, or start sign-in if it still needs an account."""
+        status = self._credit_statuses.get(tool.id)
+        if (
+            tool.metered
+            and status is not None
+            and status.ok is False
+            and "not on this computer" not in (status.label or "").lower()
+        ):
+            # Needs sign-in — never dump them into a failing TUI.
+            self._notify(
+                f"{tool.title} needs a quick sign-in first…",
+                timeout=3,
+            )
+            if self._open_accounts(tool.id):
+                return
+        self._launch_tool(tool, project)
+
+    def _open_accounts(
+        self,
+        focus_id: str | None = None,
+        *,
+        setup_all: bool = False,
+    ) -> bool:
+        """Open Getting you ready (sign-in walkthrough)."""
+        exe = shutil.which("teddyos-accounts")
+        if not exe:
+            return False
+        argv = [exe]
+        if setup_all:
+            argv.append("--setup-all")
+        elif focus_id:
+            argv.extend(["--connect", focus_id])
+        # Don’t dismiss Search under the sign-in window; re-probe when back.
+        self._hold_for_dialog = True
+        self._reprobe_on_focus = True
+        ok = self._spawn(argv, cwd=str(Path.home()))
+        if not ok:
+            self._hold_for_dialog = False
+            self._reprobe_on_focus = False
+        return ok
+
+    def _accounts_row(self) -> Gtk.Widget:
+        # Kept for clone-auth recovery; plain language only.
+        row = Adw.ActionRow(title="Sign in to GitHub or an AI")
+        row.set_subtitle(
+            "Needed once so teddyOS can download projects and answer questions"
+        )
+        row.set_subtitle_lines(2)
+        row.add_prefix(self._tool_icon("teddyos-accounts"))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect("activated", lambda *_: self._open_accounts(setup_all=True))
+        return row
+
+    def _tool_icon(self, name: str) -> Gtk.Image:
+        """Load a work-tool icon from the theme, with a file fallback.
+
+        The live image installs teddyos-*.svg into hicolor. A guest that was
+        upgraded without re-baking the icon cache still needs a picture — so
+        we also try on-disk SVG/PNG. Symbolic names (folder-symbolic) stay
+        theme-only. Never leave a blank square.
+        """
+        img = Gtk.Image()
+        img.set_pixel_size(32)
+        name = (name or "").strip() or "application-x-executable"
+        theme = Gtk.IconTheme.get_for_display(self.get_display())
+        if theme and theme.has_icon(name):
+            img.set_from_icon_name(name)
+            return img
+        # Symbolic / generic GNOME names
+        if name.endswith("-symbolic") or "/" not in name and not name.startswith("teddyos-"):
+            if theme and theme.has_icon(name):
+                img.set_from_icon_name(name)
+                return img
+            # folder → folder-symbolic fallback
+            alt = f"{name}-symbolic" if not name.endswith("-symbolic") else name
+            if theme and theme.has_icon(alt):
+                img.set_from_icon_name(alt)
+                return img
+        for base in (
+            Path("/usr/share/icons/hicolor/scalable/apps"),
+            Path("/usr/share/icons/hicolor/48x48/apps"),
+            Path("/usr/share/icons/hicolor/64x64/apps"),
+            Path(__file__).resolve().parent.parent / "icons",
+        ):
+            for ext in (".svg", ".png"):
+                path = base / f"{name}{ext}"
+                if path.is_file():
+                    try:
+                        img.set_from_file(str(path))
+                        return img
+                    except GLib.Error:
+                        continue
+        img.set_from_icon_name("application-x-executable")
+        return img
+
+    def _credit_summary_line(self, ready: list) -> str:
+        """One line of helper balances for the Get help card."""
+        parts: list[str] = []
+        for t in ready[:5]:
+            st = self._credit_statuses.get(t.id)
+            if st is None:
+                continue
+            lab = self._plain_status(st.label)
+            # Shorten for the summary strip
+            if lab.startswith("Needs sign-in"):
+                lab = "needs sign-in"
+            elif lab == "Out of uses for now":
+                lab = "out of uses"
+            elif lab in ("Ready · tap to open", "Tap to open"):
+                lab = "ready"
+            parts.append(f"{t.title}: {lab}")
+        return " · ".join(parts)
+
+    def _format_tool_subtitle(
+        self, tool_id: str, credit_label: str, recent: bool | None = None
+    ) -> str:
+        if recent is None:
+            recent = work_tools.is_recent(tool_id)
+        label = self._plain_status(credit_label)
+        if recent and label and "used this" not in label.lower():
+            return f"{label} · used before"
+        return label
+
+    @staticmethod
+    def _plain_status(label: str) -> str:
+        """Map probe jargon to words a non-technical person understands.
+
+        Preserve real balance / plan lines (e.g. “Max plan · ready”,
+        “72% left”). Older code rewrote anything with “remaining” to a
+        useless “Ready · tap to open”, which hid credit detection.
+        """
+        raw = (label or "").strip()
+        if not raw:
+            return "Tap to open"
+        low = raw.lower()
+        if "checking" in low:
+            return "Checking…"
+        if any(s in low for s in ("isn’t installed", "isn't installed", "not installed", "not on this computer")):
+            return "Not on this computer"
+        if "web app" in low:
+            return raw[:72]
+        if any(s in low for s in (
+            "needs sign-in", "sign in", "not logged", "log in", "login",
+            "not signed",
+        )) and "plan" not in low and "web app" not in low:
+            return "Needs sign-in · tap to connect"
+        if any(s in low for s in (
+            "too low", "out of uses", "out of", "no credit", "quota",
+            "usage limit", "depleted", "credit balance is too low",
+        )):
+            return "Out of uses for now"
+        # Real balance / plan / connected lines — keep them visible.
+        if any(
+            s in low
+            for s in (
+                "%", "plan", "connected", "chatgpt", "api key",
+                "resets", "left", "remaining", "balance", "credits",
+            )
+        ):
+            return raw[:72]
+        if low in ("ready · tap to open", "ready", "tap to open"):
+            return "Ready · tap to open"
+        if "may need sign-in" in low:
+            return raw[:72]
+        # Keep short unknown labels; never dump raw CLI errors into the list.
+        if len(raw) > 72:
+            return "Tap to open"
+        return raw
+
+    def _begin_credit_probes(self, tools: list[WorkTool]) -> None:
+        # Probe everything that is metered, plus free AI tools that still have
+        # a probe (so "Installed · …" can replace "No credits needed" when
+        # that is more honest).
+        to_probe = [t for t in tools if t.is_ai]
+        if not to_probe:
+            return
+        self._credit_generation += 1
+        generation = self._credit_generation
+
+        def work() -> None:
+            statuses = {t.id: work_tools.probe_credits(t) for t in to_probe}
+            GLib.idle_add(self._apply_credit_statuses, generation, statuses)
+
+        threading.Thread(target=work, daemon=True).start()
+
+    def _apply_credit_statuses(
+        self,
+        generation: int,
+        statuses: dict[str, CreditStatus],
+    ) -> bool:
+        if generation != self._credit_generation:
+            return False  # a newer goal already replaced the list
+        self._credit_statuses = dict(statuses)
+        for tool_id, status in statuses.items():
+            row = self._tool_rows.get(tool_id)
+            if row is None:
+                continue
+            self._credit_labels[tool_id] = status.label
+            row.set_subtitle(GLib.markup_escape_text(
+                self._format_tool_subtitle(tool_id, status.label)))
+            # Dim and still clickable when empty: the person may want to open
+            # Claude to top up or re-login. A hard-disabled row looks broken.
+            if status.ok is False:
+                row.add_css_class("dim-label")
+            else:
+                row.remove_css_class("dim-label")
+        self._refresh_broadcast_ui()
+        return False
+
+    # Terminal AI tools that die without a TTY. Never bare-spawn these.
+    _TTY_TOOLS = frozenset({
+        "claude", "grok", "gemini", "codex", "copilot", "antigravity",
+        "aider", "ollama", "crush", "goose",
+    })
+
+    def _notify(self, message: str, *, timeout: int = 3) -> None:
+        """Short on-screen confirmation that a click did something."""
+        try:
+            toast = Adw.Toast.new(message)
+            toast.set_timeout(timeout)
+            self._toasts.add_toast(toast)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _progress_mod(self):
+        try:
+            import progress as prog  # type: ignore
+            return prog
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _refresh_progress_ui(self) -> None:
+        """Update fluency strip: overall XP + per-persona levels."""
+        prog = self._progress_mod()
+        if prog is None or not hasattr(self, "_progress_bar"):
+            return
+        try:
+            snap = prog.snapshot()
+            # Prefer active persona meter when they have persona XP; else global.
+            if (
+                hasattr(prog, "persona_meter")
+                and getattr(snap, "persona_xp", None)
+                and snap.persona_xp
+            ):
+                frac, _cap = prog.persona_meter(snap.active_persona, snap)
+                line = prog.progress_line(snap)
+            elif hasattr(prog, "ultracode_meter"):
+                frac, line = prog.ultracode_meter(snap)
+            else:
+                frac = (
+                    min(1.0, max(0.0, snap.xp_into_level / snap.xp_for_level))
+                    if snap.next_level_xp is not None and snap.xp_for_level > 0
+                    else 1.0
+                )
+                line = prog.progress_line(snap)
+            self._progress_bar.set_fraction(frac)
+            self._progress_label.set_text(line)
+            if hasattr(self, "_mission_label"):
+                mission = ""
+                if hasattr(prog, "daily_mission_line"):
+                    mission = prog.daily_mission_line(snap) or ""
+                elif getattr(snap, "mission_line", ""):
+                    mission = snap.mission_line
+                self._mission_label.set_text(mission)
+                self._mission_label.set_visible(bool(mission))
+            # Accent once any persona (esp. Ultracode) is part of their story.
+            if (
+                getattr(snap, "ultracode_asks", 0) > 0
+                or getattr(snap, "switch_count", 0) > 0
+                or bool(getattr(snap, "persona_levels", None))
+                or getattr(snap, "combo", 0) >= 2
+            ):
+                self._progress_bar.add_css_class("accent")
+            else:
+                self._progress_bar.remove_css_class("accent")
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _celebrate(self, snap) -> None:
+        """Toast the best progress event (badge / level / streak)."""
+        prog = self._progress_mod()
+        if prog is None or snap is None:
+            return
+        try:
+            line = prog.format_toast(getattr(snap, "events", []) or [])
+            if line:
+                self._notify(line, timeout=4)
+            self._refresh_progress_ui()
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _restore_pending_ask(self) -> bool:
+        """Return from sign-in to the same job — project or messaging."""
+        data = pending_ask.load()
+        if not data:
+            return False
+        project = (data.get("project") or "").strip()
+        prompt = (data.get("prompt") or "").strip()
+        query = (data.get("query") or "").strip()
+        kind = (data.get("kind") or "work").strip().lower()
+        # Messaging / freeform: re-run the human Search words so action flags
+        # rebuild (LinkedIn open, Draft my replies, etc.).
+        if kind in ("linkedin", "whatsapp", "freeform") and query:
+            self._user_query = query
+            self._pending_task = prompt
+            self.entry.set_text(query)
+            self._run(query)
+            pending_ask.clear()
+            if kind in ("linkedin", "whatsapp"):
+                self._notify(
+                    "You’re signed in. AI will draft replies — tap “Draft my replies” "
+                    "if it doesn’t start on its own.",
+                    timeout=6,
+                )
+            elif prompt:
+                self._notify(
+                    "You’re signed in. Your question is ready — tap Get help.",
+                    timeout=5,
+                )
+            else:
+                self._notify(
+                    "You’re signed in. Type what you need, then tap Get help.",
+                    timeout=5,
+                )
+            return False
+        if not project or not Path(project).is_dir():
+            # Fallback: if we only have a query, re-run it.
+            if query:
+                self.entry.set_text(query)
+                self._run(query)
+                pending_ask.clear()
+                self._notify(
+                    "You’re signed in. Continue where you left off.",
+                    timeout=5,
+                )
+                return False
+            pending_ask.clear()
+            return False
+        # Project path: drive Search as if they typed work on <folder> again.
+        name = Path(project).name
+        self._pending_task = prompt
+        self.entry.set_text(f"work on {name}")
+        self._run(f"work on {name}")
+        pending_ask.clear()
+        if prompt:
+            self._notify(
+                "You’re signed in. Your question is ready — tap Get help.",
+                timeout=5,
+            )
+        else:
+            self._notify(
+                "You’re signed in. Type what you need, then tap Get help.",
+                timeout=5,
+            )
+        return False
+
+    def _launch_tool(
+        self,
+        tool: WorkTool,
+        project: Path,
+        prompt: str | None = None,
+    ) -> None:
+        # Record before spawn so a crashy tool still counts as a choice.
+        work_tools.record_use(tool.id)
+        path = str(project)
+        prompt = (prompt or "").strip() or None
+
+        # Chat CLIs (Claude, Grok, Gemini, …) must NEVER open a terminal UI
+        # for non-technical people. Always use the answers window
+        # (teddyos-ask-all) which runs them headlessly in the background.
+        if tool.id in self._TTY_TOOLS and work_tools.is_chat_helper(tool.id):
+            if not prompt:
+                self._prompt_then_ask(tool, project)
+                return
+            self._open_ask_all(project, prompt, [tool.id])
+            return
+
+        if prompt is None:
+            self._notify(f"Opening {tool.title}…")
+
+        # Non-chat tools: Files, Perplexity web, Cursor, editors, …
+        ok = self._spawn(self._launch_argv(tool, path), cwd=path)
+        if ok:
+            GLib.timeout_add(250, self._yield_to_launched_app)
+            return
+        log.error("launch failed tool=%s project=%s", tool.id, path)
+        self._notify(
+            f"Couldn’t open {tool.title}. Try again in a moment.",
+            timeout=5,
+        )
+        try:
+            Gtk.UriLauncher.new(
+                Gio.File.new_for_path(path).get_uri()
+            ).launch(self, None, None, None)
+        except GLib.Error:
+            pass
+
+    def _prompt_then_ask(self, tool: WorkTool, project: Path) -> None:
+        """Ask what they need, then open the Answers window for one AI."""
+        # Hold blur-close while the dialog has focus (parent is-active goes false).
+        self._hold_for_dialog = True
+        dialog = Adw.MessageDialog(
+            transient_for=self,
+            heading=f"Ask {tool.title}",
+            body=(
+                "What do you need help with? We’ll match how you sound — "
+                "simple by default, or Ultracode / student / academic / writer / "
+                "business / design / career and more."
+            ),
+        )
+        entry = Gtk.Entry()
+        entry.set_placeholder_text(
+            "e.g. homework · resume · pitch deck · literature review · refactor api.ts"
+        )
+        entry.set_margin_top(8)
+        pending = (getattr(self, "_pending_task", None) or "").strip()
+        if pending:
+            entry.set_text(pending)
+        dialog.set_extra_child(entry)
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("ask", "Get help")
+        dialog.set_response_appearance("ask", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("ask")
+        dialog.set_close_response("cancel")
+
+        def on_response(_d, response: str) -> None:
+            self._hold_for_dialog = False
+            # Dialog is gone; re-arm blur-close after focus settles.
+            GLib.timeout_add(200, self._arm_blur_close)
+            if response != "ask":
+                return
+            text = entry.get_text().strip()
+            if not text:
+                self._notify("Type what you need help with first.", timeout=3)
+                return
+            self._open_ask_all(project, text, [tool.id])
+
+        dialog.connect("response", on_response)
+        dialog.present()
+        entry.grab_focus()
+
+    def _open_ask_all(
+        self, project: Path, prompt: str, tool_ids: list[str],
+    ) -> None:
+        ask = shutil.which("teddyos-ask-all")
+        if not ask:
+            self._notify(
+                "Answers window isn’t available on this copy of teddyOS.",
+                timeout=4,
+            )
+            return
+        names = ", ".join(
+            t.title for t in self._broadcast_tools if t.id in tool_ids
+        ) or "your AIs"
+        # Audience detect → Ultracode toast + fluency XP (gamification core).
+        mode = ""
+        prog = self._progress_mod()
+        snap = None
+        if prog is not None and hasattr(prog, "award_from_prompt"):
+            try:
+                snap = prog.award_from_prompt(prompt, tool_ids=tool_ids)
+                if getattr(snap, "ultracode_asks", 0) > 0 or any(
+                    getattr(e, "ultracode", False) for e in (snap.events or [])
+                ):
+                    # Fresh ultracode event this turn?
+                    if any(getattr(e, "ultracode", False) for e in (snap.events or [])):
+                        mode = " · Ultracode"
+                # Detect from events if first unlock
+                if any(
+                    getattr(e, "badge_id", "") == "ultracode"
+                    or (getattr(e, "kind", "") == "ultracode")
+                    for e in (snap.events or [])
+                ):
+                    mode = " · Ultracode"
+            except Exception:  # noqa: BLE001
+                snap = None
+        if not mode:
+            try:
+                sys.path.insert(0, "/usr/lib/teddyos")
+                from audience import detect_audience, Audience  # type: ignore
+                if detect_audience(prompt) is Audience.CODE:
+                    mode = " · Ultracode"
+            except Exception:  # noqa: BLE001
+                pass
+        self._notify(f"Asking {names}{mode}…", timeout=3)
+        if snap is not None:
+            GLib.timeout_add(900, lambda s=snap: (self._celebrate(s), False)[1])
+        ok = self._spawn(
+            [
+                ask,
+                "--project", str(project),
+                "--prompt", prompt,
+                "--tools", ",".join(tool_ids),
+            ],
+            cwd=str(project),
+        )
+        if ok:
+            GLib.timeout_add(250, self._yield_to_launched_app)
+        else:
+            self._notify("Couldn’t open the answers window.", timeout=4)
+
+    def _yield_to_launched_app(self) -> bool:
+        """Dismiss Search once another window takes over (Answers, sign-in, …).
+
+        Click-away already closes on focus loss; this is a fast path so the
+        Answers window is never buried under Search for a beat.
+        """
+        try:
+            self.close()
+        except Exception:  # noqa: BLE001
+            try:
+                self.set_visible(False)
+            except Exception:  # noqa: BLE001
+                pass
+        return False
+
+    def _spawn(self, argv: list[str], *, cwd: str) -> bool:
+        """Start a GUI/terminal child with the desktop session’s environment."""
+        if not argv or not argv[0]:
+            return False
+        # Resolve bare names so a thin PATH cannot hide /usr/local/bin tools.
+        if "/" not in argv[0]:
+            found = shutil.which(argv[0])
+            if not found:
+                log.error("spawn: not on PATH: %s", argv[0])
+                return False
+            argv = [found, *argv[1:]]
+        log.info("launch argv=%s cwd=%s", argv, cwd)
+        try:
+            launcher = Gio.SubprocessLauncher.new(Gio.SubprocessFlags.NONE)
+            launcher.set_cwd(cwd)
+            path_env = os.environ.get("PATH", "/usr/bin:/bin")
+            for extra in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
+                if extra not in path_env.split(":"):
+                    path_env = f"{extra}:{path_env}"
+            launcher.setenv("PATH", path_env, True)
+            for key in (
+                "DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
+                "DBUS_SESSION_BUS_ADDRESS", "HOME", "USER", "LANG",
+                "XAUTHORITY", "GDK_BACKEND",
+            ):
+                val = os.environ.get(key)
+                if val:
+                    launcher.setenv(key, val, True)
+            launcher.spawnv(argv)
+            return True
+        except GLib.Error as exc:
+            log.error("spawn failed argv=%s: %s", argv, exc.message)
+            # Gio sometimes fails where a plain detached Popen still works.
+            try:
+                env = os.environ.copy()
+                env["PATH"] = (
+                    "/usr/local/bin:"
+                    + str(Path.home() / ".local" / "bin")
+                    + ":"
+                    + env.get("PATH", "/usr/bin:/bin")
+                )
+                subprocess.Popen(  # noqa: S603
+                    argv,
+                    cwd=cwd,
+                    env=env,
+                    start_new_session=True,
+                    stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                log.info("spawn via Popen argv=%s", argv)
+                return True
+            except OSError as exc2:
+                log.error("Popen failed argv=%s: %s", argv, exc2)
+                return False
+
+    def _launch_argv(self, tool: WorkTool, path: str) -> list[str]:
+        """Build argv for non-TTY tools (Files, editors, …)."""
+        raw = [a.replace("{path}", path) for a in tool.argv]
+        argv: list[str] = []
+        for part in raw:
+            if " " in part and not Path(part).exists():
+                argv.extend(part.split())
+            else:
+                argv.append(part)
+        return argv
+
+    def _launch_via_terminal(
+        self,
+        tool: WorkTool,
+        path: str,
+        prompt_args: list[str] | None = None,
+    ) -> bool:
+        """Last-resort Terminal host if teddyos-agent is missing."""
+        binary = {
+            "gemini": "gemini",
+            "codex": "codex",
+            "grok": "grok",
+            "claude": "claude",
+            "copilot": "copilot",
+            "antigravity": "agy",
+            "aider": "aider",
+            "ollama": "ollama",
+            "crush": "crush",
+            "goose": "goose",
+        }.get(tool.id)
+        if not binary:
+            return False
+        resolved = shutil.which(binary)
+        if not resolved:
+            for prefix in ("/usr/local/bin", str(Path.home() / ".local" / "bin")):
+                candidate = Path(prefix) / binary
+                if candidate.is_file() and os.access(candidate, os.X_OK):
+                    resolved = str(candidate)
+                    break
+        if not resolved:
+            log.error("terminal launch: binary missing tool=%s", tool.id)
+            return False
+
+        title = f"{tool.title} — {Path(path).name}"
+        term = shutil.which("gnome-terminal") or shutil.which("kgx")
+        if not term:
+            log.error("terminal launch: no gnome-terminal/kgx")
+            return False
+        extra = list(prompt_args or [])
+        if "gnome-terminal" in term:
+            argv = [
+                term,
+                f"--title={title}",
+                f"--working-directory={path}",
+                "--",
+                resolved,
+                *extra,
+            ]
+        else:
+            cmd = " ".join(shlex.quote(p) for p in [resolved, *extra])
+            argv = [
+                term,
+                f"--title={title}",
+                "-e",
+                f"bash -lc {shlex.quote(f'cd {path} && exec {cmd}')}",
+            ]
+        return self._spawn(argv, cwd=path)
+
+    def _append_notices(self, outcome) -> None:
+        """Show what the search knows about its own limits.
+
+        The engine already works out why a search came back thin — the index is
+        still downloading, a source errored, a capability is off — and returns
+        it in Outcome.notes/errors. This window used to drop all of it on the
+        floor, so someone who searched and got nothing was shown an empty list
+        and no reason, while the CLI printed the explanation to a terminal
+        nobody was looking at.
+
+        That is the difference between "this is broken" and "this is not ready
+        yet", and the machine already knew which.
+        """
+        for text in getattr(outcome, "errors", []) or []:
+            self.results.append(self._notice_row(text, "dialog-warning-symbolic"))
+        for text in getattr(outcome, "notes", []) or []:
+            self.results.append(self._notice_row(text, "dialog-information-symbolic"))
+
+    def _notice_row(self, text: str, icon: str) -> Gtk.Widget:
+        row = Adw.ActionRow(title=GLib.markup_escape_text(text))
+        row.set_title_lines(3)
+        row.add_prefix(Gtk.Image.new_from_icon_name(icon))
+        row.add_css_class("dim-label")
+        # Not activatable: it is an explanation, and a row that looks clickable
+        # and does nothing is worse than one that plainly does not.
+        row.set_activatable(False)
+        return row
+
+    def _row(self, res) -> Gtk.Widget:
+        row = Adw.ActionRow(title=GLib.markup_escape_text(res.title))
+        snippet = " ".join((res.snippet or "").split())[:160]
+        row.set_subtitle(GLib.markup_escape_text(snippet))
+        row.set_subtitle_lines(2)
+
+        badge = Gtk.Label(label=SOURCE_LABEL.get(res.source, res.source))
+        badge.add_css_class("caption")
+        badge.add_css_class("dim-label")
+        badge.set_valign(Gtk.Align.CENTER)
+        row.add_suffix(badge)
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+
+        row.set_activatable(True)
+        row.connect("activated", lambda *_a, r=res: self._open(r))
+        return row
+
+    def _open_link_row(self, title: str, subtitle: str, url: str) -> Gtk.Widget:
+        """One-tap open of a useful site (e.g. LinkedIn messages)."""
+        row = Adw.ActionRow(title=GLib.markup_escape_text(title))
+        row.set_subtitle(GLib.markup_escape_text(subtitle))
+        row.set_subtitle_lines(2)
+        row.add_prefix(Gtk.Image.new_from_icon_name("web-browser-symbolic"))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect(
+            "activated",
+            lambda *_a, u=url: self._open_url(u),
+        )
+        return row
+
+    def _open_url(self, url: str) -> None:
+        try:
+            Gtk.UriLauncher.new(url).launch(self, None, None, None)
+        except GLib.Error:
+            pass
+
+    def _web_row(self, query: str) -> Gtk.Widget:
+        # Truncate. The title interpolates the query, and a stuck key or a
+        # pasted paragraph turns one row into a wall of text taller than the
+        # window — found exactly that way. The full query still goes to the
+        # web search; only the label is shortened.
+        shown = query if len(query) <= 48 else query[:48].rstrip() + "…"
+        row = Adw.ActionRow(
+            title=f"Search the web for “{GLib.markup_escape_text(shown)}”")
+        row.set_title_lines(1)
+        row.set_subtitle(
+            "Opens a browser search for things that are not on this computer "
+            "(school sites, work tools, and the open web)")
+        row.set_subtitle_lines(2)
+        row.add_prefix(Gtk.Image.new_from_icon_name("web-browser-symbolic"))
+        row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))
+        row.set_activatable(True)
+        row.connect("activated", lambda *_a: self._open_web(query))
+        return row
+
+    def _open_web(self, query: str) -> None:
+        try:
+            Gtk.UriLauncher.new(WEB_SEARCH + GLib.uri_escape_string(query, None, True)) \
+                .launch(self, None, None, None)
+        except GLib.Error:
+            pass
+
+    def _open(self, res) -> None:
+        target = res.url
+        if not target:
+            return
+        # A local file has no scheme; handing a bare path to the URI opener
+        # silently does nothing, which looks exactly like a dead row.
+        if not target.startswith(("http://", "https://", "file://")):
+            target = Gio.File.new_for_path(target).get_uri()
+        try:
+            Gtk.UriLauncher.new(target).launch(self, None, None, None)
+        except GLib.Error:
+            pass
+
+
+class SearchApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID)
+
+    def do_activate(self):
+        (self.props.active_window or SearchWindow(self)).present()
+
+
+if __name__ == "__main__":
+    # X11 needs this, and X11 is exactly where this image ends up.
+    #
+    # GNOME binds a window to its launcher by WM_CLASS. Under Wayland that is the
+    # GApplication id, which is what StartupWMClass in the .desktop already says.
+    # Under X11 it comes from the program name instead — "teddyos-search-app" — so
+    # the match fails, the running window does not light up its pinned dock tile,
+    # and it appears a second time as a stray entry with a fallback icon.
+    #
+    # That was visible the moment the desktop came up on a machine with no GPU,
+    # because a machine with no GPU is one running the X11 session. Setting prgname
+    # to the application id makes both worlds agree.
+    GLib.set_prgname(APP_ID)
+    sys.exit(SearchApp().run(sys.argv))
