@@ -2,7 +2,7 @@
 project: os
 purpose: identity card for agents and humans
 status: active
-updated: 2026-07-31
+updated: 2026-08-01
 version_note: Ship version is the top-level VERSION file.
 ---
 
@@ -32,6 +32,7 @@ Makefile         default = make desktop
 make help
 make linux-init          # once: Debian disk + cloud-init
 make linux-provision     # once: GNOME + Chromium (headless QEMU, ssh :2222)
+make linux-product       # Search/dock/theme product install into guest
 make desktop             # open Linux in UTM (VM: teddyos)
 make linux-iso           # live ISO → dist/
 make test                # scripts/linux-contract-unit.sh

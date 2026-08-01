@@ -2,7 +2,7 @@
 project: os
 purpose: identity card for agents and humans
 status: active
-updated: 2026-07-31
+updated: 2026-08-01
 version_note: Ship version is the top-level VERSION file.
 ---
 
@@ -32,6 +32,7 @@ Makefile         default = make desktop
 make help
 make linux-init
 make linux-provision
+make linux-product
 make desktop
 make linux-iso
 make test
@@ -39,12 +40,12 @@ make test
 
 ## NON-NEGOTIABLES
 
-1. **Linux is the only product.**
-2. **Non-technical first.**
-3. **Capability model** — messaging open + draft only, never auto-send.
+1. **Linux is the only product.** No freestanding kernel / “hello” ISO.
+2. **Non-technical first.** Plain language on every user-facing surface.
+3. **Capability model.** Tools denied until granted. Messaging = open + draft only (never auto-send).
 4. **No secrets in the tree.**
-5. **Tests gate commits** — `make test` for `linux/` changes.
-6. **Version + changelog** on real work.
+5. **Tests gate commits.** `make test` (Linux contracts) when touching `linux/`.
+6. **Version + changelog on real work.** Bump `VERSION` + newest-first `CHANGELOG.md`.
 
 ## Ship a change
 
