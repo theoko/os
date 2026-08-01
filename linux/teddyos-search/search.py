@@ -274,6 +274,20 @@ _LINKEDIN_MSG_RE = re.compile(
 )
 
 
+def _fold_channel_typos(low: str) -> str:
+    """Fold common channel misspellings so intent still fires.
+
+    People type “linkdin” and “watsapp” constantly; treating those as
+    unknown lookups is worse than a soft fold. Only whole-token-ish
+    replacements — never rewrite real English mid-word.
+    """
+    low = re.sub(r"\blinkd?in\b", "linkedin", low)
+    low = re.sub(r"\blinkedin\b", "linkedin", low)  # no-op normalise
+    low = re.sub(r"\b(watsapp|whatsap|whatapp|whatsaap)\b", "whatsapp", low)
+    low = low.replace("whats app", "whatsapp")
+    return low
+
+
 def is_linkedin_messages_goal(text: str) -> bool:
     """True when the person wants AI help with LinkedIn messaging / replies.
 
@@ -283,7 +297,7 @@ def is_linkedin_messages_goal(text: str) -> bool:
     stripped = (text or "").strip()
     if not stripped:
         return False
-    low = stripped.lower()
+    low = _fold_channel_typos(stripped.lower())
     if "linkedin" not in low:
         return False
     if any(
@@ -294,7 +308,7 @@ def is_linkedin_messages_goal(text: str) -> bool:
         )
     ):
         return True
-    return bool(_LINKEDIN_MSG_RE.search(stripped))
+    return bool(_LINKEDIN_MSG_RE.search(low))
 
 
 # Action prompt when we open Get help for LinkedIn replies.
@@ -344,7 +358,7 @@ def is_whatsapp_messages_goal(text: str) -> bool:
     stripped = (text or "").strip()
     if not stripped:
         return False
-    low = stripped.lower().replace("whats app", "whatsapp")
+    low = _fold_channel_typos(stripped.lower())
     if "whatsapp" not in low:
         return False
     if any(
@@ -361,7 +375,7 @@ def is_whatsapp_messages_goal(text: str) -> bool:
         return True
     if any(w in low for w in ("wanna", "want", "open", "read", "catch", "use")):
         return True
-    return bool(_WHATSAPP_MSG_RE.search(stripped))
+    return bool(_WHATSAPP_MSG_RE.search(low))
 
 
 # Same product model as LinkedIn: open Web WhatsApp, AI drafts paste-ready
@@ -389,6 +403,100 @@ def whatsapp_reply_action_prompt(user_query: str = "") -> str:
     if q and q.lower() not in WHATSAPP_REPLY_PROMPT.lower():
         return f"{WHATSAPP_REPLY_PROMPT}\n\nTheir words: {q}"
     return WHATSAPP_REPLY_PROMPT
+
+
+_EMAIL_MSG_RE = re.compile(
+    r"""
+    \b(
+        (reply|respond|answer|check|clear|draft|catch\s+up)\s+
+            (to\s+)?(my\s+)?(emails?|gmail|mail|inbox)|
+        (emails?|gmail|mail)\s+(replies?|messages?|help|drafts?)|
+        my\s+(emails?|gmail|inbox)|
+        help\s+with\s+(my\s+)?(emails?|gmail|inbox)
+    )\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def is_email_messages_goal(text: str) -> bool:
+    """True when the person wants AI help with their email *inbox*.
+
+    Compose-from-scratch asks (“write a meeting follow-up email after a job
+    interview”) are freeform writing, not the open-inbox + draft-replies path.
+    Inbox language (reply / check / clear / catch up / gmail) still qualifies.
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    low = stripped.lower()
+    # Explicit channel words for email.
+    if not any(w in low for w in ("email", "emails", "gmail", "mail", "inbox")):
+        return False
+
+    # Compose a new message from a brief — not "clear my inbox".
+    compose_shaped = any(
+        p in low
+        for p in (
+            "write a", "write an", "write me", "draft a", "draft an",
+            "compose a", "compose an", "follow-up email", "follow up email",
+            "thank you email", "thank-you email", "cold email",
+            "cover letter", "outreach email",
+        )
+    )
+    inbox_shaped = any(
+        w in low
+        for w in (
+            "reply", "replies", "respond", "answer", "check", "clear",
+            "catch", "inbox", "unread", "triage",
+        )
+    ) or bool(re.search(r"\b(my\s+)?(emails?|gmail|mail)\b", low) and any(
+        w in low for w in ("help", "read", "draft", "messages")
+    ))
+    if compose_shaped and not inbox_shaped:
+        return False
+
+    # Prefer messaging language over pure search.
+    if any(
+        w in low
+        for w in (
+            "reply", "replies", "respond", "answer", "draft", "check",
+            "clear", "catch", "help", "read", "write",
+        )
+    ):
+        # “write” alone is too broad when compose_shaped already bailed;
+        # remaining “write” hits are inbox-ish (“write replies”).
+        return True
+    return bool(_EMAIL_MSG_RE.search(stripped))
+
+
+# Same product model as LinkedIn/WhatsApp: open Email app, AI drafts only.
+# Headless Claude must NOT use Gmail MCP tools (permission prompts break -p mode).
+EMAIL_REPLY_PROMPT = (
+    "I want AI help replying to my email right now. Email (webmail) should be "
+    "open or about to open on this computer.\n\n"
+    "CRITICAL rules for this session:\n"
+    "- Do NOT use Gmail tools, MCP, search_threads, or any inbox API.\n"
+    "- Do NOT mention terminal, claude, settings.json, permissions files, "
+    "or developer setup.\n"
+    "- You only draft; I paste and send. Never claim you sent mail.\n\n"
+    "You are my email reply co-pilot:\n"
+    "1) In one short sentence, ask me to paste the email (or short thread) "
+    "I need to answer.\n"
+    "2) When I paste, draft a clear reply I can paste into my mail app — "
+    "under ~120 words, match their tone, no fake claims.\n"
+    "3) Offer two options if useful: (A) short & friendly (B) a bit more formal.\n"
+    "4) End each draft with “Ready to paste — send the next one when you want.”\n\n"
+    "Start now with step 1 only. Plain language. No Markdown."
+)
+
+
+def email_reply_action_prompt(user_query: str = "") -> str:
+    """Full model prompt for an email reply session."""
+    q = (user_query or "").strip()
+    if q and q.lower() not in EMAIL_REPLY_PROMPT.lower():
+        return f"{EMAIL_REPLY_PROMPT}\n\nTheir words: {q}"
+    return EMAIL_REPLY_PROMPT
 
 
 def resolve_project_dirs(name: str, roots: list[Path] | None = None) -> list[Path]:
@@ -996,11 +1104,41 @@ def prune(results: list[Result]) -> list[Result]:
 
 # --- built-in corpus --------------------------------------------------------
 
+def _builtin_fields(doc: dict) -> tuple[str, str, str, str]:
+    """Title, url, body, category from either seed shape.
+
+    ISO / product install ships `search/seed.json` in portal short keys
+    (`t`, `u`, `b`, `c`). Older hand-edited corpora used long keys
+    (`title`, `url`, `text`/`body`). Accept both so a real seed scores
+    instead of ranking every document as untitled empty text.
+    """
+    title = str(doc.get("title") or doc.get("t") or "(untitled)")
+    url = str(doc.get("url") or doc.get("u") or "")
+    body = str(
+        doc.get("text") or doc.get("body") or doc.get("b") or ""
+    )
+    category = str(doc.get("category") or doc.get("c") or "")
+    return title, url, body, category
+
+
 def search_builtin(query: str, limit: int) -> tuple[list[Result], str | None]:
+    """Search the offline help that ships with the image.
+
+    Missing file is not an error — same posture as a portal corpus that has
+    not been synced yet. Product install / ISO should ship the seed, but a
+    partial guest must not paint every query with a warning row when Guide
+    and web results still work. Corrupt JSON or unreadable-but-present file
+    is still reported in plain language.
+    """
+    path = BUILTIN_CORPUS
+    if not path.is_file():
+        return [], None
     try:
-        corpus = json.loads(BUILTIN_CORPUS.read_text())
-    except (OSError, ValueError) as exc:
-        return [], "The built-in help couldn't be read."
+        corpus = json.loads(path.read_text())
+    except OSError:
+        return [], "The built-in help is on this computer but couldn’t be opened."
+    except ValueError:
+        return [], "The built-in help file is damaged, so offline help is skipped."
 
     docs = corpus.get("docs", corpus if isinstance(corpus, list) else [])
     tokens = query_terms(query)
@@ -1008,15 +1146,17 @@ def search_builtin(query: str, limit: int) -> tuple[list[Result], str | None]:
     for doc in docs:
         if not isinstance(doc, dict):
             continue
-        text = " ".join(str(doc.get(k, "")) for k in ("url", "text", "body"))
-        score, matched = _score_matched(tokens, text, str(doc.get("title", "")))
+        title, url, body, category = _builtin_fields(doc)
+        text = f"{url} {body}".strip()
+        score, matched = _score_matched(tokens, text, title)
         if score > 0:
             out.append(Result(
-                title=doc.get("title", "(untitled)"),
-                url=doc.get("url", ""),
-                snippet=(doc.get("text") or doc.get("body") or "")[:200],
+                title=title,
+                url=url,
+                snippet=body[:200],
                 source="built-in",
                 score=score,
+                category=category,
                 matched=matched,
                 terms=len(tokens),
             ))
@@ -1151,15 +1291,15 @@ def search(query: str, limit: int = 10) -> Outcome:
         if corpus_err:
             outcome.errors.append(corpus_err)
         elif not portal_corpus_status()["present"]:
-            # No command name here. This note is rendered in the Search window
-            # as often as in a terminal, and "run teddyos-search --sync"
-            # presumes a terminal, a command and a flag — three things too many
-            # for the one feature this OS is built around. Setup downloads the
-            # index itself now, so reaching this line means that has not
-            # finished; say what is true, in words anyone can act on.
-            outcome.notes.append(
-                "Search is still downloading what it needs. Web results will "
-                "appear once that finishes.")
+            # Only nag when the small index also came up empty. If Guide
+            # already answered (GEX tools, market pages, …), a permanent
+            # “still downloading” row is noise next to good hits — the same
+            # defect class as “built-in help couldn’t be read” on a working
+            # ticker result.
+            if not results and not corpus_results:
+                outcome.notes.append(
+                    "Search is still downloading what it needs. Web results "
+                    "will appear once that finishes.")
     else:
         outcome.denied.append("Online search")
 

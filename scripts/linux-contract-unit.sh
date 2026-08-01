@@ -438,18 +438,28 @@ assert i.kind is IntentKind.MESSAGE_REPLY and i.channel is Channel.LINKEDIN
 assert i.confidence >= 0.9 and i.auto_start_ok
 i = classify("draft whatsapp replies with AI")
 assert i.kind is IntentKind.MESSAGE_REPLY and i.channel is Channel.WHATSAPP
+i = classify("i need to check my email inbox")
+assert i.kind is IntentKind.MESSAGE_REPLY and i.channel is Channel.EMAIL
+assert i.confidence >= 0.9 and i.auto_start_ok
+# Typos still route to the channel
+assert classify("linkdin messages").kind is IntentKind.MESSAGE_REPLY
+assert classify("linkdin messages").channel is Channel.LINKEDIN
+assert classify("watsapp reply").kind is IntentKind.MESSAGE_REPLY
+assert classify("watsapp reply").channel is Channel.WHATSAPP
+# Compose-from-scratch is not inbox reply
+assert classify("write a meeting follow-up email after a job interview").kind is not IntentKind.MESSAGE_REPLY
 
 # Generic reply → ambiguous choices (not silent LinkedIn)
 i = classify("reply to my messages with AI")
 assert i.kind is IntentKind.AMBIGUOUS
 labels = [choice_label(a) for a in i.alternatives]
+assert any("Email" in x for x in labels)
 assert any("WhatsApp" in x for x in labels)
 assert any("LinkedIn" in x for x in labels)
 
 # Project vs lookup
 assert classify("i wanna work on tsearch").kind is IntentKind.PROJECT_HELP
 assert classify("what is photosynthesis").kind is IntentKind.LOOKUP
-assert classify("i need to check my email inbox").kind is IntentKind.FREEFORM_HELP
 
 # User pick is certain
 p = force_message_reply("help", Channel.WHATSAPP)
@@ -1322,10 +1332,21 @@ if grep -q 'audience.py' linux/iso/build-iso.sh \
   && grep -q teddyos-ask-all linux/iso/build-iso.sh \
   && grep -q teddyos-search-app linux/iso/build-iso.sh \
   && grep -q teddyos-linkedin linux/iso/build-iso.sh \
-  && grep -q 'teddyos-agent/teddyos-whatsapp' linux/iso/build-iso.sh; then
+  && grep -q 'teddyos-agent/teddyos-whatsapp' linux/iso/build-iso.sh \
+  && grep -q 'usr/share/teddyos/corpus.json' linux/iso/build-iso.sh; then
   ok "build-iso installs full search/agent stack"
 else
   bad "build-iso stack" "missing install lines"
+fi
+
+# --- product install + update payload ship built-in corpus ------------------
+if grep -q 'usr/share/teddyos/corpus.json' scripts/teddyos-install-product.sh \
+  && grep -q 'search/seed.json' scripts/teddyos-install-product.sh \
+  && grep -q 'usr/share/teddyos/corpus.json' scripts/make-update-payload.sh \
+  && test -f search/seed.json; then
+  ok "product/update ship offline corpus seed"
+else
+  bad "product corpus" "seed not wired into product install or payload"
 fi
 
 # --- work_tools prompt_argv + recents ---------------------------------------
@@ -1740,17 +1761,28 @@ assert isinstance(st["present"], bool)
 assert isinstance(st["docs"], int) and st["docs"] >= 0
 
 # Point builtin corpus at repo seed if present
-seed = Path("search/corpus.json")
+seed = Path("search/seed.json")
+if not seed.is_file():
+    seed = Path("search/corpus.json")
 if seed.is_file():
     s.BUILTIN_CORPUS = seed
     res, err = s.search_builtin("linux", limit=5)
     assert isinstance(res, list)
-    # may be empty if seed is personal index without "linux" — still no throw
-    print("builtin-search-ok", len(res), err)
+    assert err is None, err
+    # seed is about the Linux daily driver — must score under t/u/b keys
+    assert len(res) >= 1, "seed must match 'linux' via short keys"
+    assert res[0].title and res[0].title != "(untitled)"
+    print("builtin-search-ok", len(res), res[0].title)
 else:
     res, err = s.search_builtin("linux", limit=3)
     assert isinstance(res, list)
     print("builtin-missing-ok", err)
+
+# Missing file is quiet (not the old alarming warning row)
+s.BUILTIN_CORPUS = Path("/nonexistent/teddyos-corpus-missing.json")
+res_m, err_m = s.search_builtin("anything", limit=3)
+assert res_m == [] and err_m is None, (res_m, err_m)
+print("builtin-absent-quiet-ok")
 
 # scoring helpers
 sc = s._score(["linux", "kernel"], "the linux kernel rocks", "Linux Kernel")

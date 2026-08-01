@@ -121,6 +121,15 @@ for m in caps search sandbox work_tools git_projects accounts audience intent \
 done
 put linux/logging/logutil.py usr/lib/teddyos/logutil.py
 
+# Built-in offline help (same seed the live ISO bakes). Without this, Search
+# grants "Built-in help" but /usr/share/teddyos/corpus.json is missing and
+# every query used to show "The built-in help couldn't be read."
+if [[ -f search/seed.json ]]; then
+  put search/seed.json usr/share/teddyos/corpus.json
+elif [[ -f search/corpus.json ]]; then
+  put search/corpus.json usr/share/teddyos/corpus.json
+fi
+
 # --- shell extension + icons ---
 put linux/shell-extension/teddyos@teddysearch.com/extension.js \
   "usr/share/gnome-shell/extensions/teddyos@teddysearch.com/extension.js"

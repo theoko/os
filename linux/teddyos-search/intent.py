@@ -84,6 +84,7 @@ def classify(text: str) -> Intent:
     # --- explicit messaging (high confidence) --------------------------------
     want_li = engine.is_linkedin_messages_goal(raw)
     want_wa = engine.is_whatsapp_messages_goal(raw)
+    want_email = engine.is_email_messages_goal(raw)
 
     if want_li and want_wa:
         # Both named — ambiguous channel, clear job.
@@ -129,6 +130,16 @@ def classify(text: str) -> Intent:
             auto_start_ok=True,
         )
 
+    if want_email:
+        return _message_intent(
+            raw, subject, Channel.EMAIL, confidence=0.95,
+            summary=(
+                "Looks like you want AI help with email. "
+                "AI drafts; you always send."
+            ),
+            auto_start_ok=True,
+        )
+
     # --- generic reply / inbox without channel → ambiguous messaging ---------
     if _looks_like_generic_reply(low):
         li = _message_intent(
@@ -138,6 +149,10 @@ def classify(text: str) -> Intent:
         wa = _message_intent(
             raw, subject, Channel.WHATSAPP, confidence=0.5,
             summary="Draft WhatsApp replies with AI (you paste and send).",
+        )
+        em = _message_intent(
+            raw, subject, Channel.EMAIL, confidence=0.5,
+            summary="Draft email replies with AI (you paste and send).",
         )
         lookup = Intent(
             kind=IntentKind.LOOKUP,
@@ -156,7 +171,7 @@ def classify(text: str) -> Intent:
                 "Looks like you want help replying to messages. "
                 "Which inbox? AI only drafts — you always send."
             ),
-            alternatives=(wa, li, lookup),
+            alternatives=(em, wa, li, lookup),
             auto_start_ok=False,
             source="rules",
         )
@@ -254,6 +269,8 @@ def choice_label(intent: Intent) -> str:
             return "Reply on WhatsApp with AI"
         if intent.channel is Channel.LINKEDIN:
             return "Reply on LinkedIn with AI"
+        if intent.channel is Channel.EMAIL:
+            return "Reply on Email with AI"
         return "Reply to messages with AI"
     if intent.kind is IntentKind.PROJECT_HELP:
         sub = intent.subject or "a project"

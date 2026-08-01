@@ -73,6 +73,14 @@ done
 put linux/logging/logutil.py usr/lib/teddyos/logutil.py
 put linux/logging/teddyos-log-collect usr/bin/teddyos-log-collect 755
 
+# Offline built-in help seed (product install + ISO ship this; updates must too
+# or a guest that only ever took payloads never gets /usr/share/teddyos/corpus.json).
+if [ -f search/seed.json ]; then
+  put search/seed.json usr/share/teddyos/corpus.json
+elif [ -f search/corpus.json ]; then
+  put search/corpus.json usr/share/teddyos/corpus.json
+fi
+
 # Agents beyond the original four.
 for a in teddyos-ask-all teddyos-perplexity teddyos-devin teddyos-replit \
          teddyos-accounts teddyos-open-signin teddyos-linkedin teddyos-whatsapp \

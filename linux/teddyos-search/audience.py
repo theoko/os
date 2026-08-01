@@ -4094,10 +4094,13 @@ _BROWSER_EXT_PHRASES = (
 )
 
 _EMAIL_PRODUCTIVITY_WORDS = frozenset({
-    "inbox", "email", "zero-inbox", "filters", "labels", "templates", "cc", "unsubscribe",
+    "inbox", "email", "emails", "gmail", "mail", "zero-inbox", "filters",
+    "labels", "templates", "cc", "unsubscribe", "webmail",
 })
 _EMAIL_PRODUCTIVITY_PHRASES = (
     'inbox zero', 'email filters', 'email templates', 'triage email',
+    'clear my inbox', 'clear my gmail', 'check my email', 'check my gmail',
+    'help with email', 'help with gmail',
 )
 
 _NOTE_TAKING_WORDS = frozenset({
@@ -6894,6 +6897,14 @@ def score_audiences(text: str) -> dict[Audience, int]:
         scores[Audience.MARKETING] = max(0, scores[Audience.MARKETING] - 3)
         scores[Audience.SUPPORT] = max(0, scores[Audience.SUPPORT] - 2)
         scores[Audience.EMAIL_PRODUCTIVITY] = max(0, scores[Audience.EMAIL_PRODUCTIVITY] - 2)
+    # Gmail / inbox triage — "clear" alone is also a badminton shot; when the
+    # object is mail, email wins.
+    if any(w in low for w in ("gmail", "inbox", "email", "emails", "webmail")) and any(
+        w in low for w in ("clear", "check", "reply", "triage", "catch", "unread", "help")
+    ):
+        scores[Audience.EMAIL_PRODUCTIVITY] += 10
+        scores[Audience.BADMINTON] = max(0, scores[Audience.BADMINTON] - 8)
+        scores[Audience.SUPPORT] = max(0, scores[Audience.SUPPORT] - 2)
     if any(p in low for p in ("career change", "career pivot", "transferable skills")):
         scores[Audience.CAREER_CHANGE] += 4
         scores[Audience.JOB] = max(0, scores[Audience.JOB] - 1)

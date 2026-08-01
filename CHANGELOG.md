@@ -1,5 +1,5 @@
 ---
-version: v0.16.4
+version: v0.16.5
 project: os
 updated: 2026-08-01
 type: changelog
@@ -10,6 +10,20 @@ type: changelog
 Runtime version is the top-level VERSION file (no v prefix there).
 This file is newest-first. When behavior ships: bump VERSION, add an entry
 here, update this frontmatter version / updated, then conventional-commit.
+
+## [v0.16.5] — 2026-08-01
+
+### Fixed — Search UI honesty + messaging routing
+
+- **Product install + update payload** ship `search/seed.json` →
+  `/usr/share/teddyos/corpus.json` (ISO already did; UTM daily-driver did not).
+- **Built-in search** reads portal short keys (`t`/`u`/`b`/`c`) as well as
+  long keys; **missing corpus is quiet** (no “couldn’t be read” row).
+- **Corpus-download note** only when Guide also has nothing (no nag next to
+  good hits).
+- Seed: no “stock Debian” (was poisoning `tsla stock` → Dock apps).
+- Messaging: `linkdin` / `watsapp` typos; Email compose ≠ inbox reply;
+  gmail “clear” is not badminton.
 
 ## [v0.16.4] — 2026-08-01
 
