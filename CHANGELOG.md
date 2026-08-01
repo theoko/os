@@ -1,5 +1,5 @@
 ---
-version: v0.16.2
+version: v0.16.3
 project: os
 updated: 2026-08-01
 type: changelog
@@ -10,6 +10,14 @@ type: changelog
 Runtime version is the top-level VERSION file (no v prefix there).
 This file is newest-first. When behavior ships: bump VERSION, add an entry
 here, update this frontmatter version / updated, then conventional-commit.
+
+## [v0.16.3] — 2026-08-01
+
+### Fixed — product install ships full desktop matrix
+
+`teddyos-install-product.sh` now installs the same app desktops as the live
+ISO (Email, Perplexity, Devin, Replit, plus NoDisplay Answers/Accounts/Claude)
+so UTM daily-driver guests match e2e and the app grid.
 
 ## [v0.16.2] — 2026-08-01
 

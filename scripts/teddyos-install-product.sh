@@ -169,6 +169,95 @@ Categories=Network;InstantMessaging;
 StartupNotify=true
 EOF
 
+# Match ISO desktop matrix (e2e + app grid). NoDisplay for shell-only apps.
+cat > "$STAGE/usr/share/applications/teddyos-gmail.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Email
+Comment=Set up Gmail or another email provider
+Exec=teddyos-gmail
+Icon=gmail-desktop
+Terminal=false
+Categories=Network;Email;
+StartupNotify=true
+Keywords=Gmail;Outlook;Yahoo;Mail;Email;
+EOF
+
+cat > "$STAGE/usr/share/applications/teddyos-claude.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Claude
+Comment=Ask Claude (via Search)
+Exec=teddyos-search-app
+Icon=teddyos-claude
+Terminal=false
+NoDisplay=true
+Categories=Utility;Development;
+StartupWMClass=com.teddyos.Claude
+EOF
+
+cat > "$STAGE/usr/share/applications/teddyos-perplexity.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Perplexity
+Comment=Ask anything on the web
+Exec=teddyos-perplexity
+Icon=teddyos-perplexity
+Terminal=false
+Categories=Network;WebBrowser;
+StartupWMClass=teddyos-perplexity
+EOF
+
+cat > "$STAGE/usr/share/applications/teddyos-devin.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Devin
+Comment=AI software engineer from Cognition
+Exec=teddyos-devin
+Icon=teddyos-devin
+Terminal=false
+Categories=Network;Development;
+StartupWMClass=teddyos-devin
+EOF
+
+cat > "$STAGE/usr/share/applications/teddyos-replit.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Replit
+Comment=Build apps from plain words
+Exec=teddyos-replit
+Icon=teddyos-replit
+Terminal=false
+Categories=Network;Development;
+StartupWMClass=teddyos-replit
+EOF
+
+cat > "$STAGE/usr/share/applications/teddyos-accounts.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Getting you ready
+Comment=One-time sign-in so teddyOS can help
+Exec=teddyos-accounts
+Icon=teddyos-accounts
+Terminal=false
+NoDisplay=true
+Categories=Settings;Utility;
+StartupWMClass=com.teddyos.Accounts
+EOF
+
+cat > "$STAGE/usr/share/applications/teddyos-answers.desktop" <<'EOF'
+[Desktop Entry]
+Type=Application
+Name=Answers
+Comment=Answers to what you asked, in one place
+Exec=teddyos-ask-all
+Icon=teddyos-answers
+Terminal=false
+NoDisplay=true
+Categories=Utility;
+StartupWMClass=com.teddyos.AskAll
+EOF
+
 cat > "$STAGE/usr/share/applications/teddyos-welcome.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
