@@ -2549,14 +2549,34 @@ assert s.is_web_first_goal("food delivery")
 assert not s.is_web_first_goal("sushi")  # bare food stays normal lookup
 assert not s.is_web_first_goal("order of magnitude")
 assert not s.is_web_first_goal("tsla stock")
-# filter keeps builtin + title-matching Guide; drops Focaccia-class noise
+# filter keeps food Help + title-matching Guide; drops Focaccia / Smelting / OS docs
 weak = s.Result("Focaccia", "https://x", "bread recipe", "portal", score=20.0, matched=1, terms=2)
 strong = s.Result("Kimchi", "https://y", "korean", "portal", score=9.0, matched=2, terms=2)
-help_hit = s.Result("Pizza", "os://food/pizza", "flatbread", "built-in", score=1.0, matched=1, terms=1)
-kept = s._filter_web_first_results([weak, strong, help_hit], "kimchi recipe")
-assert help_hit in kept and strong in kept and weak not in kept
-kept_pizza = s._filter_web_first_results([weak, help_hit], "pizza recipe")
-assert help_hit in kept_pizza and weak not in kept_pizza
+smelt = s.Result("Smelting", "https://z", "metal", "portal", score=15.0, matched=1, terms=2)
+help_hit = s.Result(
+    "Pizza", "os://food/pizza", "flatbread", "built-in",
+    score=1.0, matched=1, terms=1, category="food",
+)
+os_doc = s.Result(
+    "Desktop UTM daily driver", "os://desktop", "make linux",
+    "built-in", score=0.5, matched=1, terms=2, category="docs",
+)
+tip = s.Result(
+    "Recipes delivery and near me", "os://search/web-first", "recipes",
+    "built-in", score=2.0, matched=1, terms=1, category="food",
+)
+kept = s._filter_web_first_results(
+    [weak, strong, help_hit, os_doc, tip], "kimchi recipe")
+assert strong in kept and tip in kept
+assert help_hit not in kept  # pizza card only for pizza queries
+assert weak not in kept and os_doc not in kept
+kept_pizza = s._filter_web_first_results([weak, help_hit, tip], "pizza recipe")
+assert help_hit in kept_pizza and tip in kept_pizza and weak not in kept_pizza
+kept_smelt = s._filter_web_first_results([smelt, tip], "Smelt recipe")
+assert smelt not in kept_smelt and tip in kept_smelt
+kept_ashure = s._filter_web_first_results(
+    [tip, help_hit, os_doc], "how to make Ashure")
+assert tip in kept_ashure and help_hit not in kept_ashure and os_doc not in kept_ashure
 
 # is_linkedin_messages_goal
 assert s.is_linkedin_messages_goal("reply to my linkedin messages")

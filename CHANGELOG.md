@@ -1,5 +1,5 @@
 ---
-version: v0.16.6
+version: v0.16.7
 project: os
 updated: 2026-08-01
 type: changelog
@@ -10,6 +10,16 @@ type: changelog
 Runtime version is the top-level VERSION file (no v prefix there).
 This file is newest-first. When behavior ships: bump VERSION, add an entry
 here, update this frontmatter version / updated, then conventional-commit.
+
+## [v0.16.7] — 2026-08-01
+
+### Fixed — web-first recipe ranking after 2023 Trends probe
+
+- Guide title match uses **word boundaries** (no more “smelt” → Smelting).
+- Built-in on web-first keeps **food** cards + tip only (not Desktop UTM on
+  “how to make …”).
+- Local files only if the dish name is in the filename (probe JSON no longer
+  wins for Bibimbap).
 
 ## [v0.16.6] — 2026-08-01
 

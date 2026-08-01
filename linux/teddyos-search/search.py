@@ -704,14 +704,25 @@ _WEB_FIRST_FILLER = frozenset({
 })
 
 
+def _title_has_content_token(title: str, content: list[str]) -> bool:
+    """True if a dish/place token appears as a whole word in the title.
+
+    Substring match let “smelt” keep “Smelting” and similar false friends.
+    """
+    title_l = (title or "").lower()
+    for t in content:
+        if re.search(rf"\b{re.escape(t)}\b", title_l):
+            return True
+    return False
+
+
 def _filter_web_first_results(
     results: list[Result], query: str = "",
 ) -> list[Result]:
-    """Keep Help/files; keep Guide only if the dish name is in the title.
+    """Keep food Help + honest Guide; drop OS docs and false-friend wiki.
 
-    “pizza recipe” used to rank Focaccia (high BM25 on “recipe” in body).
-    Web-first means: offline food cards + files stay; portal must put a
-    content token (pizza, sushi, …) in the *title*, not only filler words.
+    “pizza recipe” used to rank Focaccia; “smelt recipe” ranked Smelting;
+    “how to make Ashure” kept Desktop UTM because “make” hits OS seed text.
     """
     content = [
         t for t in query_terms(query)
@@ -720,16 +731,29 @@ def _filter_web_first_results(
     keep: list[Result] = []
     for r in results:
         src = (r.source or "").lower()
-        if src in ("built-in", "your files", "workspace"):
-            keep.append(r)
+        title = r.title or ""
+        cat = (r.category or "").lower()
+
+        if src == "built-in":
+            # Web-first tip always; food cards only when the dish is in the
+            # title (else “how to make Ashure” listed every food card).
+            title_l = title.lower()
+            if "recipe" in title_l or "near me" in title_l:
+                keep.append(r)
+            elif content and _title_has_content_token(title, content):
+                keep.append(r)
             continue
+
+        if src in ("your files", "workspace"):
+            # Only keep local files that look about the dish (not a probe JSON
+            # that happens to list the query string).
+            if content and _title_has_content_token(title, content):
+                keep.append(r)
+            continue
+
         if src not in ("portal", "teddysearch", "web"):
             continue
-        if not content:
-            continue
-        title_l = (r.title or "").lower()
-        # Dish/place token must appear in the title (Kimchi for “kimchi recipe”).
-        if any(t in title_l for t in content):
+        if content and _title_has_content_token(title, content):
             keep.append(r)
     return keep
 
@@ -1408,6 +1432,26 @@ def search(query: str, limit: int = 10) -> Outcome:
     # Focaccia, then the filter emptied the list.
     if web_first:
         outcome.results = _filter_web_first_results(outcome.results, query)
+        # “how to make Ashure” may not BM25-hit the tip card (no shared rare
+        # tokens). Still show the offline tip when Built-in help is on.
+        if grants.get("search.query") and not any(
+            "recipe" in (r.title or "").lower() or "near me" in (r.title or "").lower()
+            for r in outcome.results
+        ):
+            outcome.results.insert(0, Result(
+                title="Recipes delivery and near me",
+                url="os://search/web-first",
+                snippet=(
+                    "Recipes, food delivery, and places near you are better "
+                    "on the open web. Use Search the web first — the Guide "
+                    "crawl is not a restaurant app."
+                ),
+                source="built-in",
+                score=1.0,
+                category="food",
+                matched=0,
+                terms=len(query_terms(query)) or 1,
+            ))
         outcome.notes.append(
             "Recipes, delivery, and “near me” are better on the open web — "
             "use Search the web below (or first).")
