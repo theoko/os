@@ -13,6 +13,10 @@ here, update this frontmatter version / updated, then conventional-commit.
 
 ## [v0.16.3] — 2026-08-01
 
+### Fixed — Email phone QR works without guest LAN
+
+UTM shared networking (192.168.64.x) is unreachable from a phone on home Wi‑Fi. Email **Link from phone** now QRs the provider https URL directly (cellular or any Wi‑Fi). Clear copy: phone sign-in does not sign in the computer.
+
 ### Fixed — product install ships full desktop matrix
 
 `teddyos-install-product.sh` now installs the same app desktops as the live

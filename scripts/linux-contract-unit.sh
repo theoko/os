@@ -2660,7 +2660,11 @@ acc = Path("linux/teddyos-agent/teddyos-accounts").read_text()
 assert "phone_auth" in acc and "_show_phone_qr" in acc
 gm = Path("linux/teddyos-agent/teddyos-gmail").read_text()
 assert "Link from phone" in gm or "phone" in gm.lower()
-assert "PhonePairServer" in gm or "phone_auth" in gm
+assert "phone_auth" in gm
+# Email QR must not require guest LAN (UTM 192.168.64.x unreachable from phone)
+assert "Works on cellular" in gm or "Direct provider URL" in gm or "no guest HTTP server" in gm
+assert phone_auth.is_vm_guest_ip("192.168.64.14")
+assert not phone_auth.is_vm_guest_ip("192.168.1.10")
 print("phone-auth-ok")
 PY
 then

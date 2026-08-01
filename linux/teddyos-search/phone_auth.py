@@ -16,8 +16,39 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 
+# UTM shared networking, QEMU usernet, VirtualBox host-only — phone on home
+# Wi‑Fi cannot reach these. Prefer a real LAN address when one exists.
+_VM_ONLY_PREFIXES = (
+    "192.168.64.",   # Apple/UTM shared
+    "192.168.122.",  # libvirt default
+    "10.0.2.",       # QEMU usernet
+    "10.0.3.",
+    "172.16.0.",     # common VBox host-only (also used on some LANs — see below)
+)
+
+
+def is_vm_guest_ip(ip: str | None) -> bool:
+    """True when *ip* is almost certainly only reachable inside a VM net."""
+    if not ip:
+        return True
+    if ip.startswith("127.") or ip.startswith("169.254."):
+        return True
+    # UTM shared + QEMU usernet are unambiguous guest NAT ranges.
+    if ip.startswith("192.168.64.") or ip.startswith("10.0.2."):
+        return True
+    if ip.startswith("192.168.122."):
+        return True
+    return False
+
+
 def lan_ipv4() -> str | None:
-    """Best-effort primary LAN IPv4 (not 127.0.0.1)."""
+    """Best-effort IPv4 a *phone on Wi‑Fi* might reach (not 127.0.0.1).
+
+    Prefer a non-VM address. In UTM shared networking the only address is often
+    192.168.64.x — callers should treat that as unreachable from a phone and
+    fall back (e.g. QR the public https URL for webmail).
+    """
+    candidates: list[str] = []
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
@@ -26,17 +57,21 @@ def lan_ipv4() -> str | None:
         finally:
             s.close()
         if ip and not ip.startswith("127."):
-            return ip
+            candidates.append(ip)
     except OSError:
         pass
     try:
         for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET):
             ip = info[4][0]
-            if ip and not ip.startswith("127."):
-                return ip
+            if ip and not ip.startswith("127.") and ip not in candidates:
+                candidates.append(ip)
     except OSError:
         pass
-    return None
+    # Prefer anything that does not look like UTM/QEMU guest-only.
+    for ip in candidates:
+        if not is_vm_guest_ip(ip):
+            return ip
+    return candidates[0] if candidates else None
 
 
 def make_qr_png(data: str, path: Path, *, size: int = 8) -> bool:
