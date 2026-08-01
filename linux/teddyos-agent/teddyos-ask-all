@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -82,6 +83,70 @@ APP_ID = "com.teddyos.AskAll"
 _TIMEOUT = 180
 # Soft cap so a runaway log dump cannot freeze the UI.
 _MAX_CHARS = 24_000
+
+
+def format_answer_for_display(text: str) -> str:
+    """Turn model Markdown into clean reading text for a Gtk.Label.
+
+    Answers cards use plain labels (not a browser). Raw ``##`` / ``**bold**``
+    looks broken — especially in “Keeping it simple.” Strip common Markdown
+    while keeping structure: section titles, bullets, paragraphs.
+    """
+    raw = (text or "").replace("\r\n", "\n").replace("\r", "\n")
+    if not raw.strip():
+        return ""
+
+    def _inline(s: str) -> str:
+        s = re.sub(r"\*\*(.+?)\*\*", r"\1", s)
+        s = re.sub(r"__(.+?)__", r"\1", s)
+        s = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", s)
+        s = re.sub(r"(?<!_)_(?!_)(.+?)(?<!_)_(?!_)", r"\1", s)
+        s = re.sub(r"`([^`]+)`", r"\1", s)
+        s = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", s)
+        return s
+
+    out: list[str] = []
+    in_fence = False
+    for line in raw.split("\n"):
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            out.append(line)
+            continue
+
+        hm = re.match(r"^(#{1,6})\s+(.*)$", line)
+        if hm:
+            title = _inline(hm.group(2).strip())
+            if title:
+                if out and out[-1] != "":
+                    out.append("")
+                out.append(title)
+                out.append("")
+            continue
+
+        bm = re.match(r"^(\s*)[-*+]\s+(.*)$", line)
+        if bm:
+            out.append(f"{bm.group(1)}• {_inline(bm.group(2).strip())}")
+            continue
+
+        nm = re.match(r"^(\s*)(\d+)\.\s+(.*)$", line)
+        if nm:
+            out.append(f"{nm.group(1)}{nm.group(2)}. {_inline(nm.group(3).strip())}")
+            continue
+
+        # Horizontal rule → blank line
+        if re.match(r"^(\s*[-*_]\s*){3,}$", stripped):
+            if out and out[-1] != "":
+                out.append("")
+            continue
+
+        out.append(_inline(line))
+
+    text_out = "\n".join(out)
+    text_out = re.sub(r"\n{3,}", "\n\n", text_out)
+    return text_out.strip()
 
 
 def _model_prompt(tool_id: str, prompt: str) -> str:
@@ -266,11 +331,12 @@ class ToolCard(Gtk.Box):
         self.spinner.set_visible(False)
         self.status.set_text("Done")
         self.body.remove_css_class("dim-label")
-        cleaned = (text or "").strip() or "No answer came back."
-        if len(cleaned) > _MAX_CHARS:
-            cleaned = cleaned[:_MAX_CHARS] + "\n\n… (cut short here)"
-        self.answer_text = cleaned
-        self.body.set_text(cleaned)
+        # Keep raw for synthesis; show a cleaned version in the card.
+        raw = (text or "").strip() or "No answer came back."
+        if len(raw) > _MAX_CHARS:
+            raw = raw[:_MAX_CHARS] + "\n\n… (cut short here)"
+        self.answer_text = raw
+        self.body.set_text(format_answer_for_display(raw) or raw)
         self._add_continue(failed=False)
         self._notify_done_once()
 
@@ -282,7 +348,7 @@ class ToolCard(Gtk.Box):
         self.spinner.set_visible(False)
         self.status.set_text("Couldn’t finish")
         self.body.remove_css_class("dim-label")
-        self.body.set_text(message)
+        self.body.set_text(format_answer_for_display(message) or (message or ""))
         self._add_continue(failed=True)
         self._notify_done_once()
 
@@ -1097,7 +1163,7 @@ class AskAllWindow(Adw.ApplicationWindow):
         who = _TITLES.get(reviewer, reviewer)
         self._synth_status.set_text(f"Done · via {who}")
         self._synth_body.remove_css_class("dim-label")
-        self._synth_body.set_text(text)
+        self._synth_body.set_text(format_answer_for_display(text) or (text or ""))
         self._progress.set_text(
             "All done. Start with “Across all answers”, "
             "then open any single AI below if you want more detail."

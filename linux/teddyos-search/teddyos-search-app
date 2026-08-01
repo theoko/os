@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -795,9 +796,14 @@ class SearchWindow(Adw.ApplicationWindow):
             self._begin_credit_probes(tools)
             return rows
 
-        # No local folder — try the person's GitHub when they are signed in.
+        # No local folder — resolve from GitHub.
+        # owner/name (e.g. iakovos/trading) can be a *public* clone with no
+        # sign-in; private repos and bare names still need GitHub connected.
         auth = git_projects.git_auth()
-        if not auth.ok:
+        owner_name = bool(
+            re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", subject or "")
+        )
+        if not auth.ok and not owner_name:
             rows.append(self._notice_row(
                 f"There isn’t a folder called “{subject}” on this computer yet. "
                 "If it lives in your GitHub account, connect GitHub once, then "
@@ -807,12 +813,19 @@ class SearchWindow(Adw.ApplicationWindow):
             rows.append(self._github_connect_row())
             return rows
 
-        who = f" as {auth.login}" if auth.login else ""
-        rows.append(self._notice_row(
-            f"There isn’t a folder called “{subject}” here. "
-            f"Checking your GitHub projects{who}…",
-            "emblem-synchronizing-symbolic",
-        ))
+        if auth.ok:
+            who = f" as {auth.login}" if auth.login else ""
+            rows.append(self._notice_row(
+                f"There isn’t a folder called “{subject}” here. "
+                f"Checking your GitHub projects{who}…",
+                "emblem-synchronizing-symbolic",
+            ))
+        else:
+            rows.append(self._notice_row(
+                f"There isn’t a folder called “{subject}” here. "
+                "Looking for a public GitHub project with that name…",
+                "emblem-synchronizing-symbolic",
+            ))
         self._begin_git_lookup(subject, generation=self._generation)
         return rows
 
@@ -1482,16 +1495,34 @@ class SearchWindow(Adw.ApplicationWindow):
             ))
             log.warning("git lookup error for %r: %s", subject, err)
         if not repos:
-            self.results.append(self._notice_row(
-                f"Couldn’t find a project named “{subject}” on this computer "
-                "or in your GitHub account. Check the name, or put the folder "
-                "in your home folder and try again.",
-                "dialog-information-symbolic",
-            ))
+            auth = git_projects.git_auth()
+            if auth.ok:
+                self.results.append(self._notice_row(
+                    f"Couldn’t find a project named “{subject}” on this computer "
+                    "or in your GitHub account. Check the name, or put the folder "
+                    "in your home folder and try again.",
+                    "dialog-information-symbolic",
+                ))
+            else:
+                # Public owner/name miss, or private without sign-in.
+                self.results.append(self._notice_row(
+                    f"Couldn’t download “{subject}” without GitHub sign-in "
+                    "(private project, or the name isn’t public). "
+                    "Connect GitHub once, then try again — or copy the folder "
+                    "into your home folder.",
+                    "dialog-information-symbolic",
+                ))
+                self.results.append(self._github_connect_row())
             self.stack.set_visible_child_name("results")
             return False
 
-        self.results.append(self._section_label("On your GitHub — tap to download"))
+        public = any(getattr(r, "source", "") == "public-https" for r in repos)
+        label = (
+            "On GitHub — tap to download"
+            if public
+            else "On your GitHub — tap to download"
+        )
+        self.results.append(self._section_label(label))
         for repo in repos:
             self.results.append(self._clone_row(repo))
         self.stack.set_visible_child_name("results")
@@ -1509,13 +1540,19 @@ class SearchWindow(Adw.ApplicationWindow):
         return row
 
     def _start_github_connect(self) -> None:
-        """Launch GitHub sign-in in a window the person can follow.
-
-        They should not have to invent a command. Prefer Terminal so the
-        browser/code steps from GitHub are visible; fall back to a plain
-        notice if nothing can run.
-        """
+        """Launch GitHub sign-in in a window the person can follow."""
         log.info("start github connect")
+        # gh is required for Connect — ISO ships it; thin product installs
+        # sometimes omit it. Offer a plain next step instead of "Not on this computer."
+        if not shutil.which("gh"):
+            self.results.append(self._notice_row(
+                "GitHub tools aren’t on this computer yet. "
+                "Ask Search: “install GitHub CLI” or open Terminal and run: "
+                "sudo apt install -y gh — then tap Connect GitHub again.",
+                "dialog-information-symbolic",
+            ))
+            self.stack.set_visible_child_name("results")
+            return
         if self._open_accounts("github"):
             return
         self.results.append(self._notice_row(

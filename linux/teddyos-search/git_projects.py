@@ -78,18 +78,28 @@ def find_remote_repos(subject: str, limit: int = 8) -> list[RemoteRepo]:
     """Search the user's GitHub for repos matching a work-on subject.
 
     Returns [] when unauthenticated or nothing matches — never raises.
+
+    Explicit ``owner/name`` is special: public repos can be found with plain
+    HTTPS even when ``gh`` is not signed in (or not installed). Private repos
+    still need auth and return [] so the UI can offer Connect GitHub.
     """
     slug = (subject or "").strip().strip("/")
     if not slug or len(slug) < 2:
         return []
     auth = git_auth()
-    if not auth.ok:
-        return []
 
     # owner/name typed explicitly.
     if re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", slug):
-        repo = _resolve_full_name(slug, auth)
+        if auth.ok:
+            repo = _resolve_full_name(slug, auth)
+            if repo:
+                return [repo]
+        # Public clone without sign-in (common for open projects / first try).
+        repo = _resolve_public_full_name(slug)
         return [repo] if repo else []
+
+    if not auth.ok:
+        return []
 
     found: list[RemoteRepo] = []
     if auth.method == "gh":
@@ -287,7 +297,7 @@ def _resolve_full_name(full_name: str, auth: GitAuth) -> RemoteRepo | None:
                 )
             except (json.JSONDecodeError, TypeError):
                 pass
-    # SSH probe: does the remote exist?
+    # SSH / authenticated probe: does the remote exist?
     url = _clone_url(full_name, auth)
     code, _out = _run(["git", "ls-remote", "--heads", url, "HEAD"], timeout=20)
     if code == 0:
@@ -298,6 +308,23 @@ def _resolve_full_name(full_name: str, auth: GitAuth) -> RemoteRepo | None:
             source="ssh-probe",
         )
     return None
+
+
+def _resolve_public_full_name(full_name: str) -> RemoteRepo | None:
+    """HTTPS ls-remote for a public owner/name — no gh, no SSH keys required."""
+    if not shutil.which("git"):
+        return None
+    url = f"https://github.com/{full_name}.git"
+    code, _out = _run(["git", "ls-remote", "--heads", url, "HEAD"], timeout=20)
+    if code != 0:
+        return None
+    return RemoteRepo(
+        full_name=full_name,
+        name=full_name.split("/")[-1],
+        clone_url=url,
+        description="",
+        source="public-https",
+    )
 
 
 def _gh_search(slug: str, login: str, limit: int) -> list[RemoteRepo]:

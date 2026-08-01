@@ -9306,6 +9306,10 @@ _SHAPE: dict[Audience, str] = {
         "words. Do not ask them to open a terminal, run commands, or read stack "
         "traces. If you change files, say what you did in plain language. "
         "If a technical word is unavoidable, define it once in one simple sentence.\n\n"
+        "Write for a plain text screen: do NOT use Markdown. No # headings, "
+        "no **bold**, no *italics*, no ``` code fences, no - bullet markers. "
+        "Use short paragraphs. Put section titles on their own line in ordinary "
+        "words (for example: The short version).\n\n"
         "Their request:\n{text}"
     ),
 }

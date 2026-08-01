@@ -48,8 +48,10 @@ echo ">>> browser"
 run 'sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq chromium'
 
 echo ">>> tooling + Claude Code"
+# gh: Search “work on owner/repo” and Connect GitHub need the GitHub CLI.
+# ISO already ships it; daily-driver provision must match.
 run 'sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-       nodejs npm git ripgrep build-essential python3 python3-venv'
+       nodejs npm git gh ripgrep build-essential python3 python3-venv'
 run 'sudo npm install -g --silent @anthropic-ai/claude-code 2>&1 | tail -3'
 
 echo ">>> boot to the desktop"

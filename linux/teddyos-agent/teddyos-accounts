@@ -121,6 +121,8 @@ class SignInWindow(Adw.ApplicationWindow):
         app: Adw.Application,
         account: "acc.Account",
         argv: list[str],
+        *,
+        skip_intro: bool = False,
     ):
         super().__init__(
             application=app,
@@ -129,6 +131,7 @@ class SignInWindow(Adw.ApplicationWindow):
         self.set_default_size(520, 480)
         self._account = account
         self._argv = argv
+        self._skip_intro = skip_intro
         self._proc: subprocess.Popen | None = None
         self._opened_urls: set[str] = set()
         self._last_url = ""
@@ -330,21 +333,38 @@ class SignInWindow(Adw.ApplicationWindow):
         toolbar.set_content(stack)
         self.set_content(toolbar)
 
-        log.info("connect start id=%s argv=%s", account.id, argv)
+        log.info(
+            "connect start id=%s argv=%s skip_intro=%s",
+            account.id, argv, skip_intro,
+        )
 
-        if animations_enabled():
-            self._start_intro()
+        # From Search Continue / --connect: skip the ~7s "Let’s set you up"
+        # animation — people already waited; start the browser path now.
+        if skip_intro or not animations_enabled():
+            self._intro_col.set_opacity(0.0)
+            self._intro_col.set_visible(False)
+            self._skip.set_visible(False)
+            self._page.set_opacity(1.0)
+            self._header.set_opacity(1.0)
+            self._intro_over = True
+            GLib.idle_add(self._begin_login_ui)
         else:
-            self._intro_finish()
+            self._start_intro()
 
     # --- intro --------------------------------------------------------------
 
     def _beats(self) -> list[str]:
         name = self._account.title
+        if self._account.id in _DEVICE_CODE_ACCOUNTS:
+            return [
+                "Let’s set you up.",
+                f"We’ll connect {name} in a moment.",
+                "Prefer your phone? We’ll show a code or QR when we can.",
+            ]
         return [
             "Let’s set you up.",
             f"We’ll connect {name} in a moment.",
-            "Prefer your phone? We’ll show a code or QR when we can.",
+            "A browser window will open on this computer.",
         ]
 
     def _start_intro(self) -> None:
@@ -398,12 +418,20 @@ class SignInWindow(Adw.ApplicationWindow):
                 "A sign-in page may open next. We’ll handle any codes."
             )
         else:
-            # Claude / Grok / Codex style: pure browser OAuth.
-            body = (
-                f"A sign-in page is opening for {self._account.title}.\n"
-                "Sign in and approve there. If the page shows a code, "
-                "paste it in the box below — no terminal needed."
-            )
+            # Claude / Grok / Codex: browser OAuth. In VMs the page often ends
+            # with a code to paste — treat that as normal, not failure.
+            if self._account.id == "claude":
+                body = (
+                    f"A sign-in page is opening for {self._account.title}.\n"
+                    "Sign in and approve there. If the page shows a code at the "
+                    "end, paste it in the box below — that is normal on this OS."
+                )
+            else:
+                body = (
+                    f"A sign-in page is opening for {self._account.title}.\n"
+                    "Sign in and approve there. If the page shows a code, "
+                    "paste it in the box below — no terminal needed."
+                )
             # Offer paste early so people aren’t stuck staring at a code.
             self._paste_box.set_visible(True)
         self._body.set_text(body)
@@ -598,9 +626,9 @@ class SignInWindow(Adw.ApplicationWindow):
                 self._device_opened = True
                 self._browser_opened = True
         elif self._account.id not in _DEVICE_CODE_ACCOUNTS:
-            # Browser OAuth: QR the authorize URL so a phone can open it too.
-            self._code_box.set_visible(True)
-            self._show_phone_qr(url)
+            # Do not QR Claude/browser OAuth: phone cannot finish localhost
+            # callback. Keep QR only for device-code tools (GitHub/Copilot).
+            pass
         if self._account.id in _DEVICE_CODE_ACCOUNTS:
             body = (
                 f"Scan the QR with your phone, or finish in the window for "
@@ -608,9 +636,9 @@ class SignInWindow(Adw.ApplicationWindow):
             )
         else:
             body = (
-                f"Sign in to {self._account.title} in the browser window "
-                f"(or scan the QR on your phone). "
-                "If it shows a code at the end, paste it below and tap Send code."
+                f"Sign in to {self._account.title} in the browser window on "
+                "this computer. If it shows a code at the end, paste it below "
+                "and tap Send code."
             )
             self._paste_box.set_visible(True)
         self._set_status("On your phone or this screen", body, spinning=True)
@@ -841,9 +869,9 @@ class AccountsWindow(Adw.ApplicationWindow):
 
         intro = Gtk.Label(
             label=(
-                "To answer questions and download your projects, teddyOS needs "
-                "you signed in a few places (like Claude or GitHub). "
-                "Tap Continue — we’ll open each sign-in for you, one at a time."
+                "To answer questions and download projects, teddyOS needs a short "
+                "sign-in (usually Claude). Tap Continue for that one step. "
+                "Other apps stay optional — connect them later only if you want."
             ),
             wrap=True,
             xalign=0.0,
@@ -1209,7 +1237,14 @@ class AccountsWindow(Adw.ApplicationWindow):
 
 
         log.info("open sign-in id=%s argv=%s", account.id, argv)
-        win = SignInWindow(self.get_application(), account, argv)
+        # Always skip cinematic intro when opened from Search Continue / --connect.
+        app = self.get_application()
+        skip = bool(
+            getattr(app, "_setup_all_on_start", False)
+            or getattr(app, "_focus_id", None)
+            or self._focus_id
+        )
+        win = SignInWindow(app, account, argv, skip_intro=skip)
         win.present()
         win.connect("close-request", self._after_sign_in)
 

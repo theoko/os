@@ -2647,6 +2647,61 @@ else
   bad "phone_auth" "failed"
 fi
 
+# --- Answers: strip Markdown for card display ---
+if python3 - <<'PY'
+import re
+from pathlib import Path
+text = Path("linux/teddyos-agent/teddyos-ask-all").read_text()
+m = re.search(
+    r"def format_answer_for_display\(text: str\) -> str:.*?(?=\ndef )",
+    text,
+    re.S,
+)
+assert m, "format_answer_for_display missing"
+ns = {"re": re}
+exec(m.group(0), ns)
+fmt = ns["format_answer_for_display"]
+out = fmt("## The short version\n\nYour computer runs **Linux**.\n- one\n- two\n")
+assert "##" not in out and "**" not in out
+assert "The short version" in out
+assert "• one" in out
+plain = Path("linux/teddyos-search/audience.py").read_text()
+assert "do NOT use Markdown" in plain
+print("answer-display-ok")
+PY
+then
+  ok "answer display strips Markdown + PLAIN forbids it"
+else
+  bad "answer display" "formatter or PLAIN shape"
+fi
+
+# --- GitHub work-on: public owner/repo + gh in provision ---
+if python3 - <<'PY'
+from pathlib import Path
+import re
+gp = Path("linux/teddyos-search/git_projects.py").read_text()
+assert "_resolve_public_full_name" in gp
+assert "public-https" in gp
+app = Path("linux/teddyos-search/teddyos-search-app").read_text()
+assert "owner_name" in app
+assert "public GitHub" in app or "Looking for a public" in app
+prov = Path("scripts/teddyos-provision.sh").read_text()
+assert re.search(r"\bgh\b", prov)
+inst = Path("scripts/teddyos-install-product.sh").read_text()
+assert re.search(r"\bgh\b", inst)
+acc = Path("linux/teddyos-agent/teddyos-accounts").read_text()
+assert "skip_intro" in acc
+assert "that is normal on this OS" in acc
+# OAuth must not QR authorize URLs as "phone finishes setup"
+assert "Do not QR Claude" in acc or "localhost callback" in acc
+print("github-workon-ok")
+PY
+then
+  ok "GitHub work-on public path + gh package + fast Connect"
+else
+  bad "github work-on" "missing public resolve or gh wiring"
+fi
+
 echo
 echo "PASS=$PASS  FAIL=$FAIL  TOTAL=$((PASS + FAIL))"
 if [[ "$FAIL" -gt 0 ]]; then

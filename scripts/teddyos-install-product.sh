@@ -252,6 +252,8 @@ run 'set -e
      sudo gtk-update-icon-cache -f /usr/share/icons/hicolor >/dev/null 2>&1 || true
      sudo update-desktop-database /usr/share/applications >/dev/null 2>&1 || true
      sudo dconf update >/dev/null 2>&1 || true
+     # Search “work on owner/repo” + Connect GitHub need the GitHub CLI (ISO has it).
+     sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gh git >/dev/null 2>&1 || true
      sudo DEBIAN_FRONTEND=noninteractive apt-get remove -y -qq gnome-tour >/dev/null 2>&1 || true
      rm -f /tmp/teddyos-product.tgz
      command -v teddyos-search-app
