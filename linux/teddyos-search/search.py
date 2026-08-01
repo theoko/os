@@ -1403,17 +1403,15 @@ def search(query: str, limit: int = 10) -> Outcome:
             "Permissions and add the folder under Your files.")
 
     outcome.results.sort(key=lambda r: r.score, reverse=True)
-    # Full-match prune across sources, not only inside each one — otherwise a
-    # perfect local hit still sits under a pile of single-term web noise.
-    outcome.results = prune(outcome.results)[:limit]
-
+    # Web-first filter BEFORE the limit slice. Portal food noise scores higher
+    # than offline Help cards; slicing first dropped Pizza Help in favor of
+    # Focaccia, then the filter emptied the list.
     if web_first:
-        # Guide crawl is finance/wiki-heavy. “pizza recipe” and “sushi near me”
-        # produced Focaccia / Vinegar-class noise; keep Help + files + Guide
-        # only when the dish name is in the title.
-        outcome.results = _filter_web_first_results(
-            outcome.results, query)[:limit]
+        outcome.results = _filter_web_first_results(outcome.results, query)
         outcome.notes.append(
             "Recipes, delivery, and “near me” are better on the open web — "
             "use Search the web below (or first).")
+    # Full-match prune across sources, not only inside each one — otherwise a
+    # perfect local hit still sits under a pile of single-term web noise.
+    outcome.results = prune(outcome.results)[:limit]
     return outcome
