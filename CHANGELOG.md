@@ -1,5 +1,5 @@
 ---
-version: v0.16.7
+version: v0.16.8
 project: os
 updated: 2026-08-01
 type: changelog
@@ -10,6 +10,16 @@ type: changelog
 Runtime version is the top-level VERSION file (no v prefix there).
 This file is newest-first. When behavior ships: bump VERSION, add an entry
 here, update this frontmatter version / updated, then conventional-commit.
+
+## [v0.16.8] — 2026-08-01
+
+### Fixed — Ultracode Get help no longer hangs on Claude
+
+- Headless Claude uses `--dangerously-skip-permissions` + `--add-dir` so
+  interactive tool prompts cannot freeze “Thinking…”.
+- Ultracode prompt: vague “work on the project” gets orientation first, not
+  a forced edit thrash.
+- Clearer errors for timeouts / “Execution error”; success/timeout logged.
 
 ## [v0.16.7] — 2026-08-01
 

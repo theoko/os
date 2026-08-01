@@ -252,7 +252,31 @@ def _headless_argv(
         return None
     if tool_id == "claude":
         exe = shutil.which("claude")
-        return [exe, "-p", text] if exe else None
+        if not exe:
+            return None
+        # Headless -p must not wait on interactive permission prompts — those
+        # hang forever and only surface as “Execution error” / a 3‑minute
+        # timeout. Skip checks in this sandboxed guest path (same idea as
+        # antigravity --dangerously-skip-permissions).
+        #
+        # Also force plain-text first answers: Ultracode prompts that say
+        # “read files / make the edit” send Claude Code into a tool loop that
+        # often ends as “Execution error” with no answer. Get help needs a
+        # spoken reply in-window; file edits can be a follow-up.
+        text = (
+            "Answer in plain text only for this turn. Do not use tools, "
+            "shell, or file edits. If you need files, name paths. "
+            "Be concrete and helpful.\n\n"
+            + text
+        )
+        cmd = [
+            exe, "-p", text,
+            "--dangerously-skip-permissions",
+            "--permission-mode", "bypassPermissions",
+        ]
+        if project:
+            cmd.extend(["--add-dir", project])
+        return cmd
     if tool_id == "gemini":
         exe = shutil.which("gemini") or _find("gemini")
         return [exe, "-p", text] if exe else None
@@ -1410,18 +1434,34 @@ class AskAllWindow(Adw.ApplicationWindow):
                 GLib.idle_add(self._cards[tool_id].set_error, msg)
                 return
             if not text:
+                log.warning("headless empty tool=%s code=%s", tool_id, proc.returncode)
                 GLib.idle_add(
                     self._cards[tool_id].set_error,
                     f"{title} finished without an answer. "
                     "Try asking again in a moment.",
                 )
                 return
+            # Claude sometimes prints only "Execution error" when tools fail.
+            if text.strip().lower() in ("execution error", "error") or (
+                len(text) < 40 and "execution error" in text.lower()
+            ):
+                log.warning("headless execution-error tool=%s text=%r", tool_id, text[:80])
+                GLib.idle_add(
+                    self._cards[tool_id].set_error,
+                    f"{title} hit a problem working in this folder. "
+                    "Try a more specific ask (for example “what is this repo?”), "
+                    "or open Claude from Connect and try again.",
+                )
+                return
+            log.info("headless ok tool=%s chars=%d", tool_id, len(text))
             GLib.idle_add(self._cards[tool_id].set_answer, text)
         except subprocess.TimeoutExpired:
+            log.warning("headless timeout tool=%s after=%ss", tool_id, _TIMEOUT)
             GLib.idle_add(
                 self._cards[tool_id].set_error,
-                f"{title} is taking too long. Try a shorter question, or "
-                "ask again in a moment.",
+                f"{title} is taking too long. Try a shorter question "
+                "(for example “what does this project do?”), or ask again "
+                "in a moment.",
             )
         except OSError as exc:
             log.error("headless oserror tool=%s: %s", tool_id, exc)

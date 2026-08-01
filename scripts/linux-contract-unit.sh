@@ -1877,6 +1877,16 @@ else
   bad "teddyos-search CLI" "failed"
 fi
 
+# --- ask-all Claude headless must skip interactive permissions --------------
+if grep -q 'dangerously-skip-permissions' linux/teddyos-agent/teddyos-ask-all \
+  && grep -q 'Execution error' linux/teddyos-agent/teddyos-ask-all \
+  && grep -q 'headless timeout' linux/teddyos-agent/teddyos-ask-all \
+  && grep -q 'vague' linux/teddyos-search/audience.py; then
+  ok "ask-all Claude headless: skip perms + ultracode vague prompt"
+else
+  bad "ask-all claude hang fix" "missing skip-permissions or logging"
+fi
+
 # --- ask-all argparse source (gi may be missing on host) --------------------
 if python3 - <<'PY'
 from pathlib import Path

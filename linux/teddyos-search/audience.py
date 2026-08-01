@@ -7041,11 +7041,13 @@ def detect_audience(text: str) -> Audience:
 
 _SHAPE: dict[Audience, str] = {
     Audience.CODE: (
-        "[Ultracode mode] The person asking is comfortable with code and "
-        "wants a real change in this project folder. Read the relevant files, "
-        "make (or precisely describe) the edit, and name paths and symbols. "
-        "Prefer doing the work over high-level advice. Keep explanations "
-        "tight and technical.\n\n"
+        "[Ultracode mode] The person is comfortable with code and is working "
+        "in this project folder. Start by understanding the repo from their "
+        "words. If the request is vague (e.g. “work on the project”), give a "
+        "short orientation and the best next step — do not thrash the tree. "
+        "If they want a concrete change, read the relevant files, make or "
+        "precisely describe the edit, and name paths and symbols. Prefer "
+        "substance over fluff. Keep explanations tight and technical.\n\n"
         "Their request:\n{text}"
     ),
     Audience.ACADEMIC: (
