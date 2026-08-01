@@ -1432,9 +1432,17 @@ def search(query: str, limit: int = 10) -> Outcome:
     # Focaccia, then the filter emptied the list.
     if web_first:
         outcome.results = _filter_web_first_results(outcome.results, query)
-        # “how to make Ashure” may not BM25-hit the tip card (no shared rare
-        # tokens). Still show the offline tip when Built-in help is on.
-        if grants.get("search.query") and not any(
+        outcome.notes.append(
+            "Recipes, delivery, and “near me” are better on the open web — "
+            "use Search the web below (or first).")
+    # Full-match prune across sources, not only inside each one — otherwise a
+    # perfect local hit still sits under a pile of single-term web noise.
+    outcome.results = prune(outcome.results)[:limit]
+
+    # Inject tip AFTER prune so a full-match Guide hit (Bagel) does not drop
+    # the offline recipes card. “how to make Ashure” may not BM25-hit the tip.
+    if web_first and grants.get("search.query"):
+        if not any(
             "recipe" in (r.title or "").lower() or "near me" in (r.title or "").lower()
             for r in outcome.results
         ):
@@ -1452,10 +1460,4 @@ def search(query: str, limit: int = 10) -> Outcome:
                 matched=0,
                 terms=len(query_terms(query)) or 1,
             ))
-        outcome.notes.append(
-            "Recipes, delivery, and “near me” are better on the open web — "
-            "use Search the web below (or first).")
-    # Full-match prune across sources, not only inside each one — otherwise a
-    # perfect local hit still sits under a pile of single-term web noise.
-    outcome.results = prune(outcome.results)[:limit]
     return outcome
