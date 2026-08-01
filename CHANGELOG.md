@@ -1,7 +1,7 @@
 ---
-version: v0.16.1
+version: v0.16.2
 project: os
-updated: 2026-07-31
+updated: 2026-08-01
 type: changelog
 ---
 
@@ -10,6 +10,23 @@ type: changelog
 Runtime version is the top-level VERSION file (no v prefix there).
 This file is newest-first. When behavior ships: bump VERSION, add an entry
 here, update this frontmatter version / updated, then conventional-commit.
+
+## [v0.16.2] — 2026-08-01
+
+### Fixed — product polish on daily-driver Linux
+
+- **Debian watermark** — `teddyos-brand.sh` clears GDM login logo, rewrites
+  os-release / issue / lsb, points vendor-logos at teddyOS; wired into
+  provision + product install.
+- **Dock vanished** — Just Perfection `dash=true` when using Dash to Dock
+  (hiding overview dash was zeroing the dock actor).
+- **Answers cards** — strip Markdown for display; plain persona asks the
+  model not to emit `##` / `**`.
+- **GitHub work-on** — install `gh` on provision/product paths (ISO already
+  had it); public `owner/repo` clones without sign-in; clearer private-repo
+  Connect copy.
+- **Connect friction** — skip the long intro when launched from Search;
+  no OAuth phone QR for Claude (localhost callback); honest one-AI copy.
 
 ## [v0.16.1] — 2026-07-31
 
