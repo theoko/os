@@ -25,3 +25,6 @@ manifest.json
 __pycache__/
 *.pyc
 /docs/ui-preview.png
+
+# Kaggle bulk downloads (local only)
+dist/kaggle-datasets/
