@@ -2659,10 +2659,11 @@ srv.stop()
 acc = Path("linux/teddyos-agent/teddyos-accounts").read_text()
 assert "phone_auth" in acc and "_show_phone_qr" in acc
 gm = Path("linux/teddyos-agent/teddyos-gmail").read_text()
-assert "Link from phone" in gm or "phone" in gm.lower()
+assert "phone" in gm.lower()
 assert "phone_auth" in gm
-# Email QR must not require guest LAN (UTM 192.168.64.x unreachable from phone)
-assert "Works on cellular" in gm or "Direct provider URL" in gm or "no guest HTTP server" in gm
+# One-screen Email + direct https QR (no guest LAN for phone)
+assert "Open Email" in gm or "Open on my phone" in gm
+assert "_open_saved_inbox" in gm or "setup_done" in gm
 assert phone_auth.is_vm_guest_ip("192.168.64.14")
 assert not phone_auth.is_vm_guest_ip("192.168.1.10")
 print("phone-auth-ok")
@@ -2699,6 +2700,21 @@ then
   ok "answer display strips Markdown + PLAIN forbids it"
 else
   bad "answer display" "formatter or PLAIN shape"
+fi
+
+# --- Answers conversation continuity ---
+if python3 - <<'PY'
+from pathlib import Path
+src = Path("linux/teddyos-agent/teddyos-ask-all").read_text()
+assert "_thread_prompt" in src and "_looks_like_followup" in src
+assert "_save_last_help" in src and "last-help.json" in src
+assert "do not claim you lack context" in src
+print("thread-context-ok")
+PY
+then
+  ok "Answers follow-up keeps prior context"
+else
+  bad "Answers thread" "missing conversation memory"
 fi
 
 # --- GitHub work-on: public owner/repo + gh in provision ---

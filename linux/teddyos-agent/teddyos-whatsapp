@@ -89,6 +89,33 @@ def _profile_dir() -> Path:
     return PROFILE
 
 
+def _already_linked() -> bool:
+    """True when Chromium profile likely has a prior WhatsApp Web session."""
+    root = _profile_dir()
+    # Default Chromium profile stores cookies under Default/ or directly.
+    for rel in (
+        "Default/Cookies",
+        "Default/Network/Cookies",
+        "Cookies",
+        "Network/Cookies",
+    ):
+        p = root / rel
+        try:
+            if p.is_file() and p.stat().st_size > 0:
+                return True
+        except OSError:
+            continue
+    # Local Storage often appears after first successful link.
+    for name in ("Default/Local Storage", "Local Storage"):
+        d = root / name
+        try:
+            if d.is_dir() and any(d.iterdir()):
+                return True
+        except OSError:
+            continue
+    return False
+
+
 def _open_whatsapp_app() -> None:
     chromium = (
         shutil.which("chromium")
@@ -283,25 +310,36 @@ class GuideWindow(Adw.ApplicationWindow):
 
 
 class App(Adw.Application):
-    def __init__(self) -> None:
+    def __init__(self, *, force_setup: bool = False) -> None:
         super().__init__(
             application_id=APP_ID,
             flags=Gio.ApplicationFlags.FLAGS_NONE,
         )
+        self._force_setup = force_setup
 
     def do_activate(self) -> None:  # noqa: N802
+        # After the phone is linked once, dock should open chats — not a tour.
+        if not self._force_setup and _already_linked():
+            _open_whatsapp_app()
+            from gi.repository import GLib  # local: keep module import light
+
+            GLib.idle_add(self.quit)
+            return
         win = self.props.active_window
         if win is None:
             win = GuideWindow(self)
         win.present()
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    argv = list(argv if argv is not None else sys.argv)
+    force = "--setup" in argv or "--guide" in argv
+    argv = [a for a in argv if a not in ("--setup", "--guide")]
     if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
         _open_whatsapp_app()
         return 0
-    return App().run(None)
+    return App(force_setup=force).run(argv)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(None))

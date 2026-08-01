@@ -1,10 +1,5 @@
 #!/usr/bin/env python3
-"""Email setup guide — Gmail or another provider, not a naked vendor page.
-
-Dock “Gmail” / Mail should mean *how email works here*, then open the
-inbox you actually use (Gmail, Outlook, Yahoo, iCloud, Proton, or Other).
-AI only drafts; you always send.
-"""
+"""Email — open your inbox fast. First time: pick a provider. After that: open."""
 
 from __future__ import annotations
 
@@ -22,7 +17,6 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk  # noqa: E402
 
 sys.path.insert(0, "/usr/lib/teddyos")
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "teddyos-search"))
 try:
     import phone_auth
 except Exception:  # noqa: BLE001
@@ -32,67 +26,30 @@ APP_ID = "com.teddyos.Gmail"
 STATE = Path.home() / ".config" / "teddyos" / "email-provider.json"
 APPS_ROOT = Path.home() / ".local/share/teddyos-apps"
 
-# id, label, web URL, profile folder, chromium --class
-PROVIDERS: list[dict] = [
-    {
-        "id": "gmail",
-        "label": "Gmail",
-        "hint": "Google",
-        "url": "https://mail.google.com/",
-        "profile": "gmail",
-        "class": "teddyos-gmail",
-    },
-    {
-        "id": "outlook",
-        "label": "Outlook",
-        "hint": "Microsoft / Hotmail / Live",
-        "url": "https://outlook.live.com/mail/",
-        "profile": "outlook",
-        "class": "teddyos-outlook",
-    },
-    {
-        "id": "yahoo",
-        "label": "Yahoo Mail",
-        "hint": "Yahoo",
-        "url": "https://mail.yahoo.com/",
-        "profile": "yahoo",
-        "class": "teddyos-yahoo",
-    },
-    {
-        "id": "icloud",
-        "label": "iCloud Mail",
-        "hint": "Apple",
-        "url": "https://www.icloud.com/mail",
-        "profile": "icloud",
-        "class": "teddyos-icloud",
-    },
-    {
-        "id": "proton",
-        "label": "Proton Mail",
-        "hint": "Proton",
-        "url": "https://mail.proton.me/",
-        "profile": "proton",
-        "class": "teddyos-proton",
-    },
-    {
-        "id": "other",
-        "label": "Other email",
-        "hint": "Any webmail link",
-        "url": "",
-        "profile": "other-mail",
-        "class": "teddyos-other-mail",
-    },
+PROVIDERS = [
+    {"id": "gmail", "label": "Gmail", "hint": "Google",
+     "url": "https://mail.google.com/", "profile": "gmail", "class": "teddyos-gmail"},
+    {"id": "outlook", "label": "Outlook", "hint": "Microsoft / Hotmail / Live",
+     "url": "https://outlook.live.com/mail/", "profile": "outlook", "class": "teddyos-outlook"},
+    {"id": "yahoo", "label": "Yahoo Mail", "hint": "Yahoo",
+     "url": "https://mail.yahoo.com/", "profile": "yahoo", "class": "teddyos-yahoo"},
+    {"id": "icloud", "label": "iCloud Mail", "hint": "Apple",
+     "url": "https://www.icloud.com/mail", "profile": "icloud", "class": "teddyos-icloud"},
+    {"id": "proton", "label": "Proton Mail", "hint": "Proton",
+     "url": "https://mail.proton.me/", "profile": "proton", "class": "teddyos-proton"},
+    {"id": "other", "label": "Other email", "hint": "Any webmail link",
+     "url": "", "profile": "other-mail", "class": "teddyos-other-mail"},
 ]
 
 
-def _load_state() -> dict:
+def _load_state():
     try:
         return json.loads(STATE.read_text())
     except (OSError, ValueError, TypeError):
         return {}
 
 
-def _save_state(data: dict) -> None:
+def _save_state(data):
     try:
         STATE.parent.mkdir(parents=True, exist_ok=True)
         STATE.write_text(json.dumps(data, indent=2) + "\n")
@@ -100,14 +57,28 @@ def _save_state(data: dict) -> None:
         pass
 
 
-def _provider_by_id(pid: str) -> dict | None:
+def _provider_by_id(pid):
     for p in PROVIDERS:
         if p["id"] == pid:
             return p
     return None
 
 
-def _open_mail_app(*, url: str, profile: str, class_name: str) -> None:
+def _url_for_state(st):
+    p = _provider_by_id(st.get("provider_id") or "")
+    if p is None:
+        return None
+    if p["id"] == "other":
+        url = (st.get("custom_url") or "").strip()
+        if not url:
+            return None
+        if not url.startswith(("http://", "https://")):
+            url = "https://" + url
+        return p, url
+    return p, p["url"]
+
+
+def _open_mail_app(*, url, profile, class_name):
     chromium = (
         shutil.which("chromium")
         or shutil.which("chromium-browser")
@@ -119,220 +90,74 @@ def _open_mail_app(*, url: str, profile: str, class_name: str) -> None:
     data = APPS_ROOT / profile
     data.mkdir(parents=True, exist_ok=True)
     argv = [
-        chromium,
-        f"--app={url}",
-        f"--class={class_name}",
-        f"--user-data-dir={data}",
-        "--password-store=basic",
+        chromium, f"--app={url}", f"--class={class_name}",
+        f"--user-data-dir={data}", "--password-store=basic",
         "--ozone-platform-hint=auto",
     ]
     try:
-        subprocess.Popen(  # noqa: S603
-            argv,
-            start_new_session=True,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+        subprocess.Popen(
+            argv, start_new_session=True,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
         )
     except OSError:
         pass
 
 
-class GuideWindow(Adw.ApplicationWindow):
-    """Short guide + provider picker, then open the chosen webmail."""
+def _open_saved_inbox():
+    resolved = _url_for_state(_load_state())
+    if resolved is None:
+        return False
+    p, url = resolved
+    _open_mail_app(url=url, profile=p["profile"], class_name=p["class"])
+    return True
 
-    # Steps: 0 intro, 1 control, 2 choose provider, 3 open
-    STEP_INTRO = 0
-    STEP_CONTROL = 1
-    STEP_CHOOSE = 2
-    STEP_OPEN = 3
 
-    def __init__(self, app: Adw.Application):
-        super().__init__(application=app, title="Email setup")
-        self.set_default_size(580, 560)
+class SetupWindow(Adw.ApplicationWindow):
+    def __init__(self, app):
+        super().__init__(application=app, title="Email")
+        self.set_default_size(480, 560)
         self.set_resizable(False)
-        self._step = self.STEP_INTRO
         st = _load_state()
         self._provider_id = st.get("provider_id") or "gmail"
         self._custom_url = st.get("custom_url") or ""
+        self._qr_path = None
 
         css = Gtk.CssProvider()
-        css.load_from_data(
-            b"""
-            .teddyos-guide-title { font-size: 26px; font-weight: 700; }
-            .teddyos-guide-body { font-size: 15px; line-height: 1.45; }
-            .teddyos-guide-dots { letter-spacing: 4px; }
-            .teddyos-provider-row {
-                padding: 10px 12px;
-                border-radius: 12px;
-            }
+        css.load_from_data(b"""
+            .teddyos-guide-title { font-size: 24px; font-weight: 700; }
+            .teddyos-provider-row { padding: 10px 12px; border-radius: 12px; }
             .teddyos-provider-row:hover { background: alpha(@accent_bg_color, 0.12); }
             window { background: #fbfbfa; }
-            """
-        )
+        """)
         Gtk.StyleContext.add_provider_for_display(
             self.get_display(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
 
-        self._stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
-        self._stack.set_vexpand(True)
-
-        self._stack.add_named(self._page_text(
-            "mail-unread-symbolic",
-            "Email on teddyOS",
-            "This isn’t a random browser tab.\n\n"
-            "A few short steps explain how email works here — "
-            "and you pick which inbox to use. You can skip any time.",
-        ), "intro")
-
-        self._stack.add_named(self._page_text(
-            "security-high-symbolic",
-            "You’re always in control",
-            "teddyOS never sends a message for you on its own.\n\n"
-            "When AI helps with a reply, it only drafts. You read it, "
-            "change it if you want, and you tap send — or you don’t.",
-        ), "control")
-
-        self._stack.add_named(self._build_choose_page(), "choose")
-        self._stack.add_named(self._build_open_page(), "open")
-
-        self._primary = Gtk.Button(halign=Gtk.Align.CENTER)
-        self._primary.add_css_class("suggested-action")
-        self._primary.add_css_class("pill")
-        self._primary.set_size_request(260, -1)
-        self._primary.connect("clicked", self._on_primary)
-
-        self._secondary = Gtk.Button(halign=Gtk.Align.CENTER)
-        self._secondary.add_css_class("flat")
-        self._secondary.connect("clicked", self._on_secondary)
-
-        self._later = Gtk.Button(
-            label="Open inbox without the guide",
-            halign=Gtk.Align.CENTER,
-        )
-        self._later.add_css_class("flat")
-        self._later.add_css_class("caption")
-        self._later.set_margin_top(4)
-        self._later.connect("clicked", lambda *_: self._finish(open_inbox=True))
-
-        self._phone_btn = Gtk.Button(
-            label="Link from phone (QR)",
-            halign=Gtk.Align.CENTER,
-        )
-        self._phone_btn.add_css_class("flat")
-        self._phone_btn.set_margin_top(2)
-        self._phone_btn.connect("clicked", self._start_phone_link)
-        self._phone_btn.set_visible(False)
-
-        self._phone_box = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL, spacing=8, halign=Gtk.Align.CENTER
-        )
-        self._phone_box.set_visible(False)
-        self._phone_qr = Gtk.Image(pixel_size=180, halign=Gtk.Align.CENTER)
-        self._phone_label = Gtk.Label(
-            wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=40
-        )
-        self._phone_label.add_css_class("dim-label")
-        self._phone_label.add_css_class("caption")
-        self._phone_box.append(self._phone_qr)
-        self._phone_box.append(self._phone_label)
-        self._pair_server = None
-        self._qr_path: Path | None = None
-
-        buttons = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=8,
-            halign=Gtk.Align.CENTER,
-        )
-        buttons.set_margin_top(16)
-        buttons.set_margin_bottom(20)
-        buttons.append(self._primary)
-        buttons.append(self._secondary)
-        buttons.append(self._phone_btn)
-        buttons.append(self._phone_box)
-        buttons.append(self._later)
-
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        outer.append(self._stack)
-        outer.append(buttons)
-
-        toolbar = Adw.ToolbarView()
-        header = Adw.HeaderBar(show_title=False)
-        skip = Gtk.Button(label="Close")
-        skip.add_css_class("flat")
-        skip.connect("clicked", lambda *_: self._finish(open_inbox=False))
-        header.pack_end(skip)
-        toolbar.add_top_bar(header)
-        toolbar.set_content(Adw.Clamp(maximum_size=520, child=outer))
-        self.set_content(toolbar)
-
-        esc = Gtk.EventControllerKey()
-        esc.connect("key-pressed", self._on_key)
-        self.add_controller(esc)
-        self._show_step(self.STEP_INTRO)
-
-    def _page_text(self, icon: str, title: str, body: str) -> Gtk.Widget:
-        img = Gtk.Image(pixel_size=80, halign=Gtk.Align.CENTER, icon_name=icon)
-        img.set_margin_top(20)
-        t = Gtk.Label(label=title, wrap=True, justify=Gtk.Justification.CENTER)
-        t.add_css_class("teddyos-guide-title")
-        t.set_margin_top(16)
-        b = Gtk.Label(
-            label=body, wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=42
-        )
-        b.add_css_class("teddyos-guide-body")
-        b.add_css_class("dim-label")
-        b.set_margin_top(12)
-        b.set_margin_start(16)
-        b.set_margin_end(16)
-        dots = Gtk.Label(halign=Gtk.Align.CENTER)
-        dots.add_css_class("teddyos-guide-dots")
-        dots.add_css_class("dim-label")
-        dots.set_margin_top(20)
-        dots.set_name("dots")
-        col = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=0,
-            valign=Gtk.Align.CENTER,
-            halign=Gtk.Align.CENTER,
-        )
-        col.set_margin_start(24)
-        col.set_margin_end(24)
-        for w in (img, t, b, dots):
-            col.append(w)
-        return col
-
-    def _build_choose_page(self) -> Gtk.Widget:
-        title = Gtk.Label(
-            label="Which email do you use?",
-            wrap=True,
-            justify=Gtk.Justification.CENTER,
-        )
+        title = Gtk.Label(label="Email", wrap=True, justify=Gtk.Justification.CENTER)
         title.add_css_class("teddyos-guide-title")
-        title.set_margin_top(12)
+        title.set_margin_top(8)
 
-        sub = Gtk.Label(
-            label="Pick one. You can change this later.",
-            wrap=True,
-            justify=Gtk.Justification.CENTER,
+        trust = Gtk.Label(
+            label="AI only drafts replies. You always send.\n"
+            "Passwords stay on the email site — never in teddyOS.",
+            wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=40,
         )
-        sub.add_css_class("dim-label")
-        sub.set_margin_top(6)
-        sub.set_margin_bottom(12)
+        trust.add_css_class("dim-label")
+        trust.add_css_class("caption")
+        trust.set_margin_top(6)
+        trust.set_margin_bottom(10)
 
-        self._provider_group = Gtk.CheckButton()  # invisible radio root
-        self._provider_group.set_visible(False)
+        ask = Gtk.Label(label="Which email do you use?", wrap=True, justify=Gtk.Justification.CENTER)
+        ask.add_css_class("heading")
+        ask.set_margin_bottom(6)
 
-        list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        list_box.set_margin_start(8)
-        list_box.set_margin_end(8)
-        self._provider_buttons: dict[str, Gtk.CheckButton] = {}
-
-        first_radio: Gtk.CheckButton | None = None
+        first_radio = None
+        self._provider_buttons = {}
+        list_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         for p in PROVIDERS:
             row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12)
             row.add_css_class("teddyos-provider-row")
-            radio = Gtk.CheckButton(label="")
+            radio = Gtk.CheckButton()
             if first_radio is None:
                 first_radio = radio
             else:
@@ -341,8 +166,7 @@ class GuideWindow(Adw.ApplicationWindow):
                 radio.set_active(True)
             radio.connect("toggled", self._on_provider_toggled, p["id"])
             self._provider_buttons[p["id"]] = radio
-
-            labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, hexpand=True)
+            labels = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=1, hexpand=True)
             name = Gtk.Label(label=p["label"], xalign=0)
             name.add_css_class("heading")
             hint = Gtk.Label(label=p["hint"], xalign=0)
@@ -350,102 +174,96 @@ class GuideWindow(Adw.ApplicationWindow):
             hint.add_css_class("dim-label")
             labels.append(name)
             labels.append(hint)
-
-            # Click whole row
             click = Gtk.GestureClick()
-            click.connect(
-                "released",
-                lambda _g, _n, _x, _y, pid=p["id"]: self._select_provider(pid),
-            )
+            click.connect("released", lambda _g, _n, _x, _y, pid=p["id"]: self._select_provider(pid))
             row.add_controller(click)
-
             row.append(radio)
             row.append(labels)
             list_box.append(row)
 
-        self._other_entry = Gtk.Entry(
-            placeholder_text="https://mail.example.com  (for Other email)",
-            hexpand=True,
-        )
-        self._other_entry.set_margin_top(10)
-        self._other_entry.set_margin_start(8)
-        self._other_entry.set_margin_end(8)
+        scroller = Gtk.ScrolledWindow(vexpand=True, min_content_height=200)
+        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroller.set_child(list_box)
+
+        self._other_entry = Gtk.Entry(placeholder_text="https://mail.example.com  (Other only)", hexpand=True)
+        self._other_entry.set_margin_top(8)
         if self._custom_url:
             self._other_entry.set_text(self._custom_url)
         self._other_entry.set_sensitive(self._provider_id == "other")
         self._other_entry.connect("changed", self._on_other_url_changed)
 
-        self._choose_dots = Gtk.Label(halign=Gtk.Align.CENTER)
-        self._choose_dots.add_css_class("teddyos-guide-dots")
-        self._choose_dots.add_css_class("dim-label")
-        self._choose_dots.set_margin_top(16)
+        self._primary = Gtk.Button(label="Open Email")
+        self._primary.add_css_class("suggested-action")
+        self._primary.add_css_class("pill")
+        self._primary.set_size_request(280, -1)
+        self._primary.set_halign(Gtk.Align.CENTER)
+        self._primary.set_margin_top(14)
+        self._primary.connect("clicked", self._open_computer)
 
-        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
-        col.set_margin_top(8)
-        col.set_margin_bottom(8)
-        col.append(title)
-        col.append(sub)
-        scroller = Gtk.ScrolledWindow(vexpand=True, min_content_height=220)
-        scroller.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scroller.set_child(list_box)
-        col.append(scroller)
-        col.append(self._other_entry)
-        col.append(self._choose_dots)
-        return col
+        self._phone_btn = Gtk.Button(label="Open on my phone")
+        self._phone_btn.add_css_class("flat")
+        self._phone_btn.set_halign(Gtk.Align.CENTER)
+        self._phone_btn.set_margin_top(4)
+        self._phone_btn.connect("clicked", self._show_phone_qr)
 
-    def _build_open_page(self) -> Gtk.Widget:
-        self._open_icon = Gtk.Image(
-            pixel_size=80, halign=Gtk.Align.CENTER, icon_name="mail-send-symbolic"
-        )
-        self._open_icon.set_margin_top(24)
-        self._open_title = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER)
-        self._open_title.add_css_class("teddyos-guide-title")
-        self._open_title.set_margin_top(16)
-        self._open_body = Gtk.Label(
-            wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=42
-        )
-        self._open_body.add_css_class("teddyos-guide-body")
-        self._open_body.add_css_class("dim-label")
-        self._open_body.set_margin_top(12)
-        self._open_body.set_margin_start(16)
-        self._open_body.set_margin_end(16)
-        self._open_dots = Gtk.Label(halign=Gtk.Align.CENTER)
-        self._open_dots.add_css_class("teddyos-guide-dots")
-        self._open_dots.add_css_class("dim-label")
-        self._open_dots.set_margin_top(20)
-        col = Gtk.Box(
-            orientation=Gtk.Orientation.VERTICAL,
-            spacing=0,
-            valign=Gtk.Align.CENTER,
-            halign=Gtk.Align.CENTER,
-        )
-        for w in (
-            self._open_icon,
-            self._open_title,
-            self._open_body,
-            self._open_dots,
-        ):
-            col.append(w)
-        return col
+        self._phone_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, halign=Gtk.Align.CENTER)
+        self._phone_box.set_visible(False)
+        self._phone_box.set_margin_top(8)
+        self._phone_qr = Gtk.Image(pixel_size=160, halign=Gtk.Align.CENTER)
+        self._phone_label = Gtk.Label(wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=38)
+        self._phone_label.add_css_class("dim-label")
+        self._phone_label.add_css_class("caption")
+        self._phone_box.append(self._phone_qr)
+        self._phone_box.append(self._phone_label)
 
-    def _select_provider(self, pid: str) -> None:
+        self._status = Gtk.Label(label="", wrap=True, justify=Gtk.Justification.CENTER, max_width_chars=40)
+        self._status.add_css_class("dim-label")
+        self._status.add_css_class("caption")
+        self._status.set_visible(False)
+
+        body = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+        body.set_margin_start(20)
+        body.set_margin_end(20)
+        body.set_margin_top(4)
+        body.set_margin_bottom(12)
+        for w in (title, trust, ask, scroller, self._other_entry, self._primary, self._phone_btn, self._phone_box, self._status):
+            body.append(w)
+
+        toolbar = Adw.ToolbarView()
+        header = Adw.HeaderBar()
+        header.set_title_widget(Adw.WindowTitle(title="Email", subtitle=""))
+        close_btn = Gtk.Button(label="Close")
+        close_btn.add_css_class("flat")
+        close_btn.connect("clicked", lambda *_: self.close())
+        header.pack_end(close_btn)
+        toolbar.add_top_bar(header)
+        toolbar.set_content(Adw.Clamp(maximum_size=460, child=body))
+        self.set_content(toolbar)
+
+        esc = Gtk.EventControllerKey()
+        esc.connect("key-pressed", self._on_key)
+        self.add_controller(esc)
+
+    def _select_provider(self, pid):
         btn = self._provider_buttons.get(pid)
         if btn is not None:
             btn.set_active(True)
         self._provider_id = pid
         self._other_entry.set_sensitive(pid == "other")
+        self._hide_phone_qr()
         if pid == "other":
             self._other_entry.grab_focus()
 
-    def _on_provider_toggled(self, btn: Gtk.CheckButton, pid: str) -> None:
+    def _on_provider_toggled(self, btn, pid):
         if btn.get_active():
             self._provider_id = pid
             self._other_entry.set_sensitive(pid == "other")
+            self._hide_phone_qr()
 
-    def _on_other_url_changed(self, entry: Gtk.Entry) -> None:
+    def _on_other_url_changed(self, entry):
         self._custom_url = entry.get_text().strip()
 
-    def _resolved_provider(self) -> tuple[dict, str] | None:
+    def _resolved(self):
         p = _provider_by_id(self._provider_id) or PROVIDERS[0]
         if p["id"] == "other":
             url = self._custom_url.strip()
@@ -456,135 +274,36 @@ class GuideWindow(Adw.ApplicationWindow):
             return p, url
         return p, p["url"]
 
-    def _dots_for(self, step: int) -> str:
-        return " ".join("●" if i == step else "○" for i in range(4))
+    def _persist(self, p):
+        _save_state({
+            "provider_id": p["id"],
+            "custom_url": self._custom_url if p["id"] == "other" else "",
+            "setup_done": True,
+        })
 
-    def _show_step(self, step: int) -> None:
-        self._step = step
-        names = ("intro", "control", "choose", "open")
-        self._stack.set_visible_child_name(names[step])
-
-        # Update dots on simple pages (first two have a child named dots)
-        for page_name in ("intro", "control"):
-            page = self._stack.get_child_by_name(page_name)
-            if page is None:
-                continue
-            child = page.get_first_child()
-            while child is not None:
-                if child.get_name() == "dots" and isinstance(child, Gtk.Label):
-                    child.set_text(self._dots_for(step))
-                child = child.get_next_sibling()
-
-        if step == self.STEP_CHOOSE:
-            self._choose_dots.set_text(self._dots_for(step))
-            self._primary.set_label("Continue")
-            self._secondary.set_label("Back")
-            self._later.set_visible(False)
-            self._phone_btn.set_visible(False)
-            self._phone_box.set_visible(False)
-            self._stop_phone_link()
-        elif step == self.STEP_OPEN:
-            p = _provider_by_id(self._provider_id) or PROVIDERS[0]
-            self._open_title.set_text(f"Open {p['label']}")
-            if p["id"] == "other":
-                self._open_body.set_text(
-                    "Open on this computer, or scan a QR to open the same site "
-                    "on your phone.\n\n"
-                    "Your password stays on the email site — teddyOS never stores it. "
-                    "Signing in on the phone does not sign in this computer."
-                )
-            else:
-                self._open_body.set_text(
-                    f"Open {p['label']} on this computer, or scan a QR to open "
-                    f"it on your phone (works on cellular or any Wi‑Fi).\n\n"
-                    "Signing in on the phone does not sign in this computer — "
-                    "still use Open on this computer for Email here. "
-                    "AI never sends mail for you."
-                )
-            self._open_dots.set_text(self._dots_for(step))
-            self._primary.set_label(f"Open on this computer")
-            self._secondary.set_label("Back")
-            self._later.set_visible(False)
-            self._phone_btn.set_visible(True)
-            self._phone_box.set_visible(False)
-        elif step == self.STEP_INTRO:
-            self._primary.set_label("Show me how")
-            self._secondary.set_label("Skip for now")
-            self._later.set_visible(True)
-            self._phone_btn.set_visible(False)
-            self._phone_box.set_visible(False)
-            self._stop_phone_link()
-        else:
-            self._primary.set_label("Next")
-            self._secondary.set_label("Back")
-            self._later.set_visible(False)
-            self._phone_btn.set_visible(False)
-            self._phone_box.set_visible(False)
-            self._stop_phone_link()
-
-    def _on_key(self, _c, keyval, _code, _state) -> bool:
-        if keyval == Gdk.KEY_Escape:
-            self._finish(open_inbox=False)
-            return True
-        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter, Gdk.KEY_Right):
-            self._on_primary()
-            return True
-        if keyval == Gdk.KEY_Left and self._step > 0:
-            self._show_step(self._step - 1)
-            return True
-        return False
-
-    def _on_primary(self, *_args) -> None:
-        if self._step == self.STEP_INTRO:
-            self._show_step(self.STEP_CONTROL)
-        elif self._step == self.STEP_CONTROL:
-            self._show_step(self.STEP_CHOOSE)
-        elif self._step == self.STEP_CHOOSE:
-            if self._provider_id == "other" and not self._custom_url.strip():
-                self._other_entry.grab_focus()
-                self._other_entry.add_css_class("error")
-                return
-            self._other_entry.remove_css_class("error")
-            self._show_step(self.STEP_OPEN)
-        else:
-            self._finish(open_inbox=True)
-
-    def _on_secondary(self, *_args) -> None:
-        if self._step == self.STEP_INTRO:
-            self._finish(open_inbox=False)
-            return
-        self._show_step(self._step - 1)
-
-    def _start_phone_link(self, *_a) -> None:
-        """QR the provider URL so the phone can open webmail without LAN.
-
-        Older builds served a tiny page on the guest IP (same Wi‑Fi). That fails
-        in UTM/QEMU: the guest is on a private virtual net (e.g. 192.168.64.x)
-        the phone cannot reach. The QR now points at the real https URL so any
-        phone with internet works. Desktop sign-in is still a separate step.
-        """
-        resolved = self._resolved_provider()
+    def _open_computer(self, *_a):
+        resolved = self._resolved()
         if resolved is None:
-            self._show_step(self.STEP_CHOOSE)
+            self._flash("Paste a webmail link for Other email.")
             self._other_entry.grab_focus()
             return
         p, url = resolved
-        if not url.startswith("http"):
-            self._phone_label.set_text(
-                "Add a webmail link first, or use Open on this computer."
-            )
-            self._phone_box.set_visible(True)
+        self._persist(p)
+        _open_mail_app(url=url, profile=p["profile"], class_name=p["class"])
+        self.close()
+
+    def _show_phone_qr(self, *_a):
+        resolved = self._resolved()
+        if resolved is None:
+            self._flash("Pick a provider (or paste a link for Other).")
             return
+        p, url = resolved
         if phone_auth is None:
-            self._phone_label.set_text(
-                "Phone link isn’t available right now. Use Open on this computer."
-            )
-            self._phone_box.set_visible(True)
+            self._flash("Phone QR is not available. Use Open Email.")
             return
-        self._stop_phone_link()
-        # Direct provider URL — no guest HTTP server (broken on UTM shared net).
-        qr_target = url
-        path = phone_auth.qr_temp_png(qr_target)
+        self._persist(p)
+        self._hide_phone_qr()
+        path = phone_auth.qr_temp_png(url)
         if path is not None:
             self._qr_path = path
             try:
@@ -596,21 +315,16 @@ class GuideWindow(Adw.ApplicationWindow):
             self._phone_qr.set_visible(False)
         self._phone_label.set_text(
             f"Scan to open {p['label']} on your phone.\n"
-            f"{qr_target}\n\n"
-            "Works on cellular or any Wi‑Fi — no special network setup.\n"
-            "This does not sign in Email on this computer. "
-            "Tap “Open on this computer” for that."
+            "Any network is fine.\n\n"
+            "This does not sign in Email on this computer — "
+            "use Open Email for that."
         )
         self._phone_box.set_visible(True)
         self._phone_btn.set_label("Refresh phone QR")
 
-    def _stop_phone_link(self) -> None:
-        if self._pair_server is not None:
-            try:
-                self._pair_server.stop()
-            except Exception:  # noqa: BLE001
-                pass
-            self._pair_server = None
+    def _hide_phone_qr(self):
+        self._phone_box.set_visible(False)
+        self._phone_btn.set_label("Open on my phone")
         if self._qr_path is not None:
             try:
                 self._qr_path.unlink(missing_ok=True)
@@ -618,53 +332,52 @@ class GuideWindow(Adw.ApplicationWindow):
                 pass
             self._qr_path = None
 
-    def _finish(self, *, open_inbox: bool) -> None:
-        if open_inbox:
-            resolved = self._resolved_provider()
-            if resolved is None:
-                # No URL for Other — bounce back to picker.
-                self._show_step(self.STEP_CHOOSE)
-                self._other_entry.grab_focus()
-                return
-            p, url = resolved
-            _save_state(
-                {
-                    "provider_id": p["id"],
-                    "custom_url": self._custom_url if p["id"] == "other" else "",
-                }
-            )
-            _open_mail_app(url=url, profile=p["profile"], class_name=p["class"])
-        self._stop_phone_link()
-        self.close()
+    def _flash(self, msg):
+        self._status.set_text(msg)
+        self._status.set_visible(True)
+
+    def _on_key(self, _c, keyval, _code, _state):
+        if keyval == Gdk.KEY_Escape:
+            self.close()
+            return True
+        if keyval in (Gdk.KEY_Return, Gdk.KEY_KP_Enter):
+            self._open_computer()
+            return True
+        return False
+
+    def do_close_request(self):
+        self._hide_phone_qr()
+        return False
 
 
 class App(Adw.Application):
-    def __init__(self) -> None:
-        super().__init__(
-            application_id=APP_ID,
-            flags=Gio.ApplicationFlags.FLAGS_NONE,
-        )
+    def __init__(self, *, force_setup=False):
+        super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.FLAGS_NONE)
+        self._force_setup = force_setup
 
-    def do_activate(self) -> None:  # noqa: N802
+    def do_activate(self):
+        # Returning users: open inbox immediately (dock feels instant).
+        if not self._force_setup and _url_for_state(_load_state()) is not None:
+            if _open_saved_inbox():
+                GLib.idle_add(self.quit)
+                return
         win = self.props.active_window
         if win is None:
-            win = GuideWindow(self)
+            win = SetupWindow(self)
         win.present()
 
 
-def main() -> int:
+def main(argv=None):
+    argv = list(argv if argv is not None else sys.argv)
+    force_setup = "--setup" in argv or "--guide" in argv
+    argv = [a for a in argv if a not in ("--setup", "--guide")]
+
     if not os.environ.get("DISPLAY") and not os.environ.get("WAYLAND_DISPLAY"):
-        st = _load_state()
-        p = _provider_by_id(st.get("provider_id") or "gmail") or PROVIDERS[0]
-        url = p["url"]
-        if p["id"] == "other":
-            url = (st.get("custom_url") or "").strip()
-            if url and not url.startswith(("http://", "https://")):
-                url = "https://" + url
-        if url:
-            _open_mail_app(url=url, profile=p["profile"], class_name=p["class"])
+        if not force_setup:
+            _open_saved_inbox()
         return 0
-    return App().run(None)
+
+    return App(force_setup=force_setup).run(argv)
 
 
 if __name__ == "__main__":

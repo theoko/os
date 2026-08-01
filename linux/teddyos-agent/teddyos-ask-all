@@ -154,12 +154,99 @@ def _model_prompt(tool_id: str, prompt: str) -> str:
     return shape_prompt_for_tool(tool_id, (prompt or "").strip())
 
 
+_LAST_HELP = Path.home() / ".config" / "teddyos" / "last-help.json"
+_HISTORY_MAX_AGE_S = 45 * 60  # 45 minutes — long enough for a follow-up
+
+
+def _load_last_help() -> dict | None:
+    try:
+        import json
+        import time
+
+        data = json.loads(_LAST_HELP.read_text())
+        ts = float(data.get("ts") or 0)
+        if time.time() - ts > _HISTORY_MAX_AGE_S:
+            return None
+        if not (data.get("prompt") and data.get("answer")):
+            return None
+        return data
+    except (OSError, ValueError, TypeError):
+        return None
+
+
+def _save_last_help(*, prompt: str, answer: str, tool_id: str = "") -> None:
+    try:
+        import json
+        import time
+
+        _LAST_HELP.parent.mkdir(parents=True, exist_ok=True)
+        _LAST_HELP.write_text(
+            json.dumps(
+                {
+                    "prompt": (prompt or "")[:2000],
+                    "answer": (answer or "")[:4000],
+                    "tool_id": tool_id or "",
+                    "ts": time.time(),
+                },
+                indent=2,
+            )
+            + "\n"
+        )
+    except OSError:
+        pass
+
+
+def _looks_like_followup(text: str) -> bool:
+    """Short emotional / referential lines that need prior context."""
+    t = (text or "").strip()
+    if not t or len(t) > 120:
+        return False
+    words = t.split()
+    if len(words) > 18:
+        return False
+    low = t.lower()
+    # Explicit project goals are new topics.
+    if any(s in low for s in ("work on ", "i wanna work", "clone ", "github.com")):
+        return False
+    cues = (
+        "that's sad", "thats sad", "that is sad", "so sad", "ugh", "damn",
+        "why", "how come", "really", "ok but", "okay but", "and then",
+        "what about", "tell me more", "go on", "continue", "thanks",
+        "thank you", "got it", "makes sense", "that sucks", "oh no",
+        "hmm", "huh", "wait", "so what", "then what", "can you",
+        "help me", "please", "same", "more", "explain",
+    )
+    if any(low == c or low.startswith(c + " ") or low.startswith(c + ",") for c in cues):
+        return True
+    # Very short replies often continue a thread.
+    return len(words) <= 6
+
+
+def _thread_prompt(user_prompt: str, *, prior_q: str, prior_a: str) -> str:
+    """Model-facing text that includes the last exchange (UI still shows user only)."""
+    pq = (prior_q or "").strip()[:1500]
+    pa = (prior_a or "").strip()[:2500]
+    u = (user_prompt or "").strip()
+    if not pq or not pa:
+        return u
+    return (
+        "You are continuing a conversation. The person can see your earlier "
+        "answer; do not claim you lack context.\n\n"
+        f"Earlier they asked:\n{pq}\n\n"
+        f"You answered:\n{pa}\n\n"
+        f"They now say:\n{u}\n\n"
+        "Respond helpfully to their latest message, using that context. "
+        "Plain language. No Markdown."
+    )
+
+
 # id → (title, build_argv(prompt) -> list[str])
 def _headless_argv(
     tool_id: str, prompt: str, project: str = "",
 ) -> list[str] | None:
     """One-shot CLI that prints an answer and exits. cwd is the project."""
     # UI still shows the original text; only the model-facing string is shaped.
+    # *prompt* may already include thread context from the caller.
     text = _model_prompt(tool_id, prompt)
     if not text:
         return None
@@ -337,6 +424,13 @@ class ToolCard(Gtk.Box):
             raw = raw[:_MAX_CHARS] + "\n\n… (cut short here)"
         self.answer_text = raw
         self.body.set_text(format_answer_for_display(raw) or raw)
+        # Persist for follow-ups from Search (“that’s sad”) within ~45 min.
+        try:
+            _save_last_help(
+                prompt=self.prompt, answer=raw, tool_id=self.tool_id,
+            )
+        except Exception:  # noqa: BLE001
+            pass
         self._add_continue(failed=False)
         self._notify_done_once()
 
@@ -448,10 +542,13 @@ class ToolCard(Gtk.Box):
         prompt = (prompt or "").strip()
         if not prompt or self._on_rerun is None:
             return
+        # Keep the prior answer so the re-run can pass thread context.
+        prior_q = self.prompt
+        prior_a = self.answer_text
         self.prompt = prompt
         log.info("rerun in-window tool=%s prompt_len=%d", self.tool_id, len(prompt))
         self.set_working()
-        self._on_rerun(self.tool_id, prompt)
+        self._on_rerun(self.tool_id, prompt, prior_q=prior_q, prior_a=prior_a)
 
 
 class AskAllWindow(Adw.ApplicationWindow):
@@ -1191,7 +1288,13 @@ class AskAllWindow(Adw.ApplicationWindow):
         log.warning("synthesis fail: %s", message)
         return False
 
-    def _rerun_one(self, tool_id: str, prompt: str) -> None:
+    def _rerun_one(
+        self,
+        tool_id: str,
+        prompt: str,
+        prior_q: str = "",
+        prior_a: str = "",
+    ) -> None:
         """In-window re-ask (same or new prompt) — does not spawn a second app."""
         prompt = (prompt or "").strip()
         self._prompt = prompt
@@ -1230,13 +1333,33 @@ class AskAllWindow(Adw.ApplicationWindow):
         )
         threading.Thread(
             target=self._run_one,
-            args=(tool_id, prompt),
+            args=(tool_id, prompt, prior_q, prior_a),
             daemon=True,
         ).start()
 
-    def _run_one(self, tool_id: str, prompt: str | None = None) -> None:
+    def _run_one(
+        self,
+        tool_id: str,
+        prompt: str | None = None,
+        prior_q: str = "",
+        prior_a: str = "",
+    ) -> None:
         prompt = prompt if prompt is not None else self._prompt
-        argv = _headless_argv(tool_id, prompt, self._project)
+        model_text = prompt
+        # Prefer in-window prior; else last-help file for follow-ups from Search.
+        pq, pa = (prior_q or "").strip(), (prior_a or "").strip()
+        if not (pq and pa):
+            last = _load_last_help()
+            if last and _looks_like_followup(prompt or ""):
+                pq = (last.get("prompt") or "").strip()
+                pa = (last.get("answer") or "").strip()
+        if pq and pa and (prompt or "").strip() != pq:
+            model_text = _thread_prompt(prompt or "", prior_q=pq, prior_a=pa)
+            log.info(
+                "thread context tool=%s prior_q_len=%d prior_a_len=%d",
+                tool_id, len(pq), len(pa),
+            )
+        argv = _headless_argv(tool_id, model_text, self._project)
         title = _TITLES.get(tool_id, tool_id)
         if not argv:
             GLib.idle_add(

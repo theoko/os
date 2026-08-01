@@ -1,5 +1,5 @@
 ---
-version: v0.16.3
+version: v0.16.4
 project: os
 updated: 2026-08-01
 type: changelog
@@ -11,7 +11,16 @@ Runtime version is the top-level VERSION file (no v prefix there).
 This file is newest-first. When behavior ships: bump VERSION, add an entry
 here, update this frontmatter version / updated, then conventional-commit.
 
-## [v0.16.3] — 2026-08-01
+## [v0.16.4] — 2026-08-01
+
+### Fixed — friendlier Email, WhatsApp, and Answers continuity
+
+- **Email**: one screen (pick provider → Open). Dock re-opens inbox after first setup.
+- **Phone QR**: opens the real mail site (any network); not guest LAN.
+- **WhatsApp**: skip the multi-step guide once the phone is linked.
+- **Answers**: short follow-ups (“that’s sad”) reuse the last Q&A for ~45 minutes.
+
+ — 2026-08-01
 
 ### Fixed — Email phone QR works without guest LAN
 
