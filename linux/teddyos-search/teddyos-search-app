@@ -157,6 +157,7 @@ def _decode(data: dict) -> engine.Outcome:
         errors=data.get("errors", []),
         notes=data.get("notes", []),
         portal_age=data.get("portal_age_seconds"),
+        web_first=bool(data.get("web_first")),
     )
 
 
@@ -560,6 +561,8 @@ class SearchWindow(Adw.ApplicationWindow):
             for row in work:
                 self.results.append(row)
 
+        web_first = bool(getattr(outcome, "web_first", False)) or engine.is_web_first_goal(query)
+
         if not outcome.results and not work:
             # Not an empty screen. "Nothing found" with no next step is where
             # someone gives up; the same screen with one obvious action is not.
@@ -568,7 +571,20 @@ class SearchWindow(Adw.ApplicationWindow):
             # list reads as "this is broken"; an empty list under a sentence
             # saying the index is still downloading reads as "wait a minute".
             self._append_notices(outcome)
-            self.results.append(self._web_row(query))
+            self.results.append(self._web_row(query, lead=web_first))
+            self.stack.set_visible_child_name("results")
+            self._refresh_banner()
+            return False
+
+        # Recipes / near me / delivery: web row first so Focaccia-class Guide
+        # noise is not the hero. Help/files hits stay under "Also on this computer".
+        if web_first and not work:
+            self.results.append(self._web_row(query, lead=True))
+            self._append_notices(outcome)
+            if outcome.results:
+                self.results.append(self._section_label("Also on this computer"))
+                for res in outcome.results:
+                    self.results.append(self._row(res))
             self.stack.set_visible_child_name("results")
             self._refresh_banner()
             return False
@@ -582,7 +598,7 @@ class SearchWindow(Adw.ApplicationWindow):
                 self.results.append(self._row(res))
         self._append_notices(outcome)
         if not work:
-            self.results.append(self._web_row(query))
+            self.results.append(self._web_row(query, lead=False))
         self.stack.set_visible_child_name("results")
         self._refresh_banner()
         return False
@@ -2424,7 +2440,7 @@ class SearchWindow(Adw.ApplicationWindow):
         except GLib.Error:
             pass
 
-    def _web_row(self, query: str) -> Gtk.Widget:
+    def _web_row(self, query: str, lead: bool = False) -> Gtk.Widget:
         # Truncate. The title interpolates the query, and a stuck key or a
         # pasted paragraph turns one row into a wall of text taller than the
         # window — found exactly that way. The full query still goes to the
@@ -2433,9 +2449,14 @@ class SearchWindow(Adw.ApplicationWindow):
         row = Adw.ActionRow(
             title=f"Search the web for “{GLib.markup_escape_text(shown)}”")
         row.set_title_lines(1)
-        row.set_subtitle(
-            "Opens a browser search for things that are not on this computer "
-            "(school sites, work tools, and the open web)")
+        if lead:
+            row.set_subtitle(
+                "Best for recipes, delivery, and places near you — "
+                "the guide on this computer is not a restaurant app")
+        else:
+            row.set_subtitle(
+                "Opens a browser search for things that are not on this computer "
+                "(school sites, work tools, and the open web)")
         row.set_subtitle_lines(2)
         row.add_prefix(Gtk.Image.new_from_icon_name("web-browser-symbolic"))
         row.add_suffix(Gtk.Image.new_from_icon_name("go-next-symbolic"))

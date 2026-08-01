@@ -1,5 +1,5 @@
 ---
-version: v0.16.5
+version: v0.16.6
 project: os
 updated: 2026-08-01
 type: changelog
@@ -10,6 +10,16 @@ type: changelog
 Runtime version is the top-level VERSION file (no v prefix there).
 This file is newest-first. When behavior ships: bump VERSION, add an entry
 here, update this frontmatter version / updated, then conventional-commit.
+
+## [v0.16.6] — 2026-08-01
+
+### Fixed — food / recipe searches lead with the web
+
+- **Web-first** for `recipe`, `near me`, `how to make/cook`, delivery/order-food:
+  demote weak Guide noise; UI puts **Search the web** first with plain copy.
+- **Built-in food seed** — short offline cards (sushi, pizza, coffee, kimchi, …)
+  plus a “Recipes delivery and near me” tip pointing at the web row.
+- Bare food names still normal lookup so Help + real wiki pages can win.
 
 ## [v0.16.5] — 2026-08-01
 

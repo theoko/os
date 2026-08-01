@@ -655,6 +655,65 @@ class Outcome:
     # where the user could get more by doing something.
     notes: list[str] = field(default_factory=list)
     portal_age: float | None = None
+    # Recipes / “near me” / order-food — open web is the honest first answer.
+    web_first: bool = False
+
+
+# Everyday asks the Guide crawl answers poorly (food recipes, local delivery).
+# Detected here so ranking can demote weak portal noise and the UI can put the
+# web row first. Conservative on bare "order" (not "order of magnitude").
+_WEB_FIRST_RE = re.compile(
+    r"""
+    \b(
+        recipes?|
+        near\s+me|nearby|
+        how\s+to\s+(make|cook|bake|prepare|grill|fry|roast)|
+        how\s+do\s+i\s+(make|cook|bake|prepare)|
+        (order|get)\s+(me\s+)?(a\s+|some\s+)?(
+            pizza|food|sushi|tacos?|burger|coffee|ramen|chinese|thai|
+            indian|mexican|delivery|takeout|take-?out
+        )|
+        (food\s+)?delivery|takeout|take-?out|uber\s*eats|doordash|grubhub|
+        restaurants?\s+near|open\s+now
+    )\b
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def is_web_first_goal(text: str) -> bool:
+    """True when the open web should lead, not Guide BM25 noise.
+
+    Recipe / near-me / delivery phrasing. Bare food names stay normal lookup
+    so offline food Help seed and real wiki pages can still win.
+    """
+    stripped = (text or "").strip()
+    if not stripped:
+        return False
+    return bool(_WEB_FIRST_RE.search(stripped))
+
+
+def _filter_web_first_results(results: list[Result]) -> list[Result]:
+    """Keep local/builtin answers; drop weak Guide noise on web-first asks.
+
+    Strong full-match portal hits still pass (e.g. a real “Kimchi” page when
+    someone typed “kimchi recipe”) so we do not hide good encyclopaedia cards.
+    """
+    keep: list[Result] = []
+    for r in results:
+        src = (r.source or "").lower()
+        if src in ("built-in", "your files", "workspace"):
+            keep.append(r)
+            continue
+        # Portal / teddysearch: require full term coverage and a real score.
+        if r.terms > 0 and r.matched >= r.terms and r.score >= 1.5:
+            keep.append(r)
+            continue
+        # Single rare food word with high score (e.g. “sushi” alone is not
+        # web-first; multi-word “sushi recipe” needs full match above).
+        if r.terms == 1 and r.matched == 1 and r.score >= 8.0:
+            keep.append(r)
+    return keep
 
 
 def _score(query_tokens: list[str], text: str, title: str = "") -> float:
@@ -1266,6 +1325,8 @@ def search(query: str, limit: int = 10) -> Outcome:
     outcome = Outcome()
     paths = path_terms(query)
     workspace_hits = 0
+    web_first = is_web_first_goal(query)
+    outcome.web_first = web_first
 
     if grants.get("workspace.index"):
         results, err = search_workspace(query, limit)
@@ -1327,4 +1388,13 @@ def search(query: str, limit: int = 10) -> Outcome:
     # Full-match prune across sources, not only inside each one — otherwise a
     # perfect local hit still sits under a pile of single-term web noise.
     outcome.results = prune(outcome.results)[:limit]
+
+    if web_first:
+        # Guide crawl is finance/wiki-heavy. “pizza recipe” and “sushi near me”
+        # produced Focaccia / Vinegar-class noise; keep Help + files + only
+        # strong full matches, and tell the person the web row is intentional.
+        outcome.results = _filter_web_first_results(outcome.results)[:limit]
+        outcome.notes.append(
+            "Recipes, delivery, and “near me” are better on the open web — "
+            "use Search the web below (or first).")
     return outcome

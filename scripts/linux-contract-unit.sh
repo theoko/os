@@ -1343,7 +1343,10 @@ fi
 if grep -q 'usr/share/teddyos/corpus.json' scripts/teddyos-install-product.sh \
   && grep -q 'search/seed.json' scripts/teddyos-install-product.sh \
   && grep -q 'usr/share/teddyos/corpus.json' scripts/make-update-payload.sh \
-  && test -f search/seed.json; then
+  && test -f search/seed.json \
+  && grep -q 'Recipes delivery and near me' search/seed.json \
+  && grep -q 'is_web_first_goal' linux/teddyos-search/search.py \
+  && grep -q 'web_first' linux/teddyos-search/teddyos-search-app; then
   ok "product/update ship offline corpus seed"
 else
   bad "product corpus" "seed not wired into product install or payload"
@@ -1773,6 +1776,13 @@ if seed.is_file():
     assert len(res) >= 1, "seed must match 'linux' via short keys"
     assert res[0].title and res[0].title != "(untitled)"
     print("builtin-search-ok", len(res), res[0].title)
+    # food cards ship offline
+    food, ferr = s.search_builtin("sushi", limit=5)
+    assert ferr is None
+    assert any("sushi" in r.title.lower() for r in food), [r.title for r in food]
+    pizza, _ = s.search_builtin("pizza", limit=5)
+    assert any("pizza" in r.title.lower() for r in pizza)
+    print("builtin-food-ok", [r.title for r in food[:2]])
 else:
     res, err = s.search_builtin("linux", limit=3)
     assert isinstance(res, list)
@@ -2529,6 +2539,22 @@ assert not s.is_work_goal("")
 assert s.is_freeform_help_goal("reply to my linkedin messages")
 assert s.is_freeform_help_goal("check my email inbox")
 assert not s.is_freeform_help_goal("best python libraries")
+
+# is_web_first_goal — recipes / near me / delivery lead to the open web
+assert s.is_web_first_goal("pizza recipe")
+assert s.is_web_first_goal("sushi near me")
+assert s.is_web_first_goal("how to make banana bread")
+assert s.is_web_first_goal("order pizza")
+assert s.is_web_first_goal("food delivery")
+assert not s.is_web_first_goal("sushi")  # bare food stays normal lookup
+assert not s.is_web_first_goal("order of magnitude")
+assert not s.is_web_first_goal("tsla stock")
+# filter keeps builtin, drops weak portal
+weak = s.Result("Focaccia", "https://x", "bread", "portal", score=0.5, matched=1, terms=2)
+strong = s.Result("Kimchi", "https://y", "korean", "portal", score=9.0, matched=2, terms=2)
+help_hit = s.Result("Pizza", "os://food/pizza", "flatbread", "built-in", score=1.0, matched=1, terms=1)
+kept = s._filter_web_first_results([weak, strong, help_hit])
+assert help_hit in kept and strong in kept and weak not in kept
 
 # is_linkedin_messages_goal
 assert s.is_linkedin_messages_goal("reply to my linkedin messages")

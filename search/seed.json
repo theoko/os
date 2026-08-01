@@ -70,6 +70,97 @@
       "c": "docs",
       "b": "Online Guide ranking happens on this computer over a cached index. teddyOS asks teddysearch for the index; it does not send your typed query to fetch results. Workspace search stays local to folders you allow.",
       "pr": 0.8
+    },
+    {
+      "t": "Recipes delivery and near me",
+      "u": "os://search/web-first",
+      "c": "food",
+      "b": "Recipes, food delivery, and places near you are better on the open web. Type pizza recipe, sushi near me, or order coffee — Search puts Search the web first. The Guide crawl is not a restaurant app.",
+      "pr": 0.95
+    },
+    {
+      "t": "Sushi",
+      "u": "os://food/sushi",
+      "c": "food",
+      "b": "Sushi is vinegared rice with seafood or vegetables. For recipes, restaurants near you, or delivery, use Search the web. This help card is offline only — not live menus or prices.",
+      "pr": 0.7
+    },
+    {
+      "t": "Pizza",
+      "u": "os://food/pizza",
+      "c": "food",
+      "b": "Pizza is flatbread with tomato, cheese, and toppings. For recipes, delivery, or pizza near me, use Search the web — local menus change too fast for this computer’s guide.",
+      "pr": 0.7
+    },
+    {
+      "t": "Coffee",
+      "u": "os://food/coffee",
+      "c": "food",
+      "b": "Coffee is a brewed drink from roasted beans — espresso, drip, cold brew. For how to make coffee at home or cafes near you, use Search the web.",
+      "pr": 0.65
+    },
+    {
+      "t": "Beer",
+      "u": "os://food/beer",
+      "c": "food",
+      "b": "Beer is an alcoholic drink from fermented grain. Styles include lager, ale, IPA. For shops near you or food pairings, use Search the web. Drink responsibly.",
+      "pr": 0.6
+    },
+    {
+      "t": "Banana bread",
+      "u": "os://food/banana-bread",
+      "c": "food",
+      "b": "Banana bread is a sweet quick bread made with ripe bananas. For a full recipe (oven time, flour amounts), use Search the web — this is only a short offline note.",
+      "pr": 0.65
+    },
+    {
+      "t": "Kimchi",
+      "u": "os://food/kimchi",
+      "c": "food",
+      "b": "Kimchi is a Korean fermented vegetable side dish, often napa cabbage and chili. For recipes and how to make kimchi safely, use Search the web.",
+      "pr": 0.65
+    },
+    {
+      "t": "Taco",
+      "u": "os://food/taco",
+      "c": "food",
+      "b": "Tacos are filled tortillas — street style, soft or hard shell. For taco recipes or order tacos near me, use Search the web.",
+      "pr": 0.6
+    },
+    {
+      "t": "Chocolate cake",
+      "u": "os://food/chocolate-cake",
+      "c": "food",
+      "b": "Chocolate cake is a cocoa-based dessert. For baking recipes and frostings, use Search the web — measurements matter more than this short note.",
+      "pr": 0.6
+    },
+    {
+      "t": "Couscous",
+      "u": "os://food/couscous",
+      "c": "food",
+      "b": "Couscous is small steamed granules of semolina, common in North African cooking. For couscous recipes and how to make fluffy couscous, use Search the web.",
+      "pr": 0.6
+    },
+    {
+      "t": "Pasta spaghetti",
+      "u": "os://food/pasta",
+      "c": "food",
+      "b": "Pasta and spaghetti are wheat noodles served with sauce. For recipes and cooking times, use Search the web.",
+      "pr": 0.55
+    },
+    {
+      "t": "Ramen",
+      "u": "os://food/ramen",
+      "c": "food",
+      "b": "Ramen is a Japanese noodle soup with broth, noodles, and toppings. For recipes or ramen near me, use Search the web.",
+      "pr": 0.6
+    },
+    {
+      "t": "Frozen yogurt",
+      "u": "os://food/frozen-yogurt",
+      "c": "food",
+      "b": "Frozen yogurt is a frozen dessert made with yogurt cultures. For shops near you or how to make it at home, use Search the web.",
+      "pr": 0.55
     }
   ]
 }

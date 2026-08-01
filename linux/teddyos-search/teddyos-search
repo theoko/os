@@ -97,6 +97,7 @@ def payload(query: str, outcome) -> dict:
         "errors": outcome.errors,
         "notes": outcome.notes,
         "portal_age_seconds": outcome.portal_age,
+        "web_first": bool(getattr(outcome, "web_first", False)),
     }
 
 
