@@ -693,25 +693,43 @@ def is_web_first_goal(text: str) -> bool:
     return bool(_WEB_FIRST_RE.search(stripped))
 
 
-def _filter_web_first_results(results: list[Result]) -> list[Result]:
-    """Keep local/builtin answers; drop weak Guide noise on web-first asks.
+# Content words that do not prove a Guide hit is about the dish (they match
+# almost every cooking-adjacent wiki page and recreated the Focaccia problem).
+_WEB_FIRST_FILLER = frozenset({
+    "recipe", "recipes", "how", "to", "make", "cook", "bake", "prepare",
+    "grill", "fry", "roast", "near", "me", "nearby", "order", "get", "best",
+    "easy", "food", "delivery", "takeout", "take", "out", "restaurant",
+    "restaurants", "open", "now", "doordash", "uber", "eats", "grubhub",
+    "some", "a", "an", "the", "for", "with", "and", "or",
+})
 
-    Strong full-match portal hits still pass (e.g. a real “Kimchi” page when
-    someone typed “kimchi recipe”) so we do not hide good encyclopaedia cards.
+
+def _filter_web_first_results(
+    results: list[Result], query: str = "",
+) -> list[Result]:
+    """Keep Help/files; keep Guide only if the dish name is in the title.
+
+    “pizza recipe” used to rank Focaccia (high BM25 on “recipe” in body).
+    Web-first means: offline food cards + files stay; portal must put a
+    content token (pizza, sushi, …) in the *title*, not only filler words.
     """
+    content = [
+        t for t in query_terms(query)
+        if t not in _WEB_FIRST_FILLER and len(t) > 2
+    ]
     keep: list[Result] = []
     for r in results:
         src = (r.source or "").lower()
         if src in ("built-in", "your files", "workspace"):
             keep.append(r)
             continue
-        # Portal / teddysearch: require full term coverage and a real score.
-        if r.terms > 0 and r.matched >= r.terms and r.score >= 1.5:
-            keep.append(r)
+        if src not in ("portal", "teddysearch", "web"):
             continue
-        # Single rare food word with high score (e.g. “sushi” alone is not
-        # web-first; multi-word “sushi recipe” needs full match above).
-        if r.terms == 1 and r.matched == 1 and r.score >= 8.0:
+        if not content:
+            continue
+        title_l = (r.title or "").lower()
+        # Dish/place token must appear in the title (Kimchi for “kimchi recipe”).
+        if any(t in title_l for t in content):
             keep.append(r)
     return keep
 
@@ -1391,9 +1409,10 @@ def search(query: str, limit: int = 10) -> Outcome:
 
     if web_first:
         # Guide crawl is finance/wiki-heavy. “pizza recipe” and “sushi near me”
-        # produced Focaccia / Vinegar-class noise; keep Help + files + only
-        # strong full matches, and tell the person the web row is intentional.
-        outcome.results = _filter_web_first_results(outcome.results)[:limit]
+        # produced Focaccia / Vinegar-class noise; keep Help + files + Guide
+        # only when the dish name is in the title.
+        outcome.results = _filter_web_first_results(
+            outcome.results, query)[:limit]
         outcome.notes.append(
             "Recipes, delivery, and “near me” are better on the open web — "
             "use Search the web below (or first).")

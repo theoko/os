@@ -2549,12 +2549,14 @@ assert s.is_web_first_goal("food delivery")
 assert not s.is_web_first_goal("sushi")  # bare food stays normal lookup
 assert not s.is_web_first_goal("order of magnitude")
 assert not s.is_web_first_goal("tsla stock")
-# filter keeps builtin, drops weak portal
-weak = s.Result("Focaccia", "https://x", "bread", "portal", score=0.5, matched=1, terms=2)
+# filter keeps builtin + title-matching Guide; drops Focaccia-class noise
+weak = s.Result("Focaccia", "https://x", "bread recipe", "portal", score=20.0, matched=1, terms=2)
 strong = s.Result("Kimchi", "https://y", "korean", "portal", score=9.0, matched=2, terms=2)
 help_hit = s.Result("Pizza", "os://food/pizza", "flatbread", "built-in", score=1.0, matched=1, terms=1)
-kept = s._filter_web_first_results([weak, strong, help_hit])
+kept = s._filter_web_first_results([weak, strong, help_hit], "kimchi recipe")
 assert help_hit in kept and strong in kept and weak not in kept
+kept_pizza = s._filter_web_first_results([weak, help_hit], "pizza recipe")
+assert help_hit in kept_pizza and weak not in kept_pizza
 
 # is_linkedin_messages_goal
 assert s.is_linkedin_messages_goal("reply to my linkedin messages")
