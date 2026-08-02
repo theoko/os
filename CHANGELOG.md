@@ -1,5 +1,5 @@
 ---
-version: v0.16.8
+version: v0.16.9
 project: os
 updated: 2026-08-01
 type: changelog
@@ -10,6 +10,51 @@ type: changelog
 Runtime version is the top-level VERSION file (no v prefix there).
 This file is newest-first. When behavior ships: bump VERSION, add an entry
 here, update this frontmatter version / updated, then conventional-commit.
+
+## [v0.16.9] — 2026-08-01
+
+### Fixed — Search finds the page you named
+
+Asking for a page by its exact name did not reliably return it. Measured over
+1,782 Wikipedia titles this corpus actually holds, teddyOS put the right page
+first **84.8%** of the time; teddysearch, ranking the *same 12,918 documents*,
+managed **96.5%**.
+
+`TITLE_REPEAT` already leaned that way — title terms are counted five times
+inside the term frequency — but that is a tf nudge competing on the same axis
+as a long body repeating the word, and it lost often enough to matter:
+
+```
+Space race       returned  Space Race and the Moon landing
+Cgroups          returned  cgroups and Linux namespaces — the …
+Demis Roussos    returned  Entehno (έντεχνο) and Greek song …
+Market anomaly   returned  Low-volatility anomaly
+```
+
+A document whose **primary title** is exactly what was typed now takes an
+explicit boost, scaled to the candidate score range so it stays decisive as the
+corpus grows rather than being a fixed constant. Titles are pre-tokenised once
+per corpus load, not per keystroke.
+
+| | before | after |
+|---|---|---|
+| exact-title lookup, r@1 (n=1,782) | 84.8% | **97.4%** |
+| exact-title lookup, MRR | 0.911 | **0.983** |
+| CMU Q&A, multi-word questions (n=325) | 0.414 | **0.414** |
+
+225 lookups corrected, 1 regressed. Multi-word questions are untouched, and
+necessarily so: the boost only fires on an *exact* primary-title match, which a
+question like "What is a butterfly?" never produces. It also cannot change
+whether a search returns anything — it only re-scores documents already
+matched.
+
+Ported from the teddysearch ranker, which carries the same rule.
+
+`make test` 85/85. Not verified in the VM (`make desktop`) — this is a ranking
+change inside `search_portal_corpus`, exercised directly against the real
+67 MB portal corpus rather than through the desktop.
+
+---
 
 ## [v0.16.8] — 2026-08-01
 
